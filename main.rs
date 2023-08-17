@@ -21,7 +21,7 @@ impl<B: Backend> Model<B> {
     }
 
     fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
-        let retrievability = (Tensor::ones_like(&t) + t / (s * 9)).powf(-1.0);
+        let retrievability = (t / (s * 9) + 1).powf(-1.0);
         retrievability
     }
 
@@ -32,7 +32,7 @@ impl<B: Backend> Model<B> {
         let new_s = last_s.clone() * (self.w.val().slice([8..9]).exp() *
             (-new_d + 11) *
             (-self.w.val().slice([9..10]) * last_s.log()).exp() *
-            ((r * -self.w.val().slice([10..11])).exp() - 1) * 
+            (((-r + 1) * self.w.val().slice([10..11])).exp() - 1) * 
             hard_penalty * 
             easy_bonus + 1);
         new_s
@@ -49,14 +49,19 @@ impl<B: Backend> Model<B> {
     fn step(&self, i: usize, delta_t: Tensor<B, 1>, rating: Tensor<B, 1>, stability: Tensor<B, 1>, difficulty: Tensor<B, 1>) -> (Tensor<B, 1>, Tensor<B, 1>) {
         if i == 0 {
             let new_s = self.w.val().select(0, rating.clone().int() - 1);
-            let new_d = self.w.val().slice([4..5]) - self.w.val().slice([5..6]) * rating;
+            let new_d = self.w.val().slice([4..5]) - self.w.val().slice([5..6]) * (rating - 3);
             (new_s, new_d)
         } else {
             let r = self.power_forgetting_curve(delta_t, stability.clone());
-            let new_d = difficulty.clone() + self.w.val().slice([1..2]) * (rating.clone() - self.w.val().slice([2..3]) * difficulty);
+            dbg!("r {:?}", r.clone());
+            let new_d = difficulty.clone() - self.w.val().slice([6..7]) * (rating.clone() - 3);
             // let new_d = new_d.clamp(1.0, 10.0); 
             // TODO: consider constraining the associated type `<B as Backend>::FloatElem` to `{float}` or calling a method that returns `<B as Backend>::FloatElem`
-            let new_s = self.stability_after_success(stability.clone(), new_d.clone(), r.clone(), rating.clone()).mask_where(rating.equal_elem(1), self.stability_after_failure(stability, new_d.clone(), r));
+            dbg!("new_d {:?}", new_d.clone());
+            // let new_s = self.stability_after_success(stability.clone(), new_d.clone(), r.clone(), rating.clone()).mask_where(rating.equal_elem(1), self.stability_after_failure(stability, new_d.clone(), r));
+            let s_recall = self.stability_after_success(stability.clone(), new_d.clone(), r.clone(), rating.clone());
+            let s_forget = self.stability_after_failure(stability, new_d.clone(), r);
+            let new_s = s_recall.mask_where(rating.equal_elem(1), s_forget);
             (new_s, new_d)
         }
     }
@@ -68,7 +73,12 @@ impl<B: Backend> Model<B> {
         for i in 0..seq_len {
             let delta_t = delta_ts.clone().slice([i..i+1]).squeeze(0);
             let rating = ratings.clone().slice([i..i+1]).squeeze(0);
+            dbg!("delta_t {:?}", delta_t.clone());
+            dbg!("rating {:?}", rating.clone());
             (stability, difficulty) = self.step(i, delta_t, rating, stability, difficulty);
+            dbg!("stability {:?}", stability.clone());
+            dbg!("difficulty {:?}", difficulty.clone());
+            dbg!()
         }
         (stability, difficulty)
     }
@@ -78,8 +88,8 @@ impl<B: Backend> Model<B> {
 fn main() {
     type Backend = NdArrayBackend<f32>;
     let model = Model::<Backend>::new();
-    let delta_ts = Tensor::<Backend, 2>::from_floats([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]);
-    let ratings = Tensor::<Backend, 2>::from_floats([[1.0, 2.0, 3.0, 4.0, 1.0, 2.0]]);
+    let delta_ts = Tensor::<Backend, 2>::from_floats([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0, 2.0, 2.0]]);
+    let ratings = Tensor::<Backend, 2>::from_floats([[1.0, 2.0, 3.0, 4.0, 1.0, 2.0], [1.0, 2.0, 3.0, 4.0, 1.0, 2.0]]);
     let (stability, difficulty) = model.forward(delta_ts, ratings);
     println!("stability {:?}", stability);
     println!("difficulty {:?}", difficulty);
