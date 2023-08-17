@@ -46,7 +46,7 @@ impl<B: Backend> Model<B> {
         new_s
     }
 
-    fn step(&self, i: i32, delta_t: Tensor<B, 1>, rating: Tensor<B, 1>, stability: Tensor<B, 1>, difficulty: Tensor<B, 1>) -> (Tensor<B, 1>, Tensor<B, 1>) {
+    fn step(&self, i: usize, delta_t: Tensor<B, 1>, rating: Tensor<B, 1>, stability: Tensor<B, 1>, difficulty: Tensor<B, 1>) -> (Tensor<B, 1>, Tensor<B, 1>) {
         if i == 0 {
             let new_s = self.w.select(0, rating.int());
             let new_d = self.w.slice([4..5]) - self.w.slice([5..6]) * rating;
@@ -64,7 +64,11 @@ impl<B: Backend> Model<B> {
         let [seq_len, batch_size] = delta_ts.dims();
         let mut stability = Tensor::zeros([batch_size]);
         let mut difficulty = Tensor::zeros([batch_size]);
-        for (i, delta_t, rating, stability, diffculty) in ().enumerate() { // TODO: enumerate
+        for i in 0..seq_len {
+            let delta_t = delta_ts.slice([i..i+1]).squeeze(0);
+            let rating = ratings.slice([i..i+1]).squeeze(0);
+            let difficulty = difficultys.slice([i..i+1]).squeeze(0);
+            let stability = stabilitys.slice([i..i+1]).squeeze(0);
             let (stability, difficulty) = self.step(i, delta_t, rating, stability, difficulty);
         }
         (stability, difficulty)
