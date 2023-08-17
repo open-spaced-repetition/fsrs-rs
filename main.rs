@@ -48,13 +48,13 @@ impl<B: Backend> Model<B> {
 
     fn step(&self, i: i32, delta_t: Tensor<B, 1>, rating: Tensor<B, 1>, stability: Tensor<B, 1>, difficulty: Tensor<B, 1>) -> (Tensor<B, 1>, Tensor<B, 1>) {
         if i == 0 {
-            let new_s = self.w.select(0, rating.int()); // TODO: int
+            let new_s = self.w.select(0, rating.int());
             let new_d = self.w.slice([4..5]) - self.w.slice([5..6]) * rating;
             (new_s, new_d)
         } else {
             let r = self.power_forgetting_curve(delta_t, stability);
             let new_d = difficulty + self.w.slice([1..2]) * (rating - self.w.slice([2..3]) * difficulty);
-            let new_d = new_d.clip(1, 10); // TODO: clip
+            let new_d = new_d.clamp(1.0, 10.0); // TODO: consider constraining the associated type `<B as Backend>::FloatElem` to `{float}` or calling a method that returns `<B as Backend>::FloatElem`
             let new_s = self.stability_after_success(stability, new_d, r, rating).mask_where(rating.equal_elem(1), self.stability_after_failure(stability, new_d, r));
             (new_s, new_d)
         }
