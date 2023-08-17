@@ -76,11 +76,11 @@ impl<B: Backend> Model<B> {
             (new_s, new_d)
         } else {
             let r = self.power_forgetting_curve(delta_t, stability.clone());
-            dbg!(&r.clone());
+            dbg!(&r);
             let new_d = difficulty.clone() - self.w.val().slice([6..7]) * (rating.clone() - 3);
             // let new_d = new_d.clamp(1.0, 10.0);
             // TODO: consider constraining the associated type `<B as Backend>::FloatElem` to `{float}` or calling a method that returns `<B as Backend>::FloatElem`
-            dbg!(&new_d.clone());
+            dbg!(&new_d);
             let s_recall = self.stability_after_success(
                 stability.clone(),
                 new_d.clone(),
@@ -105,10 +105,10 @@ impl<B: Backend> Model<B> {
             let delta_t = delta_ts.clone().slice([i..i + 1]).squeeze(0);
             let rating = ratings.clone().slice([i..i + 1]).squeeze(0);
             dbg!(&delta_t);
-            dbg!(&rating.clone());
+            dbg!(&rating);
             (stability, difficulty) = self.step(i, delta_t, rating, stability, difficulty);
-            dbg!(&stability.clone());
-            dbg!(&difficulty.clone());
+            dbg!(&stability);
+            dbg!(&difficulty);
             dbg!()
         }
         (stability, difficulty)
