@@ -78,7 +78,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         if i == 0 {
             let new_s = self.w().select(0, rating.clone().int() - 1);
             let new_d = self.w().slice([4..5]) - self.w().slice([5..6]) * (rating - 3);
-            (new_s, new_d)
+            (new_s.clamp(0.1, 36500.0), new_d.clamp(1.0, 10.0))
         } else {
             let r = self.power_forgetting_curve(delta_t, stability.clone());
             // dbg!(&r);
@@ -93,7 +93,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             );
             let s_forget = self.stability_after_failure(stability, new_d.clone(), r);
             let new_s = s_recall.mask_where(rating.equal_elem(1), s_forget);
-            (new_s, new_d)
+            (new_s.clamp(0.1, 36500.0), new_d)
         }
     }
 
