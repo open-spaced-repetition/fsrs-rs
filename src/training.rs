@@ -15,6 +15,7 @@ use burn::{
         // metric::{AccuracyMetric, LossMetric},
         LearnerBuilder,
     },
+    module::Param,
 };
 use log::info;
 
@@ -74,6 +75,15 @@ pub struct TrainingConfig {
     pub learning_rate: f64,
 }
 
+pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>>) -> Param<Tensor<B, 1>> {
+
+    let new_weights = weights.map(|w| {
+        w.clamp(0.0, 1.0)
+    });
+
+    new_weights
+}
+
 pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
     std::fs::create_dir_all(artifact_dir).ok();
     config
@@ -112,7 +122,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
             config.learning_rate,
         );
 
-    let model_trained = learner.fit(dataloader_train, dataloader_test);
+    let mut model_trained = learner.fit(dataloader_train, dataloader_test);
 
     config
         .save(format!("{ARTIFACT_DIR}/config.json").as_str())
@@ -124,6 +134,8 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
             format!("{ARTIFACT_DIR}/model").into(),
         )
         .expect("Failed to save trained model");
+
+    model_trained.w = weight_clipper(model_trained.w);
 
     info!("trained weights: {}", &model_trained.w.val());
 }
