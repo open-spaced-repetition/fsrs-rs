@@ -1,11 +1,12 @@
 use burn::{
-    module::Param,
-    tensor::{backend::Backend, Float, Tensor},
+    module::{Param, Module},
+    tensor::{backend::Backend, Float, Tensor}, config::Config,
 };
 
-#[derive(Debug)]
+
+#[derive(Module, Debug)]
 pub struct Model<B: Backend> {
-    pub(crate) w: Param<Tensor<B, 1>>,
+    w: Param<Tensor<B, 1>>,
 }
 
 impl<B: Backend> Model<B> {
@@ -21,7 +22,7 @@ impl<B: Backend> Model<B> {
         }
     }
 
-    fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
+    pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
         let retrievability = (t / (s * 9) + 1).powf(-1.0);
         retrievability
     }
@@ -112,6 +113,17 @@ impl<B: Backend> Model<B> {
             dbg!()
         }
         (stability, difficulty)
+    }
+}
+
+
+#[derive(Config, Debug)]
+pub struct ModelConfig {
+}
+
+impl ModelConfig {
+    pub fn init<B: Backend>(&self) -> Model<B> {
+        Model::new()
     }
 }
 
