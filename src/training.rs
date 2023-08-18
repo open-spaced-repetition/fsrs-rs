@@ -77,7 +77,7 @@ pub struct TrainingConfig {
 
 pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>>) -> Param<Tensor<B, 1>> {
 
-    let clamps = [
+    const CLAMPS: [(f32, f32); 13] = [
         (1.0, 10.0),
         (0.1, 5.0),
         (0.1, 5.0),
@@ -97,7 +97,7 @@ pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>
     
     let new_weights = weights.map(|w| {
         i += 1;
-        w.clamp(clamps[i].0, clamps[i].1)
+        w.clamp(CLAMPS[i].0, CLAMPS[i].1)
     });
 
     new_weights
