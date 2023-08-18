@@ -77,8 +77,27 @@ pub struct TrainingConfig {
 
 pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>>) -> Param<Tensor<B, 1>> {
 
+    let clamps = [
+        (1.0, 10.0),
+        (0.1, 5.0),
+        (0.1, 5.0),
+        (0.0, 0.5),
+        (0.0, 3.0),
+        (0.1, 0.8),
+        (0.01, 2.5),
+        (0.5, 5.0),
+        (0.01, 0.2),
+        (0.01, 0.9),
+        (0.01, 2.0),
+        (0.0, 1.0),
+        (1.0, 10.0),
+    ];
+    let mut i = 3; // Starts at 4 because increments at 1 at the start
+    // https://regex101.com/r/21mXNI/1
+    
     let new_weights = weights.map(|w| {
-        w.clamp(0.0, 1.0)
+        i += 1;
+        w.clamp(clamps[i].0, clamps[i].1)
     });
 
     new_weights
