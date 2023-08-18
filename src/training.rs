@@ -3,7 +3,7 @@ use crate::model::{ModelConfig, Model};
 use burn::module::Module;
 use burn::nn::loss::CrossEntropyLoss;
 use burn::optim::AdamConfig;
-use burn::record::{CompactRecorder, NoStdTrainingRecorder, Recorder};
+use burn::record::{PrettyJsonFileRecorder, FullPrecisionSettings, Recorder};
 use burn::tensor::{Tensor, Int};
 use burn::tensor::backend::Backend;
 use burn::train::{TrainStep, TrainOutput, ValidStep, ClassificationOutput};
@@ -12,10 +12,11 @@ use burn::{
     data::dataloader::DataLoaderBuilder,
     tensor::backend::ADBackend,
     train::{
-        metric::{AccuracyMetric, LossMetric},
+        // metric::{AccuracyMetric, LossMetric},
         LearnerBuilder,
     },
 };
+use log::info;
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
     pub fn forward_classification(
@@ -28,11 +29,14 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         // dbg!(&t_historys);
         // dbg!(&r_historys);
         let (stability, _difficulty) = self.forward(t_historys, r_historys);
-        let retention = self.power_forgetting_curve(delta_ts, stability);
+        let retention = self.power_forgetting_curve(delta_ts.clone(), stability.clone());
         // dbg!(&retention);
-        let logits = Tensor::cat(vec![retention.clone(), -retention + 1], 0).reshape([1, -1]);
-        // dbg!(&logits);
-        // dbg!(&labels);
+        let logits = Tensor::cat(vec![retention.clone(), -retention.clone() + 1], 0).reshape([1, -1]);
+        info!("stability: {}", &stability);
+        info!("delta_ts: {}", &delta_ts);
+        info!("retention: {}", &retention);
+        info!("logits: {}", &logits);
+        info!("labels: {}", &labels);
         let loss = CrossEntropyLoss::new(None).forward(logits.clone(), labels.clone());
         ClassificationOutput::new(loss, logits, labels)
     }
@@ -95,11 +99,11 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
         .build(FSRSDataset::test());
 
     let learner = LearnerBuilder::new(artifact_dir)
-        .metric_train_plot(AccuracyMetric::new())
-        .metric_valid_plot(AccuracyMetric::new())
-        .metric_train_plot(LossMetric::new())
-        .metric_valid_plot(LossMetric::new())
-        .with_file_checkpointer(1, CompactRecorder::new())
+        // .metric_train_plot(AccuracyMetric::new())
+        // .metric_valid_plot(AccuracyMetric::new())
+        // .metric_train_plot(LossMetric::new())
+        // .metric_valid_plot(LossMetric::new())
+        .with_file_checkpointer(1, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
         .devices(vec![device])
         .num_epochs(config.num_epochs)
         .build(
@@ -114,14 +118,14 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
         .save(format!("{ARTIFACT_DIR}/config.json").as_str())
         .unwrap();
 
-    NoStdTrainingRecorder::new()
+        PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
         .record(
             model_trained.clone().into_record(),
             format!("{ARTIFACT_DIR}/model").into(),
         )
         .expect("Failed to save trained model");
 
-    dbg!(&model_trained.w.clone());
+    info!("trained weights: {}", &model_trained.w.val());
 }
 
 

@@ -10,3 +10,4 @@ burn = { git = "https://github.com/burn-rs/burn.git", version = "0.9.0" }
 burn-ndarray = { git = "https://github.com/burn-rs/burn.git", version = "0.9.0" }
 burn-autodiff = { git = "https://github.com/burn-rs/burn.git", version = "0.9.0" }
 serde = "1.0.183"
+log = "0.4"

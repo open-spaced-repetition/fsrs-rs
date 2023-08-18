@@ -1,4 +1,4 @@
-use burn::{tensor::{backend::Backend, Data, Tensor, Float, ElementConversion, Shape, Int}, data::{dataset::{InMemDataset, Dataset}, dataloader::DataLoaderBuilder}};
+use burn::{tensor::{backend::Backend, Data, Tensor, Float, ElementConversion, Shape, Int}, data::dataset::{InMemDataset, Dataset}};
 use serde::{Deserialize, Serialize};
 use burn::data::dataloader::batcher::Batcher;
 
@@ -102,7 +102,7 @@ fn test() {
     const JSON_FILE: &str = "tests/data/revlog_history.json";
     use burn::data::dataset::InMemDataset;
     use burn::data::dataloader::Dataset;
-    // use burn::data::dataloader::DataLoaderBuilder;
+    use burn::data::dataloader::DataLoaderBuilder;
     let dataset = InMemDataset::<FSRSItem>::from_json_rows(JSON_FILE).unwrap();
     let item = dataset.get(704).unwrap();
     dbg!(&item);
@@ -115,9 +115,9 @@ fn test() {
     let dataloader = DataLoaderBuilder::new(batcher)
         .batch_size(1)
         .shuffle(42)
-        .num_workers(1)
+        .num_workers(4)
         .build(dataset);
-    for item in dataloader.iter() {
-        dbg!(&item.r_historys);
+    for _item in dataloader.iter() {
+        // dbg!(&item.r_historys);
     }
 }
