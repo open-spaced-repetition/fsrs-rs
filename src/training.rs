@@ -27,10 +27,10 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     ) -> ClassificationOutput<B> {
         let (stability, _difficulty) = self.forward(t_historys, r_historys);
         let retention = self.power_forgetting_curve(delta_ts, stability);
-        dbg!(&retention);
+        // dbg!(&retention);
         let logits = Tensor::cat(vec![retention.clone(), -retention + 1], 0).reshape([1, -1]);
-        dbg!(&logits);
-        dbg!(&labels);
+        // dbg!(&logits);
+        // dbg!(&labels);
         let loss = CrossEntropyLoss::new(None).forward(logits.clone(), labels.clone());
         ClassificationOutput::new(loss, logits, labels)
     }
@@ -50,7 +50,7 @@ impl<B: Backend<FloatElem = f32>> ValidStep<FSRSBatch<B>, ClassificationOutput<B
     }
 }
 
-static ARTIFACT_DIR: &str = "/tmp/fsrs";
+static ARTIFACT_DIR: &str = "./tmp/fsrs";
 
 #[derive(Config)]
 pub struct TrainingConfig {
@@ -114,10 +114,12 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
 
     NoStdTrainingRecorder::new()
         .record(
-            model_trained.into_record(),
+            model_trained.clone().into_record(),
             format!("{ARTIFACT_DIR}/model").into(),
         )
         .expect("Failed to save trained model");
+
+    dbg!(&model_trained.w.clone());
 }
 
 
@@ -129,7 +131,7 @@ fn test() {
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
     let device = NdArrayDevice::Cpu;
 
-    let artifact_dir = "/tmp/fsrs";
+    let artifact_dir = ARTIFACT_DIR;
     train::<AutodiffBackend>(
         artifact_dir,
         TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),

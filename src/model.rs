@@ -6,7 +6,7 @@ use burn::{
 
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
-    w: Param<Tensor<B, 1>>,
+    pub w: Param<Tensor<B, 1>>,
 }
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
@@ -81,10 +81,10 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             (new_s, new_d)
         } else {
             let r = self.power_forgetting_curve(delta_t, stability.clone());
-            dbg!(&r);
+            // dbg!(&r);
             let new_d = difficulty.clone() - self.w().slice([6..7]) * (rating.clone() - 3);
             let new_d = new_d.clamp(1.0, 10.0);
-            dbg!(&new_d);
+            // dbg!(&new_d);
             let s_recall = self.stability_after_success(
                 stability.clone(),
                 new_d.clone(),
@@ -108,12 +108,12 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         for i in 0..seq_len {
             let delta_t = delta_ts.clone().slice([i..i + 1]).squeeze(0);
             let rating = ratings.clone().slice([i..i + 1]).squeeze(0);
-            dbg!(&delta_t);
-            dbg!(&rating);
+            // dbg!(&delta_t);
+            // dbg!(&rating);
             (stability, difficulty) = self.step(i, delta_t, rating, stability, difficulty);
-            dbg!(&stability);
-            dbg!(&difficulty);
-            dbg!()
+            // dbg!(&stability);
+            // dbg!(&difficulty);
+            // dbg!()
         }
         (stability, difficulty)
     }
