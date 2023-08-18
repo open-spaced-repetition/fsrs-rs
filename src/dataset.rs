@@ -36,14 +36,14 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .iter()
             .map(|item| Data::new(item.t_history.clone(), Shape { dims: [item.t_history.len()] }))
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.reshape([1, -1]))
+            .map(|tensor| tensor.unsqueeze())
             .collect();
 
         let r_historys = items
             .iter()
             .map(|item| Data::new(item.r_history.clone(), Shape { dims: [item.t_history.len()] }))
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.reshape([1, -1]))
+            .map(|tensor| tensor.unsqueeze())
             .collect();
 
         let delta_ts = items
@@ -56,10 +56,13 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .map(|item| Tensor::<B, 1, Int>::from_data(Data::from([item.label.elem()])))
             .collect();
 
-        let t_historys = Tensor::cat(t_historys, 0).to_device(&self.device);
-        let r_historys = Tensor::cat(r_historys, 0).to_device(&self.device);
+        let t_historys = Tensor::cat(t_historys, 0).transpose().to_device(&self.device); // [seq_len, batch_size]
+        let r_historys = Tensor::cat(r_historys, 0).transpose().to_device(&self.device); // [seq_len, batch_size]
         let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);
         let labels = Tensor::cat(labels, 0).to_device(&self.device);
+
+        // dbg!(&items[0].t_history);
+        // dbg!(&t_historys);
 
         FSRSBatch { t_historys, r_historys, delta_ts, labels }
     }
@@ -103,7 +106,7 @@ fn test() {
     let dataset = InMemDataset::<FSRSItem>::from_json_rows(JSON_FILE).unwrap();
     let item = dataset.get(704).unwrap();
     dbg!(&item);
-    
+
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
     let device = NdArrayDevice::Cpu;

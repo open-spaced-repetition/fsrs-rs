@@ -25,6 +25,8 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         delta_ts: Tensor<B, 1>,
         labels: Tensor<B, 1, Int>,
     ) -> ClassificationOutput<B> {
+        // dbg!(&t_historys);
+        // dbg!(&r_historys);
         let (stability, _difficulty) = self.forward(t_historys, r_historys);
         let retention = self.power_forgetting_curve(delta_ts, stability);
         // dbg!(&retention);
