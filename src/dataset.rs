@@ -1,8 +1,6 @@
-use burn::tensor::{backend::Backend, Data, Tensor, Float, ElementConversion, Shape};
+use burn::{tensor::{backend::Backend, Data, Tensor, Float, ElementConversion, Shape, Int}, data::{dataset::{InMemDataset, Dataset}, dataloader::DataLoaderBuilder}};
 use serde::{Deserialize, Serialize};
 use burn::data::dataloader::batcher::Batcher;
-
-const SEQ_LEN: usize = 32;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FSRSItem {
@@ -28,7 +26,7 @@ pub struct FSRSBatch<B: Backend> {
     pub t_historys: Tensor<B, 2, Float>,
     pub r_historys: Tensor<B, 2, Float>,
     pub delta_ts: Tensor<B, 1, Float>,
-    pub labels: Tensor<B, 1, Float>,
+    pub labels: Tensor<B, 1, Int>,
 }
 
 impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
@@ -36,16 +34,16 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
 
         let t_historys = items
             .iter()
-            .map(|item| Data::new(item.t_history.clone(), Shape { dims: [SEQ_LEN] }))
+            .map(|item| Data::new(item.t_history.clone(), Shape { dims: [item.t_history.len()] }))
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.reshape([1, SEQ_LEN]))
+            .map(|tensor| tensor.reshape([1, -1]))
             .collect();
 
         let r_historys = items
             .iter()
-            .map(|item| Data::new(item.r_history.clone(), Shape { dims: [SEQ_LEN] }))
+            .map(|item| Data::new(item.r_history.clone(), Shape { dims: [item.t_history.len()] }))
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.reshape([1, SEQ_LEN]))
+            .map(|tensor| tensor.reshape([1, -1]))
             .collect();
 
         let delta_ts = items
@@ -55,7 +53,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
 
         let labels = items
             .iter()
-            .map(|item| Tensor::<B, 1, Float>::from_data(Data::from([item.label.elem()])))
+            .map(|item| Tensor::<B, 1, Int>::from_data(Data::from([item.label.elem()])))
             .collect();
 
         let t_historys = Tensor::cat(t_historys, 0).to_device(&self.device);
@@ -67,24 +65,56 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     }
 }
 
+pub struct FSRSDataset {
+    dataset: InMemDataset<FSRSItem>
+}
+
+impl Dataset<FSRSItem> for FSRSDataset {
+    fn len(&self) -> usize {
+        self.dataset.len()
+    }
+
+    fn get(&self, index: usize) -> Option<FSRSItem> {
+        self.dataset.get(index)
+    }
+}
+
+impl FSRSDataset {
+    pub fn train() -> Self {
+        Self::new()
+    }
+
+    pub fn test() -> Self {
+        Self::new()
+    }
+
+    fn new() -> Self {
+        let dataset = InMemDataset::<FSRSItem>::from_json_rows("tests/data/revlog_history.json").unwrap();
+        Self { dataset }
+    }
+}
+
 #[test]
 fn test() {
     const JSON_FILE: &str = "tests/data/revlog_history.json";
     use burn::data::dataset::InMemDataset;
     use burn::data::dataloader::Dataset;
-    use burn::data::dataloader::DataLoaderBuilder;
+    // use burn::data::dataloader::DataLoaderBuilder;
     let dataset = InMemDataset::<FSRSItem>::from_json_rows(JSON_FILE).unwrap();
-    dbg!(&dataset.get(704));
-
-
+    let item = dataset.get(704).unwrap();
+    dbg!(&item);
+    
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
     let device = NdArrayDevice::Cpu;
     type Backend = NdArrayBackend<f32>;
     let batcher = FSRSBatcher::<Backend>::new(device.clone());
-    DataLoaderBuilder::new(batcher)
+    let dataloader = DataLoaderBuilder::new(batcher)
         .batch_size(1)
         .shuffle(42)
         .num_workers(1)
         .build(dataset);
+    for item in dataloader.iter() {
+        dbg!(&item.r_historys);
+    }
 }
