@@ -94,14 +94,14 @@ pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>
         (0.0, 1.0),
         (1.0, 10.0),
     ];
-    let mut i = 3; // Starts at 4 because increments at 1 at the start
+    let mut i = 0; // Starts at 4 because increments at 1 at the start
     // https://regex101.com/r/21mXNI/1
     
     let new_weights = weights.map(|layer| {
         let new = layer.clone();
         let val: &mut Vec<f32> = &mut new.to_data().value;
 
-        for w in val.iter_mut() {
+        for w in val.iter_mut().skip(4) {
             i += 1;
             *w = w.clamp(CLAMPS[i].0.into(), CLAMPS[i].1.into());
         } 
@@ -117,14 +117,14 @@ fn weight_clipper_test() {
     type Backend = NdArrayBackend<f32>;
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
 
-    let backend = Tensor::<AutodiffBackend, 1>::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0]);
+    let backend = Tensor::<AutodiffBackend, 1>::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 0.25]);
     let examples = Param::from(backend);
 
     let param = weight_clipper(examples);
     let values: &Tensor<AutodiffBackend, 1> = &param.val();
 
     let t = values.to_data().value;
-    assert_eq!(t, vec![0.0, -1000.0, 1000.0, 0.0, 5.0, 0.0]);
+    assert_eq!(t, vec![0.0, -1000.0, 1000.0, 0.0, 5.0, 0.1, 0.25]);
 }
 
 pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
