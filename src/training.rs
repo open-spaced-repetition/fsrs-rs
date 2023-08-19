@@ -4,7 +4,8 @@ use burn::module::Module;
 use burn::nn::loss::CrossEntropyLoss;
 use burn::optim::AdamConfig;
 use burn::record::{PrettyJsonFileRecorder, FullPrecisionSettings, Recorder};
-use burn::tensor::{Tensor, Int};
+use burn::tensor::ops::TensorOps;
+use burn::tensor::{Tensor, Int, Data};
 use burn::tensor::backend::Backend;
 use burn::train::{TrainStep, TrainOutput, ValidStep, ClassificationOutput};
 use burn::{
@@ -17,6 +18,7 @@ use burn::{
     },
     module::Param,
 };
+use burn_ndarray::NdArrayBackend;
 use log::info;
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
@@ -95,9 +97,16 @@ pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>
     let mut i = 3; // Starts at 4 because increments at 1 at the start
     // https://regex101.com/r/21mXNI/1
     
-    let new_weights = weights.map(|w| {
-        i += 1;
-        w.clamp(CLAMPS[i].0, CLAMPS[i].1)
+    let new_weights = weights.map(|layer| {
+        let new = layer.clone();
+        let val: &mut Vec<f32> = &mut new.to_data().value;
+
+        for w in val.iter_mut() {
+            i += 1;
+            *w = w.clamp(CLAMPS[i].0.into(), CLAMPS[i].1.into());
+        } 
+
+        Tensor::from_data(Data::new(val.clone(), new.shape()))
     });
 
     new_weights
@@ -108,14 +117,14 @@ fn weight_clipper_test() {
     type Backend = NdArrayBackend<f32>;
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
 
-    let backend = Tensor::<AutodiffBackend, 1, Float>::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0]);
+    let backend = Tensor::<AutodiffBackend, 1>::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0]);
     let examples = Param::from(backend);
 
     let param = weight_clipper(examples);
     let values: &Tensor<AutodiffBackend, 1> = &param.val();
 
     let t = values.to_data().value;
-    assert_eq!(t, vec![0.0, -1000.0, 1000.0, 0.0, 5.0, ]);
+    assert_eq!(t, vec![0.0, -1000.0, 1000.0, 0.0, 5.0, 0.0]);
 }
 
 pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
