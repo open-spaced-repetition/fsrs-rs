@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::{Row, Connection, Result};
 
 #[derive(Debug)]
@@ -27,13 +29,12 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
     })
 }
 
-#[test]
-fn test() {
+fn read_collection() -> Vec<RevlogEntry> {
     let db = Connection::open("tests/data/collection.anki21").unwrap();
-    let filter_out_suspended_cards = true;
-    let filter_out_flags = vec![1, 2, 3];
+    let filter_out_suspended_cards = false;
+    let filter_out_flags = vec![];
     let flags_str = if !filter_out_flags.is_empty() {
-        format!("AND flags NOT IN ({})", filter_out_flags.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(", "))
+        format!("AND flags NOT IN ({})", filter_out_flags.iter().map(|x: &i32| x.to_string()).collect::<Vec<String>>().join(", "))
     } else {
         "".to_string()
     };
@@ -51,11 +52,28 @@ fn test() {
         suspended_cards_str, flags_str
     );
 
-    let revlog = db.prepare_cached(&query).unwrap()
+    let revlogs = db.prepare_cached(&query).unwrap()
     .query_and_then([],  row_to_revlog_entry).unwrap()
     .collect::<Result<Vec<RevlogEntry>>>().unwrap();
+    revlogs
+}
 
-    for r in revlog {
+fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
+    let mut grouped: HashMap<i64, Vec<RevlogEntry>> = HashMap::new();
+    for revlog in revlogs {
+        grouped.entry(revlog.cid).or_insert_with(Vec::new).push(revlog);
+    }
+
+    grouped.into_iter().map(|(_, v)| v).collect()
+}
+
+#[test]
+fn test() {
+    let revlogs = read_collection();
+    dbg!(revlogs.len());
+    let revlogs = group_by_cid(revlogs);
+    dbg!(revlogs.len());
+    for r in revlogs {
         dbg!(&r);
         break;
     }
