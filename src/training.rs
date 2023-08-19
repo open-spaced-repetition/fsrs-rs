@@ -77,60 +77,6 @@ pub struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>>) -> Param<Tensor<B, 1>> {
-
-    const CLAMPS: [(f32, f32); 13] = [
-        (1.0, 10.0),
-        (0.1, 5.0),
-        (0.1, 5.0),
-        (0.0, 0.5),
-        (0.0, 3.0),
-        (0.1, 0.8),
-        (0.01, 2.5),
-        (0.5, 5.0),
-        (0.01, 0.2),
-        (0.01, 0.9),
-        (0.01, 2.0),
-        (0.0, 1.0),
-        (1.0, 10.0),
-    ];
-    let mut i = 0; // Starts at 4 because increments at 1 at the start
-    // https://regex101.com/r/21mXNI/1
-    
-    let new_weights = weights.map(|layer| {
-        let new = layer.clone();
-        let val: &mut Vec<f32> = &mut new.to_data().value;
-
-        for w in val.iter_mut().skip(4) {
-            *w = w.clamp(CLAMPS[i].0.into(), CLAMPS[i].1.into());
-            i += 1;
-        } 
-
-        Tensor::from_data(Data::new(val.clone(), new.shape()))
-    });
-
-    new_weights
-}
-
-#[test]
-fn weight_clipper_test() {
-    type Backend = NdArrayBackend<f32>;
-    type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
-
-    let backend = Tensor::<AutodiffBackend, 1>::from_floats(
-        [0.0, -1000.0, 1000.0, 0.0, // Ignored
-         1000.0, -1000.0, 1.0, 0.25]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
-    let examples = Param::from(backend);
-
-    let param = weight_clipper(examples);
-    let values: &Tensor<AutodiffBackend, 1> = &param.val();
-
-    let t = values.to_data().value;
-    assert_eq!(t, vec!
-        [0.0, -1000.0, 1000.0, 0.0,
-         10.0, 0.1, 1.0, 0.25]);
-}
-
 pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
     std::fs::create_dir_all(artifact_dir).ok();
     config
@@ -181,8 +127,6 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
             format!("{ARTIFACT_DIR}/model").into(),
         )
         .expect("Failed to save trained model");
-
-    model_trained.w = weight_clipper(model_trained.w);
 
     info!("trained weights: {}", &model_trained.w.val());
 }
