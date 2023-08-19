@@ -103,6 +103,21 @@ pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>
     new_weights
 }
 
+#[test]
+fn weight_clipper_test() {
+    type Backend = NdArrayBackend<f32>;
+    type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
+
+    let backend = Tensor::<AutodiffBackend, 1, Float>::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0]);
+    let examples = Param::from(backend);
+
+    let param = weight_clipper(examples);
+    let values: &Tensor<AutodiffBackend, 1> = &param.val();
+
+    let t = values.to_data().value;
+    assert_eq!(t, vec![0.0, -1000.0, 1000.0, 0.0, 5.0, ]);
+}
+
 pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
     std::fs::create_dir_all(artifact_dir).ok();
     config
