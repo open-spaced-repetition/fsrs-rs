@@ -193,6 +193,31 @@ fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
     }).collect()
 }
 
+fn remove_non_learning_first(revlogs_per_card: Vec<Vec<RevlogEntry>>) -> Vec<Vec<RevlogEntry>> {
+    let mut result = revlogs_per_card;
+    result.retain(|entries| {
+        if let Some(first_entry) = entries.first() {
+            first_entry.review_kind == 1
+        } else {
+            false
+        }
+    });
+    result
+}
+
+pub fn anki_to_fsrs() -> Vec<FSRSItem> {
+    let revlogs = read_collection();
+    let revlogs_per_card = group_by_cid(revlogs);
+    let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
+        .into_iter()
+        .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
+        .collect();
+
+    let filtered_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
+    let fsrs_items = convert_to_fsrs_items(filtered_revlogs_per_card);
+    fsrs_items
+}
+
 #[test]
 fn test() {
     let revlogs = read_collection();
@@ -204,18 +229,11 @@ fn test() {
         .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
         .collect();
 
-    extracted_revlogs_per_card.retain(|entries| {
-        if let Some(first_entry) = entries.first() {
-            first_entry.review_kind == 1
-        } else {
-            false
-        }
-    });
-
     for r in &extracted_revlogs_per_card {
         dbg!(r);
         break;
     }
+    extracted_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
     dbg!(extracted_revlogs_per_card.iter().map(|x| x.len()).sum::<usize>());
     let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
     dbg!(fsrs_items.len());
