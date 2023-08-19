@@ -3,21 +3,23 @@ use chrono_tz::Tz;
 use rusqlite::{Connection, Result, Row};
 use std::collections::HashMap;
 
+use crate::dataset::FSRSItem;
+
 #[derive(Debug)]
 struct RevlogEntry {
     id: i64,
     cid: i64,
     usn: i64,
-    button_chosen: i64,
+    button_chosen: i32,
     interval: i64,
     last_interval: i64,
     ease_factor: i64,
     taken_millis: i64,
     review_kind: i64,
-    delta_t: i64,
-    i: i64,
-    r_history: Vec<i64>,
-    t_history: Vec<i64>,
+    delta_t: i32,
+    i: usize,
+    r_history: Vec<i32>,
+    t_history: Vec<i32>,
 }
 
 fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
@@ -107,7 +109,7 @@ fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chr
     datetime.date_naive()
 }
 
-fn filter_entries(mut entries: Vec<RevlogEntry>, next_day_starts_at: i64, timezone: Tz) -> Vec<RevlogEntry> {
+fn extract_time_series_feature(mut entries: Vec<RevlogEntry>, next_day_starts_at: i64, timezone: Tz) -> Vec<RevlogEntry> {
     // 寻找最后一组连续 review_kind = 0 的第一个 RevlogEntry 的索引
     let mut index_to_keep = 0;
     let mut i = entries.len();
@@ -146,12 +148,12 @@ fn filter_entries(mut entries: Vec<RevlogEntry>, next_day_starts_at: i64, timezo
     for i in 1..entries.len() {
         let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
         let date_previous = convert_to_date(entries[i - 1].id, next_day_starts_at, timezone);
-        entries[i].delta_t = (date_current - date_previous).num_days();
+        entries[i].delta_t = (date_current - date_previous).num_days() as i32;
     }
 
     // 计算 i, r_history, t_history
     for i in 0..entries.len() {
-        entries[i].i = (i as i64) + 1; // 位置从 1 开始
+        entries[i].i = i + 1; // 位置从 1 开始
         // 除了第一个条目，其余条目将前面的 button_chosen 和 delta_t 加入 r_history 和 t_history
         if i > 0 {
             entries[i].r_history = entries[0..i].iter().map(|e| e.button_chosen).collect();
@@ -159,23 +161,62 @@ fn filter_entries(mut entries: Vec<RevlogEntry>, next_day_starts_at: i64, timezo
         }
     }
 
+    // 找到 review_kind = 0 且前一个 RevlogEntry 的 review_kind 是 1 或 2 的 RevlogEntry，然后删除其及其之后的所有 RevlogEntry
+    if let Some(index_to_remove) = entries.windows(2).enumerate().find_map(|(i, window)| {
+        if (window[0].review_kind == 1 || window[0].review_kind == 2) && window[1].review_kind == 0 {
+            Some(i + 1) // 返回第一个符合条件的 RevlogEntry 的索引
+        } else {
+            None
+        }
+    }) {
+        entries.truncate(index_to_remove); // 截取从 0 到 index_to_remove 的部分，删除其后的所有条目
+    }
+
     entries
+}
+
+
+fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
+    revlogs.into_iter().flat_map(|group| {
+        group.into_iter().map(|entry| {
+            FSRSItem {
+                t_history: entry.t_history,
+                r_history: entry.r_history,
+                delta_t: entry.delta_t as f32,
+                label: match entry.button_chosen {
+                    1 => 0.0,
+                    2 | 3 | 4 => 1.0,
+                    _ => panic!("Unexpected value for button_chosen"),
+                },
+            }
+        })
+    }).collect()
 }
 
 #[test]
 fn test() {
     let revlogs = read_collection();
     dbg!(revlogs.len());
-    let revlogs = group_by_cid(revlogs);
-    dbg!(revlogs.len());
-    let filtered_entries: Vec<Vec<RevlogEntry>> = revlogs
+    let revlogs_per_card = group_by_cid(revlogs);
+    dbg!(revlogs_per_card.len());
+    let mut extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
         .into_iter()
-        .map(|entries| filter_entries(entries, 4, Tz::Asia__Shanghai))
+        .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
         .collect();
-    // total revlogs
-    for r in &filtered_entries {
+
+    extracted_revlogs_per_card.retain(|entries| {
+        if let Some(first_entry) = entries.first() {
+            first_entry.review_kind == 1
+        } else {
+            false
+        }
+    });
+
+    for r in &extracted_revlogs_per_card {
         dbg!(r);
         break;
     }
-    dbg!(filtered_entries.iter().map(|x| x.len()).sum::<usize>());
+    dbg!(extracted_revlogs_per_card.iter().map(|x| x.len()).sum::<usize>());
+    let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
+    dbg!(fsrs_items.len());
 }
