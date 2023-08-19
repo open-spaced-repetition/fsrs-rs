@@ -15,6 +15,9 @@ struct RevlogEntry {
     taken_millis: i64,
     review_kind: i64,
     delta_t: i64,
+    i: i64,
+    r_history: Vec<i64>,
+    t_history: Vec<i64>,
 }
 
 fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
@@ -29,6 +32,9 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
         taken_millis: row.get(7).unwrap_or_default(),
         review_kind: row.get(8).unwrap_or_default(),
         delta_t: 0,
+        i: 0,
+        r_history: vec![],
+        t_history: vec![],
     })
 }
 
@@ -136,11 +142,21 @@ fn filter_entries(mut entries: Vec<RevlogEntry>, next_day_starts_at: i64, timezo
         unique_dates.insert(date)
     });
 
-        // 计算其余 RevlogEntry 的 delta_t
+    // 计算其余 RevlogEntry 的 delta_t
     for i in 1..entries.len() {
         let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
         let date_previous = convert_to_date(entries[i - 1].id, next_day_starts_at, timezone);
         entries[i].delta_t = (date_current - date_previous).num_days();
+    }
+
+    // 计算 i, r_history, t_history
+    for i in 0..entries.len() {
+        entries[i].i = (i as i64) + 1; // 位置从 1 开始
+        // 除了第一个条目，其余条目将前面的 button_chosen 和 delta_t 加入 r_history 和 t_history
+        if i > 0 {
+            entries[i].r_history = entries[0..i].iter().map(|e| e.button_chosen).collect();
+            entries[i].t_history = entries[0..i].iter().map(|e| e.delta_t).collect();
+        }
     }
 
     entries
