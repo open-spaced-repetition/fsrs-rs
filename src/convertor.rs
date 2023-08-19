@@ -1,4 +1,5 @@
 use chrono::prelude::*;
+use chrono_tz::Tz;
 use rusqlite::{Connection, Result, Row};
 use std::collections::HashMap;
 
@@ -13,6 +14,7 @@ struct RevlogEntry {
     ease_factor: i64,
     taken_millis: i64,
     review_kind: i64,
+    delta_t: i64,
 }
 
 fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
@@ -26,6 +28,7 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
         ease_factor: row.get(6)?,
         taken_millis: row.get(7).unwrap_or_default(),
         review_kind: row.get(8).unwrap_or_default(),
+        delta_t: 0,
     })
 }
 
@@ -70,8 +73,6 @@ fn read_collection() -> Vec<RevlogEntry> {
         current_timestamp, current_timestamp, suspended_cards_str, flags_str
     );
 
-    dbg!(&query);
-
     let revlogs = db
         .prepare_cached(&query)
         .unwrap()
@@ -94,7 +95,13 @@ fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
     grouped.into_iter().map(|(_, v)| v).collect()
 }
 
-fn remove_revlog_before_forget(mut entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chrono::NaiveDate {
+    let timestamp_seconds = timestamp - next_day_starts_at * 3600 * 1000; // 剪去指定小时数
+    let datetime = Utc.timestamp_millis_opt(timestamp_seconds).unwrap().with_timezone(&timezone);
+    datetime.date_naive()
+}
+
+fn filter_entries(mut entries: Vec<RevlogEntry>, next_day_starts_at: i64, timezone: Tz) -> Vec<RevlogEntry> {
     // 寻找最后一组连续 review_kind = 0 的第一个 RevlogEntry 的索引
     let mut index_to_keep = 0;
     let mut i = entries.len();
@@ -111,6 +118,31 @@ fn remove_revlog_before_forget(mut entries: Vec<RevlogEntry>) -> Vec<RevlogEntry
     // 删除此 RevlogEntry 之前的所有条目
     entries.drain(..index_to_keep);
 
+    // 去掉 review_kind = 4 的 RevlogEntry
+    entries.retain(|entry| entry.review_kind != 4);
+
+    // 去掉 review_kind = 3 且 ease_factor = 0 的 RevlogEntry
+    entries.retain(|entry| entry.review_kind != 3 || entry.ease_factor != 0);
+
+    // 将所有 review_kind + 1
+    for entry in &mut entries {
+        entry.review_kind += 1;
+    }
+
+    // 转换时间戳并保留每个日期的第一个 RevlogEntry
+    let mut unique_dates = std::collections::HashSet::new();
+    entries.retain(|entry| {
+        let date = convert_to_date(entry.id, next_day_starts_at, timezone);
+        unique_dates.insert(date)
+    });
+
+        // 计算其余 RevlogEntry 的 delta_t
+    for i in 1..entries.len() {
+        let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
+        let date_previous = convert_to_date(entries[i - 1].id, next_day_starts_at, timezone);
+        entries[i].delta_t = (date_current - date_previous).num_days();
+    }
+
     entries
 }
 
@@ -120,14 +152,14 @@ fn test() {
     dbg!(revlogs.len());
     let revlogs = group_by_cid(revlogs);
     dbg!(revlogs.len());
-    // for r in revlogs {
-    //     dbg!(&r);
-    //     break;
-    // }
     let filtered_entries: Vec<Vec<RevlogEntry>> = revlogs
         .into_iter()
-        .map(remove_revlog_before_forget)
+        .map(|entries| filter_entries(entries, 4, Tz::Asia__Shanghai))
         .collect();
     // total revlogs
+    for r in &filtered_entries {
+        dbg!(r);
+        break;
+    }
     dbg!(filtered_entries.iter().map(|x| x.len()).sum::<usize>());
 }
