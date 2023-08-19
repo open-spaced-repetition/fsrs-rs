@@ -94,7 +94,7 @@ impl FSRSDataset {
     }
 
     fn new() -> Self {
-        let dataset = InMemDataset::<FSRSItem>::from_json_rows("tests/data/revlog_history.json").unwrap();
+        let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
         Self { dataset }
     }
 }

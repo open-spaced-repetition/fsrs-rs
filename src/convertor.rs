@@ -178,7 +178,9 @@ fn extract_time_series_feature(mut entries: Vec<RevlogEntry>, next_day_starts_at
 
 fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
     revlogs.into_iter().flat_map(|group| {
-        group.into_iter().map(|entry| {
+        group.into_iter()
+        .filter(|entry| entry.i != 1) // 过滤掉 i = 1 的 RevlogEntry
+        .map(|entry| {
             FSRSItem {
                 t_history: entry.t_history,
                 r_history: entry.r_history,
@@ -229,10 +231,7 @@ fn test() {
         .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
         .collect();
 
-    for r in &extracted_revlogs_per_card {
-        dbg!(r);
-        break;
-    }
+    dbg!(&extracted_revlogs_per_card[0]);
     extracted_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
     dbg!(extracted_revlogs_per_card.iter().map(|x| x.len()).sum::<usize>());
     let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
