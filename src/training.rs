@@ -102,8 +102,8 @@ pub fn weight_clipper<B: ADBackend<FloatElem = f32>>(weights: Param<Tensor<B, 1>
         let val: &mut Vec<f32> = &mut new.to_data().value;
 
         for w in val.iter_mut().skip(4) {
-            i += 1;
             *w = w.clamp(CLAMPS[i].0.into(), CLAMPS[i].1.into());
+            i += 1;
         } 
 
         Tensor::from_data(Data::new(val.clone(), new.shape()))
@@ -117,14 +117,18 @@ fn weight_clipper_test() {
     type Backend = NdArrayBackend<f32>;
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
 
-    let backend = Tensor::<AutodiffBackend, 1>::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 0.25]);
+    let backend = Tensor::<AutodiffBackend, 1>::from_floats(
+        [0.0, -1000.0, 1000.0, 0.0, // Ignored
+         1000.0, -1000.0, 1.0, 0.25]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
     let examples = Param::from(backend);
 
     let param = weight_clipper(examples);
     let values: &Tensor<AutodiffBackend, 1> = &param.val();
 
     let t = values.to_data().value;
-    assert_eq!(t, vec![0.0, -1000.0, 1000.0, 0.0, 5.0, 0.1, 0.25]);
+    assert_eq!(t, vec!
+        [0.0, -1000.0, 1000.0, 0.0,
+         10.0, 0.1, 1.0, 0.25]);
 }
 
 pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
