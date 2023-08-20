@@ -1,17 +1,24 @@
-use burn::{tensor::{backend::Backend, Data, Tensor, Float, ElementConversion, Shape, Int}, data::dataset::{InMemDataset, Dataset}};
-use serde::{Deserialize, Serialize};
 use burn::data::dataloader::batcher::Batcher;
+use burn::{
+    data::dataset::{Dataset, InMemDataset},
+    tensor::{backend::Backend, Data, ElementConversion, Float, Int, Shape, Tensor},
+};
+use serde::{Deserialize, Serialize};
 
 use crate::convertor::anki_to_fsrs;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FSRSItem {
-    pub t_history: Vec<i32>,
-    pub r_history: Vec<i32>,
+    pub reviews: Vec<Review>,
     pub delta_t: f32,
     pub label: f32,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Review {
+    pub rating: i32,
+    pub delta_t: i32,
+}
 
 pub struct FSRSBatcher<B: Backend> {
     device: B::Device,
@@ -33,17 +40,30 @@ pub struct FSRSBatch<B: Backend> {
 
 impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, items: Vec<FSRSItem>) -> FSRSBatch<B> {
-
         let t_historys = items
             .iter()
-            .map(|item| Data::new(item.t_history.clone(), Shape { dims: [item.t_history.len()] }))
+            .map(|item| {
+                Data::new(
+                    item.reviews.iter().map(|r| r.delta_t).collect(),
+                    Shape {
+                        dims: [item.reviews.len()],
+                    },
+                )
+            })
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
             .map(|tensor| tensor.unsqueeze())
             .collect();
 
         let r_historys = items
             .iter()
-            .map(|item| Data::new(item.r_history.clone(), Shape { dims: [item.t_history.len()] }))
+            .map(|item| {
+                Data::new(
+                    item.reviews.iter().map(|r| r.rating).collect(),
+                    Shape {
+                        dims: [item.reviews.len()],
+                    },
+                )
+            })
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
             .map(|tensor| tensor.unsqueeze())
             .collect();
@@ -58,20 +78,29 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .map(|item| Tensor::<B, 1, Int>::from_data(Data::from([item.label.elem()])))
             .collect();
 
-        let t_historys = Tensor::cat(t_historys, 0).transpose().to_device(&self.device); // [seq_len, batch_size]
-        let r_historys = Tensor::cat(r_historys, 0).transpose().to_device(&self.device); // [seq_len, batch_size]
+        let t_historys = Tensor::cat(t_historys, 0)
+            .transpose()
+            .to_device(&self.device); // [seq_len, batch_size]
+        let r_historys = Tensor::cat(r_historys, 0)
+            .transpose()
+            .to_device(&self.device); // [seq_len, batch_size]
         let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);
         let labels = Tensor::cat(labels, 0).to_device(&self.device);
 
         // dbg!(&items[0].t_history);
         // dbg!(&t_historys);
 
-        FSRSBatch { t_historys, r_historys, delta_ts, labels }
+        FSRSBatch {
+            t_historys,
+            r_historys,
+            delta_ts,
+            labels,
+        }
     }
 }
 
 pub struct FSRSDataset {
-    dataset: InMemDataset<FSRSItem>
+    dataset: InMemDataset<FSRSItem>,
 }
 
 impl Dataset<FSRSItem> for FSRSDataset {
@@ -102,9 +131,9 @@ impl FSRSDataset {
 #[test]
 fn test_from_json() {
     const JSON_FILE: &str = "tests/data/revlog_history.json";
-    use burn::data::dataset::InMemDataset;
-    use burn::data::dataloader::Dataset;
     use burn::data::dataloader::DataLoaderBuilder;
+    use burn::data::dataloader::Dataset;
+    use burn::data::dataset::InMemDataset;
     let dataset = InMemDataset::<FSRSItem>::from_json_rows(JSON_FILE).unwrap();
     let item = dataset.get(704).unwrap();
     dbg!(&item);
@@ -127,8 +156,8 @@ fn test_from_json() {
 
 #[test]
 fn test_from_anki() {
-    use burn::data::dataset::InMemDataset;
     use burn::data::dataloader::Dataset;
+    use burn::data::dataset::InMemDataset;
 
     let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
     let item = dataset.get(704).unwrap();
