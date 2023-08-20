@@ -20,15 +20,12 @@ pub fn weight_clipper<B: Backend<FloatElem = f32>>(weights:Tensor<B, 1>) -> Tens
         (0.0, 1.0),
         (1.0, 10.0),
     ];
-    let mut i = 0; 
     // https://regex101.com/r/21mXNI/1
-    
 
     let val: &mut Vec<f32> = &mut weights.to_data().value;
 
-    for w in val.iter_mut().skip(4) {
+    for (i, w) in val.iter_mut().skip(4).enumerate() {
         *w = w.clamp(CLAMPS[i].0.into(), CLAMPS[i].1.into());
-        i += 1;
     } 
 
     Tensor::from_data(Data::new(val.clone(), weights.shape()))
