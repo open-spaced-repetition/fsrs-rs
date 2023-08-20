@@ -1,5 +1,6 @@
 use crate::dataset::{FSRSBatcher, FSRSDataset, FSRSBatch};
 use crate::model::{ModelConfig, Model};
+use crate::weight_clipper::weight_clipper;
 use burn::module::Module;
 use burn::nn::loss::CrossEntropyLoss;
 use burn::optim::AdamConfig;
@@ -15,6 +16,7 @@ use burn::{
         // metric::{AccuracyMetric, LossMetric},
         LearnerBuilder,
     },
+    module::Param,
 };
 use log::info;
 
@@ -112,7 +114,8 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
             config.learning_rate,
         );
 
-    let model_trained = learner.fit(dataloader_train, dataloader_test);
+    let mut model_trained = learner.fit(dataloader_train, dataloader_test);
+    model_trained.w = Param::from(weight_clipper(model_trained.w.val()));
 
     config
         .save(format!("{ARTIFACT_DIR}/config.json").as_str())
