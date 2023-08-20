@@ -142,7 +142,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 
     pub fn forward(
-        &self,
+        &mut self,
         delta_ts: Tensor<B, 2>,
         ratings: Tensor<B, 2, Float>,
     ) -> (Tensor<B, 1>, Tensor<B, 1>) {
@@ -159,7 +159,8 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             // dbg!(&difficulty);
             // dbg!()
         }
-        (weight_clipper(stability), weight_clipper(difficulty))
+        self.w = Param::from(weight_clipper(self.w.val()));
+        (stability, difficulty)
     }
 }
 
@@ -178,7 +179,7 @@ impl ModelConfig {
 fn test() {
     use burn_ndarray::NdArrayBackend;
     type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
+    let mut model = Model::<Backend>::new();
     let delta_ts = Tensor::<Backend, 2>::from_floats([
         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
