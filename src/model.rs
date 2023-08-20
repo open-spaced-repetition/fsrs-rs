@@ -38,14 +38,14 @@ fn weight_clipper_test() {
 
     let tensor = Tensor::from_floats(
         [0.0, -1000.0, 1000.0, 0.0, // Ignored
-         1000.0, -1000.0, 1.0, 0.25]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
+         1000.0, -1000.0, 1.0, 0.25, -0.1]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
 
     let param: Tensor<Backend, 1> = weight_clipper(tensor);
     let values = &param.to_data().value;
 
     assert_eq!(*values, vec!
         [0.0, -1000.0, 1000.0, 0.0,
-         10.0, 0.1, 1.0, 0.25]);
+         10.0, 0.1, 1.0, 0.25, 0.0]);
 }
 
 #[derive(Module, Debug)]
@@ -137,7 +137,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             );
             let s_forget = self.stability_after_failure(stability, new_d.clone(), r);
             let new_s = s_recall.mask_where(rating.equal_elem(1), s_forget);
-            (new_s.clamp(0.1, 36500.0), weight_clipper(new_d))
+            (new_s.clamp(0.1, 36500.0), new_d)
         }
     }
 
@@ -159,7 +159,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             // dbg!(&difficulty);
             // dbg!()
         }
-        (stability, difficulty)
+        (weight_clipper(stability), weight_clipper(difficulty))
     }
 }
 
