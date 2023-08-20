@@ -1,52 +1,8 @@
 use burn::{
     module::{Param, Module},
-    tensor::{backend::{Backend, ADBackend}, Float, Tensor, Data}, config::Config,
+    tensor::{backend::Backend, Float, Tensor}, config::Config,
 };
 
-pub fn weight_clipper<B: Backend<FloatElem = f32>>(weights:Tensor<B, 1>) -> Tensor<B, 1> {
-
-    const CLAMPS: [(f32, f32); 13] = [
-        (1.0, 10.0),
-        (0.1, 5.0),
-        (0.1, 5.0),
-        (0.0, 0.5),
-        (0.0, 3.0),
-        (0.1, 0.8),
-        (0.01, 2.5),
-        (0.5, 5.0),
-        (0.01, 0.2),
-        (0.01, 0.9),
-        (0.01, 2.0),
-        (0.0, 1.0),
-        (1.0, 10.0),
-    ];
-    // https://regex101.com/r/21mXNI/1
-
-    let val: &mut Vec<f32> = &mut weights.to_data().value;
-
-    for (i, w) in val.iter_mut().skip(4).enumerate() {
-        *w = w.clamp(CLAMPS[i].0.into(), CLAMPS[i].1.into());
-    } 
-
-    Tensor::from_data(Data::new(val.clone(), weights.shape()))
-}
-
-#[test]
-fn weight_clipper_test() {
-    type Backend = burn_ndarray::NdArrayBackend<f32>;
-    //type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
-
-    let tensor = Tensor::from_floats(
-        [0.0, -1000.0, 1000.0, 0.0, // Ignored
-         1000.0, -1000.0, 1.0, 0.25, -0.1]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
-
-    let param: Tensor<Backend, 1> = weight_clipper(tensor);
-    let values = &param.to_data().value;
-
-    assert_eq!(*values, vec!
-        [0.0, -1000.0, 1000.0, 0.0,
-         10.0, 0.1, 1.0, 0.25, 0.0]);
-}
 
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
@@ -142,7 +98,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 
     pub fn forward(
-        &mut self,
+        &self,
         delta_ts: Tensor<B, 2>,
         ratings: Tensor<B, 2, Float>,
     ) -> (Tensor<B, 1>, Tensor<B, 1>) {
@@ -159,7 +115,6 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             // dbg!(&difficulty);
             // dbg!()
         }
-        self.w = Param::from(weight_clipper(self.w.val()));
         (stability, difficulty)
     }
 }
@@ -179,7 +134,7 @@ impl ModelConfig {
 fn test() {
     use burn_ndarray::NdArrayBackend;
     type Backend = NdArrayBackend<f32>;
-    let mut model = Model::<Backend>::new();
+    let model = Model::<Backend>::new();
     let delta_ts = Tensor::<Backend, 2>::from_floats([
         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],

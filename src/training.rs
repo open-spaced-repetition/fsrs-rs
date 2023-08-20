@@ -1,11 +1,11 @@
 use crate::dataset::{FSRSBatcher, FSRSDataset, FSRSBatch};
 use crate::model::{ModelConfig, Model};
+use crate::weight_clipper::weight_clipper;
 use burn::module::Module;
 use burn::nn::loss::CrossEntropyLoss;
 use burn::optim::AdamConfig;
 use burn::record::{PrettyJsonFileRecorder, FullPrecisionSettings, Recorder};
-use burn::tensor::ops::TensorOps;
-use burn::tensor::{Tensor, Int, Data};
+use burn::tensor::{Tensor, Int};
 use burn::tensor::backend::Backend;
 use burn::train::{TrainStep, TrainOutput, ValidStep, ClassificationOutput};
 use burn::{
@@ -18,7 +18,6 @@ use burn::{
     },
     module::Param,
 };
-use burn_ndarray::NdArrayBackend;
 use log::info;
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
@@ -116,6 +115,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
         );
 
     let mut model_trained = learner.fit(dataloader_train, dataloader_test);
+    model_trained.w = Param::from(weight_clipper(model_trained.w.val()));
 
     config
         .save(format!("{ARTIFACT_DIR}/config.json").as_str())
