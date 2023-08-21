@@ -10,7 +10,6 @@ struct RevlogEntry {
     id: i64,
     cid: i64,
     button_chosen: i32,
-    ease_factor: i64,
     review_kind: i64,
     delta_t: i32,
     i: usize,
@@ -23,8 +22,7 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
         id: row.get(0)?,
         cid: row.get(1)?,
         button_chosen: row.get(2)?,
-        ease_factor: row.get(3)?,
-        review_kind: row.get(4).unwrap_or_default(),
+        review_kind: row.get(3).unwrap_or_default(),
         delta_t: 0,
         i: 0,
         r_history: vec![],
@@ -58,7 +56,7 @@ fn read_collection() -> Vec<RevlogEntry> {
     let current_timestamp = Utc::now().timestamp() * 1000;
 
     let query = format!(
-        "SELECT id, cid, ease, factor, type
+        "SELECT id, cid, ease, type
          FROM revlog 
          WHERE (type != 4 OR ivl <= 0)
          AND (factor != 0 or type != 3)
@@ -109,7 +107,7 @@ fn extract_time_series_feature(
     mut entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,
     timezone: Tz,
-) -> Vec<RevlogEntry> {
+) -> Option<Vec<RevlogEntry>> {
     // Find the index of the first RevlogEntry in the last continuous group where review_kind = 0
     // 寻找最后一组连续 review_kind = 0 的第一个 RevlogEntry 的索引
     let mut index_to_keep = 0;
@@ -184,7 +182,13 @@ fn extract_time_series_feature(
         entries.truncate(index_to_remove);
     }
 
-    entries
+    // we ignore cards that don't start in the learning state
+    if let Some(first) = entries.first() {
+        if first.review_kind == 1 {
+            return Some(entries)
+        }
+    }
+    None
 }
 
 fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
@@ -215,29 +219,15 @@ fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
         .collect()
 }
 
-fn remove_non_learning_first(revlogs_per_card: Vec<Vec<RevlogEntry>>) -> Vec<Vec<RevlogEntry>> {
-    let mut result = revlogs_per_card;
-    result.retain(|entries| {
-        if let Some(first_entry) = entries.first() {
-            first_entry.review_kind == 1
-        } else {
-            false
-        }
-    });
-    result
-}
-
 pub fn anki_to_fsrs() -> Vec<FSRSItem> {
     let revlogs = read_collection();
     let revlogs_per_card = group_by_cid(revlogs);
     let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
         .into_iter()
-        .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
+        .filter_map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
         .collect();
 
-    let filtered_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
-
-    convert_to_fsrs_items(filtered_revlogs_per_card)
+    convert_to_fsrs_items(extracted_revlogs_per_card)
 }
 
 #[cfg(test)]
@@ -252,13 +242,11 @@ mod tests {
         assert_eq!(revlogs.len(), 24394);
         let revlogs_per_card = group_by_cid(revlogs);
         assert_eq!(revlogs_per_card.len(), 3324);
-        let mut extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
+        let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
             .into_iter()
-            .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
+            .filter_map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
             .collect();
 
-        dbg!(&extracted_revlogs_per_card[0]);
-        extracted_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
         assert_eq!(
             extracted_revlogs_per_card
                 .iter()
@@ -270,4 +258,3 @@ mod tests {
         assert_eq!(fsrs_items.len(), 14290);
     }
 }
-
