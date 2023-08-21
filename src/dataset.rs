@@ -160,8 +160,7 @@ fn test_from_anki() {
     use burn::data::dataset::InMemDataset;
 
     let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
-    let item = dataset.get(704).unwrap();
-    dbg!(&item);
+    dbg!(dataset.get(704).unwrap());
 
     use burn_ndarray::NdArrayDevice;
     let device = NdArrayDevice::Cpu;
@@ -174,8 +173,11 @@ fn test_from_anki() {
         .shuffle(42)
         .num_workers(4)
         .build(dataset);
-    for item in dataloader.iter() {
-        dbg!(&item.r_historys);
-        break;
-    }
+    dbg!(
+        dataloader
+            .iter()
+            .next()
+            .expect("loader is empty")
+            .r_historys
+    );
 }
