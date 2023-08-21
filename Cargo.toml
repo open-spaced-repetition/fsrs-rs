@@ -1,5 +1,5 @@
 [package]
-name = "fsrs-optimizer-rust"
+name = "fsrs-optimizer-rs"
 version = "0.1.0"
 edition = "2021"
 
