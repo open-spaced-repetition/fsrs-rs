@@ -61,6 +61,7 @@ fn read_collection() -> Vec<RevlogEntry> {
         "SELECT id, cid, ease, factor, type
          FROM revlog 
          WHERE (type != 4 OR ivl <= 0)
+         AND (factor != 0 or type != 3)
          AND id < {}
          AND cid < {}
          AND cid IN (
@@ -128,10 +129,6 @@ fn extract_time_series_feature(
     // Remove all entries before this RevlogEntry
     // 删除此 RevlogEntry 之前的所有条目
     entries.drain(..index_to_keep);
-
-    // Remove RevlogEntry with review_kind = 3 and ease_factor = 0
-    // 去掉 review_kind = 3 且 ease_factor = 0 的 RevlogEntry
-    entries.retain(|entry| entry.review_kind != 3 || entry.ease_factor != 0);
 
     // Increment review_kind of all entries by 1
     // 将所有 review_kind + 1
