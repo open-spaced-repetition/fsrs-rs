@@ -109,6 +109,7 @@ fn extract_time_series_feature(
     next_day_starts_at: i64,
     timezone: Tz,
 ) -> Vec<RevlogEntry> {
+    // Find the index of the first RevlogEntry in the last continuous group where review_kind = 0
     // 寻找最后一组连续 review_kind = 0 的第一个 RevlogEntry 的索引
     let mut index_to_keep = 0;
     let mut i = entries.len();
@@ -118,24 +119,31 @@ fn extract_time_series_feature(
         if entries[i].review_kind == 0 {
             index_to_keep = i;
         } else if index_to_keep != 0 {
-            break; // 找到了连续的 review_kind = 0 的组，退出循环
+            // Found a continuous group of review_kind = 0, exit the loop
+            // 找到了连续的 review_kind = 0 的组，退出循环
+            break;
         }
     }
 
+    // Remove all entries before this RevlogEntry
     // 删除此 RevlogEntry 之前的所有条目
     entries.drain(..index_to_keep);
 
+    // Remove RevlogEntry with review_kind = 4
     // 去掉 review_kind = 4 的 RevlogEntry
     entries.retain(|entry| entry.review_kind != 4);
 
+    // Remove RevlogEntry with review_kind = 3 and ease_factor = 0
     // 去掉 review_kind = 3 且 ease_factor = 0 的 RevlogEntry
     entries.retain(|entry| entry.review_kind != 3 || entry.ease_factor != 0);
 
+    // Increment review_kind of all entries by 1
     // 将所有 review_kind + 1
     for entry in &mut entries {
         entry.review_kind += 1;
     }
 
+    // Convert the timestamp and keep the first RevlogEntry for each date
     // 转换时间戳并保留每个日期的第一个 RevlogEntry
     let mut unique_dates = std::collections::HashSet::new();
     entries.retain(|entry| {
@@ -143,6 +151,7 @@ fn extract_time_series_feature(
         unique_dates.insert(date)
     });
 
+    // Compute delta_t for the remaining RevlogEntries
     // 计算其余 RevlogEntry 的 delta_t
     for i in 1..entries.len() {
         let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
@@ -150,26 +159,36 @@ fn extract_time_series_feature(
         entries[i].delta_t = (date_current - date_previous).num_days() as i32;
     }
 
+    // Compute i, r_history, t_history
     // 计算 i, r_history, t_history
     for i in 0..entries.len() {
-        entries[i].i = i + 1; // 位置从 1 开始
-                              // 除了第一个条目，其余条目将前面的 button_chosen 和 delta_t 加入 r_history 和 t_history
+        // Position starts from 1
+        // 位置从 1 开始
+        entries[i].i = i + 1;
+
+        // Except for the first entry, the remaining entries add the preceding button_chosen and delta_t to r_history and t_history
+        // 除了第一个条目，其余条目将前面的 button_chosen 和 delta_t 加入 r_history 和 t_history
         if i > 0 {
             entries[i].r_history = entries[0..i].iter().map(|e| e.button_chosen).collect();
             entries[i].t_history = entries[0..i].iter().map(|e| e.delta_t).collect();
         }
     }
 
+    // Find the RevlogEntry with review_kind = 0 where the preceding RevlogEntry has review_kind of 1 or 2, then remove it and all following RevlogEntries
     // 找到 review_kind = 0 且前一个 RevlogEntry 的 review_kind 是 1 或 2 的 RevlogEntry，然后删除其及其之后的所有 RevlogEntry
     if let Some(index_to_remove) = entries.windows(2).enumerate().find_map(|(i, window)| {
         if (window[0].review_kind == 1 || window[0].review_kind == 2) && window[1].review_kind == 0
         {
-            Some(i + 1) // 返回第一个符合条件的 RevlogEntry 的索引
+            // Return the index of the first RevlogEntry that meets the condition
+            // 返回第一个符合条件的 RevlogEntry 的索引
+            Some(i + 1)
         } else {
             None
         }
     }) {
-        entries.truncate(index_to_remove); // 截取从 0 到 index_to_remove 的部分，删除其后的所有条目
+        // Truncate from 0 to index_to_remove, removing all subsequent entries
+        // 截取从 0 到 index_to_remove 的部分，删除其后的所有条目
+        entries.truncate(index_to_remove);
     }
 
     entries
