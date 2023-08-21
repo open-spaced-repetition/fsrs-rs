@@ -1,8 +1,8 @@
 use burn::{
-    module::{Param, Module},
-    tensor::{backend::Backend, Float, Tensor}, config::Config,
+    config::Config,
+    module::{Module, Param},
+    tensor::{backend::Backend, Float, Tensor},
 };
-
 
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
@@ -119,10 +119,8 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 }
 
-
 #[derive(Config, Debug)]
-pub struct ModelConfig {
-}
+pub struct ModelConfig {}
 
 impl ModelConfig {
     pub fn init<B: Backend<FloatElem = f32>>(&self) -> Model<B> {
