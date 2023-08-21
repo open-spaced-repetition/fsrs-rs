@@ -1,3 +1,5 @@
+use std::iter::repeat;
+
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
     data::dataset::{Dataset, InMemDataset},
@@ -40,11 +42,22 @@ pub struct FSRSBatch<B: Backend> {
 
 impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, items: Vec<FSRSItem>) -> FSRSBatch<B> {
+        let pad_size = items
+            .iter()
+            .map(|x| x.reviews.len())
+            .max()
+            .expect("FSRSItem is empty");
+
         let t_historys = items
             .iter()
             .map(|item| {
                 Data::new(
-                    item.reviews.iter().map(|r| r.delta_t).collect(),
+                    item.reviews
+                        .iter()
+                        .map(|r| r.delta_t)
+                        .chain(repeat(0))
+                        .take(pad_size)
+                        .collect(),
                     Shape {
                         dims: [item.reviews.len()],
                     },
@@ -58,7 +71,12 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .iter()
             .map(|item| {
                 Data::new(
-                    item.reviews.iter().map(|r| r.rating).collect(),
+                    item.reviews
+                        .iter()
+                        .map(|r| r.rating)
+                        .chain(repeat(0))
+                        .take(pad_size)
+                        .collect(),
                     Shape {
                         dims: [item.reviews.len()],
                     },
@@ -160,8 +178,7 @@ fn test_from_anki() {
     use burn::data::dataset::InMemDataset;
 
     let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
-    let item = dataset.get(704).unwrap();
-    dbg!(&item);
+    dbg!(dataset.get(704).unwrap());
 
     use burn_ndarray::NdArrayDevice;
     let device = NdArrayDevice::Cpu;
@@ -174,8 +191,11 @@ fn test_from_anki() {
         .shuffle(42)
         .num_workers(4)
         .build(dataset);
-    for item in dataloader.iter() {
-        dbg!(&item.r_historys);
-        break;
-    }
+    dbg!(
+        dataloader
+            .iter()
+            .next()
+            .expect("loader is empty")
+            .r_historys
+    );
 }
