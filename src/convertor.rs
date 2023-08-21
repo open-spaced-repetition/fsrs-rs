@@ -1,5 +1,6 @@
 use chrono::prelude::*;
 use chrono_tz::Tz;
+use itertools::Itertools;
 use rusqlite::{Connection, Result, Row};
 use std::collections::HashMap;
 
@@ -12,9 +13,6 @@ struct RevlogEntry {
     button_chosen: i32,
     review_kind: i64,
     delta_t: i32,
-    i: usize,
-    r_history: Vec<i32>,
-    t_history: Vec<i32>,
 }
 
 fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
@@ -24,9 +22,6 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
         button_chosen: row.get(2)?,
         review_kind: row.get(3).unwrap_or_default(),
         delta_t: 0,
-        i: 0,
-        r_history: vec![],
-        t_history: vec![],
     })
 }
 
@@ -103,11 +98,13 @@ fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chr
     datetime.date_naive()
 }
 
-fn extract_time_series_feature(
+/// Given a list of revlog entries for a single card with length n, we create
+/// n-1 FSRS items, where each item contains the history of the preceding reviews.
+fn convert_to_fsrs_items(
     mut entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,
     timezone: Tz,
-) -> Option<Vec<RevlogEntry>> {
+) -> Option<Vec<FSRSItem>> {
     // Find the index of the first RevlogEntry in the last continuous group where review_kind = 0
     // 寻找最后一组连续 review_kind = 0 的第一个 RevlogEntry 的索引
     let mut index_to_keep = 0;
@@ -127,6 +124,16 @@ fn extract_time_series_feature(
     // Remove all entries before this RevlogEntry
     // 删除此 RevlogEntry 之前的所有条目
     entries.drain(..index_to_keep);
+
+    // we ignore cards that don't start in the learning state
+    if let Some(entry) = entries.first() {
+        if entry.review_kind != 0 {
+            return None;
+        }
+    } else {
+        // no revlog entries
+        return None;
+    }
 
     // Increment review_kind of all entries by 1
     // 将所有 review_kind + 1
@@ -150,21 +157,6 @@ fn extract_time_series_feature(
         entries[i].delta_t = (date_current - date_previous).num_days() as i32;
     }
 
-    // Compute i, r_history, t_history
-    // 计算 i, r_history, t_history
-    for i in 0..entries.len() {
-        // Position starts from 1
-        // 位置从 1 开始
-        entries[i].i = i + 1;
-
-        // Except for the first entry, the remaining entries add the preceding button_chosen and delta_t to r_history and t_history
-        // 除了第一个条目，其余条目将前面的 button_chosen 和 delta_t 加入 r_history 和 t_history
-        if i > 0 {
-            entries[i].r_history = entries[0..i].iter().map(|e| e.button_chosen).collect();
-            entries[i].t_history = entries[0..i].iter().map(|e| e.delta_t).collect();
-        }
-    }
-
     // Find the RevlogEntry with review_kind = 0 where the preceding RevlogEntry has review_kind of 1 or 2, then remove it and all following RevlogEntries
     // 找到 review_kind = 0 且前一个 RevlogEntry 的 review_kind 是 1 或 2 的 RevlogEntry，然后删除其及其之后的所有 RevlogEntry
     if let Some(index_to_remove) = entries.windows(2).enumerate().find_map(|(i, window)| {
@@ -182,52 +174,45 @@ fn extract_time_series_feature(
         entries.truncate(index_to_remove);
     }
 
-    // we ignore cards that don't start in the learning state
-    if let Some(first) = entries.first() {
-        if first.review_kind == 1 {
-            return Some(entries);
-        }
-    }
-    None
-}
-
-fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
-    revlogs
-        .into_iter()
-        .flat_map(|group| {
-            group
-                .into_iter()
-                .filter(|entry| entry.i != 1) // 过滤掉 i = 1 的 RevlogEntry
-                .map(|entry| FSRSItem {
-                    reviews: entry
-                        .r_history
-                        .iter()
-                        .zip(entry.t_history.iter())
-                        .map(|(&r, &t)| Review {
-                            rating: r,
-                            delta_t: t,
-                        })
-                        .collect(),
+    // Compute i, r_history, t_history
+    // 计算 i, r_history, t_history
+    // Except for the first entry, the remaining entries add the preceding button_chosen and delta_t to r_history and t_history
+    // 除了第一个条目，其余条目将前面的 button_chosen 和 delta_t 加入 r_history 和 t_history
+    Some(
+        entries
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(idx, entry)| {
+                let reviews = entries
+                    .iter()
+                    .take(idx)
+                    .map(|r| Review {
+                        rating: r.button_chosen,
+                        delta_t: r.delta_t,
+                    })
+                    .collect();
+                FSRSItem {
+                    reviews,
                     delta_t: entry.delta_t as f32,
                     label: match entry.button_chosen {
                         1 => 0.0,
-                        2 | 3 | 4 => 1.0,
-                        _ => panic!("Unexpected value for button_chosen"),
+                        2 | 3 | 4 | _ => 1.0,
                     },
-                })
-        })
-        .collect()
+                }
+            })
+            .collect(),
+    )
 }
 
 pub fn anki_to_fsrs() -> Vec<FSRSItem> {
     let revlogs = read_collection();
     let revlogs_per_card = group_by_cid(revlogs);
-    let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
+    revlogs_per_card
         .into_iter()
-        .filter_map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
-        .collect();
-
-    convert_to_fsrs_items(extracted_revlogs_per_card)
+        .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
+        .flatten()
+        .collect()
 }
 
 #[cfg(test)]
@@ -243,23 +228,16 @@ mod tests {
             .iter()
             .filter(|r| r.cid == 1528947214762)
             .cloned()
-            .collect::<Vec<_>>()];
+            .collect_vec()];
         assert_eq!(revlogs.len(), 24394);
         let revlogs_per_card = group_by_cid(revlogs.clone());
         assert_eq!(revlogs_per_card.len(), 3324);
-        let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
+        let fsrs_items = revlogs_per_card
             .into_iter()
-            .filter_map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
-            .collect();
+            .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
+            .flatten()
+            .collect_vec();
 
-        assert_eq!(
-            extracted_revlogs_per_card
-                .iter()
-                .map(|x| x.len())
-                .sum::<usize>(),
-            17614
-        );
-        let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
         assert_eq!(fsrs_items.len(), 14290);
         assert_eq!(
             fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
@@ -267,11 +245,11 @@ mod tests {
         );
 
         // convert a subset and check it matches expectations
-        let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = single_card_revlog
+        let fsrs_items = single_card_revlog
             .into_iter()
-            .filter_map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
-            .collect();
-        let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
+            .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
+            .flatten()
+            .collect_vec();
         assert_eq!(
             &fsrs_items,
             &[
