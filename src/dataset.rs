@@ -153,8 +153,7 @@ fn test_from_json() {
     use burn::data::dataloader::Dataset;
     use burn::data::dataset::InMemDataset;
     let dataset = InMemDataset::<FSRSItem>::from_json_rows(JSON_FILE).unwrap();
-    let item = dataset.get(704).unwrap();
-    dbg!(&item);
+    dbg!(dataset.get(704).unwrap());
 
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
@@ -166,10 +165,13 @@ fn test_from_json() {
         .shuffle(42)
         .num_workers(4)
         .build(dataset);
-    for item in dataloader.iter() {
-        dbg!(&item.r_historys);
-        break;
-    }
+    dbg!(
+        dataloader
+            .iter()
+            .next()
+            .expect("loader is empty")
+            .r_historys
+    );
 }
 
 #[test]
