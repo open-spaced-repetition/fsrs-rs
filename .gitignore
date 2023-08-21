@@ -17,3 +17,5 @@ Cargo.lock
 
 tmp/
 *.anki21
+py
+.venv

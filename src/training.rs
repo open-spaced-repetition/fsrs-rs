@@ -76,7 +76,7 @@ pub struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
+pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) -> Vec<f32> {
     std::fs::create_dir_all(artifact_dir).ok();
     config
         .save(&format!("{artifact_dir}/config.json"))
@@ -129,6 +129,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
         .expect("Failed to save trained model");
 
     info!("trained weights: {}", &model_trained.w.val());
+    model_trained.w.to_data().value
 }
 
 
