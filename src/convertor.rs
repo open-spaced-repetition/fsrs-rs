@@ -228,26 +228,34 @@ pub fn anki_to_fsrs() -> Vec<FSRSItem> {
     convert_to_fsrs_items(filtered_revlogs_per_card)
 }
 
-#[test]
-fn test() {
-    let revlogs = read_collection();
-    assert_eq!(revlogs.len(), 24394);
-    let revlogs_per_card = group_by_cid(revlogs);
-    assert_eq!(revlogs_per_card.len(), 3324);
-    let mut extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
-        .into_iter()
-        .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
-        .collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    dbg!(&extracted_revlogs_per_card[0]);
-    extracted_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
-    assert_eq!(
-        extracted_revlogs_per_card
-            .iter()
-            .map(|x| x.len())
-            .sum::<usize>(),
-        17614
-    );
-    let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
-    assert_eq!(fsrs_items.len(), 14290);
+    // This test currently expects the following .anki21 file to be placed in tests/data/:
+    // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
+    #[test]
+    fn test() {
+        let revlogs = read_collection();
+        assert_eq!(revlogs.len(), 24394);
+        let revlogs_per_card = group_by_cid(revlogs);
+        assert_eq!(revlogs_per_card.len(), 3324);
+        let mut extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
+            .into_iter()
+            .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
+            .collect();
+
+        dbg!(&extracted_revlogs_per_card[0]);
+        extracted_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
+        assert_eq!(
+            extracted_revlogs_per_card
+                .iter()
+                .map(|x| x.len())
+                .sum::<usize>(),
+            17614
+        );
+        let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
+        assert_eq!(fsrs_items.len(), 14290);
+    }
 }
+
