@@ -1,22 +1,16 @@
-use crate::dataset::{FSRSBatcher, FSRSDataset, FSRSBatch};
-use crate::model::{ModelConfig, Model};
+use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
+use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
 use burn::module::Module;
 use burn::nn::loss::CrossEntropyLoss;
 use burn::optim::AdamConfig;
-use burn::record::{PrettyJsonFileRecorder, FullPrecisionSettings, Recorder};
-use burn::tensor::{Tensor, Int};
+use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
-use burn::train::{TrainStep, TrainOutput, ValidStep, ClassificationOutput};
+use burn::tensor::{Int, Tensor};
+use burn::train::{ClassificationOutput, TrainOutput, TrainStep, ValidStep};
 use burn::{
-    config::Config,
-    data::dataloader::DataLoaderBuilder,
-    tensor::backend::ADBackend,
-    train::{
-        // metric::{AccuracyMetric, LossMetric},
-        LearnerBuilder,
-    },
-    module::Param,
+    config::Config, data::dataloader::DataLoaderBuilder, module::Param, tensor::backend::ADBackend,
+    train::LearnerBuilder,
 };
 use log::info;
 
@@ -33,7 +27,8 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         let (stability, _difficulty) = self.forward(t_historys, r_historys);
         let retention = self.power_forgetting_curve(delta_ts.clone(), stability.clone());
         // dbg!(&retention);
-        let logits = Tensor::cat(vec![retention.clone(), -retention.clone() + 1], 0).reshape([1, -1]);
+        let logits =
+            Tensor::cat(vec![retention.clone(), -retention.clone() + 1], 0).reshape([1, -1]);
         info!("stability: {}", &stability);
         info!("delta_ts: {}", &delta_ts);
         info!("retention: {}", &retention);
@@ -46,7 +41,12 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
 
 impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
     fn step(&self, batch: FSRSBatch<B>) -> TrainOutput<ClassificationOutput<B>> {
-        let item = self.forward_classification(batch.t_historys, batch.r_historys, batch.delta_ts, batch.labels);
+        let item = self.forward_classification(
+            batch.t_historys,
+            batch.r_historys,
+            batch.delta_ts,
+            batch.labels,
+        );
 
         TrainOutput::new(self, item.loss.backward(), item)
     }
@@ -54,7 +54,12 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
 
 impl<B: Backend<FloatElem = f32>> ValidStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
     fn step(&self, batch: FSRSBatch<B>) -> ClassificationOutput<B> {
-        self.forward_classification(batch.t_historys, batch.r_historys, batch.delta_ts, batch.labels)
+        self.forward_classification(
+            batch.t_historys,
+            batch.r_historys,
+            batch.delta_ts,
+            batch.labels,
+        )
     }
 }
 
@@ -76,7 +81,11 @@ pub struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: TrainingConfig, device: B::Device) -> Vec<f32> {
+pub fn train<B: ADBackend<FloatElem = f32>>(
+    artifact_dir: &str,
+    config: TrainingConfig,
+    device: B::Device,
+) -> Vec<f32> {
     std::fs::create_dir_all(artifact_dir).ok();
     config
         .save(&format!("{artifact_dir}/config.json"))
@@ -121,7 +130,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
         .save(format!("{ARTIFACT_DIR}/config.json").as_str())
         .unwrap();
 
-        PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
+    PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
         .record(
             model_trained.clone().into_record(),
             format!("{ARTIFACT_DIR}/model").into(),
@@ -131,7 +140,6 @@ pub fn train<B: ADBackend<FloatElem = f32>>(artifact_dir: &str, config: Training
     info!("trained weights: {}", &model_trained.w.val());
     model_trained.w.to_data().value
 }
-
 
 #[test]
 fn test() {
