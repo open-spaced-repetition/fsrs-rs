@@ -1,6 +1,5 @@
 use chrono::prelude::*;
 use chrono_tz::Tz;
-use itertools::Itertools;
 use rusqlite::{Connection, Result, Row};
 use std::collections::HashMap;
 
@@ -193,7 +192,7 @@ fn convert_to_fsrs_items(
                     })
                     .collect();
                 FSRSItem {
-                    reviews: reviews,
+                    reviews,
                     delta_t: entry.delta_t,
                     rating: entry.button_chosen,
                 }
@@ -218,6 +217,7 @@ mod tests {
     use crate::dataset::FSRSBatcher;
     use burn::data::dataloader::batcher::Batcher;
     use burn::tensor::Data;
+    use itertools::Itertools;
 
     // This test currently expects the following .anki21 file to be placed in tests/data/:
     // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
