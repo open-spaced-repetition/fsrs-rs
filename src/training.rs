@@ -152,6 +152,6 @@ fn test() {
     train::<AutodiffBackend>(
         artifact_dir,
         TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
-        device.clone(),
+        device,
     );
 }

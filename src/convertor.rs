@@ -9,12 +9,8 @@ use crate::dataset::{FSRSItem, Review};
 struct RevlogEntry {
     id: i64,
     cid: i64,
-    usn: i64,
     button_chosen: i32,
-    interval: i64,
-    last_interval: i64,
     ease_factor: i64,
-    taken_millis: i64,
     review_kind: i64,
     delta_t: i32,
     i: usize,
@@ -26,13 +22,9 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
     Ok(RevlogEntry {
         id: row.get(0)?,
         cid: row.get(1)?,
-        usn: row.get(2)?,
-        button_chosen: row.get(3)?,
-        interval: row.get(4)?,
-        last_interval: row.get(5)?,
-        ease_factor: row.get(6)?,
-        taken_millis: row.get(7).unwrap_or_default(),
-        review_kind: row.get(8).unwrap_or_default(),
+        button_chosen: row.get(2)?,
+        ease_factor: row.get(3)?,
+        review_kind: row.get(4).unwrap_or_default(),
         delta_t: 0,
         i: 0,
         r_history: vec![],
@@ -66,7 +58,7 @@ fn read_collection() -> Vec<RevlogEntry> {
     let current_timestamp = Utc::now().timestamp() * 1000;
 
     let query = format!(
-        "SELECT * 
+        "SELECT id, cid, ease, factor, type
          FROM revlog 
          WHERE (type != 4 OR ivl <= 0)
          AND id < {}
@@ -100,7 +92,7 @@ fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
             .push(revlog);
     }
 
-    grouped.into_iter().map(|(_, v)| v).collect()
+    grouped.into_values().collect()
 }
 
 fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chrono::NaiveDate {
@@ -232,8 +224,8 @@ pub fn anki_to_fsrs() -> Vec<FSRSItem> {
         .collect();
 
     let filtered_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
-    let fsrs_items = convert_to_fsrs_items(filtered_revlogs_per_card);
-    fsrs_items
+
+    convert_to_fsrs_items(filtered_revlogs_per_card)
 }
 
 #[test]
