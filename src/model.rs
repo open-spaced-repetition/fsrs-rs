@@ -27,8 +27,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
-        let retrievability = (t / (s * 9) + 1).powf(-1.0);
-        retrievability
+        (t / (s * 9) + 1).powf(-1.0)
     }
 
     fn stability_after_success(
@@ -41,17 +40,17 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         let batch_size = rating.dims()[0];
         let hard_penalty = Tensor::ones([batch_size])
             .mask_where(rating.clone().equal_elem(2), self.w().slice([15..16]));
-        let easy_bonus = Tensor::ones([batch_size])
-            .mask_where(rating.clone().equal_elem(4), self.w().slice([16..17]));
-        let new_s = last_s.clone()
+        let easy_bonus =
+            Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.w().slice([16..17]));
+
+        last_s.clone()
             * (self.w().slice([8..9]).exp()
                 * (-new_d + 11)
                 * (-self.w().slice([9..10]) * last_s.log()).exp()
                 * (((-r + 1) * self.w().slice([10..11])).exp() - 1)
                 * hard_penalty
                 * easy_bonus
-                + 1);
-        new_s
+                + 1)
     }
 
     fn stability_after_failure(
@@ -60,11 +59,10 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         new_d: Tensor<B, 1>,
         r: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
-        let new_s = self.w().slice([11..12])
+        self.w().slice([11..12])
             * (-self.w().slice([12..13]) * new_d.log()).exp()
             * ((self.w().slice([13..14]) * (last_s + 1).log()).exp() - 1)
-            * ((-r + 1) * self.w().slice([14..15])).exp();
-        new_s
+            * ((-r + 1) * self.w().slice([14..15])).exp()
     }
 
     fn step(
@@ -82,7 +80,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         } else {
             let r = self.power_forgetting_curve(delta_t, stability.clone());
             // dbg!(&r);
-            let new_d = difficulty.clone() - self.w().slice([6..7]) * (rating.clone() - 3);
+            let new_d = difficulty - self.w().slice([6..7]) * (rating.clone() - 3);
             let new_d = new_d.clamp(1.0, 10.0);
             // dbg!(&new_d);
             let s_recall = self.stability_after_success(

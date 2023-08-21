@@ -92,7 +92,7 @@ fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
             .push(revlog);
     }
 
-    grouped.into_iter().map(|(_, v)| v).collect()
+    grouped.into_values().collect()
 }
 
 fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chrono::NaiveDate {
@@ -224,8 +224,8 @@ pub fn anki_to_fsrs() -> Vec<FSRSItem> {
         .collect();
 
     let filtered_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
-    let fsrs_items = convert_to_fsrs_items(filtered_revlogs_per_card);
-    fsrs_items
+
+    convert_to_fsrs_items(filtered_revlogs_per_card)
 }
 
 #[test]

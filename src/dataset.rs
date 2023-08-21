@@ -142,7 +142,7 @@ fn test_from_json() {
     use burn_ndarray::NdArrayDevice;
     let device = NdArrayDevice::Cpu;
     type Backend = NdArrayBackend<f32>;
-    let batcher = FSRSBatcher::<Backend>::new(device.clone());
+    let batcher = FSRSBatcher::<Backend>::new(device);
     let dataloader = DataLoaderBuilder::new(batcher)
         .batch_size(1)
         .shuffle(42)
@@ -167,7 +167,7 @@ fn test_from_anki() {
     let device = NdArrayDevice::Cpu;
     use burn_ndarray::NdArrayBackend;
     type Backend = NdArrayBackend<f32>;
-    let batcher = FSRSBatcher::<Backend>::new(device.clone());
+    let batcher = FSRSBatcher::<Backend>::new(device);
     use burn::data::dataloader::DataLoaderBuilder;
     let dataloader = DataLoaderBuilder::new(batcher)
         .batch_size(1)
