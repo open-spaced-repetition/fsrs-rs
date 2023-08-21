@@ -9,13 +9,13 @@ use crate::convertor::anki_to_fsrs;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct FSRSItem {
-    pub reviews: Vec<Review>,
+    pub reviews: Vec<FSRSReview>,
     pub delta_t: f32,
     pub label: f32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct Review {
+pub struct FSRSReview {
     pub rating: i32,
     pub delta_t: i32,
 }

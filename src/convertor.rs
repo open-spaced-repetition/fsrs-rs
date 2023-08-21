@@ -4,7 +4,7 @@ use itertools::Itertools;
 use rusqlite::{Connection, Result, Row};
 use std::collections::HashMap;
 
-use crate::dataset::{FSRSItem, Review};
+use crate::dataset::{FSRSItem, FSRSReview};
 
 #[derive(Debug, Clone)]
 struct RevlogEntry {
@@ -187,7 +187,7 @@ fn convert_to_fsrs_items(
                 let reviews = entries
                     .iter()
                     .take(idx)
-                    .map(|r| Review {
+                    .map(|r| FSRSReview {
                         rating: r.button_chosen,
                         delta_t: r.delta_t,
                     })
@@ -254,7 +254,7 @@ mod tests {
             &fsrs_items,
             &[
                 FSRSItem {
-                    reviews: vec![Review {
+                    reviews: vec![FSRSReview {
                         rating: 3,
                         delta_t: 0
                     }],
@@ -263,11 +263,11 @@ mod tests {
                 },
                 FSRSItem {
                     reviews: vec![
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 0
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 5
                         }
@@ -277,15 +277,15 @@ mod tests {
                 },
                 FSRSItem {
                     reviews: vec![
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 0
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 5
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 10
                         }
@@ -295,19 +295,19 @@ mod tests {
                 },
                 FSRSItem {
                     reviews: vec![
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 0
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 5
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 10
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 22
                         }
@@ -317,23 +317,23 @@ mod tests {
                 },
                 FSRSItem {
                     reviews: vec![
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 0
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 5
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 10
                         },
-                        Review {
+                        FSRSReview {
                             rating: 3,
                             delta_t: 22
                         },
-                        Review {
+                        FSRSReview {
                             rating: 2,
                             delta_t: 56
                         }
