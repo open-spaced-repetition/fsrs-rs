@@ -6,20 +6,20 @@ use std::collections::HashMap;
 use crate::dataset::{FSRSItem, Review};
 
 #[derive(Debug)]
-struct RevlogEntry {
-    id: i64,
-    cid: i64,
-    usn: i64,
-    button_chosen: i32,
-    interval: i64,
-    last_interval: i64,
-    ease_factor: i64,
-    taken_millis: i64,
-    review_kind: i64,
-    delta_t: i32,
-    i: usize,
-    r_history: Vec<i32>,
-    t_history: Vec<i32>,
+pub struct RevlogEntry {
+    pub id: i64,
+    pub cid: i64,
+    pub usn: i64,
+    pub button_chosen: i32,
+    pub interval: i64,
+    pub last_interval: i64,
+    pub ease_factor: i64,
+    pub taken_millis: i64,
+    pub review_kind: i64,
+    pub delta_t: i32,
+    pub i: usize,
+    pub r_history: Vec<i32>,
+    pub t_history: Vec<i32>,
 }
 
 fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
@@ -183,7 +183,7 @@ fn extract_time_series_feature(
     entries
 }
 
-fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
+pub fn convert_to_fsrs_items(revlogs: Vec<Vec<RevlogEntry>>) -> Vec<FSRSItem> {
     revlogs
         .into_iter()
         .flat_map(|group| {
@@ -223,8 +223,11 @@ fn remove_non_learning_first(revlogs_per_card: Vec<Vec<RevlogEntry>>) -> Vec<Vec
     result
 }
 
-pub fn anki_to_fsrs() -> Vec<FSRSItem> {
-    let revlogs = read_collection();
+pub fn collection_to_fsrs() -> Vec<FSRSItem> {
+    anki_to_fsrs(read_collection())
+}
+
+pub fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
     let revlogs_per_card = group_by_cid(revlogs);
     let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
         .into_iter()

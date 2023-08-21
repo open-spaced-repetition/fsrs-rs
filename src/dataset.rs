@@ -5,7 +5,7 @@ use burn::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::convertor::anki_to_fsrs;
+use crate::convertor::{anki_to_fsrs, collection_to_fsrs};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FSRSItem {
@@ -114,16 +114,16 @@ impl Dataset<FSRSItem> for FSRSDataset {
 }
 
 impl FSRSDataset {
-    pub fn train() -> Self {
-        Self::new()
+    pub fn train(items: Vec<FSRSItem>) -> Self {
+        Self::new(items)
     }
 
-    pub fn test() -> Self {
-        Self::new()
+    pub fn test(items: Vec<FSRSItem>) -> Self {
+        Self::new(items)
     }
 
-    fn new() -> Self {
-        let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
+    pub fn new(items: Vec<FSRSItem>) -> Self {
+        let dataset = InMemDataset::<FSRSItem>::new(items);
         Self { dataset }
     }
 }
@@ -159,7 +159,7 @@ fn test_from_anki() {
     use burn::data::dataloader::Dataset;
     use burn::data::dataset::InMemDataset;
 
-    let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
+    let dataset = InMemDataset::<FSRSItem>::new(collection_to_fsrs());
     let item = dataset.get(704).unwrap();
     dbg!(&item);
 

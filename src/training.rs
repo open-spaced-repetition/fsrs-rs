@@ -1,4 +1,5 @@
-use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
+use crate::convertor::collection_to_fsrs;
+use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
 use burn::module::Module;
@@ -85,6 +86,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
     artifact_dir: &str,
     config: TrainingConfig,
     device: B::Device,
+    items: &Vec<FSRSItem>,
 ) -> Vec<f32> {
     std::fs::create_dir_all(artifact_dir).ok();
     config
@@ -101,13 +103,13 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(FSRSDataset::train());
+        .build(FSRSDataset::train(items.clone()));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(FSRSDataset::test());
+        .build(FSRSDataset::test(items.clone()));
 
     let learner = LearnerBuilder::new(artifact_dir)
         // .metric_train_plot(AccuracyMetric::new())
@@ -154,5 +156,6 @@ fn test() {
         artifact_dir,
         TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
         device.clone(),
+        &collection_to_fsrs()
     );
 }
