@@ -7,16 +7,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::convertor::anki_to_fsrs;
 
+/// Represents a single review on a card, and contains the previous reviews for that card.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct FSRSItem {
+    /// The previous reviews done to the card before the current one
     pub reviews: Vec<FSRSReview>,
-    pub delta_t: f32,
-    pub label: f32,
+    /// 1-4
+    pub rating: i32,
+    /// The number of days that passed
+    pub delta_t: i32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct FSRSReview {
+    /// 1-4
     pub rating: i32,
+    /// The number of days that passed
     pub delta_t: i32,
 }
 
@@ -75,7 +81,13 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
 
         let labels = items
             .iter()
-            .map(|item| Tensor::<B, 1, Int>::from_data(Data::from([item.label.elem()])))
+            .map(|item| {
+                Tensor::<B, 1, Int>::from_data(Data::from([match item.rating {
+                    1 => 0.0,
+                    _ => 1.0,
+                }
+                .elem()]))
+            })
             .collect();
 
         let t_historys = Tensor::cat(t_historys, 0)

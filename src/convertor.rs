@@ -193,12 +193,9 @@ fn convert_to_fsrs_items(
                     })
                     .collect();
                 FSRSItem {
-                    reviews,
-                    delta_t: entry.delta_t as f32,
-                    label: match entry.button_chosen {
-                        1 => 0.0,
-                        2 | 3 | 4 | _ => 1.0,
-                    },
+                    reviews: reviews,
+                    delta_t: entry.delta_t,
+                    rating: entry.button_chosen,
                 }
             })
             .collect(),
@@ -258,8 +255,8 @@ mod tests {
                         rating: 3,
                         delta_t: 0
                     }],
-                    delta_t: 5.0,
-                    label: 1.0
+                    delta_t: 5,
+                    rating: 3
                 },
                 FSRSItem {
                     reviews: vec![
@@ -272,8 +269,8 @@ mod tests {
                             delta_t: 5
                         }
                     ],
-                    delta_t: 10.0,
-                    label: 1.0
+                    delta_t: 10,
+                    rating: 3
                 },
                 FSRSItem {
                     reviews: vec![
@@ -290,8 +287,8 @@ mod tests {
                             delta_t: 10
                         }
                     ],
-                    delta_t: 22.0,
-                    label: 1.0
+                    delta_t: 22,
+                    rating: 3
                 },
                 FSRSItem {
                     reviews: vec![
@@ -312,8 +309,8 @@ mod tests {
                             delta_t: 22
                         }
                     ],
-                    delta_t: 56.0,
-                    label: 1.0
+                    delta_t: 56,
+                    rating: 2
                 },
                 FSRSItem {
                     reviews: vec![
@@ -338,8 +335,8 @@ mod tests {
                             delta_t: 56
                         }
                     ],
-                    delta_t: 64.0,
-                    label: 1.0
+                    delta_t: 64,
+                    rating: 3
                 }
             ]
         );
