@@ -173,5 +173,11 @@ fn test_from_anki() {
         .shuffle(42)
         .num_workers(4)
         .build(dataset);
-    dbg!(dataloader.iter().next().expect("loader is empty").r_historys);
+    dbg!(
+        dataloader
+            .iter()
+            .next()
+            .expect("loader is empty")
+            .r_historys
+    );
 }
