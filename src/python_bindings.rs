@@ -44,7 +44,6 @@ fn py_train(_py: Python, revlogs: &PyList) -> PyResult<()> {
                 r_history: vec![],
                 t_history: vec![],
             }
-
         })
         .collect();
 

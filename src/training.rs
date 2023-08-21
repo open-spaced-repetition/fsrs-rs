@@ -156,6 +156,6 @@ fn test() {
         artifact_dir,
         TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
         device.clone(),
-        &collection_to_fsrs()
+        &collection_to_fsrs(),
     );
 }
