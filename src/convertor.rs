@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::dataset::{FSRSItem, Review};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RevlogEntry {
     id: i64,
     cid: i64,
@@ -185,7 +185,7 @@ fn extract_time_series_feature(
     // we ignore cards that don't start in the learning state
     if let Some(first) = entries.first() {
         if first.review_kind == 1 {
-            return Some(entries)
+            return Some(entries);
         }
     }
     None
@@ -239,8 +239,13 @@ mod tests {
     #[test]
     fn test() {
         let revlogs = read_collection();
+        let single_card_revlog = vec![revlogs
+            .iter()
+            .filter(|r| r.cid == 1528947214762)
+            .cloned()
+            .collect::<Vec<_>>()];
         assert_eq!(revlogs.len(), 24394);
-        let revlogs_per_card = group_by_cid(revlogs);
+        let revlogs_per_card = group_by_cid(revlogs.clone());
         assert_eq!(revlogs_per_card.len(), 3324);
         let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
             .into_iter()
@@ -256,5 +261,109 @@ mod tests {
         );
         let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
         assert_eq!(fsrs_items.len(), 14290);
+        assert_eq!(
+            fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
+            49382
+        );
+
+        // convert a subset and check it matches expectations
+        let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = single_card_revlog
+            .into_iter()
+            .filter_map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
+            .collect();
+        let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
+        assert_eq!(
+            &fsrs_items,
+            &[
+                FSRSItem {
+                    reviews: vec![Review {
+                        rating: 3,
+                        delta_t: 0
+                    }],
+                    delta_t: 5.0,
+                    label: 1.0
+                },
+                FSRSItem {
+                    reviews: vec![
+                        Review {
+                            rating: 3,
+                            delta_t: 0
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 5
+                        }
+                    ],
+                    delta_t: 10.0,
+                    label: 1.0
+                },
+                FSRSItem {
+                    reviews: vec![
+                        Review {
+                            rating: 3,
+                            delta_t: 0
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 5
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 10
+                        }
+                    ],
+                    delta_t: 22.0,
+                    label: 1.0
+                },
+                FSRSItem {
+                    reviews: vec![
+                        Review {
+                            rating: 3,
+                            delta_t: 0
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 5
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 10
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 22
+                        }
+                    ],
+                    delta_t: 56.0,
+                    label: 1.0
+                },
+                FSRSItem {
+                    reviews: vec![
+                        Review {
+                            rating: 3,
+                            delta_t: 0
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 5
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 10
+                        },
+                        Review {
+                            rating: 3,
+                            delta_t: 22
+                        },
+                        Review {
+                            rating: 2,
+                            delta_t: 56
+                        }
+                    ],
+                    delta_t: 64.0,
+                    label: 1.0
+                }
+            ]
+        );
     }
 }
