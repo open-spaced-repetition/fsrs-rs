@@ -129,10 +129,6 @@ fn extract_time_series_feature(
     // 删除此 RevlogEntry 之前的所有条目
     entries.drain(..index_to_keep);
 
-    // Remove RevlogEntry with review_kind = 4
-    // 去掉 review_kind = 4 的 RevlogEntry
-    entries.retain(|entry| entry.review_kind != 4);
-
     // Remove RevlogEntry with review_kind = 3 and ease_factor = 0
     // 去掉 review_kind = 3 且 ease_factor = 0 的 RevlogEntry
     entries.retain(|entry| entry.review_kind != 3 || entry.ease_factor != 0);
