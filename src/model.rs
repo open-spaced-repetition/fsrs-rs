@@ -10,6 +10,7 @@ pub struct Model<B: Backend> {
 }
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             w: Param::from(Tensor::from_floats([
