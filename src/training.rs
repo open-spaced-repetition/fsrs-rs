@@ -85,7 +85,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
     artifact_dir: &str,
     config: TrainingConfig,
     device: B::Device,
-    items: &Vec<FSRSItem>,
+    items: &[FSRSItem],
 ) -> Vec<f32> {
     std::fs::create_dir_all(artifact_dir).ok();
     config
@@ -102,13 +102,13 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(FSRSDataset::train(items.clone()));
+        .build(FSRSDataset::train(items.to_owned()));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(FSRSDataset::test(items.clone()));
+        .build(FSRSDataset::test(items.to_owned()));
 
     let learner = LearnerBuilder::new(artifact_dir)
         // .metric_train_plot(AccuracyMetric::new())
