@@ -182,20 +182,16 @@ fn convert_to_fsrs_items(
             .iter()
             .enumerate()
             .skip(1)
-            .map(|(idx, entry)| {
+            .map(|(idx, _)| {
                 let reviews = entries
                     .iter()
-                    .take(idx)
+                    .take(idx + 1)
                     .map(|r| FSRSReview {
                         rating: r.button_chosen,
                         delta_t: r.delta_t,
                     })
                     .collect();
-                FSRSItem {
-                    reviews,
-                    delta_t: entry.delta_t,
-                    rating: entry.button_chosen,
-                }
+                FSRSItem { reviews }
             })
             .collect(),
     )
@@ -241,7 +237,7 @@ mod tests {
         assert_eq!(fsrs_items.len(), 14290);
         assert_eq!(
             fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
-            49382
+            49382 + 14290
         );
 
         // convert a subset and check it matches expectations
@@ -254,14 +250,6 @@ mod tests {
             &fsrs_items,
             &[
                 FSRSItem {
-                    reviews: vec![FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    }],
-                    delta_t: 5,
-                    rating: 3
-                },
-                FSRSItem {
                     reviews: vec![
                         FSRSReview {
                             rating: 3,
@@ -272,8 +260,6 @@ mod tests {
                             delta_t: 5
                         }
                     ],
-                    delta_t: 10,
-                    rating: 3
                 },
                 FSRSItem {
                     reviews: vec![
@@ -290,8 +276,6 @@ mod tests {
                             delta_t: 10
                         }
                     ],
-                    delta_t: 22,
-                    rating: 3
                 },
                 FSRSItem {
                     reviews: vec![
@@ -312,8 +296,6 @@ mod tests {
                             delta_t: 22
                         }
                     ],
-                    delta_t: 56,
-                    rating: 2
                 },
                 FSRSItem {
                     reviews: vec![
@@ -338,8 +320,34 @@ mod tests {
                             delta_t: 56
                         }
                     ],
-                    delta_t: 64,
-                    rating: 3
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 0
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 5
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 10
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 22
+                        },
+                        FSRSReview {
+                            rating: 2,
+                            delta_t: 56
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 64
+                        }
+                    ],
                 }
             ]
         );
