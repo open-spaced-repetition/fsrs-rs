@@ -32,12 +32,8 @@ fn py_train(revlogs: &PyList) -> PyResult<Vec<f32>> {
             RevlogEntry {
                 id: get!("id"),
                 cid: get!("cid"),
-                usn: get!("usn"),
                 button_chosen: get!("ease"),
-                interval: get!("ivl"),
-                last_interval: get!("lastIvl"),
                 ease_factor: get!("factor"),
-                taken_millis: get!("time"),
                 review_kind: get!("type"),
                 delta_t: 0,
                 i: 0,

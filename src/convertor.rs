@@ -7,15 +7,15 @@ use crate::dataset::{FSRSItem, Review};
 
 #[derive(Debug)]
 pub struct RevlogEntry {
-    id: i64,
-    cid: i64,
-    button_chosen: i32,
-    ease_factor: i64,
-    review_kind: i64,
-    delta_t: i32,
-    i: usize,
-    r_history: Vec<i32>,
-    t_history: Vec<i32>,
+    pub id: i64,
+    pub cid: i64,
+    pub button_chosen: i32,
+    pub ease_factor: i64,
+    pub review_kind: i64,
+    pub delta_t: i32,
+    pub i: usize,
+    pub r_history: Vec<i32>,
+    pub t_history: Vec<i32>,
 }
 
 fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
