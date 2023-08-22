@@ -1,5 +1,5 @@
 use crate::{
-    convertor::{convert_to_fsrs_items, RevlogEntry},
+    convertor::{RevlogEntry, anki_to_fsrs},
     model::ModelConfig,
     training::{train, TrainingConfig},
 };
@@ -15,7 +15,7 @@ fn py_train(_py: Python, revlogs: &PyList) -> PyResult<()> {
     type Backend = NdArrayBackend<f32>;
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
 
-    let revlog: Vec<RevlogEntry> = revlogs
+    let revlogs: Vec<RevlogEntry> = revlogs
         .into_iter()
         .map(|e| {
             let obj: &PyDict = pyo3::PyTryInto::try_into(e).unwrap();
@@ -47,9 +47,9 @@ fn py_train(_py: Python, revlogs: &PyList) -> PyResult<()> {
         })
         .collect();
 
-    debug!("revlogs: {:?}", revlog);
+    debug!("revlogs: {:?}", revlogs);
 
-    let items = convert_to_fsrs_items(vec![revlog]);
+    let items = anki_to_fsrs(revlogs);
 
     let result = train::<AutodiffBackend>(
         "./tmp/fsrs",
