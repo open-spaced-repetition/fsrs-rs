@@ -1,4 +1,3 @@
-use crate::convertor::collection_to_fsrs;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
@@ -147,6 +146,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 fn test() {
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
+    use crate::convertor::collection_to_fsrs;
     type Backend = NdArrayBackend<f32>;
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
     let device = NdArrayDevice::Cpu;
