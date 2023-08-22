@@ -5,8 +5,6 @@ use burn::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::convertor::{anki_to_fsrs, collection_to_fsrs};
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FSRSItem {
     pub reviews: Vec<Review>,
@@ -158,6 +156,7 @@ fn test_from_json() {
 fn test_from_anki() {
     use burn::data::dataloader::Dataset;
     use burn::data::dataset::InMemDataset;
+    use crate::convertor::collection_to_fsrs;
 
     let dataset = InMemDataset::<FSRSItem>::new(collection_to_fsrs());
     let item = dataset.get(704).unwrap();
