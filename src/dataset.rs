@@ -127,54 +127,30 @@ impl FSRSDataset {
 }
 
 #[test]
-fn test_from_json() {
-    const JSON_FILE: &str = "tests/data/revlog_history.json";
-    use burn::data::dataloader::DataLoaderBuilder;
-    use burn::data::dataloader::Dataset;
-    use burn::data::dataset::InMemDataset;
-    let dataset = InMemDataset::<FSRSItem>::from_json_rows(JSON_FILE).unwrap();
-    let item = dataset.get(704).unwrap();
-    dbg!(&item);
-
-    use burn_ndarray::NdArrayBackend;
-    use burn_ndarray::NdArrayDevice;
-    let device = NdArrayDevice::Cpu;
-    type Backend = NdArrayBackend<f32>;
-    let batcher = FSRSBatcher::<Backend>::new(device.clone());
-    let dataloader = DataLoaderBuilder::new(batcher)
-        .batch_size(1)
-        .shuffle(42)
-        .num_workers(4)
-        .build(dataset);
-    for item in dataloader.iter() {
-        dbg!(&item.r_historys);
-        break;
-    }
-}
-
-#[test]
 fn test_from_anki() {
     use crate::convertor::collection_to_fsrs;
     use burn::data::dataloader::Dataset;
     use burn::data::dataset::InMemDataset;
 
     let dataset = InMemDataset::<FSRSItem>::new(collection_to_fsrs());
-    let item = dataset.get(704).unwrap();
-    dbg!(&item);
+    dbg!(dataset.get(704).unwrap());
 
     use burn_ndarray::NdArrayDevice;
     let device = NdArrayDevice::Cpu;
     use burn_ndarray::NdArrayBackend;
     type Backend = NdArrayBackend<f32>;
-    let batcher = FSRSBatcher::<Backend>::new(device.clone());
+    let batcher = FSRSBatcher::<Backend>::new(device);
     use burn::data::dataloader::DataLoaderBuilder;
     let dataloader = DataLoaderBuilder::new(batcher)
         .batch_size(1)
         .shuffle(42)
         .num_workers(4)
         .build(dataset);
-    for item in dataloader.iter() {
-        dbg!(&item.r_historys);
-        break;
-    }
+    dbg!(
+        dataloader
+            .iter()
+            .next()
+            .expect("loader is empty")
+            .r_historys
+    );
 }
