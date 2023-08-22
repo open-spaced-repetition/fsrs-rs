@@ -231,9 +231,9 @@ pub fn anki_to_fsrs() -> Vec<FSRSItem> {
 #[test]
 fn test() {
     let revlogs = read_collection();
-    dbg!(revlogs.len());
+    assert_eq!(revlogs.len(), 24394);
     let revlogs_per_card = group_by_cid(revlogs);
-    dbg!(revlogs_per_card.len());
+    assert_eq!(revlogs_per_card.len(), 3324);
     let mut extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
         .into_iter()
         .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
@@ -241,10 +241,13 @@ fn test() {
 
     dbg!(&extracted_revlogs_per_card[0]);
     extracted_revlogs_per_card = remove_non_learning_first(extracted_revlogs_per_card);
-    dbg!(extracted_revlogs_per_card
-        .iter()
-        .map(|x| x.len())
-        .sum::<usize>());
+    assert_eq!(
+        extracted_revlogs_per_card
+            .iter()
+            .map(|x| x.len())
+            .sum::<usize>(),
+        17614
+    );
     let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
-    dbg!(fsrs_items.len());
+    assert_eq!(fsrs_items.len(), 14290);
 }
