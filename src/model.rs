@@ -141,6 +141,6 @@ fn test() {
         [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
     ]);
     let (stability, difficulty) = model.forward(delta_ts, ratings);
-    println!("stability {:?}", stability);
-    println!("difficulty {:?}", difficulty);
+    dbg!(&stability);
+    dbg!(&difficulty);
 }

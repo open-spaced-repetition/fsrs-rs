@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::dataset::{FSRSItem, Review};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct RevlogEntry {
     id: i64,
     cid: i64,
@@ -25,15 +25,12 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
         button_chosen: row.get(2)?,
         ease_factor: row.get(3)?,
         review_kind: row.get(4).unwrap_or_default(),
-        delta_t: 0,
-        i: 0,
-        r_history: vec![],
-        t_history: vec![],
+        ..Default::default()
     })
 }
 
-fn read_collection() -> Vec<RevlogEntry> {
-    let db = Connection::open("tests/data/collection.anki21").unwrap();
+fn read_collection() -> Result<Vec<RevlogEntry>> {
+    let db = Connection::open("tests/data/collection.anki21")?;
     let filter_out_suspended_cards = false;
     let filter_out_flags = vec![];
     let flags_str = if !filter_out_flags.is_empty() {
@@ -57,30 +54,32 @@ fn read_collection() -> Vec<RevlogEntry> {
 
     let current_timestamp = Utc::now().timestamp() * 1000;
 
-    let query = format!(
-        "SELECT id, cid, ease, factor, type
-         FROM revlog 
-         WHERE (type != 4 OR ivl <= 0)
-         AND id < {}
-         AND cid < {}
-         AND cid IN (
-             SELECT id
-             FROM cards
-             WHERE queue != 0
-             {}
-             {}
-         )",
-        current_timestamp, current_timestamp, suspended_cards_str, flags_str
-    );
-
     let revlogs = db
-        .prepare_cached(&query)
-        .unwrap()
-        .query_and_then([], row_to_revlog_entry)
-        .unwrap()
-        .collect::<Result<Vec<RevlogEntry>>>()
-        .unwrap();
-    revlogs
+        .prepare_cached(
+            "SELECT id, cid, ease, factor, type
+        FROM revlog 
+        WHERE (type != 4 OR ivl <= 0)
+        AND id < ?1
+        AND cid < ?2
+        AND cid IN (
+            SELECT id
+            FROM cards
+            WHERE queue != 0
+            ?3
+            ?4
+        )",
+        )?
+        .query_and_then(
+            (
+                current_timestamp,
+                current_timestamp,
+                suspended_cards_str,
+                flags_str,
+            ),
+            row_to_revlog_entry,
+        )?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(revlogs)
 }
 
 fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
@@ -132,9 +131,7 @@ fn extract_time_series_feature(
     entries.retain(|entry| entry.review_kind != 3 || entry.ease_factor != 0);
 
     // 将所有 review_kind + 1
-    for entry in &mut entries {
-        entry.review_kind += 1;
-    }
+    entries.iter_mut().for_each(|entry| entry.review_kind += 1);
 
     // 转换时间戳并保留每个日期的第一个 RevlogEntry
     let mut unique_dates = std::collections::HashSet::new();
@@ -216,9 +213,9 @@ fn remove_non_learning_first(revlogs_per_card: Vec<Vec<RevlogEntry>>) -> Vec<Vec
 }
 
 pub fn anki_to_fsrs() -> Vec<FSRSItem> {
-    let revlogs = read_collection();
+    let revlogs = read_collection().expect("read error");
     let revlogs_per_card = group_by_cid(revlogs);
-    let extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
+    let extracted_revlogs_per_card: Vec<_> = revlogs_per_card
         .into_iter()
         .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
         .collect();
@@ -230,11 +227,11 @@ pub fn anki_to_fsrs() -> Vec<FSRSItem> {
 
 #[test]
 fn test() {
-    let revlogs = read_collection();
+    let revlogs = read_collection().expect("read error");
     assert_eq!(revlogs.len(), 24394);
     let revlogs_per_card = group_by_cid(revlogs);
     assert_eq!(revlogs_per_card.len(), 3324);
-    let mut extracted_revlogs_per_card: Vec<Vec<RevlogEntry>> = revlogs_per_card
+    let mut extracted_revlogs_per_card: Vec<_> = revlogs_per_card
         .into_iter()
         .map(|entries| extract_time_series_feature(entries, 4, Tz::Asia__Shanghai))
         .collect();
@@ -248,6 +245,6 @@ fn test() {
             .sum::<usize>(),
         17614
     );
-    let fsrs_items: Vec<FSRSItem> = convert_to_fsrs_items(extracted_revlogs_per_card);
+    let fsrs_items = convert_to_fsrs_items(extracted_revlogs_per_card);
     assert_eq!(fsrs_items.len(), 14290);
 }
