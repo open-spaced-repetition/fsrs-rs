@@ -8,7 +8,7 @@ use log::debug;
 use pyo3::{types::*, *};
 use std::format;
 
-#[pyfunction]
+#[pyfunction(name="train")]
 fn py_train(revlogs: &PyList) -> PyResult<Vec<f32>> {
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
