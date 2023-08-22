@@ -226,7 +226,7 @@ mod tests {
             .cloned()
             .collect_vec()];
         assert_eq!(revlogs.len(), 24394);
-        let revlogs_per_card = group_by_cid(revlogs.clone());
+        let revlogs_per_card = group_by_cid(revlogs);
         assert_eq!(revlogs_per_card.len(), 3324);
         let fsrs_items = revlogs_per_card
             .into_iter()
