@@ -58,9 +58,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                         .chain(repeat(0))
                         .take(pad_size)
                         .collect(),
-                    Shape {
-                        dims: [item.reviews.len()],
-                    },
+                    Shape { dims: [pad_size] },
                 )
             })
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
@@ -77,9 +75,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                         .chain(repeat(0))
                         .take(pad_size)
                         .collect(),
-                    Shape {
-                        dims: [item.reviews.len()],
-                    },
+                    Shape { dims: [pad_size] },
                 )
             })
             .map(|data| Tensor::<B, 1>::from_data(data.convert()))
