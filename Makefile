@@ -1,5 +1,5 @@
 CRATE = /target/debug
-WHEEL = /target/wheels
+WHEEL = .venv/lib/python3.11/site-packages/fsrs_optimizer_rust
 
 .PHONEY: test
 
@@ -9,9 +9,9 @@ ${CRATE}:
 .venv:
 	python -m venv .venv
 
-${WHEEL}:
+${WHEEL}: .venv
 	maturin develop
 
 test: ${WHEEL}
-	python py/test.py
+	.venv/bin/python py/test.py
 	cargo test
