@@ -9,7 +9,7 @@ use pyo3::{types::*, *};
 use std::format;
 
 #[pyfunction]
-fn py_train(_py: Python, revlogs: &PyList) -> PyResult<()> {
+fn py_train(revlogs: &PyList) -> PyResult<Vec<f32>> {
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
     type Backend = NdArrayBackend<f32>;
@@ -59,10 +59,8 @@ fn py_train(_py: Python, revlogs: &PyList) -> PyResult<()> {
     );
 
     println!("{:?}", result);
-    //let list = PyList::empty(py);
-    //list.append(item)
-    //let list = PyList::new(py, result);
-    Ok(())
+
+    Ok(result)
 }
 
 #[pymodule]

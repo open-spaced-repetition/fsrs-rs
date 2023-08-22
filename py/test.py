@@ -12,4 +12,6 @@ values = [{k: v for k,v in zip(COLUMNS, value)} for value in values]
 
 print(values[0])
 
-fsrs_optimizer_rust.py_train(values)
+w = fsrs_optimizer_rust.py_train(values)
+
+print(f"Python weights: {w}")
