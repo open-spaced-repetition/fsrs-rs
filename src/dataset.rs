@@ -154,9 +154,9 @@ fn test_from_json() {
 
 #[test]
 fn test_from_anki() {
+    use crate::convertor::collection_to_fsrs;
     use burn::data::dataloader::Dataset;
     use burn::data::dataset::InMemDataset;
-    use crate::convertor::collection_to_fsrs;
 
     let dataset = InMemDataset::<FSRSItem>::new(collection_to_fsrs());
     let item = dataset.get(704).unwrap();

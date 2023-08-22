@@ -144,9 +144,9 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
 #[test]
 fn test() {
+    use crate::convertor::collection_to_fsrs;
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
-    use crate::convertor::collection_to_fsrs;
     type Backend = NdArrayBackend<f32>;
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
     let device = NdArrayDevice::Cpu;

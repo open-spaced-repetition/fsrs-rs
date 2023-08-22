@@ -1,5 +1,5 @@
 use crate::{
-    convertor::{RevlogEntry, anki_to_fsrs},
+    convertor::{anki_to_fsrs, RevlogEntry},
     model::ModelConfig,
     training::{train, TrainingConfig},
 };
@@ -8,7 +8,7 @@ use log::debug;
 use pyo3::{types::*, *};
 use std::format;
 
-#[pyfunction(name="train")]
+#[pyfunction(name = "train")]
 fn py_train(revlogs: &PyList) -> PyResult<Vec<f32>> {
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
