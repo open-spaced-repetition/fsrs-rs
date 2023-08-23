@@ -48,7 +48,7 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
     };
 
     let current_timestamp = Utc::now().timestamp() * 1000;
-    // the query is safe since it will not input by user. The ?1 and ?2 is also unnecessary. But to make others feel satefy.
+    // This sql query will be remove in the futrue. See https://github.com/open-spaced-repetition/fsrs-optimizer-burn/pull/14#issuecomment-1685895643
     let revlogs = db
         .prepare_cached(&format!(
             "SELECT id, cid, ease, type
