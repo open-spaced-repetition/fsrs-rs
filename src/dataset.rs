@@ -9,17 +9,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::convertor::anki_to_fsrs;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
+/// to a single review, but contains the previous reviews of the card as well, after the
+/// first one.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct FSRSItem {
-    pub reviews: Vec<Review>,
-    pub delta_t: f32,
-    pub label: f32,
+    pub reviews: Vec<FSRSReview>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Review {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct FSRSReview {
+    /// 1-4
     pub rating: i32,
+    /// The number of days that passed
     pub delta_t: i32,
+}
+
+impl FSRSItem {
+    // The previous reviews done before the current one.
+    pub(crate) fn history(&self) -> impl Iterator<Item = &FSRSReview> {
+        self.reviews.iter().take(self.reviews.len() - 1)
+    }
+
+    pub(crate) fn current(&self) -> &FSRSReview {
+        self.reviews.last().unwrap()
+    }
 }
 
 pub struct FSRSBatcher<B: Backend> {
@@ -42,60 +56,42 @@ pub struct FSRSBatch<B: Backend> {
 
 impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, items: Vec<FSRSItem>) -> FSRSBatch<B> {
-        let pad_size = items
-            .iter()
-            .map(|x| x.reviews.len())
-            .max()
-            .expect("FSRSItem is empty");
-
-        let t_historys = items
+        let (time_histories, rating_histories) = items
             .iter()
             .map(|item| {
-                Data::new(
-                    item.reviews
-                        .iter()
-                        .map(|r| r.delta_t)
-                        .chain(repeat(0))
-                        .take(pad_size)
-                        .collect(),
-                    Shape { dims: [pad_size] },
+                let (delta_t, rating): (Vec<_>, _) =
+                    item.history().map(|r| (r.delta_t, r.rating)).unzip();
+                let count = delta_t.len();
+                let delta_t = Tensor::<B, 1>::from_data(
+                    Data::new(delta_t, Shape { dims: [count] }).convert(),
                 )
+                .unsqueeze();
+                let rating =
+                    Tensor::<B, 1>::from_data(Data::new(rating, Shape { dims: [count] }).convert())
+                        .unsqueeze();
+                (delta_t, rating)
             })
-            .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.unsqueeze())
-            .collect();
+            .unzip();
 
-        let r_historys = items
+        let (delta_ts, labels) = items
             .iter()
             .map(|item| {
-                Data::new(
-                    item.reviews
-                        .iter()
-                        .map(|r| r.rating)
-                        .chain(repeat(0))
-                        .take(pad_size)
-                        .collect(),
-                    Shape { dims: [pad_size] },
-                )
+                let current = item.current();
+                let delta_t =
+                    Tensor::<B, 1, Float>::from_data(Data::from([current.delta_t.elem()]));
+                let label = match current.rating {
+                    1 => 0.0,
+                    _ => 1.0,
+                };
+                let label = Tensor::<B, 1, Int>::from_data(Data::from([label.elem()]));
+                (delta_t, label)
             })
-            .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.unsqueeze())
-            .collect();
+            .unzip();
 
-        let delta_ts = items
-            .iter()
-            .map(|item| Tensor::<B, 1, Float>::from_data(Data::from([item.delta_t.elem()])))
-            .collect();
-
-        let labels = items
-            .iter()
-            .map(|item| Tensor::<B, 1, Int>::from_data(Data::from([item.label.elem()])))
-            .collect();
-
-        let t_historys = Tensor::cat(t_historys, 0)
+        let t_historys = Tensor::cat(time_histories, 0)
             .transpose()
             .to_device(&self.device); // [seq_len, batch_size]
-        let r_historys = Tensor::cat(r_historys, 0)
+        let r_historys = Tensor::cat(rating_histories, 0)
             .transpose()
             .to_device(&self.device); // [seq_len, batch_size]
         let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);

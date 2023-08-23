@@ -38,8 +38,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         info!("retention: {}", &retention);
         info!("logits: {}", &logits);
         info!("labels: {}", &labels);
-        let loss = self.bceloss(retention.clone(), labels.clone().float());
-        info!("loss: {}", &loss);
+        let loss = self.bceloss(retention, labels.clone().float());
         ClassificationOutput::new(loss, logits, labels)
     }
 }
@@ -139,7 +138,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
     PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
         .record(
-            model_trained.clone().into_record(),
+            model_trained.into_record(),
             format!("{ARTIFACT_DIR}/model").into(),
         )
         .expect("Failed to save trained model");
