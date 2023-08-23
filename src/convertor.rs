@@ -34,7 +34,7 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
             filter_out_flags
                 .iter()
                 .map(|x: &i32| x.to_string())
-                .collect::<Vec<String>>()
+                .collect::<Vec<_>>()
                 .join(", ")
         )
     } else {
@@ -48,9 +48,10 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
     };
 
     let current_timestamp = Utc::now().timestamp() * 1000;
+    // the query is safe since it will not input by user. The ?1 and ?2 is also unnecessary.
     let revlogs = db
-        .prepare_cached(
-            format!("SELECT id, cid, ease, factor, type
+        .prepare_cached(&format!(
+            "SELECT id, cid, ease, factor, type
         FROM revlog 
         WHERE (type != 4 OR ivl <= 0)
         AND id < ?1
@@ -61,15 +62,9 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
             WHERE queue != 0
             {suspended_cards_str}
             {flags_str}
-        )"),
-        )?
-        .query_and_then(
-            (
-                current_timestamp,
-                current_timestamp
-            ),
-            row_to_revlog_entry,
-        )?
+        )"
+        ))?
+        .query_and_then((current_timestamp, current_timestamp), row_to_revlog_entry)?
         .collect::<Result<Vec<_>>>()?;
     Ok(revlogs)
 }
@@ -215,7 +210,7 @@ mod tests {
     // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
     #[test]
     fn test() {
-        let revlogs = read_collection();
+        let revlogs = read_collection().unwrap();
         let single_card_revlog = vec![revlogs
             .iter()
             .filter(|r| r.cid == 1528947214762)
