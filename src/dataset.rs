@@ -169,3 +169,23 @@ fn test_from_anki() {
             .r_historys
     );
 }
+
+#[test]
+fn test_batcher() {
+    use burn_ndarray::NdArrayBackend;
+    use burn_ndarray::NdArrayDevice;
+    type Backend = NdArrayBackend<f32>;
+    let device = NdArrayDevice::Cpu;
+    let batcher: FSRSBatcher<Backend> = FSRSBatcher::<Backend>::new(device);
+    let dataset = FSRSDataset::train();
+    let mut items = vec![];
+    for item in dataset.iter() {
+        items.push(item);
+        if items.len() >= 8 {
+            break;
+        }
+    }
+    dbg!(&items);
+    let batch = batcher.batch(items);
+    dbg!(&batch);
+}
