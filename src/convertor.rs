@@ -48,12 +48,13 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
     };
 
     let current_timestamp = Utc::now().timestamp() * 1000;
-    // the query is safe since it will not input by user. The ?1 and ?2 is also unnecessary.
+    // the query is safe since it will not input by user. The ?1 and ?2 is also unnecessary. But to make others feel satefy.
     let revlogs = db
         .prepare_cached(&format!(
-            "SELECT id, cid, ease, factor, type
+            "SELECT id, cid, ease, type
         FROM revlog 
         WHERE (type != 4 OR ivl <= 0)
+        AND (factor != 0 or type != 3)
         AND id < ?1
         AND cid < ?2
         AND cid IN (
