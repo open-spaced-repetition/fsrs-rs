@@ -39,6 +39,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         info!("logits: {}", &logits);
         info!("labels: {}", &labels);
         let loss = self.bceloss(retention.clone(), labels.clone().float());
+        info!("loss: {}", &loss);
         ClassificationOutput::new(loss, logits, labels)
     }
 }
@@ -75,7 +76,7 @@ pub struct TrainingConfig {
     pub optimizer: AdamConfig,
     #[config(default = 10)]
     pub num_epochs: usize,
-    #[config(default = 1)]
+    #[config(default = 2)]
     pub batch_size: usize,
     #[config(default = 4)]
     pub num_workers: usize,
