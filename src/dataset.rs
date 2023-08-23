@@ -1,5 +1,3 @@
-use std::iter::repeat;
-
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
     data::dataset::{Dataset, InMemDataset},
