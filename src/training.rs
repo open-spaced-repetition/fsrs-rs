@@ -89,13 +89,13 @@ pub struct TrainingConfig {
     pub optimizer: AdamConfig,
     #[config(default = 10)]
     pub num_epochs: usize,
-    #[config(default = 2)]
+    #[config(default = 512)]
     pub batch_size: usize,
     #[config(default = 4)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-4)]
+    #[config(default = 8.0e-3)]
     pub learning_rate: f64,
 }
 
@@ -132,7 +132,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         // .metric_valid_plot(AccuracyMetric::new())
         // .metric_train_plot(LossMetric::new())
         // .metric_valid_plot(LossMetric::new())
-        .with_file_checkpointer(1, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
+        .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
         .devices(vec![device])
         .num_epochs(config.num_epochs)
         .build(

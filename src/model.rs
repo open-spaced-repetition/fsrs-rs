@@ -41,16 +41,16 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         let batch_size = rating.dims()[0];
         let hard_penalty = Tensor::ones([batch_size, 1]).mask_where(
             rating.clone().equal_elem(2),
-            self.w().slice([15..16]).reshape([1, 1]).unsqueeze(),
+            self.w().slice([15..16]).unsqueeze(),
         );
         let easy_bonus = Tensor::ones([batch_size, 1])
-            .mask_where(rating.equal_elem(4), self.w().slice([16..17]).reshape([1, 1]).unsqueeze());
+            .mask_where(rating.equal_elem(4), self.w().slice([16..17]).unsqueeze());
 
         last_s.clone()
             * (self.w().slice([8..9]).reshape([1, 1]).exp()
                 * (-new_d + 11)
                 * (-self.w().slice([9..10]).reshape([1, 1]) * last_s.log()).exp()
-                * (((-r + 1) * self.w().slice([10..11])).reshape([1, 1]).exp() - 1)
+                * (((-r + 1) * self.w().slice([10..11]).reshape([1, 1])).exp() - 1)
                 * hard_penalty
                 * easy_bonus
                 + 1)
@@ -69,7 +69,9 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.w().slice([7..8]).reshape([1, 1]) * (self.w().slice([4..5]).reshape([1, 1]) - new_d.clone()) + new_d
+        self.w().slice([7..8]).reshape([1, 1])
+            * (self.w().slice([4..5]).reshape([1, 1]) - new_d.clone())
+            + new_d
     }
 
     fn init_stability(&self, rating: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -81,7 +83,8 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 
     fn init_difficulty(&self, rating: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.w().slice([4..5]).reshape([1, 1]) - self.w().slice([5..6]).reshape([1, 1]) * (rating - 3)
+        self.w().slice([4..5]).reshape([1, 1])
+            - self.w().slice([5..6]).reshape([1, 1]) * (rating - 3)
     }
 
     fn next_difficulty(&self, difficulty: Tensor<B, 2>, rating: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -347,11 +350,13 @@ mod tests {
             Data::from([[22.454704], [14.560361], [51.15574], [152.6869]])
         );
         let s_forget = model.stability_after_failure(stability, difficulty, retention);
+        s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
             Data::from([[2.074517], [2.2729328], [2.526406], [2.8247323]])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
+        next_stability.clone().backward();
         assert_eq!(
             next_stability.to_data(),
             Data::from([[2.074517], [14.560361], [51.15574], [152.6869]])
