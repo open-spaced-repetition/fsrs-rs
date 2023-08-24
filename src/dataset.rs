@@ -143,6 +143,10 @@ impl FSRSDataset {
         self.dataset.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.dataset.is_empty()
+    }
+
     fn new() -> Self {
         let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
         Self { dataset }
