@@ -1,3 +1,4 @@
+use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
@@ -75,13 +76,13 @@ pub struct TrainingConfig {
     pub optimizer: AdamConfig,
     #[config(default = 10)]
     pub num_epochs: usize,
-    #[config(default = 2)]
+    #[config(default = 1)]
     pub batch_size: usize,
     #[config(default = 4)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-4)]
+    #[config(default = 1.0e-3)]
     pub learning_rate: f64,
 }
 
@@ -113,18 +114,23 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .num_workers(config.num_workers)
         .build(FSRSDataset::test());
 
+    let lr_scheduler = CosineAnnealingLR::init(
+        (FSRSDataset::train().len() * config.num_epochs) as f64,
+        config.learning_rate,
+    );
+
     let learner = LearnerBuilder::new(artifact_dir)
         // .metric_train_plot(AccuracyMetric::new())
         // .metric_valid_plot(AccuracyMetric::new())
         // .metric_train_plot(LossMetric::new())
         // .metric_valid_plot(LossMetric::new())
-        .with_file_checkpointer(1, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
+        .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
         .devices(vec![device])
         .num_epochs(config.num_epochs)
         .build(
             config.model.init::<B>(),
             config.optimizer.init(),
-            config.learning_rate,
+            lr_scheduler,
         );
 
     let mut model_trained = learner.fit(dataloader_train, dataloader_test);

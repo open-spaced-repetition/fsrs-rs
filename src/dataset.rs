@@ -139,6 +139,10 @@ impl FSRSDataset {
         Self::new()
     }
 
+    pub fn len(&self) -> usize {
+        self.dataset.len()
+    }
+
     fn new() -> Self {
         let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
         Self { dataset }
