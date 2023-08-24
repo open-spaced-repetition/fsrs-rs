@@ -20,9 +20,10 @@ pub fn weight_clipper<B: Backend<FloatElem = f32>>(weights: Tensor<B, 1>) -> Ten
 
     let val: &mut Vec<f32> = &mut weights.to_data().value;
 
-    for (i, w) in val.iter_mut().skip(4).enumerate() {
-        *w = w.clamp(CLAMPS[i].0, CLAMPS[i].1);
-    }
+    val.iter_mut()
+        .skip(4)
+        .zip(CLAMPS)
+        .for_each(|(w, (low, high))| *w = w.clamp(low, high));
 
     Tensor::from_data(Data::new(val.clone(), weights.shape()))
 }
