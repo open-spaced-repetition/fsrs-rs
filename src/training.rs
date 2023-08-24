@@ -51,8 +51,14 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
             batch.delta_ts,
             batch.labels,
         );
+        let mut gradients = item.loss.backward();
 
-        TrainOutput::new(self, item.loss.backward(), item)
+        let grad_tensor = self.w.grad(&gradients).unwrap();
+        self.w.grad_remove(&mut gradients);
+        let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
+        self.w.grad_replace(&mut gradients, updated_grad_tensor);
+        
+        TrainOutput::new(self, gradients, item)
     }
 }
 
