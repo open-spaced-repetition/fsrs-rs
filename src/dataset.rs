@@ -54,19 +54,28 @@ pub struct FSRSBatch<B: Backend> {
 
 impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, items: Vec<FSRSItem>) -> FSRSBatch<B> {
+        let pad_size = items
+            .iter()
+            .map(|x| x.reviews.len())
+            .max()
+            .expect("FSRSItem is empty")
+            - 1;
+
         let (time_histories, rating_histories) = items
             .iter()
             .map(|item| {
-                let (delta_t, rating): (Vec<_>, _) =
+                let (mut delta_t, mut rating): (Vec<i32>, Vec<i32>) =
                     item.history().map(|r| (r.delta_t, r.rating)).unzip();
-                let count = delta_t.len();
+                delta_t.resize(pad_size, 0);
+                rating.resize(pad_size, 0);
                 let delta_t = Tensor::<B, 1>::from_data(
-                    Data::new(delta_t, Shape { dims: [count] }).convert(),
+                    Data::new(delta_t, Shape { dims: [pad_size] }).convert(),
                 )
                 .unsqueeze();
-                let rating =
-                    Tensor::<B, 1>::from_data(Data::new(rating, Shape { dims: [count] }).convert())
-                        .unsqueeze();
+                let rating = Tensor::<B, 1>::from_data(
+                    Data::new(rating, Shape { dims: [pad_size] }).convert(),
+                )
+                .unsqueeze();
                 (delta_t, rating)
             })
             .unzip();
@@ -162,4 +171,167 @@ fn test_from_anki() {
             .expect("loader is empty")
             .r_historys
     );
+}
+
+#[test]
+fn test_batcher() {
+    use burn_ndarray::NdArrayBackend;
+    use burn_ndarray::NdArrayDevice;
+    type Backend = NdArrayBackend<f32>;
+    let device = NdArrayDevice::Cpu;
+    let batcher: FSRSBatcher<Backend> = FSRSBatcher::<Backend>::new(device);
+    let items = vec![
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 4,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 5,
+                },
+            ],
+        },
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 4,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 5,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 11,
+                },
+            ],
+        },
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 4,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 2,
+                },
+            ],
+        },
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 4,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 2,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 6,
+                },
+            ],
+        },
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 4,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 2,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 6,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 16,
+                },
+            ],
+        },
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 4,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 2,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 6,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 16,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 39,
+                },
+            ],
+        },
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 1,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 1,
+                    delta_t: 1,
+                },
+            ],
+        },
+        FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 1,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 1,
+                    delta_t: 1,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 1,
+                },
+            ],
+        },
+    ];
+    let batch = batcher.batch(items);
+    assert_eq!(
+        batch.t_historys.to_data(),
+        Data::from([
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 5.0, 0.0, 2.0, 2.0, 2.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0, 6.0, 6.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 16.0, 0.0, 0.0]
+        ])
+    );
+    assert_eq!(
+        batch.r_historys.to_data(),
+        Data::from([
+            [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 1.0, 1.0],
+            [0.0, 3.0, 0.0, 3.0, 3.0, 3.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0]
+        ])
+    );
+    assert_eq!(
+        batch.delta_ts.to_data(),
+        Data::from([5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0])
+    );
+    assert_eq!(batch.labels.to_data(), Data::from([1, 1, 1, 1, 1, 1, 0, 1]));
 }

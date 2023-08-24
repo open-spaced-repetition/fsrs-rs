@@ -90,8 +90,10 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
                 r.clone(),
                 rating.clone(),
             );
-            let s_forget = self.stability_after_failure(stability, new_d.clone(), r);
-            let new_s = s_recall.mask_where(rating.equal_elem(1), s_forget);
+            let s_forget = self.stability_after_failure(stability.clone(), new_d.clone(), r);
+            let new_s = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
+            // mask padding zeros for rating
+            let new_s = new_s.mask_where(rating.equal_elem(0), stability);
             (new_s.clamp(0.1, 36500.0), new_d)
         }
     }
