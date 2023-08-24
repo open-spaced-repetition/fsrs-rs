@@ -30,7 +30,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let (stability, _difficulty) = self.forward(t_historys, r_historys);
-        let retention = self.power_forgetting_curve(delta_ts.clone(), stability.clone());
+        let retention = self.power_forgetting_curve(delta_ts.clone().unsqueeze(), stability.clone().unsqueeze());
         let logits =
             Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).reshape([1, -1]);
         info!("stability: {}", &stability);
@@ -38,7 +38,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         info!("retention: {}", &retention);
         info!("logits: {}", &logits);
         info!("labels: {}", &labels);
-        let loss = self.bceloss(retention, labels.clone().float());
+        let loss = self.bceloss(retention.squeeze(0), labels.clone().float());
         ClassificationOutput::new(loss, logits, labels)
     }
 }
