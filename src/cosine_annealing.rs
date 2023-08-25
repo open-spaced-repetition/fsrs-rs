@@ -1,15 +1,15 @@
 use burn::{lr_scheduler::LRScheduler, LearningRate};
 #[derive(Clone, Debug)]
 pub struct CosineAnnealingLR {
-    t_max: LearningRate,
-    eta_min: LearningRate,
+    t_max: f64,
+    eta_min: f64,
     init_lr: LearningRate,
-    step_count: LearningRate,
+    step_count: f64,
     current_lr: LearningRate,
 }
 
 impl CosineAnnealingLR {
-    pub fn init(t_max: LearningRate, init_lr: LearningRate) -> CosineAnnealingLR {
+    pub fn init(t_max: f64, init_lr: LearningRate) -> CosineAnnealingLR {
         CosineAnnealingLR {
             t_max,
             eta_min: 0.0,
@@ -29,16 +29,15 @@ impl LRScheduler for CosineAnnealingLR {
         fn cosine_annealing_lr(
             init_lr: LearningRate,
             lr: LearningRate,
-            step_count: LearningRate,
-            t_max: LearningRate,
-            eta_min: LearningRate,
+            step_count: f64,
+            t_max: f64,
+            eta_min: f64,
         ) -> LearningRate {
             let cosine_arg = PI * step_count / t_max;
             if (step_count - 1.0 - t_max) % (2.0 * t_max) == 0.0 {
-                (init_lr - eta_min) * (1.0 - LearningRate::cos(PI / t_max)) / 2.0
+                (init_lr - eta_min) * (1.0 - f64::cos(PI / t_max)) / 2.0
             } else {
-                (1.0 + LearningRate::cos(cosine_arg))
-                    / (1.0 + LearningRate::cos(PI * (step_count - 1.0) / t_max))
+                (1.0 + f64::cos(cosine_arg)) / (1.0 + f64::cos(PI * (step_count - 1.0) / t_max))
                     * (lr - eta_min)
                     + eta_min
             }
@@ -66,7 +65,7 @@ impl LRScheduler for CosineAnnealingLR {
 #[test]
 fn test_lr_scheduler() {
     let mut lr_scheduler = CosineAnnealingLR::init(100000.0, 1.0e-1);
-    let mut lrs = Vec::<LearningRate>::new();
+    let mut lrs = vec![];
     for i in 0..200000 {
         if i % 20000 == 0 {
             lrs.push(lr_scheduler.current_lr);
