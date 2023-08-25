@@ -1,5 +1,6 @@
 use chrono::prelude::*;
 use chrono_tz::Tz;
+use itertools::Itertools;
 use rusqlite::{Connection, Result, Row};
 use std::collections::HashMap;
 
@@ -192,11 +193,13 @@ fn convert_to_fsrs_items(
 pub fn anki_to_fsrs() -> Vec<FSRSItem> {
     let revlogs = read_collection().expect("read error");
     let revlogs_per_card = group_by_cid(revlogs);
-    revlogs_per_card
+    let mut revlogs = revlogs_per_card
         .into_iter()
         .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
         .flatten()
-        .collect()
+        .collect_vec();
+    revlogs.sort_by_key(|r| r.reviews.len());
+    revlogs
 }
 
 #[cfg(test)]
