@@ -15,9 +15,10 @@ use burn::{
 use log::info;
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
-    fn bceloss(&self, retentions: Tensor<B, 1>, labels: Tensor<B, 1>) -> Tensor<B, 1> {
-        let loss: Tensor<B, 1> =
+    fn bceloss(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
+        let loss: Tensor<B, 2> =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
+        info!("loss: {}", &loss);
         loss.mean().neg()
     }
 
@@ -31,15 +32,28 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let (stability, _difficulty) = self.forward(t_historys, r_historys);
-        let retention = self.power_forgetting_curve(delta_ts.clone(), stability.clone());
+        let retention = self.power_forgetting_curve(
+            delta_ts.clone().unsqueeze::<2>().transpose(),
+            stability.clone(),
+        );
         let logits =
-            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).reshape([1, -1]);
+            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).reshape([2, -1]);
         info!("stability: {}", &stability);
-        info!("delta_ts: {}", &delta_ts);
+        info!(
+            "delta_ts: {}",
+            &delta_ts.clone().unsqueeze::<2>().transpose()
+        );
         info!("retention: {}", &retention);
         info!("logits: {}", &logits);
-        info!("labels: {}", &labels);
-        let loss = self.bceloss(retention, labels.clone().float());
+        info!(
+            "labels: {}",
+            &labels.clone().unsqueeze::<2>().float().transpose()
+        );
+        let loss = self.bceloss(
+            retention,
+            labels.clone().unsqueeze::<2>().float().transpose(),
+        );
+        info!("loss: {}", &loss);
         ClassificationOutput::new(loss, logits, labels)
     }
 }
@@ -76,13 +90,13 @@ pub struct TrainingConfig {
     pub optimizer: AdamConfig,
     #[config(default = 10)]
     pub num_epochs: usize,
-    #[config(default = 1)]
+    #[config(default = 512)]
     pub batch_size: usize,
     #[config(default = 4)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-3)]
+    #[config(default = 8.0e-3)]
     pub learning_rate: f64,
 }
 
