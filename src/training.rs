@@ -1,3 +1,4 @@
+use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
@@ -127,6 +128,11 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .num_workers(config.num_workers)
         .build(FSRSDataset::test());
 
+    let lr_scheduler = CosineAnnealingLR::init(
+        (FSRSDataset::train().len() * config.num_epochs) as f64,
+        config.learning_rate,
+    );
+
     let learner = LearnerBuilder::new(artifact_dir)
         // .metric_train_plot(AccuracyMetric::new())
         // .metric_valid_plot(AccuracyMetric::new())
@@ -138,7 +144,7 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .build(
             config.model.init::<B>(),
             config.optimizer.init(),
-            config.learning_rate,
+            lr_scheduler,
         );
 
     let mut model_trained = learner.fit(dataloader_train, dataloader_test);
