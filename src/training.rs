@@ -39,7 +39,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             stability.clone(),
         );
         let logits =
-            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).reshape([2, -1]);
+            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 1);
         info!("stability: {}", &stability);
         info!(
             "delta_ts: {}",
