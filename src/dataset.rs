@@ -1,7 +1,7 @@
 use crate::convertor::anki21_sample_file_converted_to_fsrs;
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
-    data::dataset::{Dataset, InMemDataset},
+    data::dataset::Dataset,
     tensor::{backend::Backend, Data, ElementConversion, Float, Int, Shape, Tensor},
 };
 use serde::{Deserialize, Serialize};
@@ -116,16 +116,16 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
 }
 
 pub struct FSRSDataset {
-    dataset: InMemDataset<FSRSItem>,
+    items: Vec<FSRSItem>,
 }
 
 impl Dataset<FSRSItem> for FSRSDataset {
     fn len(&self) -> usize {
-        self.dataset.len()
+        self.items.len()
     }
 
     fn get(&self, index: usize) -> Option<FSRSItem> {
-        self.dataset.get(index)
+        self.items.get(index).cloned()
     }
 }
 
@@ -139,25 +139,29 @@ impl FSRSDataset {
     }
 
     pub fn len(&self) -> usize {
-        self.dataset.len()
+        self.items.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.dataset.is_empty()
+        self.items.is_empty()
     }
 
     fn new_from_test_file() -> Self {
-        let dataset = InMemDataset::<FSRSItem>::new(anki21_sample_file_converted_to_fsrs());
-        Self { dataset }
+        anki21_sample_file_converted_to_fsrs().into()
+    }
+}
+
+impl From<Vec<FSRSItem>> for FSRSDataset {
+    fn from(items: Vec<FSRSItem>) -> Self {
+        Self { items }
     }
 }
 
 #[test]
 fn test_from_anki() {
     use burn::data::dataloader::Dataset;
-    use burn::data::dataset::InMemDataset;
 
-    let dataset = InMemDataset::<FSRSItem>::new(anki21_sample_file_converted_to_fsrs());
+    let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
     dbg!(dataset.get(704).unwrap());
 
     use burn_ndarray::NdArrayDevice;
