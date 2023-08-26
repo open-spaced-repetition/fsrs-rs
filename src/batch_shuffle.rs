@@ -16,13 +16,16 @@ where
     pub fn new(dataset: D, batch_size: usize, rng: &mut StdRng) -> Self {
         let len = dataset.len();
 
+        // Calculate the number of batches
         // 计算批数
         let num_batches = (len + batch_size - 1) / batch_size;
 
+        // Create a vector of batch indices and shuffle it
         // 创建一个批数索引的向量并打乱
         let mut batch_indices: Vec<usize> = (0..num_batches).collect();
         batch_indices.shuffle(rng);
 
+        // Generate the corresponding item indices for each shuffled batch
         // 为每个打乱的批次生成相应的元素索引
         let mut indices: Vec<usize> = Vec::new();
         for &batch_index in &batch_indices {

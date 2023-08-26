@@ -7,4 +7,4 @@ pub mod model;
 pub mod training;
 mod weight_clipper;
 
-mod dataloader;
+mod batch_shuffle;

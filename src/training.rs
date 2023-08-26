@@ -1,7 +1,5 @@
-use std::path::Path;
-
+use crate::batch_shuffle::BatchShuffledDataset;
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataloader::BatchShuffledDataset;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
@@ -16,6 +14,7 @@ use burn::{
     train::LearnerBuilder,
 };
 use log::info;
+use std::path::Path;
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
     fn bceloss(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
