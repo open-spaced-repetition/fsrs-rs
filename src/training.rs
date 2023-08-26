@@ -54,10 +54,11 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
         let mut gradients = item.loss.backward();
 
         let grad_tensor = self.w.grad(&gradients).unwrap();
-        self.w.grad_remove(&mut gradients);
         let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
+
+        self.w.grad_remove(&mut gradients);
         self.w.grad_replace(&mut gradients, updated_grad_tensor);
-        
+
         TrainOutput::new(self, gradients, item)
     }
 }
@@ -79,7 +80,7 @@ static ARTIFACT_DIR: &str = "./tmp/fsrs";
 pub struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
-    #[config(default = 10)]
+    #[config(default = 1)]
     pub num_epochs: usize,
     #[config(default = 1)]
     pub batch_size: usize,
