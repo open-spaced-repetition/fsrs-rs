@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::cosine_annealing::CosineAnnealingLR;
+use crate::dataloader::BatchShuffledDataset;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
@@ -124,12 +125,10 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        .num_workers(config.num_workers)
-        .build(FSRSDataset::train());
+        .build(BatchShuffledDataset::with_seed(FSRSDataset::train(), config.batch_size, config.seed));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
-        .num_workers(config.num_workers)
         .build(FSRSDataset::test());
 
     let lr_scheduler = CosineAnnealingLR::init(
