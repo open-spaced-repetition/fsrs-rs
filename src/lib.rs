@@ -1,3 +1,5 @@
+#![allow(clippy::single_range_in_vec_init)]
+
 pub mod convertor;
 mod cosine_annealing;
 pub mod dataset;
