@@ -125,7 +125,11 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        .build(BatchShuffledDataset::with_seed(FSRSDataset::train(), config.batch_size, config.seed));
+        .build(BatchShuffledDataset::with_seed(
+            FSRSDataset::train(),
+            config.batch_size,
+            config.seed,
+        ));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)

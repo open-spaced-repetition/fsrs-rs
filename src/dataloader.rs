@@ -15,14 +15,14 @@ where
     /// Creates a new shuffled dataset.
     pub fn new(dataset: D, batch_size: usize, rng: &mut StdRng) -> Self {
         let len = dataset.len();
-    
+
         // 计算批数
         let num_batches = (len + batch_size - 1) / batch_size;
-    
+
         // 创建一个批数索引的向量并打乱
         let mut batch_indices: Vec<usize> = (0..num_batches).collect();
         batch_indices.shuffle(rng);
-    
+
         // 为每个打乱的批次生成相应的元素索引
         let mut indices: Vec<usize> = Vec::new();
         for &batch_index in &batch_indices {
@@ -63,14 +63,14 @@ where
     }
 }
 
-
 #[test]
 fn test_batch_shuffle() {
     use crate::dataset::FSRSDataset;
     let dataset = FSRSDataset::train();
     let batch_size = 10;
     let seed = 42;
-    let batch_shuffled_dataset: BatchShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> = BatchShuffledDataset::with_seed(dataset, batch_size, seed);
+    let batch_shuffled_dataset: BatchShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
+        BatchShuffledDataset::with_seed(dataset, batch_size, seed);
     for i in 0..batch_shuffled_dataset.len() {
         println!("{:?}", batch_shuffled_dataset.get(i).unwrap());
         if i > batch_size {
@@ -85,7 +85,8 @@ fn test_item_shuffle() {
     use burn::data::dataset::transform::ShuffledDataset;
     let dataset = FSRSDataset::train();
     let seed = 42;
-    let shuffled_dataset: ShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> = ShuffledDataset::with_seed(dataset, seed);
+    let shuffled_dataset: ShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
+        ShuffledDataset::with_seed(dataset, seed);
     for i in 0..shuffled_dataset.len() {
         println!("{:?}", shuffled_dataset.get(i).unwrap());
         if i > 10 {

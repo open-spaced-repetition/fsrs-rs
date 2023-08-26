@@ -80,7 +80,10 @@ fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
             .push(revlog);
     }
 
-    grouped.into_values().sorted_by_cached_key(|revlog| revlog.get(0).unwrap().cid).collect()
+    grouped
+        .into_values()
+        .sorted_by_cached_key(|revlog| revlog.get(0).unwrap().cid)
+        .collect()
 }
 
 fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chrono::NaiveDate {
