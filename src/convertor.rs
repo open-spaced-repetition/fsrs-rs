@@ -27,7 +27,7 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
 fn read_collection() -> Result<Vec<RevlogEntry>> {
     let db = Connection::open("tests/data/collection.anki21")?;
     let filter_out_suspended_cards = false;
-    let filter_out_flags = vec![];
+    let filter_out_flags = [];
     let flags_str = if !filter_out_flags.is_empty() {
         format!(
             "AND flags NOT IN ({})",
