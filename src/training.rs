@@ -124,13 +124,11 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        // .shuffle(config.seed)
         .num_workers(config.num_workers)
         .build(FSRSDataset::train());
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
-        // .shuffle(config.seed)
         .num_workers(config.num_workers)
         .build(FSRSDataset::test());
 

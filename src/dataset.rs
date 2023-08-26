@@ -169,7 +169,6 @@ fn test_from_anki() {
     use burn::data::dataloader::DataLoaderBuilder;
     let dataloader = DataLoaderBuilder::new(batcher)
         .batch_size(1)
-        .shuffle(42)
         .num_workers(4)
         .build(dataset);
     dbg!(

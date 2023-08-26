@@ -1,6 +1,7 @@
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
+use rand::Rng;
 use rusqlite::{Connection, Result, Row};
 use std::collections::HashMap;
 
@@ -193,13 +194,40 @@ fn convert_to_fsrs_items(
 pub fn anki_to_fsrs() -> Vec<FSRSItem> {
     let revlogs = read_collection().expect("read error");
     let revlogs_per_card = group_by_cid(revlogs);
-    let mut revlogs = revlogs_per_card
+    // collect FSRS items into a map by sequence size
+    let mut total_fsrs_items = 0;
+    let mut revlogs_by_seq_size: HashMap<usize, Vec<FSRSItem>> = HashMap::new();
+    revlogs_per_card
         .into_iter()
         .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
         .flatten()
-        .collect_vec();
-    revlogs.sort_by_key(|r| r.reviews.len());
-    revlogs
+        .for_each(|r| {
+            total_fsrs_items += 1;
+            revlogs_by_seq_size
+                .entry(r.reviews.len())
+                .or_default()
+                .push(r)
+        });
+    let mut sizes = revlogs_by_seq_size.keys().copied().collect_vec();
+    let mut rng = rand::thread_rng();
+    let mut out: Vec<FSRSItem> = Vec::with_capacity(total_fsrs_items);
+    while !sizes.is_empty() {
+        // pick a random sequence size
+        let size_idx = rng.gen_range(0..sizes.len() as u32) as usize;
+        let size = &mut sizes[size_idx];
+        let items = revlogs_by_seq_size.get_mut(size).unwrap();
+        // add up to 512 items from it to the output vector
+        for _ in 0..512 {
+            let Some(item) = items.pop() else {
+                // this size has run out of items; clear it from available sizes
+                sizes.swap_remove(size_idx);
+                break;
+            };
+            out.push(item);
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
