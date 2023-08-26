@@ -1,11 +1,10 @@
+use crate::convertor::anki21_sample_file_converted_to_fsrs;
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
     data::dataset::{Dataset, InMemDataset},
     tensor::{backend::Backend, Data, ElementConversion, Float, Int, Shape, Tensor},
 };
 use serde::{Deserialize, Serialize};
-
-use crate::convertor::anki_to_fsrs;
 
 /// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
 /// to a single review, but contains the previous reviews of the card as well, after the
@@ -132,11 +131,11 @@ impl Dataset<FSRSItem> for FSRSDataset {
 
 impl FSRSDataset {
     pub fn train() -> Self {
-        Self::new()
+        Self::new_from_test_file()
     }
 
     pub fn test() -> Self {
-        Self::new()
+        Self::new_from_test_file()
     }
 
     pub fn len(&self) -> usize {
@@ -147,8 +146,8 @@ impl FSRSDataset {
         self.dataset.is_empty()
     }
 
-    fn new() -> Self {
-        let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
+    fn new_from_test_file() -> Self {
+        let dataset = InMemDataset::<FSRSItem>::new(anki21_sample_file_converted_to_fsrs());
         Self { dataset }
     }
 }
@@ -158,7 +157,7 @@ fn test_from_anki() {
     use burn::data::dataloader::Dataset;
     use burn::data::dataset::InMemDataset;
 
-    let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
+    let dataset = InMemDataset::<FSRSItem>::new(anki21_sample_file_converted_to_fsrs());
     dbg!(dataset.get(704).unwrap());
 
     use burn_ndarray::NdArrayDevice;
