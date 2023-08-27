@@ -175,18 +175,23 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .expect("Failed to save trained model");
 }
 
-#[test]
-fn test() {
-    use burn_ndarray::NdArrayBackend;
-    use burn_ndarray::NdArrayDevice;
-    type Backend = NdArrayBackend<f32>;
-    type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
-    let device = NdArrayDevice::Cpu;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let artifact_dir = ARTIFACT_DIR;
-    train::<AutodiffBackend>(
-        artifact_dir,
-        TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
-        device,
-    );
+    #[test]
+    fn test() {
+        use burn_ndarray::NdArrayBackend;
+        use burn_ndarray::NdArrayDevice;
+        type Backend = NdArrayBackend<f32>;
+        type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
+        let device = NdArrayDevice::Cpu;
+
+        let artifact_dir = ARTIFACT_DIR;
+        train::<AutodiffBackend>(
+            artifact_dir,
+            TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
+            device,
+        );
+    }
 }

@@ -62,31 +62,36 @@ impl LRScheduler for CosineAnnealingLR {
     }
 }
 
-#[test]
-fn test_lr_scheduler() {
-    let mut lr_scheduler = CosineAnnealingLR::init(100000.0, 1.0e-1);
-    let mut lrs = vec![];
-    for i in 0..200000 {
-        if i % 20000 == 0 {
-            lrs.push(lr_scheduler.current_lr);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lr_scheduler() {
+        let mut lr_scheduler = CosineAnnealingLR::init(100000.0, 1.0e-1);
+        let mut lrs = vec![];
+        for i in 0..200000 {
+            if i % 20000 == 0 {
+                lrs.push(lr_scheduler.current_lr);
+            }
+            lr_scheduler.step();
         }
-        lr_scheduler.step();
+        lrs.push(lr_scheduler.current_lr);
+        assert_eq!(
+            lrs,
+            vec![
+                0.1,
+                0.09045084971874785,
+                0.06545084971874875,
+                0.034549150281253875,
+                0.009549150281252989,
+                0.0,
+                0.009549150281252692,
+                0.03454915028125239,
+                0.06545084971874746,
+                0.09045084971874952,
+                0.10000000000000353
+            ]
+        )
     }
-    lrs.push(lr_scheduler.current_lr);
-    assert_eq!(
-        lrs,
-        vec![
-            0.1,
-            0.09045084971874785,
-            0.06545084971874875,
-            0.034549150281253875,
-            0.009549150281252989,
-            0.0,
-            0.009549150281252692,
-            0.03454915028125239,
-            0.06545084971874746,
-            0.09045084971874952,
-            0.10000000000000353
-        ]
-    )
 }

@@ -66,34 +66,39 @@ where
     }
 }
 
-#[test]
-fn test_batch_shuffle() {
-    use crate::dataset::FSRSDataset;
-    let dataset = FSRSDataset::train();
-    let batch_size = 10;
-    let seed = 42;
-    let batch_shuffled_dataset: BatchShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
-        BatchShuffledDataset::with_seed(dataset, batch_size, seed);
-    for i in 0..batch_shuffled_dataset.len() {
-        println!("{:?}", batch_shuffled_dataset.get(i).unwrap());
-        if i > batch_size {
-            break;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_batch_shuffle() {
+        use crate::dataset::FSRSDataset;
+        let dataset = FSRSDataset::train();
+        let batch_size = 10;
+        let seed = 42;
+        let batch_shuffled_dataset: BatchShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
+            BatchShuffledDataset::with_seed(dataset, batch_size, seed);
+        for i in 0..batch_shuffled_dataset.len() {
+            println!("{:?}", batch_shuffled_dataset.get(i).unwrap());
+            if i > batch_size {
+                break;
+            }
         }
     }
-}
 
-#[test]
-fn test_item_shuffle() {
-    use crate::dataset::FSRSDataset;
-    use burn::data::dataset::transform::ShuffledDataset;
-    let dataset = FSRSDataset::train();
-    let seed = 42;
-    let shuffled_dataset: ShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
-        ShuffledDataset::with_seed(dataset, seed);
-    for i in 0..shuffled_dataset.len() {
-        println!("{:?}", shuffled_dataset.get(i).unwrap());
-        if i > 10 {
-            break;
+    #[test]
+    fn test_item_shuffle() {
+        use crate::dataset::FSRSDataset;
+        use burn::data::dataset::transform::ShuffledDataset;
+        let dataset = FSRSDataset::train();
+        let seed = 42;
+        let shuffled_dataset: ShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
+            ShuffledDataset::with_seed(dataset, seed);
+        for i in 0..shuffled_dataset.len() {
+            println!("{:?}", shuffled_dataset.get(i).unwrap());
+            if i > 10 {
+                break;
+            }
         }
     }
 }
