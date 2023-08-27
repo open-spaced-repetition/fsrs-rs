@@ -71,7 +71,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_batch_shuffle() {
+    fn batch_shuffle() {
         use crate::dataset::FSRSDataset;
         let dataset = FSRSDataset::train();
         let batch_size = 10;
@@ -87,7 +87,7 @@ mod tests {
     }
 
     #[test]
-    fn test_item_shuffle() {
+    fn item_shuffle() {
         use crate::dataset::FSRSDataset;
         use burn::data::dataset::transform::ShuffledDataset;
         let dataset = FSRSDataset::train();

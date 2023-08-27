@@ -163,7 +163,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_w() {
+    fn w() {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn test_power_forgetting_curve() {
+    fn power_forgetting_curve() {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn test_init_stability() {
+    fn init_stability() {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn test_init_difficulty() {
+    fn init_difficulty() {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn test_forward() {
+    fn forward() {
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
         let model = Model::<Backend>::new();
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn test_next_difficulty() {
+    fn next_difficulty() {
         let model = Model::<Backend>::new();
         let difficulty = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
         let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn test_next_stability() {
+    fn next_stability() {
         let model = Model::<Backend>::new();
         let stability = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
         let difficulty = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);

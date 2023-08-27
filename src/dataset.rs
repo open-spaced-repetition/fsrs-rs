@@ -162,7 +162,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_from_anki() {
+    fn from_anki() {
         use burn::data::dataloader::Dataset;
 
         let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn test_batcher() {
+    fn batcher() {
         use burn_ndarray::NdArrayBackend;
         use burn_ndarray::NdArrayDevice;
         type Backend = NdArrayBackend<f32>;

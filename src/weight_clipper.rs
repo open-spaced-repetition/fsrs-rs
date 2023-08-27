@@ -33,7 +33,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn weight_clipper_test() {
+    fn weight_clipper_works() {
         type Backend = burn_ndarray::NdArrayBackend<f32>;
         //type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
 

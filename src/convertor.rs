@@ -208,7 +208,7 @@ mod tests {
     // This test currently expects the following .anki21 file to be placed in tests/data/:
     // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
     #[test]
-    fn test() {
+    fn conversion_works() {
         let revlogs = read_collection().unwrap();
         let single_card_revlog = vec![revlogs
             .iter()

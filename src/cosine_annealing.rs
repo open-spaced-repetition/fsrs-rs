@@ -67,7 +67,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_lr_scheduler() {
+    fn lr_scheduler() {
         let mut lr_scheduler = CosineAnnealingLR::init(100000.0, 1.0e-1);
         let mut lrs = vec![];
         for i in 0..200000 {

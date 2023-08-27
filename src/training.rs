@@ -180,7 +180,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test() {
+    fn training() {
         use burn_ndarray::NdArrayBackend;
         use burn_ndarray::NdArrayDevice;
         type Backend = NdArrayBackend<f32>;
