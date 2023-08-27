@@ -181,6 +181,10 @@ mod tests {
 
     #[test]
     fn training() {
+        if std::env::var("SKIP_TRAINING").is_ok() {
+            println!("Skipping test in CI");
+            return;
+        }
         use burn_ndarray::NdArrayBackend;
         use burn_ndarray::NdArrayDevice;
         type Backend = NdArrayBackend<f32>;
