@@ -71,7 +71,7 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
 }
 
 fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
-    let mut grouped: HashMap<i64, Vec<RevlogEntry>> = HashMap::new();
+    let mut grouped = HashMap::new();
     for revlog in revlogs {
         grouped
             .entry(revlog.cid)

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 use crate::model::{Model, ModelConfig};
@@ -107,7 +109,12 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 ) {
     std::fs::create_dir_all(artifact_dir).ok();
     config
-        .save(&format!("{artifact_dir}/config.json"))
+        .save(
+            Path::new(artifact_dir)
+                .join("config.json")
+                .to_str()
+                .unwrap(),
+        )
         .expect("Save without error");
 
     B::seed(config.seed);
@@ -153,13 +160,18 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
     info!("clipped weights: {}", &model_trained.w.val());
 
     config
-        .save(format!("{ARTIFACT_DIR}/config.json").as_str())
+        .save(
+            Path::new(ARTIFACT_DIR)
+                .join("config.json")
+                .to_str()
+                .unwrap(),
+        )
         .unwrap();
 
     PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
         .record(
             model_trained.into_record(),
-            format!("{ARTIFACT_DIR}/model").into(),
+            Path::new(ARTIFACT_DIR).join("model"),
         )
         .expect("Failed to save trained model");
 }

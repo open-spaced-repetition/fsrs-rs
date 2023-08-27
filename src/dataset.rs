@@ -64,7 +64,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
         let (time_histories, rating_histories) = items
             .iter()
             .map(|item| {
-                let (mut delta_t, mut rating): (Vec<i32>, Vec<i32>) =
+                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
                     item.history().map(|r| (r.delta_t, r.rating)).unzip();
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
@@ -187,7 +187,7 @@ fn test_batcher() {
     use burn_ndarray::NdArrayDevice;
     type Backend = NdArrayBackend<f32>;
     let device = NdArrayDevice::Cpu;
-    let batcher: FSRSBatcher<Backend> = FSRSBatcher::<Backend>::new(device);
+    let batcher = FSRSBatcher::<Backend>::new(device);
     let items = vec![
         FSRSItem {
             reviews: vec![
