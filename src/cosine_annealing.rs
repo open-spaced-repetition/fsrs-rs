@@ -77,9 +77,9 @@ mod tests {
             lr_scheduler.step();
         }
         lrs.push(lr_scheduler.current_lr);
-        assert_eq!(
-            lrs,
-            vec![
+        assert!(lrs
+            .iter()
+            .zip([
                 0.1,
                 0.09045084971874785,
                 0.06545084971874875,
@@ -91,7 +91,8 @@ mod tests {
                 0.06545084971874746,
                 0.09045084971874952,
                 0.10000000000000353
-            ]
-        )
+            ])
+            // use f64::EPSILON will fail. Seems a floating number difference between linux and macos.
+            .all(|(x, y)| (x - y).abs() < f32::EPSILON as f64));
     }
 }
