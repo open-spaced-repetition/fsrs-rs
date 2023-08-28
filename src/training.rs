@@ -43,7 +43,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 }
 
-impl <B: ADBackend<FloatElem = f32>> Model<B> {
+impl<B: ADBackend<FloatElem = f32>> Model<B> {
     fn freeze_initial_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
         let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
