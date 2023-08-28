@@ -1,5 +1,4 @@
-use std::path::Path;
-
+use crate::batch_shuffle::BatchShuffledDataset;
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 use crate::model::{Model, ModelConfig};
@@ -15,6 +14,7 @@ use burn::{
     train::LearnerBuilder,
 };
 use log::info;
+use std::path::Path;
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
     fn bceloss(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
@@ -38,8 +38,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             delta_ts.clone().unsqueeze::<2>().transpose(),
             stability.clone(),
         );
-        let logits =
-            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).reshape([2, -1]);
+        let logits = Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 1);
         info!("stability: {}", &stability);
         info!(
             "delta_ts: {}",
@@ -125,14 +124,14 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(FSRSDataset::train());
+        .build(BatchShuffledDataset::with_seed(
+            FSRSDataset::train(),
+            config.batch_size,
+            config.seed,
+        ));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
         .build(FSRSDataset::test());
 
     let lr_scheduler = CosineAnnealingLR::init(
@@ -176,18 +175,27 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .expect("Failed to save trained model");
 }
 
-#[test]
-fn test() {
-    use burn_ndarray::NdArrayBackend;
-    use burn_ndarray::NdArrayDevice;
-    type Backend = NdArrayBackend<f32>;
-    type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
-    let device = NdArrayDevice::Cpu;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let artifact_dir = ARTIFACT_DIR;
-    train::<AutodiffBackend>(
-        artifact_dir,
-        TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
-        device,
-    );
+    #[test]
+    fn training() {
+        if std::env::var("SKIP_TRAINING").is_ok() {
+            println!("Skipping test in CI");
+            return;
+        }
+        use burn_ndarray::NdArrayBackend;
+        use burn_ndarray::NdArrayDevice;
+        type Backend = NdArrayBackend<f32>;
+        type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
+        let device = NdArrayDevice::Cpu;
+
+        let artifact_dir = ARTIFACT_DIR;
+        train::<AutodiffBackend>(
+            artifact_dir,
+            TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
+            device,
+        );
+    }
 }

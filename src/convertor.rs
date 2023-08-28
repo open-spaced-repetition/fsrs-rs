@@ -1,12 +1,12 @@
 use chrono::prelude::*;
 use chrono_tz::Tz;
+use itertools::Itertools;
 use rusqlite::{Connection, Result, Row};
-use std::collections::HashMap;
 
 use crate::dataset::{FSRSItem, FSRSReview};
 
 #[derive(Clone, Debug, Default)]
-struct RevlogEntry {
+pub(crate) struct RevlogEntry {
     id: i64,
     cid: i64,
     button_chosen: i32,
@@ -63,23 +63,12 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
             WHERE queue != 0
             {suspended_cards_str}
             {flags_str}
-        )"
+        )
+        order by cid"
         ))?
         .query_and_then((current_timestamp, current_timestamp), row_to_revlog_entry)?
         .collect::<Result<Vec<_>>>()?;
     Ok(revlogs)
-}
-
-fn group_by_cid(revlogs: Vec<RevlogEntry>) -> Vec<Vec<RevlogEntry>> {
-    let mut grouped = HashMap::new();
-    for revlog in revlogs {
-        grouped
-            .entry(revlog.cid)
-            .or_insert_with(Vec::new)
-            .push(revlog);
-    }
-
-    grouped.into_values().collect()
 }
 
 fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chrono::NaiveDate {
@@ -189,14 +178,23 @@ fn convert_to_fsrs_items(
     )
 }
 
-pub fn anki_to_fsrs() -> Vec<FSRSItem> {
-    let revlogs = read_collection().expect("read error");
-    let revlogs_per_card = group_by_cid(revlogs);
-    revlogs_per_card
+pub(crate) fn anki21_sample_file_converted_to_fsrs() -> Vec<FSRSItem> {
+    anki_to_fsrs(read_collection().expect("read error"))
+}
+
+/// Convert a series of revlog entries sorted by card id into FSRS items.
+pub(crate) fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
+    let mut revlogs = revlogs
         .into_iter()
-        .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
+        .group_by(|r| r.cid)
+        .into_iter()
+        .filter_map(|(_cid, entries)| {
+            convert_to_fsrs_items(entries.collect(), 4, Tz::Asia__Shanghai)
+        })
         .flatten()
-        .collect()
+        .collect_vec();
+    revlogs.sort_by_cached_key(|r| r.reviews.len());
+    revlogs
 }
 
 #[cfg(test)]
@@ -210,7 +208,7 @@ mod tests {
     // This test currently expects the following .anki21 file to be placed in tests/data/:
     // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
     #[test]
-    fn test() {
+    fn conversion_works() {
         let revlogs = read_collection().unwrap();
         let single_card_revlog = vec![revlogs
             .iter()
@@ -218,14 +216,7 @@ mod tests {
             .cloned()
             .collect_vec()];
         assert_eq!(revlogs.len(), 24394);
-        let revlogs_per_card = group_by_cid(revlogs);
-        assert_eq!(revlogs_per_card.len(), 3324);
-        let fsrs_items = revlogs_per_card
-            .into_iter()
-            .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
-            .flatten()
-            .collect_vec();
-
+        let fsrs_items = anki_to_fsrs(revlogs);
         assert_eq!(fsrs_items.len(), 14290);
         assert_eq!(
             fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
@@ -360,5 +351,25 @@ mod tests {
             Data::from([0.0, 5.0, 10.0, 22.0, 56.0])
         );
         assert_eq!(res.labels.to_data(), Data::from([1]));
+    }
+
+    #[test]
+    fn ordering_of_inputs_should_not_change() {
+        let revlogs = anki21_sample_file_converted_to_fsrs();
+        assert_eq!(
+            revlogs[0],
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 3
+                    }
+                ]
+            }
+        );
     }
 }

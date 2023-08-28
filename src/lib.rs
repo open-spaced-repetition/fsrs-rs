@@ -6,3 +6,5 @@ pub mod dataset;
 pub mod model;
 pub mod training;
 mod weight_clipper;
+
+mod batch_shuffle;
