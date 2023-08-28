@@ -70,6 +70,18 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
 
         TrainOutput::new(self, item.loss.backward(), item)
     }
+
+    fn optimize<B1, O>(self, optim: &mut O, lr: f64, grads: burn::optim::GradientsParams) -> Self
+    where
+        B: ADBackend,
+        O: burn::optim::Optimizer<Self, B1>,
+        B1: burn::tensor::backend::ADBackend,
+        Self: burn::module::ADModule<B1>,
+    {
+        let mut model = optim.step(lr, self, grads);
+        model.w = Param::from(weight_clipper(model.w.val()));
+        model
+    }
 }
 
 impl<B: Backend<FloatElem = f32>> ValidStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
