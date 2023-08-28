@@ -12,7 +12,9 @@ use burn::{
     config::Config, data::dataloader::DataLoaderBuilder, module::Param, tensor::backend::ADBackend,
     train::LearnerBuilder,
 };
+use burn_train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
 use log::info;
+use std::sync::{Arc, Mutex};
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
     fn bceloss(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
@@ -109,8 +111,43 @@ impl<B: Backend<FloatElem = f32>> ValidStep<FSRSBatch<B>, ClassificationOutput<B
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ProgressInfo {
+    pub epoch: usize,
+    pub epoch_total: usize,
+    pub items_processed: usize,
+    pub items_total: usize,
+}
+
+#[derive(Default, Clone)]
+pub struct ProgressCollector {
+    pub state: Arc<Mutex<ProgressInfo>>,
+}
+
+impl ProgressCollector {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl DashboardRenderer for ProgressCollector {
+    fn update_train(&mut self, _state: DashboardMetricState) {}
+
+    fn update_valid(&mut self, _state: DashboardMetricState) {}
+
+    fn render_train(&mut self, item: TrainingProgress) {
+        let mut info = self.state.lock().unwrap();
+        info.epoch = item.epoch;
+        info.epoch_total = item.epoch_total;
+        info.items_processed = item.progress.items_processed;
+        info.items_total = item.progress.items_total;
+    }
+
+    fn render_valid(&mut self, _item: TrainingProgress) {}
+}
+
 #[derive(Config)]
-pub struct TrainingConfig {
+pub(crate) struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
     #[config(default = 10)]
@@ -125,7 +162,7 @@ pub struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-pub fn compute_weights(items: Vec<FSRSItem>) -> Vec<f32> {
+pub fn compute_weights(items: Vec<FSRSItem>, progress: Option<ProgressCollector>) -> Vec<f32> {
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
     type Backend = NdArrayBackend<f32>;
@@ -141,6 +178,7 @@ pub fn compute_weights(items: Vec<FSRSItem>) -> Vec<f32> {
             AdamConfig::new(),
         ),
         device,
+        progress,
         None,
     );
 
@@ -151,6 +189,8 @@ fn train<B: ADBackend<FloatElem = f32>>(
     items: Vec<FSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
+    progress: Option<ProgressCollector>,
+    // used in testing
     artifact_dir: Option<&str>,
 ) -> Model<B> {
     B::seed(config.seed);
@@ -186,6 +226,8 @@ fn train<B: ADBackend<FloatElem = f32>>(
         // .metric_valid_plot(AccuracyMetric::new())
         // .metric_train_plot(LossMetric::new())
         // .metric_valid_plot(LossMetric::new())
+    } else if let Some(progress) = progress {
+        builder = builder.renderer(progress).log_to_file(false)
     }
     let learner = builder.build(
         config.model.init::<B>(),
@@ -243,6 +285,7 @@ mod tests {
             anki21_sample_file_converted_to_fsrs(),
             &config,
             device,
+            None,
             Some(artifact_dir),
         );
 

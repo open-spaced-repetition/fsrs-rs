@@ -1,6 +1,6 @@
 use burn::tensor::{backend::Backend, Data, Tensor};
 
-pub fn weight_clipper<B: Backend<FloatElem = f32>>(weights: Tensor<B, 1>) -> Tensor<B, 1> {
+pub(crate) fn weight_clipper<B: Backend<FloatElem = f32>>(weights: Tensor<B, 1>) -> Tensor<B, 1> {
     const CLAMPS: [(f32, f32); 13] = [
         (1.0, 10.0),
         (0.1, 5.0),

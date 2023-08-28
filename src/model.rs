@@ -5,7 +5,7 @@ use burn::{
 };
 
 #[derive(Module, Debug)]
-pub struct Model<B: Backend> {
+pub(crate) struct Model<B: Backend> {
     pub w: Param<Tensor<B, 1>>,
     pub freeze_stability: bool,
 }
@@ -148,7 +148,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
 }
 
 #[derive(Config, Debug)]
-pub struct ModelConfig {
+pub(crate) struct ModelConfig {
     #[config(default = false)]
     pub freeze_stability: bool,
 }

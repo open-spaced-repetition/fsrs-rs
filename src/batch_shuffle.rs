@@ -2,7 +2,7 @@ use burn::data::dataset::Dataset;
 use rand::{prelude::SliceRandom, rngs::StdRng, SeedableRng};
 use std::marker::PhantomData;
 
-pub struct BatchShuffledDataset<D, I> {
+pub(crate) struct BatchShuffledDataset<D, I> {
     dataset: D,
     indices: Vec<usize>,
     input: PhantomData<I>,
