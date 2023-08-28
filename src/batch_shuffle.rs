@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn batch_shuffle() {
         use crate::dataset::FSRSDataset;
-        let dataset = FSRSDataset::train();
+        let dataset = FSRSDataset::sample_dataset();
         let batch_size = 10;
         let seed = 42;
         let batch_shuffled_dataset: BatchShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
@@ -90,7 +90,7 @@ mod tests {
     fn item_shuffle() {
         use crate::dataset::FSRSDataset;
         use burn::data::dataset::transform::ShuffledDataset;
-        let dataset = FSRSDataset::train();
+        let dataset = FSRSDataset::sample_dataset();
         let seed = 42;
         let shuffled_dataset: ShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
             ShuffledDataset::with_seed(dataset, seed);

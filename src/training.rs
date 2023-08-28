@@ -146,24 +146,24 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
     B::seed(config.seed);
 
-    // Data
-    let batcher_train: FSRSBatcher<B> = FSRSBatcher::<B>::new(device.clone());
-    let batcher_valid = FSRSBatcher::<B::InnerBackend>::new(device.clone());
-
+    // Training data
+    let dataset = FSRSDataset::sample_dataset();
+    let dataset_size = dataset.len();
+    let batcher_train = FSRSBatcher::<B>::new(device.clone());
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
         .build(BatchShuffledDataset::with_seed(
-            FSRSDataset::train(),
+            dataset,
             config.batch_size,
             config.seed,
         ));
 
-    let dataloader_test = DataLoaderBuilder::new(batcher_valid)
-        .batch_size(config.batch_size)
-        .build(FSRSDataset::test());
+    // We don't use any validation data
+    let batcher_valid = FSRSBatcher::<B::InnerBackend>::new(device.clone());
+    let dataloader_test = DataLoaderBuilder::new(batcher_valid).build(FSRSDataset::from(vec![]));
 
     let lr_scheduler = CosineAnnealingLR::init(
-        (FSRSDataset::train().len() * config.num_epochs) as f64,
+        (dataset_size * config.num_epochs) as f64,
         config.learning_rate,
     );
 

@@ -130,12 +130,8 @@ impl Dataset<FSRSItem> for FSRSDataset {
 }
 
 impl FSRSDataset {
-    pub fn train() -> Self {
-        Self::new_from_test_file()
-    }
-
-    pub fn test() -> Self {
-        Self::new_from_test_file()
+    pub fn sample_dataset() -> Self {
+        anki21_sample_file_converted_to_fsrs().into()
     }
 
     pub fn len(&self) -> usize {
@@ -144,10 +140,6 @@ impl FSRSDataset {
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
-    }
-
-    fn new_from_test_file() -> Self {
-        anki21_sample_file_converted_to_fsrs().into()
     }
 }
 
