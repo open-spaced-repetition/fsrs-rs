@@ -43,6 +43,17 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 }
 
+impl <B: ADBackend<FloatElem = f32>> Model<B> {
+    fn freeze_initial_stability(&self, mut grad: B::Gradients) -> B::Gradients {
+        let grad_tensor = self.w.grad(&grad).unwrap();
+        let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
+
+        self.w.grad_remove(&mut grad);
+        self.w.grad_replace(&mut grad, updated_grad_tensor);
+        grad
+    }
+}
+
 impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
     fn step(&self, batch: FSRSBatch<B>) -> TrainOutput<ClassificationOutput<B>> {
         let item = self.forward_classification(
@@ -53,11 +64,7 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
         );
         let mut gradients = item.loss.backward();
 
-        let grad_tensor = self.w.grad(&gradients).unwrap();
-        let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
-
-        self.w.grad_remove(&mut gradients);
-        self.w.grad_replace(&mut gradients, updated_grad_tensor);
+        gradients = self.freeze_initial_stability(gradients);
 
         TrainOutput::new(self, gradients, item)
     }
