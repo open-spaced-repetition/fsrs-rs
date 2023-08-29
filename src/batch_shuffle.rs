@@ -69,11 +69,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn batch_shuffle() {
         use crate::dataset::FSRSDataset;
-        let dataset = FSRSDataset::sample_dataset();
+        let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
         let batch_size = 10;
         let seed = 42;
         let batch_shuffled_dataset: BatchShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
@@ -90,7 +91,7 @@ mod tests {
     fn item_shuffle() {
         use crate::dataset::FSRSDataset;
         use burn::data::dataset::transform::ShuffledDataset;
-        let dataset = FSRSDataset::sample_dataset();
+        let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
         let seed = 42;
         let shuffled_dataset: ShuffledDataset<FSRSDataset, crate::dataset::FSRSItem> =
             ShuffledDataset::with_seed(dataset, seed);

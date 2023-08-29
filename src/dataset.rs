@@ -1,4 +1,3 @@
-use crate::convertor::anki21_sample_file_converted_to_fsrs;
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
     data::dataset::Dataset,
@@ -130,10 +129,6 @@ impl Dataset<FSRSItem> for FSRSDataset {
 }
 
 impl FSRSDataset {
-    pub fn sample_dataset() -> Self {
-        anki21_sample_file_converted_to_fsrs().into()
-    }
-
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -152,6 +147,7 @@ impl From<Vec<FSRSItem>> for FSRSDataset {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn from_anki() {
