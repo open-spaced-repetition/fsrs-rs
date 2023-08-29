@@ -61,7 +61,7 @@ jobs:
             ${{ runner.os }}-rust-release
       - name: install wget
         shell: bash
-        run: conan install wget
+        run: choco install wget
         
       - name: Run checks
         shell: bash
