@@ -79,7 +79,7 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
             batch.labels,
         );
         let mut gradients = item.loss.backward();
-        
+
         if self.freeze_stability {
             gradients = self.freeze_initial_stability(gradients);
         }
@@ -117,7 +117,7 @@ static ARTIFACT_DIR: &str = "./tmp/fsrs";
 pub struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
-    #[config(default = 1)]
+    #[config(default = 10)]
     pub num_epochs: usize,
     #[config(default = 512)]
     pub batch_size: usize,
@@ -203,7 +203,6 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
         .expect("Failed to save trained model");
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,7 +222,12 @@ mod tests {
         let artifact_dir = ARTIFACT_DIR;
         train::<AutodiffBackend>(
             artifact_dir,
-            TrainingConfig::new(ModelConfig {freeze_stability: true}, AdamConfig::new()),
+            TrainingConfig::new(
+                ModelConfig {
+                    freeze_stability: true,
+                },
+                AdamConfig::new(),
+            ),
             device,
         );
     }
