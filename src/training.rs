@@ -63,8 +63,10 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
             batch.labels,
         );
         let mut gradients = item.loss.backward();
-
-        gradients = self.freeze_initial_stability(gradients);
+        
+        if self.freeze_stability {
+            gradients = self.freeze_initial_stability(gradients);
+        }
 
         TrainOutput::new(self, gradients, item)
     }
@@ -169,7 +171,7 @@ fn test() {
     let artifact_dir = ARTIFACT_DIR;
     train::<AutodiffBackend>(
         artifact_dir,
-        TrainingConfig::new(ModelConfig::new(), AdamConfig::new()),
+        TrainingConfig::new(ModelConfig {freeze_stability: true}, AdamConfig::new()),
         device,
     );
 }
