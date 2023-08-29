@@ -56,14 +56,14 @@ pub(crate) mod tests {
 
         // Find the index of the first RevlogEntry in the last continuous group where review_kind = LEARNING
         // 寻找最后一组连续 review_kind = LEARNING 的第一个 RevlogEntry 的索引
-        let mut index_to_keep = LEARNING;
+        let mut index_to_keep = 0;
         let mut i = entries.len();
 
         while i > 0 {
             i -= 1;
             if entries[i].review_kind == LEARNING {
                 index_to_keep = i;
-            } else if index_to_keep != LEARNING {
+            } else if index_to_keep != 0 {
                 // Found a continuous group of review_kind = LEARNING, exit the loop
                 // 找到了连续的 review_kind = LEARNING 的组，退出循环
                 break;
