@@ -372,4 +372,113 @@ pub(crate) mod tests {
             }
         );
     }
+
+    enum RevlogReviewKind {
+        Learning = 0,
+        Review = 1,
+        // Relearning = 2,
+        // Filtered = 3,
+        // Manual = 4,
+    }
+
+    const NEXT_DAY_AT: i64 = 86400 * 100;
+
+    fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
+        RevlogEntry {
+            review_kind: review_kind as usize,
+            id: ((NEXT_DAY_AT - days_ago * 86400) * 1000).into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn delta_t_is_correct() -> Result<()> {
+        assert_eq!(
+            convert_to_fsrs_items(
+                vec![
+                    revlog(RevlogReviewKind::Learning, 1),
+                    revlog(RevlogReviewKind::Review, 0)
+                ],
+                NEXT_DAY_AT,
+                Tz::Asia__Shanghai
+            ),
+            Some(vec![FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 0,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 0,
+                        delta_t: 1
+                    }
+                ]
+            }])
+        );
+
+        assert_eq!(
+            convert_to_fsrs_items(
+                vec![
+                    revlog(RevlogReviewKind::Learning, 15),
+                    revlog(RevlogReviewKind::Learning, 13),
+                    revlog(RevlogReviewKind::Review, 10),
+                    revlog(RevlogReviewKind::Review, 5)
+                ],
+                NEXT_DAY_AT,
+                Tz::Asia__Shanghai
+            ),
+            Some(vec![
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 0
+                        },
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 2
+                        }
+                    ]
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 0
+                        },
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 2
+                        },
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 3
+                        }
+                    ]
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 0
+                        },
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 2
+                        },
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 3
+                        },
+                        FSRSReview {
+                            rating: 0,
+                            delta_t: 5
+                        }
+                    ]
+                }
+            ])
+        );
+
+        Ok(())
+    }
 }
