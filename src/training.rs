@@ -1,3 +1,5 @@
+use crate::batch_shuffle::BatchShuffledDataset;
+use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 use crate::model::{Model, ModelConfig};
 use crate::weight_clipper::weight_clipper;
@@ -12,11 +14,13 @@ use burn::{
     train::LearnerBuilder,
 };
 use log::info;
+use std::path::Path;
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
-    fn bceloss(&self, retentions: Tensor<B, 1>, labels: Tensor<B, 1>) -> Tensor<B, 1> {
-        let loss: Tensor<B, 1> =
+    fn bceloss(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
+        let loss: Tensor<B, 2> =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
+        info!("loss: {}", &loss);
         loss.mean().neg()
     }
 
@@ -30,15 +34,27 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let (stability, _difficulty) = self.forward(t_historys, r_historys);
-        let retention = self.power_forgetting_curve(delta_ts.clone(), stability.clone());
-        let logits =
-            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).reshape([1, -1]);
+        let retention = self.power_forgetting_curve(
+            delta_ts.clone().unsqueeze::<2>().transpose(),
+            stability.clone(),
+        );
+        let logits = Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 1);
         info!("stability: {}", &stability);
-        info!("delta_ts: {}", &delta_ts);
+        info!(
+            "delta_ts: {}",
+            &delta_ts.clone().unsqueeze::<2>().transpose()
+        );
         info!("retention: {}", &retention);
         info!("logits: {}", &logits);
-        info!("labels: {}", &labels);
-        let loss = self.bceloss(retention.clone(), labels.clone().float());
+        info!(
+            "labels: {}",
+            &labels.clone().unsqueeze::<2>().float().transpose()
+        );
+        let loss = self.bceloss(
+            retention,
+            labels.clone().unsqueeze::<2>().float().transpose(),
+        );
+        info!("loss: {}", &loss);
         ClassificationOutput::new(loss, logits, labels)
     }
 }
@@ -70,6 +86,18 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
 
         TrainOutput::new(self, gradients, item)
     }
+
+    fn optimize<B1, O>(self, optim: &mut O, lr: f64, grads: burn::optim::GradientsParams) -> Self
+    where
+        B: ADBackend,
+        O: burn::optim::Optimizer<Self, B1>,
+        B1: burn::tensor::backend::ADBackend,
+        Self: burn::module::ADModule<B1>,
+    {
+        let mut model = optim.step(lr, self, grads);
+        model.w = Param::from(weight_clipper(model.w.val()));
+        model
+    }
 }
 
 impl<B: Backend<FloatElem = f32>> ValidStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
@@ -91,13 +119,13 @@ pub struct TrainingConfig {
     pub optimizer: AdamConfig,
     #[config(default = 1)]
     pub num_epochs: usize,
-    #[config(default = 1)]
+    #[config(default = 512)]
     pub batch_size: usize,
     #[config(default = 4)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-4)]
+    #[config(default = 8.0e-3)]
     pub learning_rate: f64,
 }
 
@@ -108,7 +136,12 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 ) {
     std::fs::create_dir_all(artifact_dir).ok();
     config
-        .save(&format!("{artifact_dir}/config.json"))
+        .save(
+            Path::new(artifact_dir)
+                .join("config.json")
+                .to_str()
+                .unwrap(),
+        )
         .expect("Save without error");
 
     B::seed(config.seed);
@@ -119,28 +152,33 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
 
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(FSRSDataset::train());
+        .build(BatchShuffledDataset::with_seed(
+            FSRSDataset::train(),
+            config.batch_size,
+            config.seed,
+        ));
 
     let dataloader_test = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
         .build(FSRSDataset::test());
+
+    let lr_scheduler = CosineAnnealingLR::init(
+        (FSRSDataset::train().len() * config.num_epochs) as f64,
+        config.learning_rate,
+    );
 
     let learner = LearnerBuilder::new(artifact_dir)
         // .metric_train_plot(AccuracyMetric::new())
         // .metric_valid_plot(AccuracyMetric::new())
         // .metric_train_plot(LossMetric::new())
         // .metric_valid_plot(LossMetric::new())
-        .with_file_checkpointer(1, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
+        .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
         .devices(vec![device])
         .num_epochs(config.num_epochs)
         .build(
             config.model.init::<B>(),
             config.optimizer.init(),
-            config.learning_rate,
+            lr_scheduler,
         );
 
     let mut model_trained = learner.fit(dataloader_train, dataloader_test);
@@ -149,29 +187,44 @@ pub fn train<B: ADBackend<FloatElem = f32>>(
     info!("clipped weights: {}", &model_trained.w.val());
 
     config
-        .save(format!("{ARTIFACT_DIR}/config.json").as_str())
+        .save(
+            Path::new(ARTIFACT_DIR)
+                .join("config.json")
+                .to_str()
+                .unwrap(),
+        )
         .unwrap();
 
     PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
         .record(
-            model_trained.clone().into_record(),
-            format!("{ARTIFACT_DIR}/model").into(),
+            model_trained.into_record(),
+            Path::new(ARTIFACT_DIR).join("model"),
         )
         .expect("Failed to save trained model");
 }
 
-#[test]
-fn test() {
-    use burn_ndarray::NdArrayBackend;
-    use burn_ndarray::NdArrayDevice;
-    type Backend = NdArrayBackend<f32>;
-    type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
-    let device = NdArrayDevice::Cpu;
 
-    let artifact_dir = ARTIFACT_DIR;
-    train::<AutodiffBackend>(
-        artifact_dir,
-        TrainingConfig::new(ModelConfig {freeze_stability: true}, AdamConfig::new()),
-        device,
-    );
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn training() {
+        if std::env::var("SKIP_TRAINING").is_ok() {
+            println!("Skipping test in CI");
+            return;
+        }
+        use burn_ndarray::NdArrayBackend;
+        use burn_ndarray::NdArrayDevice;
+        type Backend = NdArrayBackend<f32>;
+        type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
+        let device = NdArrayDevice::Cpu;
+
+        let artifact_dir = ARTIFACT_DIR;
+        train::<AutodiffBackend>(
+            artifact_dir,
+            TrainingConfig::new(ModelConfig {freeze_stability: true}, AdamConfig::new()),
+            device,
+        );
+    }
 }

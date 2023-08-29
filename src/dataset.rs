@@ -1,23 +1,36 @@
+use crate::convertor::anki21_sample_file_converted_to_fsrs;
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
-    data::dataset::{Dataset, InMemDataset},
+    data::dataset::Dataset,
     tensor::{backend::Backend, Data, ElementConversion, Float, Int, Shape, Tensor},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::convertor::anki_to_fsrs;
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
+/// to a single review, but contains the previous reviews of the card as well, after the
+/// first one.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct FSRSItem {
-    pub reviews: Vec<Review>,
-    pub delta_t: f32,
-    pub label: f32,
+    pub reviews: Vec<FSRSReview>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Review {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct FSRSReview {
+    /// 1-4
     pub rating: i32,
+    /// The number of days that passed
     pub delta_t: i32,
+}
+
+impl FSRSItem {
+    // The previous reviews done before the current one.
+    pub(crate) fn history(&self) -> impl Iterator<Item = &FSRSReview> {
+        self.reviews.iter().take(self.reviews.len() - 1)
+    }
+
+    pub(crate) fn current(&self) -> &FSRSReview {
+        self.reviews.last().unwrap()
+    }
 }
 
 pub struct FSRSBatcher<B: Backend> {
@@ -40,48 +53,51 @@ pub struct FSRSBatch<B: Backend> {
 
 impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, items: Vec<FSRSItem>) -> FSRSBatch<B> {
-        let t_historys = items
+        let pad_size = items
+            .iter()
+            .map(|x| x.reviews.len())
+            .max()
+            .expect("FSRSItem is empty")
+            - 1;
+
+        let (time_histories, rating_histories) = items
             .iter()
             .map(|item| {
-                Data::new(
-                    item.reviews.iter().map(|r| r.delta_t).collect(),
-                    Shape {
-                        dims: [item.reviews.len()],
-                    },
+                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
+                    item.history().map(|r| (r.delta_t, r.rating)).unzip();
+                delta_t.resize(pad_size, 0);
+                rating.resize(pad_size, 0);
+                let delta_t = Tensor::<B, 1>::from_data(
+                    Data::new(delta_t, Shape { dims: [pad_size] }).convert(),
                 )
+                .unsqueeze();
+                let rating = Tensor::<B, 1>::from_data(
+                    Data::new(rating, Shape { dims: [pad_size] }).convert(),
+                )
+                .unsqueeze();
+                (delta_t, rating)
             })
-            .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.unsqueeze())
-            .collect();
+            .unzip();
 
-        let r_historys = items
+        let (delta_ts, labels) = items
             .iter()
             .map(|item| {
-                Data::new(
-                    item.reviews.iter().map(|r| r.rating).collect(),
-                    Shape {
-                        dims: [item.reviews.len()],
-                    },
-                )
+                let current = item.current();
+                let delta_t =
+                    Tensor::<B, 1, Float>::from_data(Data::from([current.delta_t.elem()]));
+                let label = match current.rating {
+                    1 => 0.0,
+                    _ => 1.0,
+                };
+                let label = Tensor::<B, 1, Int>::from_data(Data::from([label.elem()]));
+                (delta_t, label)
             })
-            .map(|data| Tensor::<B, 1>::from_data(data.convert()))
-            .map(|tensor| tensor.unsqueeze())
-            .collect();
+            .unzip();
 
-        let delta_ts = items
-            .iter()
-            .map(|item| Tensor::<B, 1, Float>::from_data(Data::from([item.delta_t.elem()])))
-            .collect();
-
-        let labels = items
-            .iter()
-            .map(|item| Tensor::<B, 1, Int>::from_data(Data::from([item.label.elem()])))
-            .collect();
-
-        let t_historys = Tensor::cat(t_historys, 0)
+        let t_historys = Tensor::cat(time_histories, 0)
             .transpose()
             .to_device(&self.device); // [seq_len, batch_size]
-        let r_historys = Tensor::cat(r_historys, 0)
+        let r_historys = Tensor::cat(rating_histories, 0)
             .transpose()
             .to_device(&self.device); // [seq_len, batch_size]
         let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);
@@ -100,58 +116,238 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
 }
 
 pub struct FSRSDataset {
-    dataset: InMemDataset<FSRSItem>,
+    items: Vec<FSRSItem>,
 }
 
 impl Dataset<FSRSItem> for FSRSDataset {
     fn len(&self) -> usize {
-        self.dataset.len()
+        self.items.len()
     }
 
     fn get(&self, index: usize) -> Option<FSRSItem> {
-        self.dataset.get(index)
+        self.items.get(index).cloned()
     }
 }
 
 impl FSRSDataset {
     pub fn train() -> Self {
-        Self::new()
+        Self::new_from_test_file()
     }
 
     pub fn test() -> Self {
-        Self::new()
+        Self::new_from_test_file()
     }
 
-    fn new() -> Self {
-        let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
-        Self { dataset }
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    fn new_from_test_file() -> Self {
+        anki21_sample_file_converted_to_fsrs().into()
     }
 }
 
-#[test]
-fn test_from_anki() {
-    use burn::data::dataloader::Dataset;
-    use burn::data::dataset::InMemDataset;
+impl From<Vec<FSRSItem>> for FSRSDataset {
+    fn from(items: Vec<FSRSItem>) -> Self {
+        Self { items }
+    }
+}
 
-    let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
-    dbg!(dataset.get(704).unwrap());
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    use burn_ndarray::NdArrayDevice;
-    let device = NdArrayDevice::Cpu;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let batcher = FSRSBatcher::<Backend>::new(device);
-    use burn::data::dataloader::DataLoaderBuilder;
-    let dataloader = DataLoaderBuilder::new(batcher)
-        .batch_size(1)
-        .shuffle(42)
-        .num_workers(4)
-        .build(dataset);
-    dbg!(
-        dataloader
-            .iter()
-            .next()
-            .expect("loader is empty")
-            .r_historys
-    );
+    #[test]
+    fn from_anki() {
+        use burn::data::dataloader::Dataset;
+
+        let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
+        dbg!(dataset.get(704).unwrap());
+
+        use burn_ndarray::NdArrayDevice;
+        let device = NdArrayDevice::Cpu;
+        use burn_ndarray::NdArrayBackend;
+        type Backend = NdArrayBackend<f32>;
+        let batcher = FSRSBatcher::<Backend>::new(device);
+        use burn::data::dataloader::DataLoaderBuilder;
+        let dataloader = DataLoaderBuilder::new(batcher)
+            .batch_size(1)
+            .shuffle(42)
+            .num_workers(4)
+            .build(dataset);
+        dbg!(
+            dataloader
+                .iter()
+                .next()
+                .expect("loader is empty")
+                .r_historys
+        );
+    }
+
+    #[test]
+    fn batcher() {
+        use burn_ndarray::NdArrayBackend;
+        use burn_ndarray::NdArrayDevice;
+        type Backend = NdArrayBackend<f32>;
+        let device = NdArrayDevice::Cpu;
+        let batcher = FSRSBatcher::<Backend>::new(device);
+        let items = vec![
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 5,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 5,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 11,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 6,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 6,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 16,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 6,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 16,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 39,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 1,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                ],
+            },
+        ];
+        let batch = batcher.batch(items);
+        assert_eq!(
+            batch.t_historys.to_data(),
+            Data::from([
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 5.0, 0.0, 2.0, 2.0, 2.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 6.0, 6.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 16.0, 0.0, 0.0]
+            ])
+        );
+        assert_eq!(
+            batch.r_historys.to_data(),
+            Data::from([
+                [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 1.0, 1.0],
+                [0.0, 3.0, 0.0, 3.0, 3.0, 3.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0]
+            ])
+        );
+        assert_eq!(
+            batch.delta_ts.to_data(),
+            Data::from([5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0])
+        );
+        assert_eq!(batch.labels.to_data(), Data::from([1, 1, 1, 1, 1, 1, 0, 1]));
+    }
 }

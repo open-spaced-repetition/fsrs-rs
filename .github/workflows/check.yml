@@ -1,6 +1,5 @@
 name: Check code
 on:
-  push:
   pull_request:
 
 jobs:
@@ -16,9 +15,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-rust-release-v5-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-rust-release-v6-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-release-v5
+            ${{ runner.os }}-rust-release-v6
             ${{ runner.os }}-rust-release
 
       - name: Run checks
