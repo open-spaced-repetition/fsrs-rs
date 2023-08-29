@@ -59,7 +59,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-release-v5
             ${{ runner.os }}-rust-release
-
+      - name: install wget
+        shell: bash
+        run: conan install wget
+        
       - name: Run checks
         shell: bash
         run: .github/workflows/check.sh
