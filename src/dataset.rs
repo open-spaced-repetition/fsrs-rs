@@ -1,4 +1,3 @@
-use crate::convertor::anki21_sample_file_converted_to_fsrs;
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
     data::dataset::Dataset,
@@ -33,7 +32,7 @@ impl FSRSItem {
     }
 }
 
-pub struct FSRSBatcher<B: Backend> {
+pub(crate) struct FSRSBatcher<B: Backend> {
     device: B::Device,
 }
 
@@ -44,7 +43,7 @@ impl<B: Backend> FSRSBatcher<B> {
 }
 
 #[derive(Debug, Clone)]
-pub struct FSRSBatch<B: Backend> {
+pub(crate) struct FSRSBatch<B: Backend> {
     pub t_historys: Tensor<B, 2, Float>,
     pub r_historys: Tensor<B, 2, Float>,
     pub delta_ts: Tensor<B, 1, Float>,
@@ -115,7 +114,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     }
 }
 
-pub struct FSRSDataset {
+pub(crate) struct FSRSDataset {
     items: Vec<FSRSItem>,
 }
 
@@ -129,28 +128,6 @@ impl Dataset<FSRSItem> for FSRSDataset {
     }
 }
 
-impl FSRSDataset {
-    pub fn train() -> Self {
-        Self::new_from_test_file()
-    }
-
-    pub fn test() -> Self {
-        Self::new_from_test_file()
-    }
-
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    fn new_from_test_file() -> Self {
-        anki21_sample_file_converted_to_fsrs().into()
-    }
-}
-
 impl From<Vec<FSRSItem>> for FSRSDataset {
     fn from(items: Vec<FSRSItem>) -> Self {
         Self { items }
@@ -160,6 +137,7 @@ impl From<Vec<FSRSItem>> for FSRSDataset {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn from_anki() {
