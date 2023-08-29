@@ -11,12 +11,17 @@ pub(crate) mod tests {
 
     use crate::dataset::{FSRSItem, FSRSReview};
 
+    // keep these in sync with the anki code: https://github.com/ankitects/anki/blob/740528eaf913ff4bb9d112d494a10e84fd01365a/rslib/src/revlog/mod.rs#L64-L74
+    const LEARNING: usize = 0;
+    const REVIEW: usize = 1;
+    const RELEARNING: usize = 2;
+
     #[derive(Clone, Debug, Default)]
     pub(crate) struct RevlogEntry {
         id: i64,
         cid: i64,
         button_chosen: i32,
-        review_kind: i64,
+        review_kind: usize,
         delta_t: i32,
     }
 
@@ -46,18 +51,18 @@ pub(crate) mod tests {
         next_day_starts_at: i64,
         timezone: Tz,
     ) -> Option<Vec<FSRSItem>> {
-        // Find the index of the first RevlogEntry in the last continuous group where review_kind = 0
-        // 寻找最后一组连续 review_kind = 0 的第一个 RevlogEntry 的索引
+        // Find the index of the first RevlogEntry in the last continuous group where review_kind = LEARNING
+        // 寻找最后一组连续 review_kind = LEARNING 的第一个 RevlogEntry 的索引
         let mut index_to_keep = 0;
         let mut i = entries.len();
 
         while i > 0 {
             i -= 1;
-            if entries[i].review_kind == 0 {
+            if entries[i].review_kind == LEARNING {
                 index_to_keep = i;
             } else if index_to_keep != 0 {
-                // Found a continuous group of review_kind = 0, exit the loop
-                // 找到了连续的 review_kind = 0 的组，退出循环
+                // Found a continuous group of review_kind = LEARNING, exit the loop
+                // 找到了连续的 review_kind = LEARNING 的组，退出循环
                 break;
             }
         }
@@ -68,17 +73,13 @@ pub(crate) mod tests {
 
         // we ignore cards that don't start in the learning state
         if let Some(entry) = entries.first() {
-            if entry.review_kind != 0 {
+            if entry.review_kind != LEARNING {
                 return None;
             }
         } else {
             // no revlog entries
             return None;
         }
-
-        // Increment review_kind of all entries by 1
-        // 将所有 review_kind + 1
-        entries.iter_mut().for_each(|entry| entry.review_kind += 1);
 
         // Convert the timestamp and keep the first RevlogEntry for each date
         // 转换时间戳并保留每个日期的第一个 RevlogEntry
@@ -96,11 +97,11 @@ pub(crate) mod tests {
             entries[i].delta_t = (date_current - date_previous).num_days() as i32;
         }
 
-        // Find the RevlogEntry with review_kind = 0 where the preceding RevlogEntry has review_kind of 1 or 2, then remove it and all following RevlogEntries
-        // 找到 review_kind = 0 且前一个 RevlogEntry 的 review_kind 是 1 或 2 的 RevlogEntry，然后删除其及其之后的所有 RevlogEntry
+        // Find the RevlogEntry with review_kind = LEARNING where the preceding RevlogEntry has review_kind of REVIEW or RELEARN, then remove it and all following RevlogEntries
+        // 找到 review_kind = LEARNING 且前一个 RevlogEntry 的 review_kind 是 REVIEW 或 RELEARN 的 RevlogEntry，然后删除其及其之后的所有 RevlogEntry
         if let Some(index_to_remove) = entries.windows(2).enumerate().find_map(|(i, window)| {
-            if (window[0].review_kind == 1 || window[0].review_kind == 2)
-                && window[1].review_kind == 0
+            if (window[0].review_kind == REVIEW || window[0].review_kind == RELEARNING)
+                && window[1].review_kind == LEARNING
             {
                 // Return the index of the first RevlogEntry that meets the condition
                 // 返回第一个符合条件的 RevlogEntry 的索引
