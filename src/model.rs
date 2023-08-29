@@ -49,10 +49,10 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             .mask_where(rating.equal_elem(4), self.w().slice([16..17]).unsqueeze());
 
         last_s.clone()
-            * (self.w().slice([8..9]).reshape([1, 1]).exp()
+            * (self.w().slice([8..9]).exp()
                 * (-new_d + 11)
-                * (-self.w().slice([9..10]).reshape([1, 1]) * last_s.log()).exp()
-                * (((-r + 1) * self.w().slice([10..11]).reshape([1, 1])).exp() - 1)
+                * (-self.w().slice([9..10]) * last_s.log()).exp()
+                * (((-r + 1) * self.w().slice([10..11])).exp() - 1)
                 * hard_penalty
                 * easy_bonus
                 + 1)
@@ -64,16 +64,14 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         new_d: Tensor<B, 2>,
         r: Tensor<B, 2>,
     ) -> Tensor<B, 2> {
-        self.w().slice([11..12]).reshape([1, 1])
-            * (-self.w().slice([12..13]).reshape([1, 1]) * new_d.log()).exp()
-            * ((self.w().slice([13..14]).reshape([1, 1]) * (last_s + 1).log()).exp() - 1)
-            * ((-r + 1) * self.w().slice([14..15]).reshape([1, 1])).exp()
+        self.w().slice([11..12])
+            * (-self.w().slice([12..13]) * new_d.log()).exp()
+            * ((self.w().slice([13..14]) * (last_s + 1).log()).exp() - 1)
+            * ((-r + 1) * self.w().slice([14..15])).exp()
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.w().slice([7..8]).reshape([1, 1])
-            * (self.w().slice([4..5]).reshape([1, 1]) - new_d.clone())
-            + new_d
+        self.w().slice([7..8]) * (self.w().slice([4..5]) - new_d.clone()) + new_d
     }
 
     fn init_stability(&self, rating: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -85,12 +83,11 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 
     fn init_difficulty(&self, rating: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.w().slice([4..5]).reshape([1, 1])
-            - self.w().slice([5..6]).reshape([1, 1]) * (rating - 3)
+        self.w().slice([4..5]) - self.w().slice([5..6]) * (rating - 3)
     }
 
     fn next_difficulty(&self, difficulty: Tensor<B, 2>, rating: Tensor<B, 2>) -> Tensor<B, 2> {
-        difficulty - self.w().slice([6..7]).reshape([1, 1]) * (rating - 3)
+        difficulty - self.w().slice([6..7]) * (rating - 3)
     }
 
     fn step(
