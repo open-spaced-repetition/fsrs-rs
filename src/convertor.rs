@@ -11,9 +11,10 @@ pub(crate) mod tests {
 
     use crate::dataset::{FSRSItem, FSRSReview};
 
-    const LEARNING: usize = 1;
-    const REVIEW: usize = 2;
-    const RELEARNING: usize = 3;
+    // keep these in sync with the anki code: https://github.com/ankitects/anki/blob/740528eaf913ff4bb9d112d494a10e84fd01365a/rslib/src/revlog/mod.rs#L64-L74
+    const LEARNING: usize = 0;
+    const REVIEW: usize = 1;
+    const RELEARNING: usize = 2;
 
     #[derive(Clone, Debug, Default)]
     pub(crate) struct RevlogEntry {
@@ -50,10 +51,6 @@ pub(crate) mod tests {
         next_day_starts_at: i64,
         timezone: Tz,
     ) -> Option<Vec<FSRSItem>> {
-        // Increment review_kind of all entries by 1
-        // 将所有 review_kind + 1
-        entries.iter_mut().for_each(|entry| entry.review_kind += 1);
-
         // Find the index of the first RevlogEntry in the last continuous group where review_kind = LEARNING
         // 寻找最后一组连续 review_kind = LEARNING 的第一个 RevlogEntry 的索引
         let mut index_to_keep = 0;
