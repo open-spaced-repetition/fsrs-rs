@@ -147,7 +147,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 }
 
-#[derive(Config, Debug)]
+#[derive(Config, Debug, Default)]
 pub(crate) struct ModelConfig {
     #[config(default = false)]
     pub freeze_stability: bool,

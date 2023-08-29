@@ -171,12 +171,7 @@ pub fn compute_weights(items: Vec<FSRSItem>, progress: Option<ProgressCollector>
 
     let model = train::<AutodiffBackend>(
         items,
-        &TrainingConfig::new(
-            ModelConfig {
-                freeze_stability: true,
-            },
-            AdamConfig::new(),
-        ),
+        &TrainingConfig::new(ModelConfig::default(), AdamConfig::new()),
         device,
         progress,
         None,
@@ -264,12 +259,7 @@ mod tests {
         let device = NdArrayDevice::Cpu;
 
         let artifact_dir = "./tmp/fsrs";
-        let config = TrainingConfig::new(
-            ModelConfig {
-                freeze_stability: true,
-            },
-            AdamConfig::new(),
-        );
+        let config = TrainingConfig::new(ModelConfig::default(), AdamConfig::new());
 
         std::fs::create_dir_all(artifact_dir).unwrap();
         config
