@@ -5,13 +5,14 @@ use burn::{
 };
 
 #[derive(Module, Debug)]
-pub struct Model<B: Backend> {
+pub(crate) struct Model<B: Backend> {
     pub w: Param<Tensor<B, 1>>,
+    pub freeze_stability: bool,
 }
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
     #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
+    pub fn new(freeze_stability: bool) -> Self {
         Self {
             w: Param::from(Tensor::from_floats([
                 0.4, 0.6, 2.4, 5.8, // initial stability
@@ -20,6 +21,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
                 2.18, 0.05, 0.34, 1.26, // failure
                 0.29, 2.61, // hard penalty, easy bonus
             ])),
+            freeze_stability,
         }
     }
 
@@ -145,163 +147,16 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 }
 
-#[derive(Config, Debug)]
-pub struct ModelConfig {}
+#[derive(Config, Debug, Default)]
+pub(crate) struct ModelConfig {
+    #[config(default = false)]
+    pub freeze_stability: bool,
+}
 
 impl ModelConfig {
     pub fn init<B: Backend<FloatElem = f32>>(&self) -> Model<B> {
-        Model::new()
+        Model::new(self.freeze_stability)
     }
-}
-
-#[test]
-fn test_w() {
-    use burn::tensor::Data;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
-    assert_eq!(
-        model.w().to_data(),
-        Data::from([
-            [0.4],
-            [0.6],
-            [2.4],
-            [5.8],
-            [4.93],
-            [0.94],
-            [0.86],
-            [0.01],
-            [1.49],
-            [0.14],
-            [0.94],
-            [2.18],
-            [0.05],
-            [0.34],
-            [1.26],
-            [0.29],
-            [2.61]
-        ])
-    )
-}
-
-#[test]
-fn test_power_forgetting_curve() {
-    use burn::tensor::Data;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
-    let delta_t = Tensor::<Backend, 2>::from_floats([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]);
-    let stability = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [4.0], [2.0]]);
-    let retention = model.power_forgetting_curve(delta_t, stability);
-    assert_eq!(
-        retention.to_data(),
-        Data::from([
-            [1.0],
-            [0.9473684],
-            [0.9310345],
-            [0.92307687],
-            [0.9],
-            [0.7826087]
-        ])
-    )
-}
-
-#[test]
-fn test_init_stability() {
-    use burn::tensor::Data;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
-    let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
-    let stability = model.init_stability(rating);
-    assert_eq!(
-        stability.to_data(),
-        Data::from([[0.4], [0.6], [2.4], [5.8], [0.4], [0.6]])
-    )
-}
-
-#[test]
-fn test_init_difficulty() {
-    use burn::tensor::Data;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
-    let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
-    let difficulty = model.init_difficulty(rating);
-    assert_eq!(
-        difficulty.to_data(),
-        Data::from([[6.81], [5.87], [4.93], [3.9899998], [6.81], [5.87]])
-    )
-}
-
-#[test]
-fn test_next_difficulty() {
-    use burn::tensor::Data;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
-    let difficulty = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
-    let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
-    let next_difficulty = model.next_difficulty(difficulty, rating);
-    assert_eq!(
-        next_difficulty.to_data(),
-        Data::from([[6.7200003], [5.86], [5.0], [4.14]])
-    );
-    let next_difficulty = model.mean_reversion(next_difficulty);
-    assert_eq!(
-        next_difficulty.to_data(),
-        Data::from([[6.7021003], [5.8507], [4.9993], [4.1478996]])
-    )
-}
-
-#[test]
-fn test_next_stability() {
-    use burn::tensor::Data;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
-    let stability = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
-    let difficulty = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
-    let retention = Tensor::<Backend, 2>::from_floats([[0.9], [0.8], [0.7], [0.6]]);
-    let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
-    let s_recall = model.stability_after_success(
-        stability.clone(),
-        difficulty.clone(),
-        retention.clone(),
-        rating.clone(),
-    );
-    assert_eq!(
-        s_recall.to_data(),
-        Data::from([[22.454704], [14.560361], [51.15574], [152.6869]])
-    );
-    let s_forget = model.stability_after_failure(stability, difficulty, retention);
-    assert_eq!(
-        s_forget.to_data(),
-        Data::from([[2.074517], [2.2729328], [2.526406], [2.8247323]])
-    );
-    let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
-    assert_eq!(
-        next_stability.to_data(),
-        Data::from([[2.074517], [14.560361], [51.15574], [152.6869]])
-    )
-}
-
-#[test]
-fn test_forward() {
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let model = Model::<Backend>::new();
-    let delta_ts = Tensor::<Backend, 2>::from_floats([
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
-    ]);
-    let ratings = Tensor::<Backend, 2>::from_floats([
-        [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
-        [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
-    ]);
-    let (stability, difficulty) = model.forward(delta_ts, ratings);
-    dbg!(&stability);
-    dbg!(&difficulty);
 }
 
 #[cfg(test)]
@@ -313,8 +168,107 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_next_difficulty() {
-        let model = Model::<Backend>::new();
+    fn w() {
+        use burn::tensor::Data;
+        use burn_ndarray::NdArrayBackend;
+        type Backend = NdArrayBackend<f32>;
+        let model = Model::<Backend>::new(false);
+        assert_eq!(
+            model.w().to_data(),
+            Data::from([
+                [0.4],
+                [0.6],
+                [2.4],
+                [5.8],
+                [4.93],
+                [0.94],
+                [0.86],
+                [0.01],
+                [1.49],
+                [0.14],
+                [0.94],
+                [2.18],
+                [0.05],
+                [0.34],
+                [1.26],
+                [0.29],
+                [2.61]
+            ])
+        )
+    }
+
+    #[test]
+    fn power_forgetting_curve() {
+        use burn::tensor::Data;
+        use burn_ndarray::NdArrayBackend;
+        type Backend = NdArrayBackend<f32>;
+        let model = Model::<Backend>::new(false);
+        let delta_t = Tensor::<Backend, 2>::from_floats([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]);
+        let stability =
+            Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [4.0], [2.0]]);
+        let retention = model.power_forgetting_curve(delta_t, stability);
+        assert_eq!(
+            retention.to_data(),
+            Data::from([
+                [1.0],
+                [0.9473684],
+                [0.9310345],
+                [0.92307687],
+                [0.9],
+                [0.7826087]
+            ])
+        )
+    }
+
+    #[test]
+    fn init_stability() {
+        use burn::tensor::Data;
+        use burn_ndarray::NdArrayBackend;
+        type Backend = NdArrayBackend<f32>;
+        let model = Model::<Backend>::new(false);
+        let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
+        let stability = model.init_stability(rating);
+        assert_eq!(
+            stability.to_data(),
+            Data::from([[0.4], [0.6], [2.4], [5.8], [0.4], [0.6]])
+        )
+    }
+
+    #[test]
+    fn init_difficulty() {
+        use burn::tensor::Data;
+        use burn_ndarray::NdArrayBackend;
+        type Backend = NdArrayBackend<f32>;
+        let model = Model::<Backend>::new(false);
+        let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
+        let difficulty = model.init_difficulty(rating);
+        assert_eq!(
+            difficulty.to_data(),
+            Data::from([[6.81], [5.87], [4.93], [3.9899998], [6.81], [5.87]])
+        )
+    }
+
+    #[test]
+    fn forward() {
+        use burn_ndarray::NdArrayBackend;
+        type Backend = NdArrayBackend<f32>;
+        let model = Model::<Backend>::new(false);
+        let delta_ts = Tensor::<Backend, 2>::from_floats([
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
+        ]);
+        let ratings = Tensor::<Backend, 2>::from_floats([
+            [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
+            [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
+        ]);
+        let (stability, difficulty) = model.forward(delta_ts, ratings);
+        dbg!(&stability);
+        dbg!(&difficulty);
+    }
+
+    #[test]
+    fn next_difficulty() {
+        let model = Model::<Backend>::new(false);
         let difficulty = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
         let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
         let next_difficulty = model.next_difficulty(difficulty, rating);
@@ -332,8 +286,8 @@ mod tests {
     }
 
     #[test]
-    fn test_next_stability() {
-        let model = Model::<Backend>::new();
+    fn next_stability() {
+        let model = Model::<Backend>::new(false);
         let stability = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
         let difficulty = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
         let retention = Tensor::<Backend, 2>::from_floats([[0.9], [0.8], [0.7], [0.6]]);

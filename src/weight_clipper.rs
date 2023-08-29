@@ -1,6 +1,6 @@
 use burn::tensor::{backend::Backend, Data, Tensor};
 
-pub fn weight_clipper<B: Backend<FloatElem = f32>>(weights: Tensor<B, 1>) -> Tensor<B, 1> {
+pub(crate) fn weight_clipper<B: Backend<FloatElem = f32>>(weights: Tensor<B, 1>) -> Tensor<B, 1> {
     const CLAMPS: [(f32, f32); 13] = [
         (1.0, 10.0),
         (0.1, 5.0),
@@ -28,21 +28,26 @@ pub fn weight_clipper<B: Backend<FloatElem = f32>>(weights: Tensor<B, 1>) -> Ten
     Tensor::from_data(Data::new(val.clone(), weights.shape()))
 }
 
-#[test]
-fn weight_clipper_test() {
-    type Backend = burn_ndarray::NdArrayBackend<f32>;
-    //type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let tensor = Tensor::from_floats([
-        0.0, -1000.0, 1000.0, 0.0, // Ignored
-        1000.0, -1000.0, 1.0, 0.25, -0.1,
-    ]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
+    #[test]
+    fn weight_clipper_works() {
+        type Backend = burn_ndarray::NdArrayBackend<f32>;
+        //type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
 
-    let param: Tensor<Backend, 1> = weight_clipper(tensor);
-    let values = &param.to_data().value;
+        let tensor = Tensor::from_floats([
+            0.0, -1000.0, 1000.0, 0.0, // Ignored
+            1000.0, -1000.0, 1.0, 0.25, -0.1,
+        ]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
 
-    assert_eq!(
-        *values,
-        vec![0.0, -1000.0, 1000.0, 0.0, 10.0, 0.1, 1.0, 0.25, 0.0]
-    );
+        let param: Tensor<Backend, 1> = weight_clipper(tensor);
+        let values = &param.to_data().value;
+
+        assert_eq!(
+            *values,
+            vec![0.0, -1000.0, 1000.0, 0.0, 10.0, 0.1, 1.0, 0.25, 0.0]
+        );
+    }
 }

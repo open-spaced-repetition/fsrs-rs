@@ -6,12 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-burn = { git = "https://github.com/burn-rs/burn.git", version = "0.9.0" }
-burn-ndarray = { git = "https://github.com/burn-rs/burn.git", version = "0.9.0" }
-burn-autodiff = { git = "https://github.com/burn-rs/burn.git", version = "0.9.0" }
-serde = "1.0.183"
+burn = { git = "https://github.com/burn-rs/burn.git", rev = "a4a9844da3c906e3d4795a6c72ae8c099b7187bb" }
+burn-ndarray = { git = "https://github.com/burn-rs/burn.git", rev = "a4a9844da3c906e3d4795a6c72ae8c099b7187bb" }
+burn-autodiff = { git = "https://github.com/burn-rs/burn.git", rev = "a4a9844da3c906e3d4795a6c72ae8c099b7187bb" }
+burn-train = { git = "https://github.com/burn-rs/burn.git", rev = "a4a9844da3c906e3d4795a6c72ae8c099b7187bb" }
+
+serde = "1.0.188"
 log = "0.4"
-rusqlite = { version = "0.29.0" }
 chrono = "0.4.26"
 chrono-tz = "0.8.3"
 itertools = "0.11.0"
+rand = "0.8.5"
+
+[dev-dependencies]
+rusqlite = { version = "0.29.0" }

@@ -1,11 +1,9 @@
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
-    data::dataset::{Dataset, InMemDataset},
+    data::dataset::Dataset,
     tensor::{backend::Backend, Data, ElementConversion, Float, Int, Shape, Tensor},
 };
 use serde::{Deserialize, Serialize};
-
-use crate::convertor::anki_to_fsrs;
 
 /// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
 /// to a single review, but contains the previous reviews of the card as well, after the
@@ -34,7 +32,7 @@ impl FSRSItem {
     }
 }
 
-pub struct FSRSBatcher<B: Backend> {
+pub(crate) struct FSRSBatcher<B: Backend> {
     device: B::Device,
 }
 
@@ -45,7 +43,7 @@ impl<B: Backend> FSRSBatcher<B> {
 }
 
 #[derive(Debug, Clone)]
-pub struct FSRSBatch<B: Backend> {
+pub(crate) struct FSRSBatch<B: Backend> {
     pub t_historys: Tensor<B, 2, Float>,
     pub r_historys: Tensor<B, 2, Float>,
     pub delta_ts: Tensor<B, 1, Float>,
@@ -64,7 +62,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
         let (time_histories, rating_histories) = items
             .iter()
             .map(|item| {
-                let (mut delta_t, mut rating): (Vec<i32>, Vec<i32>) =
+                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
                     item.history().map(|r| (r.delta_t, r.rating)).unzip();
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
@@ -116,230 +114,218 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     }
 }
 
-pub struct FSRSDataset {
-    dataset: InMemDataset<FSRSItem>,
+pub(crate) struct FSRSDataset {
+    items: Vec<FSRSItem>,
 }
 
 impl Dataset<FSRSItem> for FSRSDataset {
     fn len(&self) -> usize {
-        self.dataset.len()
+        self.items.len()
     }
 
     fn get(&self, index: usize) -> Option<FSRSItem> {
-        self.dataset.get(index)
+        self.items.get(index).cloned()
     }
 }
 
-impl FSRSDataset {
-    pub fn train() -> Self {
-        Self::new()
-    }
-
-    pub fn test() -> Self {
-        Self::new()
-    }
-
-    pub fn len(&self) -> usize {
-        self.dataset.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.dataset.is_empty()
-    }
-
-    fn new() -> Self {
-        let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
-        Self { dataset }
+impl From<Vec<FSRSItem>> for FSRSDataset {
+    fn from(items: Vec<FSRSItem>) -> Self {
+        Self { items }
     }
 }
 
-#[test]
-fn test_from_anki() {
-    use burn::data::dataloader::Dataset;
-    use burn::data::dataset::InMemDataset;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
 
-    let dataset = InMemDataset::<FSRSItem>::new(anki_to_fsrs());
-    dbg!(dataset.get(704).unwrap());
+    #[test]
+    fn from_anki() {
+        use burn::data::dataloader::Dataset;
 
-    use burn_ndarray::NdArrayDevice;
-    let device = NdArrayDevice::Cpu;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = NdArrayBackend<f32>;
-    let batcher = FSRSBatcher::<Backend>::new(device);
-    use burn::data::dataloader::DataLoaderBuilder;
-    let dataloader = DataLoaderBuilder::new(batcher)
-        .batch_size(1)
-        .shuffle(42)
-        .num_workers(4)
-        .build(dataset);
-    dbg!(
-        dataloader
-            .iter()
-            .next()
-            .expect("loader is empty")
-            .r_historys
-    );
-}
+        let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
+        dbg!(dataset.get(704).unwrap());
 
-#[test]
-fn test_batcher() {
-    use burn_ndarray::NdArrayBackend;
-    use burn_ndarray::NdArrayDevice;
-    type Backend = NdArrayBackend<f32>;
-    let device = NdArrayDevice::Cpu;
-    let batcher: FSRSBatcher<Backend> = FSRSBatcher::<Backend>::new(device);
-    let items = vec![
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 4,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 5,
-                },
-            ],
-        },
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 4,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 5,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 11,
-                },
-            ],
-        },
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 4,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 2,
-                },
-            ],
-        },
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 4,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 2,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 6,
-                },
-            ],
-        },
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 4,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 2,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 6,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 16,
-                },
-            ],
-        },
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 4,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 2,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 6,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 16,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 39,
-                },
-            ],
-        },
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 1,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 1,
-                    delta_t: 1,
-                },
-            ],
-        },
-        FSRSItem {
-            reviews: vec![
-                FSRSReview {
-                    rating: 1,
-                    delta_t: 0,
-                },
-                FSRSReview {
-                    rating: 1,
-                    delta_t: 1,
-                },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 1,
-                },
-            ],
-        },
-    ];
-    let batch = batcher.batch(items);
-    assert_eq!(
-        batch.t_historys.to_data(),
-        Data::from([
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 5.0, 0.0, 2.0, 2.0, 2.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0, 0.0, 6.0, 6.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0, 16.0, 0.0, 0.0]
-        ])
-    );
-    assert_eq!(
-        batch.r_historys.to_data(),
-        Data::from([
-            [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 1.0, 1.0],
-            [0.0, 3.0, 0.0, 3.0, 3.0, 3.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0]
-        ])
-    );
-    assert_eq!(
-        batch.delta_ts.to_data(),
-        Data::from([5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0])
-    );
-    assert_eq!(batch.labels.to_data(), Data::from([1, 1, 1, 1, 1, 1, 0, 1]));
+        use burn_ndarray::NdArrayDevice;
+        let device = NdArrayDevice::Cpu;
+        use burn_ndarray::NdArrayBackend;
+        type Backend = NdArrayBackend<f32>;
+        let batcher = FSRSBatcher::<Backend>::new(device);
+        use burn::data::dataloader::DataLoaderBuilder;
+        let dataloader = DataLoaderBuilder::new(batcher)
+            .batch_size(1)
+            .shuffle(42)
+            .num_workers(4)
+            .build(dataset);
+        dbg!(
+            dataloader
+                .iter()
+                .next()
+                .expect("loader is empty")
+                .r_historys
+        );
+    }
+
+    #[test]
+    fn batcher() {
+        use burn_ndarray::NdArrayBackend;
+        use burn_ndarray::NdArrayDevice;
+        type Backend = NdArrayBackend<f32>;
+        let device = NdArrayDevice::Cpu;
+        let batcher = FSRSBatcher::<Backend>::new(device);
+        let items = vec![
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 5,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 5,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 11,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 6,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 6,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 16,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 6,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 16,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 39,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 1,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                ],
+            },
+        ];
+        let batch = batcher.batch(items);
+        assert_eq!(
+            batch.t_historys.to_data(),
+            Data::from([
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 5.0, 0.0, 2.0, 2.0, 2.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 6.0, 6.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 16.0, 0.0, 0.0]
+            ])
+        );
+        assert_eq!(
+            batch.r_historys.to_data(),
+            Data::from([
+                [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 1.0, 1.0],
+                [0.0, 3.0, 0.0, 3.0, 3.0, 3.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0]
+            ])
+        );
+        assert_eq!(
+            batch.delta_ts.to_data(),
+            Data::from([5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0])
+        );
+        assert_eq!(batch.labels.to_data(), Data::from([1, 1, 1, 1, 1, 1, 0, 1]));
+    }
 }
