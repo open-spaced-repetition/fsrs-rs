@@ -90,19 +90,20 @@ fn loss(delta_t: &Array1<f32>, recall: &Array1<f32>, count: &Array1<f32>, init_s
 
 fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
     let mut optimal_stabilities: HashMap<i32, f32> = HashMap::new();
-    let epsilon = 1e-3; // precision, use f32::EPSILON will cause inf running.
+    let epsilon = 1e-6; // precision, use f32::EPSILON will cause inf running.
 
     for (first_rating, data) in pretrainset.iter() {
         let delta_t = Array1::from(data["delta_t"].clone());
         let recall = Array1::from(data["recall"].clone());
         let count = Array1::from(data["count"].clone());
 
-        let mut low = 0.0;
+        let mut low = 0.1;
         let mut high = 100.0;
-        let mut optimal_s = 0.0;
+        let mut optimal_s = 1.0;
 
-        // TODO: consider limit the number of iterations to avoid infinite loop.
+        let mut iter = 0;
         while high - low > epsilon {
+            iter += 1;
             let mid1 = low + (high - low) / 3.0;
             let mid2 = high - (high - low) / 3.0;
 
@@ -116,6 +117,10 @@ fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> Ha
             }
 
             optimal_s = (high + low) / 2.0;
+
+            if iter > 1000 {
+                break;
+            }
         }
 
         optimal_stabilities.insert(*first_rating, optimal_s);
@@ -318,7 +323,7 @@ fn test_pretrain() {
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
     assert_eq!(
         pretrain(anki21_sample_file_converted_to_fsrs()),
-        [1.1615174, 2.2759974, 6.2429657, 11.392988,]
+        [1.1614077, 2.275907, 6.2432303, 11.390343,]
     )
 }
 
