@@ -90,7 +90,7 @@ fn loss(delta_t: &Array1<f32>, recall: &Array1<f32>, count: &Array1<f32>, init_s
 
 fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
     let mut optimal_stabilities: HashMap<i32, f32> = HashMap::new();
-    let epsilon = 1e-6; // precision, use f32::EPSILON will cause inf running.
+    let epsilon = f32::EPSILON;
 
     for (first_rating, data) in pretrainset.iter() {
         let delta_t = Array1::from(data["delta_t"].clone());
@@ -319,7 +319,7 @@ fn test_pretrain() {
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
     assert_eq!(
         pretrain(anki21_sample_file_converted_to_fsrs()),
-        [1.1614077, 2.275907, 6.2432303, 11.390343,]
+        [1.161408, 2.2759073, 6.243231, 11.390343,]
     )
 }
 
