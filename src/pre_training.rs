@@ -5,6 +5,14 @@ use std::iter::Iterator;
 
 use crate::FSRSItem;
 
+pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> [f32; 4] {
+    let pretrainset = create_pretrain_data(fsrs_items);
+    let rating_count = total_rating_count(pretrainset.clone());
+    let rating_stability = search_parameters(pretrainset);
+    let init_s0 = smooth_and_fill(&mut rating_stability.clone(), &rating_count);
+    init_s0
+}
+
 fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<String, Vec<f32>>> {
     // filter FSRSItem instances with exactly 2 reviews.
     let items: Vec<_> = fsrs_items
@@ -115,7 +123,7 @@ fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> Ha
 fn smooth_and_fill(
     rating_stability: &mut HashMap<i32, f32>,
     rating_count: &HashMap<i32, i32>,
-) -> Vec<f32> {
+) -> [f32; 4] {
     for &(small_rating, big_rating) in &[(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
         if let (Some(&small_value), Some(&big_value)) = (
             rating_stability.get(&small_rating),
@@ -255,8 +263,7 @@ fn smooth_and_fill(
         }
         _ => {}
     }
-
-    init_s0
+    [init_s0[0], init_s0[1], init_s0[2], init_s0[3]]
 }
 
 #[test]
@@ -281,14 +288,12 @@ fn test_loss() {
 }
 
 #[test]
-fn test() {
+fn test_pretrain() {
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
-    let fsrs_items = anki21_sample_file_converted_to_fsrs();
-    let pre_train_data = create_pretrain_data(fsrs_items);
-    let rating_count = total_rating_count(pre_train_data.clone());
-    let rating_stability = search_parameters(pre_train_data);
-    let init_s0 = smooth_and_fill(&mut rating_stability.clone(), &rating_count);
-    dbg!(init_s0);
+    assert_eq!(
+        pretrain(anki21_sample_file_converted_to_fsrs()),
+        [1.1615174, 2.2759974, 6.2429657, 11.392988,]
+    )
 }
 
 #[test]

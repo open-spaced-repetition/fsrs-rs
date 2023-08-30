@@ -1,7 +1,7 @@
 use burn::{
     config::Config,
     module::{Module, Param},
-    tensor::{backend::Backend, Float, Tensor},
+    tensor::{backend::Backend, Data, Float, Shape, Tensor},
 };
 
 #[derive(Module, Debug)]
@@ -12,15 +12,22 @@ pub(crate) struct Model<B: Backend> {
 
 impl<B: Backend<FloatElem = f32>> Model<B> {
     #[allow(clippy::new_without_default)]
-    pub fn new(freeze_stability: bool) -> Self {
+    pub fn new(freeze_stability: bool, initial_stability: Option<[f32; 4]>) -> Self {
+        let initial_stability = initial_stability.unwrap_or_else(|| [0.4, 0.6, 2.4, 5.8]);
+        let mut initial_params = Vec::new();
+        initial_params.extend_from_slice(&initial_stability);
+        initial_params.extend_from_slice(&[
+            4.93, 0.94, 0.86, 0.01, // difficulty
+            1.49, 0.14, 0.94, // success
+            2.18, 0.05, 0.34, 1.26, // failure
+            0.29, 2.61, // hard penalty, easy bonus
+        ]);
+
         Self {
-            w: Param::from(Tensor::from_floats([
-                0.4, 0.6, 2.4, 5.8, // initial stability
-                4.93, 0.94, 0.86, 0.01, // difficulty
-                1.49, 0.14, 0.94, // success
-                2.18, 0.05, 0.34, 1.26, // failure
-                0.29, 2.61, // hard penalty, easy bonus
-            ])),
+            w: Param::from(Tensor::from_floats(Data::new(
+                initial_params,
+                Shape { dims: [17] },
+            ))),
             freeze_stability,
         }
     }
@@ -148,11 +155,12 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
 pub(crate) struct ModelConfig {
     #[config(default = false)]
     pub freeze_stability: bool,
+    pub initial_stability: Option<[f32; 4]>,
 }
 
 impl ModelConfig {
     pub fn init<B: Backend<FloatElem = f32>>(&self) -> Model<B> {
-        Model::new(self.freeze_stability)
+        Model::new(self.freeze_stability, self.initial_stability)
     }
 }
 
@@ -169,7 +177,7 @@ mod tests {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(false);
+        let model = Model::<Backend>::new(false, None);
         assert_eq!(
             model.w().to_data(),
             Data::from([
@@ -199,7 +207,7 @@ mod tests {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(false);
+        let model = Model::<Backend>::new(false, None);
         let delta_t = Tensor::<Backend, 2>::from_floats([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]);
         let stability =
             Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [4.0], [2.0]]);
@@ -222,7 +230,7 @@ mod tests {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(false);
+        let model = Model::<Backend>::new(false, None);
         let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
         let stability = model.init_stability(rating);
         assert_eq!(
@@ -236,7 +244,7 @@ mod tests {
         use burn::tensor::Data;
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(false);
+        let model = Model::<Backend>::new(false, None);
         let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
@@ -249,7 +257,7 @@ mod tests {
     fn forward() {
         use burn_ndarray::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(false);
+        let model = Model::<Backend>::new(false, None);
         let delta_ts = Tensor::<Backend, 2>::from_floats([
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
@@ -265,7 +273,7 @@ mod tests {
 
     #[test]
     fn next_difficulty() {
-        let model = Model::<Backend>::new(false);
+        let model = Model::<Backend>::new(false, None);
         let difficulty = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
         let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
         let next_difficulty = model.next_difficulty(difficulty, rating);
@@ -284,7 +292,7 @@ mod tests {
 
     #[test]
     fn next_stability() {
-        let model = Model::<Backend>::new(false);
+        let model = Model::<Backend>::new(false, None);
         let stability = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
         let difficulty = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
         let retention = Tensor::<Backend, 2>::from_floats([[0.9], [0.8], [0.7], [0.6]]);
