@@ -102,7 +102,7 @@ fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> Ha
         let mut optimal_s = 1.0;
 
         let mut iter = 0;
-        while high - low > epsilon {
+        while high - low > epsilon && iter < 1000 {
             iter += 1;
             let mid1 = low + (high - low) / 3.0;
             let mid2 = high - (high - low) / 3.0;
@@ -117,10 +117,6 @@ fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> Ha
             }
 
             optimal_s = (high + low) / 2.0;
-
-            if iter > 1000 {
-                break;
-            }
         }
 
         optimal_stabilities.insert(*first_rating, optimal_s);
