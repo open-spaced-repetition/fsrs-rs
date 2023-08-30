@@ -733,7 +733,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fsrs-optimizer-rs"
+name = "fsrs-optimizer"
 version = "0.1.0"
 dependencies = [
  "burn",
