@@ -81,7 +81,7 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
         );
         let mut gradients = item.loss.backward();
 
-        if self.freeze_stability {
+        if self.config.freeze_stability {
             gradients = self.freeze_initial_stability(gradients);
         }
 
