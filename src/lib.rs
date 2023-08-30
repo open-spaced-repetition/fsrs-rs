@@ -5,6 +5,7 @@ mod convertor;
 mod cosine_annealing;
 mod dataset;
 mod model;
+mod pre_training;
 mod training;
 mod weight_clipper;
 
