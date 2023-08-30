@@ -98,22 +98,45 @@ fn loss(
     rmse + l1
 }
 
+fn insert_default_point(
+    delta_t: Vec<f32>,
+    recall: Vec<f32>,
+    count: Vec<f32>,
+    default_s0: f32,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let mut delta_t = delta_t;
+    let mut recall = recall;
+    let mut count = count;
+    delta_t.push(default_s0);
+    recall.push(0.9);
+    count.push(10.0);
+    (delta_t, recall, count)
+}
+
 fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
-    let mut optimal_stabilities: HashMap<i32, f32> = HashMap::new();
+    let mut optimal_stabilities = HashMap::new();
     let epsilon = f32::EPSILON;
 
     for (first_rating, data) in pretrainset.iter() {
-        let delta_t = Array1::from(data["delta_t"].clone());
-        let recall = Array1::from(data["recall"].clone());
-        let count = Array1::from(data["count"].clone());
+        let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
+        let default_s0 = r_s0_default[first_rating];
+
+        let (delta_t, recall, count) = insert_default_point(
+            data["delta_t"].clone(),
+            data["recall"].clone(),
+            data["count"].clone(),
+            default_s0,
+        );
+
+        let delta_t = Array1::from(delta_t);
+        let recall = Array1::from(recall);
+        let count = Array1::from(count);
 
         let mut low = 0.1;
         let mut high = 100.0;
         let mut optimal_s = 1.0;
 
         let mut iter = 0;
-        let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
-        let default_s0 = r_s0_default[first_rating];
         while high - low > epsilon && iter < 1000 {
             iter += 1;
             let mid1 = low + (high - low) / 3.0;
@@ -177,7 +200,7 @@ fn smooth_and_fill(
                 rating_stability.contains_key(&3),
                 rating_stability.contains_key(&4),
             ) {
-                (false, false, true, true) => {
+                (false, false, _, _) => {
                     rating_stability.insert(
                         2,
                         rating_stability[&3].powf(1.0 / (1.0 - w2))
@@ -189,7 +212,7 @@ fn smooth_and_fill(
                             * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
                     );
                 }
-                (false, true, false, true) => {
+                (false, _, false, _) => {
                     rating_stability.insert(
                         3,
                         f32::powf(rating_stability[&2], 1.0 - w2)
@@ -201,7 +224,7 @@ fn smooth_and_fill(
                             * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
                     );
                 }
-                (false, true, true, false) => {
+                (false, _, _, false) => {
                     rating_stability.insert(
                         4,
                         rating_stability[&2].powf(1.0 - 1.0 / w2)
@@ -213,7 +236,7 @@ fn smooth_and_fill(
                             * rating_stability[&3].powf(1.0 - 1.0 / w1),
                     );
                 }
-                (true, false, false, true) => {
+                (_, false, false, _) => {
                     rating_stability.insert(
                         2,
                         rating_stability[&1].powf(w1 / (w1 + w2 - w1 * w2))
@@ -225,7 +248,7 @@ fn smooth_and_fill(
                             * rating_stability[&4].powf(w2 / (w1 + w2 - w1 * w2)),
                     );
                 }
-                (true, false, true, false) => {
+                (_, false, _, false) => {
                     rating_stability.insert(
                         2,
                         rating_stability[&1].powf(w1) * rating_stability[&3].powf(1.0 - w1),
@@ -236,7 +259,7 @@ fn smooth_and_fill(
                             * rating_stability[&3].powf(1.0 / w2),
                     );
                 }
-                (true, true, false, false) => {
+                (_, _, false, false) => {
                     rating_stability.insert(
                         3,
                         rating_stability[&1].powf(1.0 - 1.0 / (1.0 - w1))
@@ -250,9 +273,11 @@ fn smooth_and_fill(
                 }
                 _ => {}
             }
-            let mut sorted_items: Vec<_> = rating_stability.iter().collect();
-            sorted_items.sort_by(|a, b| a.0.cmp(b.0));
-            init_s0 = sorted_items.iter().map(|&(_, &value)| value).collect();
+            init_s0 = rating_stability
+                .iter()
+                .sorted_by(|a, b| a.0.cmp(b.0))
+                .map(|(_, &v)| v)
+                .collect();
         }
         3 => {
             match (
@@ -289,9 +314,11 @@ fn smooth_and_fill(
                 }
                 _ => {}
             }
-            let mut sorted_items: Vec<_> = rating_stability.iter().collect();
-            sorted_items.sort_by(|a, b| a.0.cmp(b.0));
-            init_s0 = sorted_items.iter().map(|&(_, &value)| value).collect();
+            init_s0 = rating_stability
+                .iter()
+                .sorted_by(|a, b| a.0.cmp(b.0))
+                .map(|(_, &v)| v)
+                .collect();
         }
         4 => {
             init_s0 = rating_stability
@@ -327,11 +354,26 @@ fn test_loss() {
 }
 
 #[test]
+fn test_search_parameters() {
+    let pretrainset = HashMap::from([(
+        4,
+        HashMap::from([
+            ("delta_t".to_string(), vec![1.0, 2.0, 3.0, 4.0]),
+            ("recall".to_string(), vec![0.9, 0.8181818, 0.75, 0.6923077]),
+            ("count".to_string(), vec![30.0, 30.0, 30.0, 30.0]),
+        ]),
+    )]);
+    let actual = search_parameters(pretrainset);
+    let expected = [(4, 1.0714815)].into_iter().collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn test_pretrain() {
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
     assert_eq!(
         pretrain(anki21_sample_file_converted_to_fsrs()),
-        [0.81501466, 1.5425551, 4.016554, 9.05143,]
+        [0.81497127, 1.5411042, 4.007436, 9.045982,]
     )
 }
 
@@ -340,5 +382,5 @@ fn test_smooth_and_fill() {
     let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.4), (4, 5.8)]);
     let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
     let actual = smooth_and_fill(&mut rating_stability, &rating_count);
-    dbg!(actual);
+    assert_eq!(actual, [0.4, 0.81906897, 2.4, 5.8,]);
 }
