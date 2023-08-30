@@ -21,7 +21,7 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<Strin
 
     // use a nested HashMap (groups) to group items first by the rating in the first FSRSReview
     // and then by the delta_t in the second FSRSReview.
-    let mut groups: HashMap<i32, HashMap<i32, Vec<i32>>> = HashMap::new();
+    let mut groups = HashMap::new();
 
     for item in items {
         let first_rating = item.reviews[0].rating;
@@ -40,7 +40,7 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<Strin
 
         // calculate the average (recall) and count for each group.
         for (second_delta_t, ratings) in inner_map {
-            let avg: f64 = ratings.iter().map(|&x| x as f64).sum::<f64>() / ratings.len() as f64;
+            let avg = ratings.iter().map(|&x| x as f64).sum::<f64>() / ratings.len() as f64;
             data.push((*second_delta_t, avg, ratings.len()));
         }
 
@@ -62,7 +62,7 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<Strin
 }
 
 fn total_rating_count(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, i32> {
-    let mut rating_count: HashMap<i32, i32> = HashMap::new();
+    let mut rating_count = HashMap::new();
     for (first_rating, data) in pretrainset.iter() {
         let count = data["count"].iter().sum::<f32>() as i32;
         rating_count.insert(*first_rating, count);
@@ -142,10 +142,7 @@ fn smooth_and_fill(
 
     let mut init_s0 = vec![];
 
-    let r_s0_default = [(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)]
-        .iter()
-        .cloned()
-        .collect::<HashMap<_, _>>();
+    let r_s0_default = HashMap::from([(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)]);
 
     match rating_stability.len() {
         0 => panic!("Not enough data for pretraining!"),
@@ -188,49 +185,48 @@ fn smooth_and_fill(
                 (false, true, true, false) => {
                     rating_stability.insert(
                         4,
-                        f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
-                            * f32::powf(rating_stability[&3], 1.0 / w2),
+                        rating_stability[&2].powf(1.0 - 1.0 / w2)
+                            * rating_stability[&3].powf(1.0 / w2),
                     );
                     rating_stability.insert(
                         1,
-                        f32::powf(rating_stability[&2], 1.0 / w1)
-                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
+                        rating_stability[&2].powf(1.0 / w1)
+                            * rating_stability[&3].powf(1.0 - 1.0 / w1),
                     );
                 }
                 (true, false, false, true) => {
                     rating_stability.insert(
                         2,
-                        f32::powf(rating_stability[&1], w1 / (w1 + w2 - w1 * w2))
-                            * f32::powf(rating_stability[&4], 1.0 - w1 / (w1 + w2 - w1 * w2)),
+                        rating_stability[&1].powf(w1 / (w1 + w2 - w1 * w2))
+                            * rating_stability[&4].powf(1.0 - w1 / (w1 + w2 - w1 * w2)),
                     );
                     rating_stability.insert(
                         3,
-                        f32::powf(rating_stability[&1], 1.0 - w2 / (w1 + w2 - w1 * w2))
-                            * f32::powf(rating_stability[&4], w2 / (w1 + w2 - w1 * w2)),
+                        rating_stability[&1].powf(1.0 - w2 / (w1 + w2 - w1 * w2))
+                            * rating_stability[&4].powf(w2 / (w1 + w2 - w1 * w2)),
                     );
                 }
                 (true, false, true, false) => {
                     rating_stability.insert(
                         2,
-                        f32::powf(rating_stability[&1], w1)
-                            * f32::powf(rating_stability[&3], 1.0 - w1),
+                        rating_stability[&1].powf(w1) * rating_stability[&3].powf(1.0 - w1),
                     );
                     rating_stability.insert(
                         4,
-                        f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
-                            * f32::powf(rating_stability[&3], 1.0 / w2),
+                        rating_stability[&2].powf(1.0 - 1.0 / w2)
+                            * rating_stability[&3].powf(1.0 / w2),
                     );
                 }
                 (true, true, false, false) => {
                     rating_stability.insert(
                         3,
-                        f32::powf(rating_stability[&1], 1.0 - 1.0 / (1.0 - w1))
-                            * f32::powf(rating_stability[&2], 1.0 / (1.0 - w1)),
+                        rating_stability[&1].powf(1.0 - 1.0 / (1.0 - w1))
+                            * rating_stability[&2].powf(1.0 / (1.0 - w1)),
                     );
                     rating_stability.insert(
                         4,
-                        f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
-                            * f32::powf(rating_stability[&3], 1.0 / w2),
+                        rating_stability[&2].powf(1.0 - 1.0 / w2)
+                            * rating_stability[&3].powf(1.0 / w2),
                     );
                 }
                 _ => {}
@@ -249,30 +245,28 @@ fn smooth_and_fill(
                 (false, _, _, _) => {
                     rating_stability.insert(
                         1,
-                        f32::powf(rating_stability[&2], 1.0 / w1)
-                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
+                        rating_stability[&2].powf(1.0 / w1)
+                            * rating_stability[&3].powf(1.0 - 1.0 / w1),
                     );
                 }
                 (_, false, _, _) => {
                     rating_stability.insert(
                         2,
-                        f32::powf(rating_stability[&1], w1)
-                            * f32::powf(rating_stability[&3], 1.0 - w1),
+                        rating_stability[&1].powf(w1) * rating_stability[&3].powf(1.0 - w1),
                     );
                 }
                 (_, _, false, _) => {
                     rating_stability.insert(
                         3,
-                        f32::powf(rating_stability[&2], 1.0 - w2)
-                            * f32::powf(rating_stability[&4], w2),
+                        rating_stability[&2].powf(1.0 - w2) * rating_stability[&4].powf(w2),
                     );
                 }
                 (_, _, _, false) => {
-                    let r2 = rating_stability[&2];
-                    let r3 = rating_stability[&3];
-                    rating_stability
-                        .entry(4)
-                        .or_insert_with(|| f32::powf(r2, 1.0 - 1.0 / w2) * f32::powf(r3, 1.0 / w2));
+                    rating_stability.insert(
+                        4,
+                        rating_stability[&2].powf(1.0 - 1.0 / w2)
+                            * rating_stability[&3].powf(1.0 / w2),
+                    );
                 }
                 _ => {}
             }
@@ -324,14 +318,8 @@ fn test_pretrain() {
 
 #[test]
 fn test_smooth_and_fill() {
-    let mut rating_stability = HashMap::new();
-    rating_stability.insert(1, 0.4);
-    rating_stability.insert(3, 2.4);
-    rating_stability.insert(4, 5.8);
-    let rating_count = [(1, 1), (2, 1), (3, 1), (4, 1)]
-        .iter()
-        .cloned()
-        .collect::<HashMap<_, _>>();
+    let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.4), (4, 5.8)]);
+    let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
     let actual = smooth_and_fill(&mut rating_stability, &rating_count);
     dbg!(actual);
 }
