@@ -47,14 +47,20 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<Strin
         // Sort by delta_t in ascending order
         data.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let delta_t: Vec<_> = data.iter().map(|&(dt, _, _)| dt as f32).collect();
-        let recall: Vec<_> = data.iter().map(|&(_, r, _)| r as f32).collect();
-        let count: Vec<_> = data.iter().map(|&(_, _, c)| c as f32).collect();
-
-        let mut inner_result = HashMap::new();
-        inner_result.insert("delta_t".to_string(), delta_t);
-        inner_result.insert("recall".to_string(), recall);
-        inner_result.insert("count".to_string(), count);
+        let inner_result = HashMap::from([
+            (
+                "delta_t".to_string(),
+                data.iter().map(|&(dt, _, _)| dt as f32).collect(),
+            ),
+            (
+                "recall".to_string(),
+                data.iter().map(|&(_, r, _)| r as f32).collect(),
+            ),
+            (
+                "count".to_string(),
+                data.iter().map(|&(_, _, c)| c as f32).collect(),
+            ),
+        ]);
 
         results.insert(*first_rating, inner_result);
     }
@@ -84,8 +90,7 @@ fn loss(delta_t: &Array1<f32>, recall: &Array1<f32>, count: &Array1<f32>, init_s
 
 fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
     let mut optimal_stabilities: HashMap<i32, f32> = HashMap::new();
-
-    let epsilon = 1e-6; // precision
+    let epsilon = 1e-6; // precision, use f32::EPSILON will cause inf running.
 
     for (first_rating, data) in pretrainset.iter() {
         let delta_t = Array1::from(data["delta_t"].clone());
