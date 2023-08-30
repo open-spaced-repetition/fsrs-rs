@@ -332,55 +332,60 @@ fn smooth_and_fill(
     [init_s0[0], init_s0[1], init_s0[2], init_s0[3]]
 }
 
-#[test]
-fn test_power_forgetting_curve() {
-    let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
-    let s = 1.0;
-    let y = power_forgetting_curve(&t, s);
-    let expected = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
-    assert_eq!(y, expected);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-fn test_loss() {
-    let delta_t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
-    let recall = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
-    let count = Array1::from(vec![100.0, 100.0, 100.0, 100.0]);
-    let init_s0 = 1.0;
-    let expected = 0.0;
-    let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
-    assert_eq!(actual, expected);
-    assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.07147003);
-}
+    #[test]
+    fn test_power_forgetting_curve() {
+        let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
+        let s = 1.0;
+        let y = power_forgetting_curve(&t, s);
+        let expected = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
+        assert_eq!(y, expected);
+    }
 
-#[test]
-fn test_search_parameters() {
-    let pretrainset = HashMap::from([(
-        4,
-        HashMap::from([
-            ("delta_t".to_string(), vec![1.0, 2.0, 3.0, 4.0]),
-            ("recall".to_string(), vec![0.9, 0.8181818, 0.75, 0.6923077]),
-            ("count".to_string(), vec![30.0, 30.0, 30.0, 30.0]),
-        ]),
-    )]);
-    let actual = search_parameters(pretrainset);
-    let expected = [(4, 1.0714815)].into_iter().collect();
-    assert_eq!(actual, expected);
-}
+    #[test]
+    fn test_loss() {
+        let delta_t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
+        let recall = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
+        let count = Array1::from(vec![100.0, 100.0, 100.0, 100.0]);
+        let init_s0 = 1.0;
+        let expected = 0.0;
+        let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
+        assert_eq!(actual, expected);
+        assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.07147003);
+    }
 
-#[test]
-fn test_pretrain() {
-    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
-    assert_eq!(
-        pretrain(anki21_sample_file_converted_to_fsrs()),
-        [0.81497127, 1.5411042, 4.007436, 9.045982,]
-    )
-}
+    #[test]
+    fn test_search_parameters() {
+        let pretrainset = HashMap::from([(
+            4,
+            HashMap::from([
+                ("delta_t".to_string(), vec![1.0, 2.0, 3.0, 4.0]),
+                ("recall".to_string(), vec![0.9, 0.8181818, 0.75, 0.6923077]),
+                ("count".to_string(), vec![30.0, 30.0, 30.0, 30.0]),
+            ]),
+        )]);
+        let actual = search_parameters(pretrainset);
+        let expected = [(4, 1.0714815)].into_iter().collect();
+        assert_eq!(actual, expected);
+    }
 
-#[test]
-fn test_smooth_and_fill() {
-    let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.4), (4, 5.8)]);
-    let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
-    let actual = smooth_and_fill(&mut rating_stability, &rating_count);
-    assert_eq!(actual, [0.4, 0.81906897, 2.4, 5.8,]);
+    #[test]
+    fn test_pretrain() {
+        use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+        assert_eq!(
+            pretrain(anki21_sample_file_converted_to_fsrs()),
+            [0.81497127, 1.5411042, 4.007436, 9.045982,]
+        )
+    }
+
+    #[test]
+    fn test_smooth_and_fill() {
+        let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.4), (4, 5.8)]);
+        let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
+        let actual = smooth_and_fill(&mut rating_stability, &rating_count);
+        assert_eq!(actual, [0.4, 0.81906897, 2.4, 5.8,]);
+    }
 }
