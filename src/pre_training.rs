@@ -90,7 +90,7 @@ fn loss(delta_t: &Array1<f32>, recall: &Array1<f32>, count: &Array1<f32>, init_s
 
 fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
     let mut optimal_stabilities: HashMap<i32, f32> = HashMap::new();
-    let epsilon = 1e-6; // precision, use f32::EPSILON will cause inf running.
+    let epsilon = 1e-3; // precision, use f32::EPSILON will cause inf running.
 
     for (first_rating, data) in pretrainset.iter() {
         let delta_t = Array1::from(data["delta_t"].clone());
@@ -101,6 +101,7 @@ fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> Ha
         let mut high = 100.0;
         let mut optimal_s = 0.0;
 
+        // TODO: consider limit the number of iterations to avoid infinite loop.
         while high - low > epsilon {
             let mid1 = low + (high - low) / 3.0;
             let mid2 = high - (high - low) / 3.0;
