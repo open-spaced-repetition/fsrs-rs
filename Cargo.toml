@@ -17,6 +17,7 @@ chrono = "0.4.26"
 chrono-tz = "0.8.3"
 itertools = "0.11.0"
 rand = "0.8.5"
+ndarray = "0.15.6"
 
 [dev-dependencies]
 rusqlite = { version = "0.29.0" }

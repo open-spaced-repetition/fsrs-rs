@@ -744,6 +744,7 @@ dependencies = [
  "chrono-tz",
  "itertools",
  "log",
+ "ndarray",
  "rand",
  "rusqlite",
  "serde",

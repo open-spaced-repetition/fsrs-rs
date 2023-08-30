@@ -134,6 +134,12 @@ impl From<Vec<FSRSItem>> for FSRSDataset {
     }
 }
 
+pub fn split_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
+    let (pretrainset, trainset) = items.into_iter().partition(|item| item.reviews.len() == 2);
+
+    (pretrainset, trainset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

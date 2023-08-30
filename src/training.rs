@@ -1,7 +1,8 @@
 use crate::batch_shuffle::BatchShuffledDataset;
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{split_data, FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::model::{Model, ModelConfig};
+use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder};
@@ -169,13 +170,17 @@ pub fn compute_weights(items: Vec<FSRSItem>, progress: Option<ProgressCollector>
     type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
     let device = NdArrayDevice::Cpu;
 
-    let model = train::<AutodiffBackend>(
-        items,
-        &TrainingConfig::new(ModelConfig::default(), AdamConfig::new()),
-        device,
-        progress,
-        None,
+    let (pre_trainset, trainset) = split_data(items);
+    let initial_stability = pretrain(pre_trainset);
+    let config = TrainingConfig::new(
+        ModelConfig {
+            freeze_stability: true,
+            initial_stability: Some(initial_stability),
+        },
+        AdamConfig::new(),
     );
+
+    let model = train::<AutodiffBackend>(trainset, &config, device, progress, None);
 
     model.w.val().to_data().value
 }
@@ -242,6 +247,7 @@ fn train<B: ADBackend<FloatElem = f32>>(
 mod tests {
     use super::*;
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+    use crate::pre_training::pretrain;
     use burn::module::Module;
     use burn::record::Recorder;
     use std::path::Path;
@@ -259,7 +265,16 @@ mod tests {
         let device = NdArrayDevice::Cpu;
 
         let artifact_dir = "./tmp/fsrs";
-        let config = TrainingConfig::new(ModelConfig::default(), AdamConfig::new());
+
+        let (pre_trainset, trainset) = split_data(anki21_sample_file_converted_to_fsrs());
+        let initial_stability = pretrain(pre_trainset);
+        let config = TrainingConfig::new(
+            ModelConfig {
+                freeze_stability: true,
+                initial_stability: Some(initial_stability),
+            },
+            AdamConfig::new(),
+        );
 
         std::fs::create_dir_all(artifact_dir).unwrap();
         config
@@ -271,13 +286,8 @@ mod tests {
             )
             .expect("Save without error");
 
-        let model_trained = train::<AutodiffBackend>(
-            anki21_sample_file_converted_to_fsrs(),
-            &config,
-            device,
-            None,
-            Some(artifact_dir),
-        );
+        let model_trained =
+            train::<AutodiffBackend>(trainset, &config, device, None, Some(artifact_dir));
 
         config
             .save(
