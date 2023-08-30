@@ -9,8 +9,7 @@ pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> [f32; 4] {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(pretrainset.clone());
     let rating_stability = search_parameters(pretrainset);
-    let init_s0 = smooth_and_fill(&mut rating_stability.clone(), &rating_count);
-    init_s0
+    smooth_and_fill(&mut rating_stability.clone(), &rating_count)
 }
 
 fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<String, Vec<f32>>> {
@@ -37,7 +36,7 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<Strin
     let mut results = HashMap::new();
 
     for (first_rating, inner_map) in &groups {
-        let mut data = Vec::new(); // (delta_t, recall, count)
+        let mut data = vec![]; // (delta_t, recall, count)
 
         // calculate the average (recall) and count for each group.
         for (second_delta_t, ratings) in inner_map {
@@ -79,9 +78,8 @@ fn loss(delta_t: &Array1<f32>, recall: &Array1<f32>, count: &Array1<f32>, init_s
     let y_pred = power_forgetting_curve(delta_t, init_s0);
     let diff = recall - &y_pred;
     let weighted_diff = &diff * &diff * count;
-    let rmse = f32::sqrt(weighted_diff.sum() / count.sum());
+    (weighted_diff.sum() / count.sum()).sqrt()
     // TODO: add l1 regularization
-    rmse
 }
 
 fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
@@ -157,107 +155,135 @@ fn smooth_and_fill(
             init_s0 = r_s0_default.values().map(|&x| x * factor).collect();
         }
         2 => {
-            if !rating_stability.contains_key(&1) && !rating_stability.contains_key(&2) {
-                rating_stability.insert(
-                    2,
-                    f32::powf(rating_stability[&3], 1.0 / (1.0 - w2))
-                        * f32::powf(rating_stability[&4], 1.0 - 1.0 / (1.0 - w2)),
-                );
-                rating_stability.insert(
-                    1,
-                    f32::powf(rating_stability[&2], 1.0 / w1)
-                        * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
-                );
-            } else if !rating_stability.contains_key(&1) && !rating_stability.contains_key(&3) {
-                rating_stability.insert(
-                    3,
-                    f32::powf(rating_stability[&2], 1.0 - w2) * f32::powf(rating_stability[&4], w2),
-                );
-                rating_stability.insert(
-                    1,
-                    f32::powf(rating_stability[&2], 1.0 / w1)
-                        * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
-                );
-            } else if !rating_stability.contains_key(&1) && !rating_stability.contains_key(&4) {
-                rating_stability.insert(
-                    4,
-                    f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
-                        * f32::powf(rating_stability[&3], 1.0 / w2),
-                );
-                rating_stability.insert(
-                    1,
-                    f32::powf(rating_stability[&2], 1.0 / w1)
-                        * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
-                );
-            } else if !rating_stability.contains_key(&2) && !rating_stability.contains_key(&3) {
-                rating_stability.insert(
-                    2,
-                    f32::powf(rating_stability[&1], w1 / (w1 + w2 - w1 * w2))
-                        * f32::powf(rating_stability[&4], 1.0 - w1 / (w1 + w2 - w1 * w2)),
-                );
-                rating_stability.insert(
-                    3,
-                    f32::powf(rating_stability[&1], 1.0 - w2 / (w1 + w2 - w1 * w2))
-                        * f32::powf(rating_stability[&4], w2 / (w1 + w2 - w1 * w2)),
-                );
-            } else if !rating_stability.contains_key(&2) && !rating_stability.contains_key(&4) {
-                rating_stability.insert(
-                    2,
-                    f32::powf(rating_stability[&1], w1) * f32::powf(rating_stability[&3], 1.0 - w1),
-                );
-                rating_stability.insert(
-                    4,
-                    f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
-                        * f32::powf(rating_stability[&3], 1.0 / w2),
-                );
-            } else if !rating_stability.contains_key(&3) && !rating_stability.contains_key(&4) {
-                rating_stability.insert(
-                    3,
-                    f32::powf(rating_stability[&1], 1.0 - 1.0 / (1.0 - w1))
-                        * f32::powf(rating_stability[&2], 1.0 / (1.0 - w1)),
-                );
-                rating_stability.insert(
-                    4,
-                    f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
-                        * f32::powf(rating_stability[&3], 1.0 / w2),
-                );
+            match (
+                rating_stability.contains_key(&1),
+                rating_stability.contains_key(&2),
+                rating_stability.contains_key(&3),
+                rating_stability.contains_key(&4),
+            ) {
+                (false, false, true, true) => {
+                    rating_stability.insert(
+                        2,
+                        rating_stability[&3].powf(1.0 / (1.0 - w2))
+                            * rating_stability[&4].powf(1.0 - 1.0 / (1.0 - w2)),
+                    );
+                    rating_stability.insert(
+                        1,
+                        f32::powf(rating_stability[&2], 1.0 / w1)
+                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
+                    );
+                }
+                (false, true, false, true) => {
+                    rating_stability.insert(
+                        3,
+                        f32::powf(rating_stability[&2], 1.0 - w2)
+                            * f32::powf(rating_stability[&4], w2),
+                    );
+                    rating_stability.insert(
+                        1,
+                        f32::powf(rating_stability[&2], 1.0 / w1)
+                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
+                    );
+                }
+                (false, true, true, false) => {
+                    rating_stability.insert(
+                        4,
+                        f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
+                            * f32::powf(rating_stability[&3], 1.0 / w2),
+                    );
+                    rating_stability.insert(
+                        1,
+                        f32::powf(rating_stability[&2], 1.0 / w1)
+                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
+                    );
+                }
+                (true, false, false, true) => {
+                    rating_stability.insert(
+                        2,
+                        f32::powf(rating_stability[&1], w1 / (w1 + w2 - w1 * w2))
+                            * f32::powf(rating_stability[&4], 1.0 - w1 / (w1 + w2 - w1 * w2)),
+                    );
+                    rating_stability.insert(
+                        3,
+                        f32::powf(rating_stability[&1], 1.0 - w2 / (w1 + w2 - w1 * w2))
+                            * f32::powf(rating_stability[&4], w2 / (w1 + w2 - w1 * w2)),
+                    );
+                }
+                (true, false, true, false) => {
+                    rating_stability.insert(
+                        2,
+                        f32::powf(rating_stability[&1], w1)
+                            * f32::powf(rating_stability[&3], 1.0 - w1),
+                    );
+                    rating_stability.insert(
+                        4,
+                        f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
+                            * f32::powf(rating_stability[&3], 1.0 / w2),
+                    );
+                }
+                (true, true, false, false) => {
+                    rating_stability.insert(
+                        3,
+                        f32::powf(rating_stability[&1], 1.0 - 1.0 / (1.0 - w1))
+                            * f32::powf(rating_stability[&2], 1.0 / (1.0 - w1)),
+                    );
+                    rating_stability.insert(
+                        4,
+                        f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
+                            * f32::powf(rating_stability[&3], 1.0 / w2),
+                    );
+                }
+                _ => {}
             }
             let mut sorted_items: Vec<_> = rating_stability.iter().collect();
-            sorted_items.sort_by(|a, b| a.0.cmp(&b.0));
+            sorted_items.sort_by(|a, b| a.0.cmp(b.0));
             init_s0 = sorted_items.iter().map(|&(_, &value)| value).collect();
         }
         3 => {
-            if !rating_stability.contains_key(&1) {
-                rating_stability.insert(
-                    1,
-                    f32::powf(rating_stability[&2], 1.0 / w1)
-                        * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
-                );
-            } else if !rating_stability.contains_key(&2) {
-                rating_stability.insert(
-                    2,
-                    f32::powf(rating_stability[&1], w1) * f32::powf(rating_stability[&3], 1.0 - w1),
-                );
-            } else if !rating_stability.contains_key(&3) {
-                rating_stability.insert(
-                    3,
-                    f32::powf(rating_stability[&2], 1.0 - w2) * f32::powf(rating_stability[&4], w2),
-                );
-            } else if !rating_stability.contains_key(&4) {
-                rating_stability.insert(
-                    4,
-                    f32::powf(rating_stability[&2], 1.0 - 1.0 / w2)
-                        * f32::powf(rating_stability[&3], 1.0 / w2),
-                );
+            match (
+                rating_stability.contains_key(&1),
+                rating_stability.contains_key(&2),
+                rating_stability.contains_key(&3),
+                rating_stability.contains_key(&4),
+            ) {
+                (false, _, _, _) => {
+                    rating_stability.insert(
+                        1,
+                        f32::powf(rating_stability[&2], 1.0 / w1)
+                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
+                    );
+                }
+                (_, false, _, _) => {
+                    rating_stability.insert(
+                        2,
+                        f32::powf(rating_stability[&1], w1)
+                            * f32::powf(rating_stability[&3], 1.0 - w1),
+                    );
+                }
+                (_, _, false, _) => {
+                    rating_stability.insert(
+                        3,
+                        f32::powf(rating_stability[&2], 1.0 - w2)
+                            * f32::powf(rating_stability[&4], w2),
+                    );
+                }
+                (_, _, _, false) => {
+                    let r2 = rating_stability[&2];
+                    let r3 = rating_stability[&3];
+                    rating_stability
+                        .entry(4)
+                        .or_insert_with(|| f32::powf(r2, 1.0 - 1.0 / w2) * f32::powf(r3, 1.0 / w2));
+                }
+                _ => {}
             }
             let mut sorted_items: Vec<_> = rating_stability.iter().collect();
-            sorted_items.sort_by(|a, b| a.0.cmp(&b.0));
+            sorted_items.sort_by(|a, b| a.0.cmp(b.0));
             init_s0 = sorted_items.iter().map(|&(_, &value)| value).collect();
         }
         4 => {
             init_s0 = rating_stability
                 .iter()
-                .sorted_by(|a, b| a.0.cmp(&b.0))
+                .sorted_by(|a, b| a.0.cmp(b.0))
                 .map(|(_, &v)| v)
                 .collect();
         }

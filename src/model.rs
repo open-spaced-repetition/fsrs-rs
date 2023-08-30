@@ -13,7 +13,7 @@ pub(crate) struct Model<B: Backend> {
 impl<B: Backend<FloatElem = f32>> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(freeze_stability: bool, initial_stability: Option<[f32; 4]>) -> Self {
-        let initial_stability = initial_stability.unwrap_or_else(|| [0.4, 0.6, 2.4, 5.8]);
+        let initial_stability = initial_stability.unwrap_or([0.4, 0.6, 2.4, 5.8]);
         let mut initial_params = Vec::new();
         initial_params.extend_from_slice(&initial_stability);
         initial_params.extend_from_slice(&[
