@@ -5,6 +5,8 @@ use std::iter::Iterator;
 
 use crate::FSRSItem;
 
+static R_S0_DEFAULT_ARRAY: &[(i32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)];
+
 pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> [f32; 4] {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(pretrainset.clone());
@@ -80,12 +82,20 @@ fn power_forgetting_curve(t: &Array1<f32>, s: f32) -> Array1<f32> {
     1.0 / (1.0 + t / (9.0 * s))
 }
 
-fn loss(delta_t: &Array1<f32>, recall: &Array1<f32>, count: &Array1<f32>, init_s0: f32) -> f32 {
+fn loss(
+    delta_t: &Array1<f32>,
+    recall: &Array1<f32>,
+    count: &Array1<f32>,
+    init_s0: f32,
+    default_s0: f32,
+) -> f32 {
     let y_pred = power_forgetting_curve(delta_t, init_s0);
     let diff = recall - &y_pred;
-    let weighted_diff = &diff * &diff * count;
-    (weighted_diff.sum() / count.sum()).sqrt()
-    // TODO: add l1 regularization
+    let weight = count * count;
+    let weighted_diff = &diff * &diff * &weight;
+    let rmse = (weighted_diff.sum() / weight.sum()).sqrt();
+    let l1 = (init_s0 - default_s0).abs() / weight.sum();
+    rmse + l1
 }
 
 fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
@@ -102,13 +112,15 @@ fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> Ha
         let mut optimal_s = 1.0;
 
         let mut iter = 0;
+        let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
+        let default_s0 = r_s0_default[first_rating];
         while high - low > epsilon && iter < 1000 {
             iter += 1;
             let mid1 = low + (high - low) / 3.0;
             let mid2 = high - (high - low) / 3.0;
 
-            let loss1 = loss(&delta_t, &recall, &count, mid1);
-            let loss2 = loss(&delta_t, &recall, &count, mid2);
+            let loss1 = loss(&delta_t, &recall, &count, mid1, default_s0);
+            let loss2 = loss(&delta_t, &recall, &count, mid2, default_s0);
 
             if loss1 < loss2 {
                 high = mid2;
@@ -149,7 +161,7 @@ fn smooth_and_fill(
 
     let mut init_s0 = vec![];
 
-    let r_s0_default = HashMap::from([(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)]);
+    let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
 
     match rating_stability.len() {
         0 => panic!("Not enough data for pretraining!"),
@@ -306,12 +318,12 @@ fn test_power_forgetting_curve() {
 fn test_loss() {
     let delta_t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
     let recall = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
-    let count = Array1::from(vec![1.0, 1.0, 1.0, 1.0]);
+    let count = Array1::from(vec![100.0, 100.0, 100.0, 100.0]);
     let init_s0 = 1.0;
     let expected = 0.0;
-    let actual = loss(&delta_t, &recall, &count, init_s0);
+    let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
     assert_eq!(actual, expected);
-    assert_eq!(loss(&delta_t, &recall, &count, 2.0), 0.07144503);
+    assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.07147003);
 }
 
 #[test]
@@ -319,7 +331,7 @@ fn test_pretrain() {
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
     assert_eq!(
         pretrain(anki21_sample_file_converted_to_fsrs()),
-        [1.161408, 2.2759073, 6.243231, 11.390343,]
+        [0.81501466, 1.5425551, 4.016554, 9.05143,]
     )
 }
 
