@@ -92,11 +92,11 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
 
     let first_rating_choices = [0, 1, 2, 3];
     let first_rating_prob = [0.15, 0.2, 0.6, 0.05];
-    let first_rating_dist = WeightedIndex::new(&first_rating_prob).unwrap();
+    let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
 
     let review_rating_choices = [1, 2, 3];
     let review_rating_prob = [0.3, 0.6, 0.1];
-    let review_rating_dist = WeightedIndex::new(&review_rating_prob).unwrap();
+    let review_rating_dist = WeightedIndex::new(review_rating_prob).unwrap();
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
@@ -283,7 +283,7 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
             .and(&true_learn)
             .for_each(|new_stab, &rating, &true_learn_flag| {
                 if true_learn_flag {
-                    *new_stab = w[rating] as f64;
+                    *new_stab = w[rating];
                 }
             });
 
@@ -319,7 +319,7 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
             .and(&true_learn)
             .for_each(|new_due, &new_ivl, &true_review_flag, &true_learn_flag| {
                 if true_review_flag || true_learn_flag {
-                    *new_due = today as f64 + new_ivl as f64;
+                    *new_due = today as f64 + new_ivl;
                 }
             });
 
