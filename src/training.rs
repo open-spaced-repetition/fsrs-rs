@@ -1,6 +1,7 @@
 use crate::batch_shuffle::BatchShuffledDataset;
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{split_data, FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
@@ -163,7 +164,10 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-pub fn compute_weights(items: Vec<FSRSItem>, progress: Option<ProgressCollector>) -> Vec<f32> {
+pub fn compute_weights(
+    items: Vec<FSRSItem>,
+    progress: Option<ProgressCollector>,
+) -> Result<Vec<f32>> {
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
     type Backend = NdArrayBackend<f32>;
@@ -171,7 +175,7 @@ pub fn compute_weights(items: Vec<FSRSItem>, progress: Option<ProgressCollector>
     let device = NdArrayDevice::Cpu;
 
     let (pre_trainset, trainset) = split_data(items);
-    let initial_stability = pretrain(pre_trainset);
+    let initial_stability = pretrain(pre_trainset)?;
     let config = TrainingConfig::new(
         ModelConfig {
             freeze_stability: true,
@@ -182,7 +186,7 @@ pub fn compute_weights(items: Vec<FSRSItem>, progress: Option<ProgressCollector>
 
     let model = train::<AutodiffBackend>(trainset, &config, device, progress, None);
 
-    model.w.val().to_data().value
+    Ok(model.w.val().to_data().value)
 }
 
 fn train<B: ADBackend<FloatElem = f32>>(
@@ -267,7 +271,7 @@ mod tests {
         let artifact_dir = "./tmp/fsrs";
 
         let (pre_trainset, trainset) = split_data(anki21_sample_file_converted_to_fsrs());
-        let initial_stability = pretrain(pre_trainset);
+        let initial_stability = pretrain(pre_trainset).unwrap();
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,

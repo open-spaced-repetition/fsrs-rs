@@ -1,13 +1,13 @@
+use crate::error::{FsrsError, Result};
+use crate::FSRSItem;
 use itertools::Itertools;
 use ndarray::Array1;
 use std::collections::HashMap;
 use std::iter::Iterator;
 
-use crate::FSRSItem;
-
 static R_S0_DEFAULT_ARRAY: &[(i32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)];
 
-pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> [f32; 4] {
+pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> Result<[f32; 4]> {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(&pretrainset);
     let rating_stability = search_parameters(pretrainset);
@@ -155,7 +155,7 @@ fn search_parameters(
 fn smooth_and_fill(
     rating_stability: &mut HashMap<i32, f32>,
     rating_count: &HashMap<i32, i32>,
-) -> [f32; 4] {
+) -> Result<[f32; 4]> {
     for &(small_rating, big_rating) in &[(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
         if let (Some(&small_value), Some(&big_value)) = (
             rating_stability.get(&small_rating),
@@ -179,7 +179,7 @@ fn smooth_and_fill(
     let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
 
     match rating_stability.len() {
-        0 => panic!("Not enough data for pretraining!"),
+        0 => return Err(FsrsError::NotEnoughData),
         1 => {
             let rating = rating_stability.keys().next().unwrap();
             let factor = rating_stability[rating] / r_s0_default[rating];
@@ -321,7 +321,7 @@ fn smooth_and_fill(
         }
         _ => {}
     }
-    [init_s0[0], init_s0[1], init_s0[2], init_s0[3]]
+    Ok([init_s0[0], init_s0[1], init_s0[2], init_s0[3]])
 }
 
 #[cfg(test)]
@@ -385,7 +385,7 @@ mod tests {
     fn test_pretrain() {
         use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
         assert_eq!(
-            pretrain(anki21_sample_file_converted_to_fsrs()),
+            pretrain(anki21_sample_file_converted_to_fsrs()).unwrap(),
             [0.81497127, 1.5411042, 4.007436, 9.045982,]
         )
     }
@@ -394,7 +394,7 @@ mod tests {
     fn test_smooth_and_fill() {
         let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.4), (4, 5.8)]);
         let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
-        let actual = smooth_and_fill(&mut rating_stability, &rating_count);
+        let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
         assert_eq!(actual, [0.4, 0.81906897, 2.4, 5.8,]);
     }
 }
