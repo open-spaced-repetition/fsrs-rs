@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use burn::config::Config;
-use ndarray::{s, Array1, Array2, Zip};
+use ndarray::{azip, s, Array1, Array2, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
 use rand::{
@@ -22,7 +22,7 @@ const COLUMNS: [&str; 9] = [
     "rand",
 ];
 
-#[derive(Config, Copy)]
+#[derive(Config, Debug)]
 pub struct SimulatorConfig {
     w: [f64; 17],
     #[config(default = 10000)]
@@ -47,26 +47,18 @@ fn stability_after_success(w: [f64; 17], s: f64, r: f64, d: f64, response: usize
     s * (1.0
         + f64::exp(w[8])
             * (11.0 - d)
-            * f64::powf(s, -w[9])
+            * s.powf(-w[9])
             * (f64::exp((1.0 - r) * w[10]) - 1.0)
             * hard_penalty
             * easy_bonus)
 }
 
 fn stability_after_failure(w: [f64; 17], s: f64, r: f64, d: f64) -> f64 {
-    f64::max(
-        0.1,
-        f64::min(
-            w[11]
-                * f64::powf(d, -w[12])
-                * (f64::powf(s + 1.0, w[13]) - 1.0)
-                * f64::exp((1.0 - r) * w[14]),
-            s,
-        ),
-    )
+    s.min(w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
+        .max(0.1)
 }
 
-fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) -> f64 {
+fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>) -> f64 {
     let SimulatorConfig {
         w,
         deck_size,
@@ -76,10 +68,10 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
         recall_cost,
         forget_cost,
         learn_cost,
-    } = config;
+    } = config.clone();
 
     let mut card_table = Array2::<f64>::zeros((COLUMNS.len(), deck_size));
-    let col_map: HashMap<&str, usize> = COLUMNS
+    let col_map: HashMap<_, _> = COLUMNS
         .iter()
         .enumerate()
         .map(|(i, &item)| (item, i))
@@ -111,7 +103,7 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
     // Main simulation loop
     for today in 0..learn_span {
         let old_stability = card_table.slice(s![col_map["stability"], ..]);
-        let has_learned: Array1<bool> = old_stability.mapv(|x| x > 1e-9);
+        let has_learned = old_stability.mapv(|x| x > 1e-9);
         let old_last_date = card_table.slice(s![col_map["last_date"], ..]);
 
         // Updating delta_t for 'has_learned' cards
@@ -162,7 +154,7 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
         }
 
         // Create 'forget' mask
-        let forget: Array1<bool> = Zip::from(&rand_slice)
+        let forget = Zip::from(&rand_slice)
             .and(&retrievability)
             .map_collect(|&rand_val, &retriev_val| rand_val > retriev_val);
 
@@ -172,22 +164,22 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
             .and(&forget)
             .for_each(|cost, &need_review_flag, &forget_flag| {
                 if need_review_flag {
-                    if forget_flag {
-                        *cost = forget_cost;
+                    *cost = if forget_flag {
+                        forget_cost
                     } else {
-                        *cost = recall_cost;
+                        recall_cost
                     }
                 }
             });
 
         // Calculate cumulative sum of 'cost'
-        let mut cum_sum: Array1<f64> = Array1::zeros(deck_size);
+        let mut cum_sum = Array1::<f64>::zeros(deck_size);
         for i in 1..deck_size {
             cum_sum[i] = cum_sum[i - 1] + cost[i];
         }
 
         // Create 'true_review' mask based on 'need_review' and 'cum_sum'
-        let true_review: Array1<bool> =
+        let true_review =
             Zip::from(&need_review)
                 .and(&cum_sum)
                 .map_collect(|&need_review_flag, &cum_cost| {
@@ -223,19 +215,17 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
             .and(&true_review)
             .and(&true_learn)
             .for_each(|rating, &true_review_flag, &true_learn_flag| {
-                if true_learn_flag {
-                    *rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
+                *rating = if true_learn_flag {
+                    first_rating_choices[first_rating_dist.sample(&mut rng)]
                 } else if true_review_flag {
-                    *rating = review_rating_choices[review_rating_dist.sample(&mut rng)];
+                    review_rating_choices[review_rating_dist.sample(&mut rng)]
+                } else {
+                    *rating
                 }
             });
 
-        let mut new_stability: ndarray::ArrayBase<
-            ndarray::OwnedRepr<f64>,
-            ndarray::Dim<[usize; 1]>,
-        > = old_stability.to_owned();
-        let old_difficulty: ndarray::ArrayBase<ndarray::ViewRepr<&f64>, ndarray::Dim<[usize; 1]>> =
-            card_table.slice(s![col_map["difficulty"], ..]);
+        let mut new_stability = old_stability.to_owned();
+        let old_difficulty = card_table.slice(s![col_map["difficulty"], ..]);
         // Iterate over slices and apply stability_after_failure function
         Zip::from(&mut new_stability)
             .and(&old_stability)
@@ -306,30 +296,21 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
 
         let old_interval = card_table.slice(s![col_map["ivl"], ..]);
         let mut new_interval = old_interval.to_owned();
-        Zip::from(&mut new_interval)
-            .and(&new_stability)
-            .and(&true_review)
-            .and(&true_learn)
-            .for_each(|new_ivl, &new_stab, &true_review_flag, &true_learn_flag| {
-                if true_review_flag || true_learn_flag {
-                    *new_ivl = (9.0 * new_stab * (1.0 / request_retention - 1.0))
-                        .round()
-                        .min(max_ivl)
-                        .max(1.0);
-                }
-            });
+        azip!((new_ivl in &mut new_interval, &new_stab in &new_stability, &true_review_flag in &true_review, &true_learn_flag in &true_learn)
+            if true_review_flag || true_learn_flag {
+                *new_ivl = (9.0 * new_stab * (1.0 / request_retention - 1.0))
+                    .round()
+                    .min(max_ivl)
+                    .max(1.0);
+        });
 
         let old_due = card_table.slice(s![col_map["due"], ..]);
         let mut new_due = old_due.to_owned();
-        Zip::from(&mut new_due)
-            .and(&new_interval)
-            .and(&true_review)
-            .and(&true_learn)
-            .for_each(|new_due, &new_ivl, &true_review_flag, &true_learn_flag| {
-                if true_review_flag || true_learn_flag {
-                    *new_due = today as f64 + new_ivl;
-                }
-            });
+        azip!((new_due in &mut new_due, &new_ivl in &new_interval, &true_review_flag in &true_review, &true_learn_flag in &true_learn)
+            if true_review_flag || true_learn_flag {
+                *new_due = today as f64 + new_ivl;
+            }
+        );
 
         // Update the card_table with the new values
         card_table
@@ -357,7 +338,7 @@ fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) 
     memorized_cnt_per_day[memorized_cnt_per_day.len() - 1]
 }
 
-pub fn find_optimal_retention(config: SimulatorConfig) -> f64 {
+pub fn find_optimal_retention(config: &SimulatorConfig) -> f64 {
     let mut low = 0.75;
     let mut high = 0.95;
     let mut optimal_retention = 0.85;
@@ -402,7 +383,7 @@ mod tests {
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
         ]);
-        let memorization = simulate(config, 0.9, None);
+        let memorization = simulate(&config, 0.9, None);
         assert_eq!(memorization, 3832.250006134299)
     }
 
@@ -412,7 +393,7 @@ mod tests {
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
         ]);
-        let optimal_retention = find_optimal_retention(config);
+        let optimal_retention = find_optimal_retention(&config);
         assert_eq!(optimal_retention, 0.8179164761469289)
     }
 }
