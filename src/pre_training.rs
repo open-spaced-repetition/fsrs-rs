@@ -9,12 +9,15 @@ static R_S0_DEFAULT_ARRAY: &[(i32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4
 
 pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> [f32; 4] {
     let pretrainset = create_pretrain_data(fsrs_items);
-    let rating_count = total_rating_count(pretrainset.clone());
+    let rating_count = total_rating_count(&pretrainset);
     let rating_stability = search_parameters(pretrainset);
     smooth_and_fill(&mut rating_stability.clone(), &rating_count)
 }
 
-fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<String, Vec<f32>>> {
+type FirstRating = i32;
+type Count = i32;
+
+fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<FirstRating, AveragesForDeltaT> {
     // filter FSRSItem instances with exactly 2 reviews.
     let items: Vec<_> = fsrs_items
         .into_iter()
@@ -23,6 +26,7 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<Strin
 
     // use a nested HashMap (groups) to group items first by the rating in the first FSRSReview
     // and then by the delta_t in the second FSRSReview.
+    // (first_rating -> second_delta_t -> vec![0/1 for fail/pass])
     let mut groups = HashMap::new();
 
     for item in items {
@@ -38,41 +42,53 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<i32, HashMap<Strin
     let mut results = HashMap::new();
 
     for (first_rating, inner_map) in &groups {
-        let mut data = vec![]; // (delta_t, recall, count)
+        let mut data = vec![];
 
         // calculate the average (recall) and count for each group.
         for (second_delta_t, ratings) in inner_map {
             let avg = ratings.iter().map(|&x| x as f64).sum::<f64>() / ratings.len() as f64;
-            data.push((*second_delta_t, avg, ratings.len()));
+            data.push(AverageRecall {
+                delta_t: *second_delta_t as f32,
+                recall: avg as f32,
+                count: ratings.len() as f32,
+            })
         }
 
         // Sort by delta_t in ascending order
-        data.sort_by(|a, b| a.0.cmp(&b.0));
+        data.sort_unstable_by(|a, b| a.delta_t.total_cmp(&b.delta_t));
 
-        let inner_result = HashMap::from([
-            (
-                "delta_t".to_string(),
-                data.iter().map(|&(dt, _, _)| dt as f32).collect(),
-            ),
-            (
-                "recall".to_string(),
-                data.iter().map(|&(_, r, _)| r as f32).collect(),
-            ),
-            (
-                "count".to_string(),
-                data.iter().map(|&(_, _, c)| c as f32).collect(),
-            ),
-        ]);
-
-        results.insert(*first_rating, inner_result);
+        results.insert(
+            *first_rating,
+            AveragesForDeltaT {
+                delta_t: data.iter().map(|d| d.delta_t).collect(),
+                recall: data.iter().map(|d| d.recall).collect(),
+                count: data.iter().map(|d| d.count).collect(),
+            },
+        );
     }
     results
 }
 
-fn total_rating_count(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, i32> {
+/// The average pass rate & count for a single delta_t for a given first rating.
+struct AverageRecall {
+    delta_t: f32,
+    recall: f32,
+    count: f32,
+}
+
+/// All delta t stats for a given first rating.
+struct AveragesForDeltaT {
+    delta_t: Vec<f32>,
+    recall: Vec<f32>,
+    count: Vec<f32>,
+}
+
+fn total_rating_count(
+    pretrainset: &HashMap<FirstRating, AveragesForDeltaT>,
+) -> HashMap<FirstRating, Count> {
     let mut rating_count = HashMap::new();
-    for (first_rating, data) in pretrainset.iter() {
-        let count = data["count"].iter().sum::<f32>() as i32;
+    for (first_rating, data) in pretrainset {
+        let count = data.count.iter().sum::<f32>() as i32;
         rating_count.insert(*first_rating, count);
     }
     rating_count
@@ -98,39 +114,37 @@ fn loss(
     rmse + l1
 }
 
-fn insert_default_point(
-    delta_t: Vec<f32>,
-    recall: Vec<f32>,
-    count: Vec<f32>,
+fn append_default_point(
+    delta_t: &mut Vec<f32>,
+    recall: &mut Vec<f32>,
+    count: &mut Vec<f32>,
     default_s0: f32,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let mut delta_t = delta_t;
-    let mut recall = recall;
-    let mut count = count;
+) {
     delta_t.push(default_s0);
     recall.push(0.9);
     count.push(10.0);
-    (delta_t, recall, count)
 }
 
-fn search_parameters(pretrainset: HashMap<i32, HashMap<String, Vec<f32>>>) -> HashMap<i32, f32> {
+fn search_parameters(
+    mut pretrainset: HashMap<FirstRating, AveragesForDeltaT>,
+) -> HashMap<i32, f32> {
     let mut optimal_stabilities = HashMap::new();
     let epsilon = f32::EPSILON;
 
-    for (first_rating, data) in pretrainset.iter() {
+    for (first_rating, data) in &mut pretrainset {
         let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
         let default_s0 = r_s0_default[first_rating];
 
-        let (delta_t, recall, count) = insert_default_point(
-            data["delta_t"].clone(),
-            data["recall"].clone(),
-            data["count"].clone(),
+        append_default_point(
+            &mut data.delta_t,
+            &mut data.recall,
+            &mut data.count,
             default_s0,
         );
 
-        let delta_t = Array1::from(delta_t);
-        let recall = Array1::from(recall);
-        let count = Array1::from(count);
+        let delta_t = Array1::from(data.delta_t.clone());
+        let recall = Array1::from(data.recall.clone());
+        let count = Array1::from(data.count.clone());
 
         let mut low = 0.1;
         let mut high = 100.0;
@@ -361,11 +375,11 @@ mod tests {
     fn test_search_parameters() {
         let pretrainset = HashMap::from([(
             4,
-            HashMap::from([
-                ("delta_t".to_string(), vec![1.0, 2.0, 3.0, 4.0]),
-                ("recall".to_string(), vec![0.9, 0.8181818, 0.75, 0.6923077]),
-                ("count".to_string(), vec![30.0, 30.0, 30.0, 30.0]),
-            ]),
+            AveragesForDeltaT {
+                delta_t: vec![1.0, 2.0, 3.0, 4.0],
+                recall: vec![0.9, 0.8181818, 0.75, 0.6923077],
+                count: vec![30.0, 30.0, 30.0, 30.0],
+            },
         )]);
         let actual = search_parameters(pretrainset);
         let expected = [(4, 1.0714815)].into_iter().collect();
