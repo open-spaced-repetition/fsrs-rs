@@ -368,15 +368,15 @@ pub fn find_optimal_retention(config: SimulatorConfig) -> f64 {
         let mid1 = low + (high - low) / 3.0;
         let mid2 = high - (high - low) / 3.0;
 
-        let sample1 = simulate(config.clone(), mid1, Some(42));
-        let sample2 = simulate(config.clone(), mid1, Some(43));
-        let sample3 = simulate(config.clone(), mid1, Some(44));
+        let sample1 = simulate(config, mid1, Some(42));
+        let sample2 = simulate(config, mid1, Some(43));
+        let sample3 = simulate(config, mid1, Some(44));
 
         let memorization1 = (sample1 + sample2 + sample3) / 3.0;
 
-        let sample1 = simulate(config.clone(), mid2, Some(42));
-        let sample2 = simulate(config.clone(), mid2, Some(43));
-        let sample3 = simulate(config.clone(), mid2, Some(44));
+        let sample1 = simulate(config, mid2, Some(42));
+        let sample2 = simulate(config, mid2, Some(43));
+        let sample3 = simulate(config, mid2, Some(44));
 
         let memorization2 = (sample1 + sample2 + sample3) / 3.0;
 
