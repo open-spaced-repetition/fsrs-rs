@@ -348,18 +348,14 @@ pub fn find_optimal_retention(config: &SimulatorConfig) -> f64 {
         iter += 1;
         let mid1 = low + (high - low) / 3.0;
         let mid2 = high - (high - low) / 3.0;
-
-        let sample1 = simulate(config, mid1, Some(42));
-        let sample2 = simulate(config, mid1, Some(43));
-        let sample3 = simulate(config, mid1, Some(44));
-
-        let memorization1 = (sample1 + sample2 + sample3) / 3.0;
-
-        let sample1 = simulate(config, mid2, Some(42));
-        let sample2 = simulate(config, mid2, Some(43));
-        let sample3 = simulate(config, mid2, Some(44));
-
-        let memorization2 = (sample1 + sample2 + sample3) / 3.0;
+        fn sameple_serveral(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
+            (0..n)
+                .map(|i| simulate(config, mid, Some((i + 42).try_into().unwrap())))
+                .sum::<f64>()
+                / n as f64
+        }
+        let memorization1 = sameple_serveral(3, config, mid1);
+        let memorization2 = sameple_serveral(3, config, mid2);
 
         if memorization1 > memorization2 {
             high = mid2;
