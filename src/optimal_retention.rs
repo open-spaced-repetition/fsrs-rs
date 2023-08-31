@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use burn::config::Config;
 use ndarray::{s, Array1, Array2, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
@@ -21,15 +22,22 @@ const COLUMNS: [&str; 9] = [
     "rand",
 ];
 
-#[derive(Clone)]
+#[derive(Config, Copy)]
 pub struct SimulatorConfig {
     w: [f64; 17],
+    #[config(default = 10000)]
     deck_size: usize,
+    #[config(default = 365)]
     learn_span: usize,
+    #[config(default = 1800.0)]
     max_cost_perday: f64,
+    #[config(default = 36500.0)]
     max_ivl: f64,
+    #[config(default = 10.0)]
     recall_cost: f64,
+    #[config(default = 50.0)]
     forget_cost: f64,
+    #[config(default = 20.0)]
     learn_cost: f64,
 }
 
@@ -390,38 +398,20 @@ mod tests {
 
     #[test]
     fn test_simulator() {
-        let config = SimulatorConfig {
-            w: [
-                0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
-                1.26, 0.29, 2.61,
-            ],
-            deck_size: 10000,
-            learn_span: 365,
-            max_cost_perday: 60.0 * 30.0,
-            max_ivl: 36500.0,
-            recall_cost: 10.0,
-            forget_cost: 50.0,
-            learn_cost: 20.0,
-        };
+        let config = SimulatorConfig::new([
+            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
+            0.29, 2.61,
+        ]);
         let memorization = simulate(config, 0.9, None);
         assert_eq!(memorization, 3832.250006134299)
     }
 
     #[test]
     fn test_find_optimal_retention() {
-        let config = SimulatorConfig {
-            w: [
-                0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
-                1.26, 0.29, 2.61,
-            ],
-            deck_size: 10000,
-            learn_span: 365,
-            max_cost_perday: 60.0 * 30.0,
-            max_ivl: 36500.0,
-            recall_cost: 10.0,
-            forget_cost: 50.0,
-            learn_cost: 20.0,
-        };
+        let config = SimulatorConfig::new([
+            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
+            0.29, 2.61,
+        ]);
         let optimal_retention = find_optimal_retention(config);
         assert_eq!(optimal_retention, 0.8179164761469289)
     }
