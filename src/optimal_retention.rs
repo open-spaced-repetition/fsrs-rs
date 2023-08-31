@@ -58,7 +58,7 @@ fn stability_after_failure(w: [f64; 17], s: f64, r: f64, d: f64) -> f64 {
     )
 }
 
-fn simulate(config: SimulatorConfig, request_retention: f64) -> f64 {
+fn simulate(config: SimulatorConfig, request_retention: f64, seed: Option<u64>) -> f64 {
     let SimulatorConfig {
         w,
         deck_size,
@@ -98,7 +98,7 @@ fn simulate(config: SimulatorConfig, request_retention: f64) -> f64 {
     let review_rating_prob = [0.3, 0.6, 0.1];
     let review_rating_dist = WeightedIndex::new(&review_rating_prob).unwrap();
 
-    let mut rng = StdRng::seed_from_u64(42);
+    let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
     // Main simulation loop
     for today in 0..learn_span {
@@ -353,15 +353,24 @@ pub fn find_optimal_retention(config: SimulatorConfig) -> f64 {
     let mut low = 0.75;
     let mut high = 0.95;
     let mut optimal_retention = 0.85;
-    let epsilon = 0.03;
+    let epsilon = 0.01;
     let mut iter = 0;
     while high - low > epsilon && iter < 10 {
         iter += 1;
         let mid1 = low + (high - low) / 3.0;
         let mid2 = high - (high - low) / 3.0;
 
-        let memorization1 = simulate(config.clone(), mid1);
-        let memorization2 = simulate(config.clone(), mid2);
+        let sample1 = simulate(config.clone(), mid1, Some(42));
+        let sample2 = simulate(config.clone(), mid1, Some(43));
+        let sample3 = simulate(config.clone(), mid1, Some(44));
+
+        let memorization1 = (sample1 + sample2 + sample3) / 3.0;
+
+        let sample1 = simulate(config.clone(), mid2, Some(42));
+        let sample2 = simulate(config.clone(), mid2, Some(43));
+        let sample3 = simulate(config.clone(), mid2, Some(44));
+
+        let memorization2 = (sample1 + sample2 + sample3) / 3.0;
 
         if memorization1 > memorization2 {
             high = mid2;
@@ -370,6 +379,7 @@ pub fn find_optimal_retention(config: SimulatorConfig) -> f64 {
         }
 
         optimal_retention = (high + low) / 2.0;
+        dbg!(iter, optimal_retention);
     }
     optimal_retention
 }
@@ -393,7 +403,7 @@ mod tests {
             forget_cost: 50.0,
             learn_cost: 20.0,
         };
-        let memorization = simulate(config, 0.9);
+        let memorization = simulate(config, 0.9, None);
         assert_eq!(memorization, 3832.250006134299)
     }
 
@@ -413,6 +423,6 @@ mod tests {
             learn_cost: 20.0,
         };
         let optimal_retention = find_optimal_retention(config);
-        assert_eq!(optimal_retention, 0.8059670781893005)
+        assert_eq!(optimal_retention, 0.8179164761469289)
     }
 }
