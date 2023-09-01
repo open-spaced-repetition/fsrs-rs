@@ -254,7 +254,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
             *new_stab = stability_after_success(w, stab, retr, diff, rating);
         });
 
-        //,itialize a new Array1 to store updated difficulty values
+        // Initialize a new Array1 to store updated difficulty values
         let mut new_difficulty = old_difficulty.to_owned();
 
         // Update the difficulty values based on the condition 'true_review & forget'
@@ -305,10 +305,8 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         let old_due = card_table.slice(s![Column::Due, ..]);
         let mut new_due = old_due.to_owned();
         izip!(&mut new_due, &new_interval, &true_review, &true_learn)
-            .filter(|(_, _, &true_review_flag, &true_learn_flag)| {
-                true_review_flag || true_learn_flag
-            })
-            .for_each(|(new_due, &new_ivl, _, _)| {
+            .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
+            .for_each(|(new_due, &new_ivl, ..)| {
                 *new_due = today as f64 + new_ivl;
             });
 
