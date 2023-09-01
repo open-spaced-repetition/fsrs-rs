@@ -117,13 +117,10 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         let mut delta_t = Array1::zeros(deck_size); // Create an array of the same length for delta_t
 
         // Calculate delta_t for entries where has_learned is true
-        Zip::from(&mut delta_t)
-            .and(&old_last_date)
-            .and(&has_learned)
-            .for_each(|delta_t, &last_date, &has_learned_flag| {
-                if has_learned_flag {
-                    *delta_t = today as f64 - last_date;
-                }
+        izip!(&mut delta_t, &old_last_date, &has_learned)
+            .filter(|(.., &has_learned_flag)| has_learned_flag)
+            .for_each(|(delta_t, &last_date, ..)| {
+                *delta_t = today as f64 - last_date;
             });
 
         let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
@@ -166,8 +163,8 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
 
         // Update 'cost' column based on 'need_review' and 'forget'
         izip!(&mut cost, &need_review, &forget)
-            .filter(|(_, &need_review_flag, &_)| need_review_flag)
-            .for_each(|(cost, &_, &forget_flag)| {
+            .filter(|(_, &need_review_flag, _)| need_review_flag)
+            .for_each(|(cost, _, &forget_flag)| {
                 *cost = if forget_flag {
                     forget_cost
                 } else {
@@ -193,7 +190,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         // Update 'cost' column based on 'need_learn'
         izip!(&mut cost, &need_learn)
             .filter(|(_, &need_learn_flag)| need_learn_flag)
-            .for_each(|(cost, &_)| {
+            .for_each(|(cost, _)| {
                 *cost = learn_cost;
             });
 
@@ -212,10 +209,8 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
                 });
 
         let mut ratings = Array1::zeros(deck_size);
-        Zip::from(&mut ratings)
-            .and(&true_review)
-            .and(&true_learn)
-            .for_each(|rating, &true_review_flag, &true_learn_flag| {
+        izip!(&mut ratings, &true_review, &true_learn).for_each(
+            |(rating, &true_review_flag, &true_learn_flag)| {
                 *rating = if true_learn_flag {
                     first_rating_choices[first_rating_dist.sample(&mut rng)]
                 } else if true_review_flag {
@@ -223,7 +218,8 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
                 } else {
                     *rating
                 }
-            });
+            },
+        );
 
         let mut new_stability = old_stability.to_owned();
         let old_difficulty = card_table.slice(s![Column::Difficulty, ..]);
@@ -266,31 +262,23 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
         let mut new_last_date = old_last_date.to_owned();
-        Zip::from(&mut new_last_date)
-            .and(&true_review)
-            .and(&true_learn)
-            .for_each(|new_last_date, &true_review_flag, &true_learn_flag| {
-                if true_review_flag || true_learn_flag {
-                    *new_last_date = today as f64;
-                }
+        izip!(&mut new_last_date, &true_review, &true_learn)
+            .filter(|(_, &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
+            .for_each(|(new_last_date, ..)| {
+                *new_last_date = today as f64;
             });
 
-        Zip::from(&mut new_stability)
-            .and(&ratings)
-            .and(&true_learn)
-            .for_each(|new_stab, &rating, &true_learn_flag| {
-                if true_learn_flag {
-                    *new_stab = w[rating];
-                }
-            });
-        Zip::from(&mut new_difficulty)
-            .and(&ratings)
-            .and(&true_learn)
-            .for_each(|new_diff, &rating, &true_learn_flag| {
-                if true_learn_flag {
-                    *new_diff = w[4] - w[5] * (rating as f64 - 3.0);
-                }
-            });
+        izip!(
+            &mut new_stability,
+            &mut new_difficulty,
+            &ratings,
+            &true_learn
+        )
+        .filter(|(.., &true_learn_flag)| true_learn_flag)
+        .for_each(|(new_stab, new_diff, &rating, _)| {
+            *new_stab = w[rating];
+            *new_diff = w[4] - w[5] * (rating as f64 - 3.0);
+        });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
         izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
