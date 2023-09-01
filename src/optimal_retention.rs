@@ -1,5 +1,6 @@
 use burn::config::Config;
-use ndarray::{azip, s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
+use itertools::izip;
+use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
 use rand::{
@@ -128,15 +129,12 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
 
         // Calculate retrievability for entries where has_learned is true
-        azip!((
-            retrievability    in &mut retrievability,
-            &delta_t          in &delta_t,
-            &stability        in &old_stability,
-            &has_learned_flag in &has_learned)
-            if has_learned_flag {
-                *retrievability = f64::powf(1.0 + delta_t / (9.0 * stability), -1.0);
-            }
-        );
+        izip!(&mut retrievability, &delta_t, &old_stability, &has_learned)
+            .filter(|(.., &has_learned_flag)| has_learned_flag)
+            .for_each(|(retrievability, &delta_t, &stability, ..)| {
+                *retrievability = (1.0 + delta_t / (9.0 * stability)).powf(-1.0)
+            });
+
         // Set 'cost' column to 0
         let mut cost = Array1::<f64>::zeros(deck_size);
 
@@ -167,16 +165,13 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
             .map_collect(|&rand_val, &retriev_val| rand_val > retriev_val);
 
         // Update 'cost' column based on 'need_review' and 'forget'
-        Zip::from(&mut cost)
-            .and(&need_review)
-            .and(&forget)
-            .for_each(|cost, &need_review_flag, &forget_flag| {
-                if need_review_flag {
-                    *cost = if forget_flag {
-                        forget_cost
-                    } else {
-                        recall_cost
-                    }
+        izip!(&mut cost, &need_review, &forget)
+            .filter(|(_, &need_review_flag, &_)| need_review_flag)
+            .for_each(|(cost, &_, &forget_flag)| {
+                *cost = if forget_flag {
+                    forget_cost
+                } else {
+                    recall_cost
                 }
             });
 
@@ -196,12 +191,10 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
 
         let need_learn = old_due.mapv(|x| x == learn_span as f64);
         // Update 'cost' column based on 'need_learn'
-        Zip::from(&mut cost)
-            .and(&need_learn)
-            .for_each(|cost, &need_learn_flag| {
-                if need_learn_flag {
-                    *cost = learn_cost;
-                }
+        izip!(&mut cost, &need_learn)
+            .filter(|(_, &need_learn_flag)| need_learn_flag)
+            .for_each(|(cost, &_)| {
+                *cost = learn_cost;
             });
 
         for i in 1..deck_size {
@@ -235,42 +228,41 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         let mut new_stability = old_stability.to_owned();
         let old_difficulty = card_table.slice(s![Column::Difficulty, ..]);
         // Iterate over slices and apply stability_after_failure function
-        azip!((
-            new_stab   in &mut new_stability,
-            &stab      in &old_stability,
-            &retr      in &retrievability,
-            &diff      in &old_difficulty,
-            &condition in &(&true_review & &forget))
-            if condition {
-                *new_stab = stability_after_failure(w, stab, retr, diff);
-            }
-        );
+        izip!(
+            &mut new_stability,
+            &old_stability,
+            &retrievability,
+            &old_difficulty,
+            &(&true_review & &forget)
+        )
+        .filter(|(.., &condition)| condition)
+        .for_each(|(new_stab, &stab, &retr, &diff, ..)| {
+            *new_stab = stability_after_failure(w, stab, retr, diff);
+        });
 
         // Iterate over slices and apply stability_after_success function
-        azip!((
-            new_stab   in &mut new_stability,
-            &rating    in &ratings,
-            &stab      in &old_stability,
-            &retr      in &retrievability,
-            &diff      in &old_difficulty,
-            &condition in &(&true_review & !&forget))
-            if condition {
-                *new_stab = stability_after_success(w, stab, retr, diff, rating);
-            }
-        );
+        izip!(
+            &mut new_stability,
+            &ratings,
+            &old_stability,
+            &retrievability,
+            &old_difficulty,
+            &(&true_review & !&forget)
+        )
+        .filter(|(.., &condition)| condition)
+        .for_each(|(new_stab, &rating, &stab, &retr, &diff, _)| {
+            *new_stab = stability_after_success(w, stab, retr, diff, rating);
+        });
 
-        // Initialize a new Array1 to store updated difficulty values
+        //,itialize a new Array1 to store updated difficulty values
         let mut new_difficulty = old_difficulty.to_owned();
 
         // Update the difficulty values based on the condition 'true_review & forget'
-        azip!((
-            new_diff  in &mut new_difficulty,
-            &old_diff in &old_difficulty,
-            &true_rev in &true_review,
-            &frgt     in &forget)
-            if true_rev && frgt {
+        izip!(&mut new_difficulty, &old_difficulty, &true_review, &forget)
+            .filter(|(.., &true_rev, &frgt)| true_rev && frgt)
+            .for_each(|(new_diff, &old_diff, ..)| {
                 *new_diff = (old_diff + 2.0 * w[6]).max(1.0).min(10.0);
-        });
+            });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
         let mut new_last_date = old_last_date.to_owned();
@@ -301,30 +293,24 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
             });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
-        azip!((
-            new_ivl           in &mut new_interval,
-            &new_stab         in &new_stability,
-            &true_review_flag in &true_review,
-            &true_learn_flag  in &true_learn)
-            if true_review_flag || true_learn_flag {
+        izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
+            .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
+            .for_each(|(new_ivl, &new_stab, ..)| {
                 *new_ivl = (9.0 * new_stab * (1.0 / request_retention - 1.0))
                     .round()
                     .min(max_ivl)
                     .max(1.0);
-            }
-        );
+            });
 
         let old_due = card_table.slice(s![Column::Due, ..]);
         let mut new_due = old_due.to_owned();
-        azip!((
-            new_due           in &mut new_due,
-            &new_ivl          in &new_interval,
-            &true_review_flag in &true_review,
-            &true_learn_flag  in &true_learn)
-            if true_review_flag || true_learn_flag {
+        izip!(&mut new_due, &new_interval, &true_review, &true_learn)
+            .filter(|(_, _, &true_review_flag, &true_learn_flag)| {
+                true_review_flag || true_learn_flag
+            })
+            .for_each(|(new_due, &new_ivl, _, _)| {
                 *new_due = today as f64 + new_ivl;
-            }
-        );
+            });
 
         // Update the card_table with the new values
         card_table
