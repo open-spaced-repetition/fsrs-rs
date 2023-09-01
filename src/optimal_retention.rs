@@ -135,7 +135,8 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
             &has_learned_flag in &has_learned)
             if has_learned_flag {
                 *retrievability = f64::powf(1.0 + delta_t / (9.0 * stability), -1.0);
-        });
+            }
+        );
         // Set 'cost' column to 0
         let mut cost = Array1::<f64>::zeros(deck_size);
 
@@ -235,10 +236,10 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         let old_difficulty = card_table.slice(s![Column::Difficulty, ..]);
         // Iterate over slices and apply stability_after_failure function
         azip!((
-            new_stab in &mut new_stability,
-            &stab    in &old_stability,
-            &retr    in &retrievability,
-            &diff    in &old_difficulty,
+            new_stab   in &mut new_stability,
+            &stab      in &old_stability,
+            &retr      in &retrievability,
+            &diff      in &old_difficulty,
             &condition in &(&true_review & &forget))
             if condition {
                 *new_stab = stability_after_failure(w, stab, retr, diff);
@@ -267,8 +268,8 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
             &old_diff in &old_difficulty,
             &true_rev in &true_review,
             &frgt     in &forget)
-        if true_rev && frgt {
-            *new_diff = (old_diff + 2.0 * w[6]).max(1.0).min(10.0);
+            if true_rev && frgt {
+                *new_diff = (old_diff + 2.0 * w[6]).max(1.0).min(10.0);
         });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
@@ -310,7 +311,8 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
                     .round()
                     .min(max_ivl)
                     .max(1.0);
-        });
+            }
+        );
 
         let old_due = card_table.slice(s![Column::Due, ..]);
         let mut new_due = old_due.to_owned();
