@@ -21,6 +21,7 @@ rand = "0.8.5"
 ndarray = "0.15.6"
 snafu = "0.7.5"
 ndarray-rand = "0.14.0"
+strum = { version = "0.25.0", features = ["derive"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.29.0" }
