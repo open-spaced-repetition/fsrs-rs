@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use burn::config::Config;
-use ndarray::{azip, s, Array1, Array2, Zip};
+use ndarray::{azip, s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
 use rand::{
@@ -9,18 +7,35 @@ use rand::{
     rngs::StdRng,
     SeedableRng,
 };
+use strum::EnumCount;
 
-const COLUMNS: [&str; 9] = [
-    "difficulty",
-    "stability",
-    "retrievability",
-    "delta_t",
-    "last_date",
-    "due",
-    "ivl",
-    "cost",
-    "rand",
-];
+#[derive(Debug, EnumCount)]
+enum Column {
+    Difficulty,
+    Stability,
+    #[allow(unused)]
+    Retrievability,
+    #[allow(unused)]
+    DeltaT,
+    LastDate,
+    Due,
+    Interval,
+    #[allow(unused)]
+    Cost,
+    #[allow(unused)]
+    Rand,
+}
+
+impl ndarray::SliceNextDim for Column {
+    type InDim = Ix1;
+    type OutDim = Ix0;
+}
+
+impl From<Column> for SliceInfoElem {
+    fn from(value: Column) -> Self {
+        SliceInfoElem::Index(value as isize)
+    }
+}
 
 #[derive(Config, Debug)]
 pub struct SimulatorConfig {
@@ -70,21 +85,12 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         learn_cost,
     } = config.clone();
 
-    let mut card_table = Array2::<f64>::zeros((COLUMNS.len(), deck_size));
-    let col_map: HashMap<_, _> = COLUMNS
-        .iter()
-        .enumerate()
-        .map(|(i, &item)| (item, i))
-        .collect();
+    let mut card_table = Array2::<f64>::zeros((Column::COUNT, deck_size));
     card_table
-        .slice_mut(s![col_map["due"], ..])
+        .slice_mut(s![Column::Due, ..])
         .fill(learn_span as f64);
-    card_table
-        .slice_mut(s![col_map["difficulty"], ..])
-        .fill(1e-10);
-    card_table
-        .slice_mut(s![col_map["stability"], ..])
-        .fill(1e-10);
+    card_table.slice_mut(s![Column::Difficulty, ..]).fill(1e-10);
+    card_table.slice_mut(s![Column::Stability, ..]).fill(1e-10);
 
     // let mut review_cnt_per_day = Array1::<f64>::zeros(learn_span);
     // let mut learn_cnt_per_day = Array1::<f64>::zeros(learn_span);
@@ -102,9 +108,9 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
 
     // Main simulation loop
     for today in 0..learn_span {
-        let old_stability = card_table.slice(s![col_map["stability"], ..]);
+        let old_stability = card_table.slice(s![Column::Stability, ..]);
         let has_learned = old_stability.mapv(|x| x > 1e-9);
-        let old_last_date = card_table.slice(s![col_map["last_date"], ..]);
+        let old_last_date = card_table.slice(s![Column::LastDate, ..]);
 
         // Updating delta_t for 'has_learned' cards
         let mut delta_t = Array1::zeros(deck_size); // Create an array of the same length for delta_t
@@ -135,7 +141,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         let mut cost = Array1::zeros(deck_size);
 
         // Create 'need_review' mask
-        let old_due = card_table.slice(s![col_map["due"], ..]);
+        let old_due = card_table.slice(s![Column::Due, ..]);
         let need_review: Array1<bool> = old_due.mapv(|x| x <= today as f64);
 
         // dbg!(&need_review.mapv(|x| x as i32).sum());
@@ -225,7 +231,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
             });
 
         let mut new_stability = old_stability.to_owned();
-        let old_difficulty = card_table.slice(s![col_map["difficulty"], ..]);
+        let old_difficulty = card_table.slice(s![Column::Difficulty, ..]);
         // Iterate over slices and apply stability_after_failure function
         Zip::from(&mut new_stability)
             .and(&old_stability)
@@ -294,7 +300,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
                 }
             });
 
-        let old_interval = card_table.slice(s![col_map["ivl"], ..]);
+        let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
         azip!((new_ivl in &mut new_interval, &new_stab in &new_stability, &true_review_flag in &true_review, &true_learn_flag in &true_learn)
             if true_review_flag || true_learn_flag {
@@ -304,7 +310,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
                     .max(1.0);
         });
 
-        let old_due = card_table.slice(s![col_map["due"], ..]);
+        let old_due = card_table.slice(s![Column::Due, ..]);
         let mut new_due = old_due.to_owned();
         azip!((new_due in &mut new_due, &new_ivl in &new_interval, &true_review_flag in &true_review, &true_learn_flag in &true_learn)
             if true_review_flag || true_learn_flag {
@@ -314,19 +320,17 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
 
         // Update the card_table with the new values
         card_table
-            .slice_mut(s![col_map["difficulty"], ..])
+            .slice_mut(s![Column::Difficulty, ..])
             .assign(&new_difficulty);
         card_table
-            .slice_mut(s![col_map["stability"], ..])
+            .slice_mut(s![Column::Stability, ..])
             .assign(&new_stability);
         card_table
-            .slice_mut(s![col_map["last_date"], ..])
+            .slice_mut(s![Column::LastDate, ..])
             .assign(&new_last_date);
+        card_table.slice_mut(s![Column::Due, ..]).assign(&new_due);
         card_table
-            .slice_mut(s![col_map["due"], ..])
-            .assign(&new_due);
-        card_table
-            .slice_mut(s![col_map["ivl"], ..])
+            .slice_mut(s![Column::Interval, ..])
             .assign(&new_interval);
 
         // Update the review_cnt_per_day, learn_cnt_per_day and memorized_cnt_per_day
@@ -348,14 +352,14 @@ pub fn find_optimal_retention(config: &SimulatorConfig) -> f64 {
         iter += 1;
         let mid1 = low + (high - low) / 3.0;
         let mid2 = high - (high - low) / 3.0;
-        fn sameple_serveral(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
+        fn sample_several(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
             (0..n)
                 .map(|i| simulate(config, mid, Some((i + 42).try_into().unwrap())))
                 .sum::<f64>()
                 / n as f64
         }
-        let memorization1 = sameple_serveral(3, config, mid1);
-        let memorization2 = sameple_serveral(3, config, mid2);
+        let memorization1 = sample_several(3, config, mid1);
+        let memorization2 = sample_several(3, config, mid2);
 
         if memorization1 > memorization2 {
             high = mid2;
