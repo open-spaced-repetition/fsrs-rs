@@ -144,9 +144,6 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             let rating = ratings.clone().slice([i..i + 1]).transpose();
             // [batch_size, 1]
             (stability, difficulty) = self.step(i, delta_t, rating, stability, difficulty);
-            // dbg!("stability: {}", &stability);
-            // dbg!("difficulty: {}", &difficulty);
-            // dbg!()
         }
         (stability, difficulty)
     }
