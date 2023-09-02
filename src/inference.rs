@@ -87,10 +87,7 @@ fn test_evaluate() {
 
     let metrics = evaluate(Model::<Backend>::new(config.clone()), device, items.clone());
 
-    assert_eq!(metrics, (
-        0.20820294,
-        0.043400552,
-    ));
+    assert_eq!(metrics, (0.20820294, 0.043400552,));
 
     let mut model = Model::<Backend>::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
@@ -117,8 +114,5 @@ fn test_evaluate() {
     )));
     let metrics = evaluate::<Backend>(model, device, items);
 
-    assert_eq!(metrics, (
-        0.20209138,
-        0.017994177,
-    ));
+    assert_eq!(metrics, (0.20209138, 0.017994177,));
 }
