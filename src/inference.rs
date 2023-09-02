@@ -1,8 +1,11 @@
-#![allow(dead_code)]
 use std::collections::HashMap;
 
-use burn::tensor::Tensor;
+use crate::model::ModelConfig;
+use burn::module::Param;
+use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
+use burn_ndarray::NdArrayBackend;
+use burn_ndarray::NdArrayDevice;
 
 use crate::dataset::FSRSBatch;
 use crate::dataset::FSRSBatcher;
@@ -22,19 +25,23 @@ fn infer<B: Backend<FloatElem = f32>>(
     (stability, difficulty, retention)
 }
 
-pub fn evaluate<B: Backend<FloatElem = f32>>(
-    model: Model<B>,
-    device: B::Device,
-    items: Vec<FSRSItem>,
-) -> (f32, f32) {
-    let batcher = FSRSBatcher::<B>::new(device);
+pub fn evaluate(weights: [f32; 17], items: Vec<FSRSItem>) -> (f32, f32) {
+    type Backend = NdArrayBackend<f32>;
+    let device = NdArrayDevice::Cpu;
+    let batcher = FSRSBatcher::<Backend>::new(device);
     let batch = batcher.batch(items);
-    let (_stability, _difficulty, retention) = infer::<B>(model, batch.clone());
+    let config = ModelConfig::default();
+    let mut model = Model::<Backend>::new(config);
+    model.w = Param::from(Tensor::from_floats(Data::new(
+        weights.to_vec(),
+        Shape { dims: [17] },
+    )));
+    let (_stability, _difficulty, retention) = infer::<Backend>(model, batch.clone());
     let pred = retention.clone().squeeze::<1>(1).to_data().value;
     let true_val = batch.labels.clone().float().to_data().value;
     let rmse = calibration_rmse(pred, true_val);
-    let loss =
-        BCELoss::<B>::new().forward(retention, batch.labels.unsqueeze::<2>().float().transpose());
+    let loss = BCELoss::<Backend>::new()
+        .forward(retention, batch.labels.unsqueeze::<2>().float().transpose());
     (loss.to_data().value[0], rmse)
 }
 
@@ -75,24 +82,21 @@ fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
 #[test]
 fn test_evaluate() {
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
-    use crate::model::ModelConfig;
-    use burn::module::Param;
-    use burn::tensor::{Data, Shape, Tensor};
-    use burn_ndarray::NdArrayBackend;
-    use burn_ndarray::NdArrayDevice;
-    type Backend = NdArrayBackend<f32>;
-    let device = NdArrayDevice::Cpu;
-    let config = ModelConfig::default();
 
     let items = anki21_sample_file_converted_to_fsrs();
 
-    let metrics = evaluate(Model::<Backend>::new(config.clone()), device, items.clone());
+    let metrics = evaluate(
+        [
+            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
+            0.29, 2.61,
+        ],
+        items.clone(),
+    );
 
     assert_eq!(metrics, (0.20820294, 0.043400552));
 
-    let mut model = Model::<Backend>::new(config);
-    model.w = Param::from(Tensor::from_floats(Data::new(
-        vec![
+    let metrics = evaluate(
+        [
             0.81497127,
             1.5411042,
             4.007436,
@@ -111,9 +115,8 @@ fn test_evaluate() {
             0.10132355,
             2.7867608,
         ],
-        Shape { dims: [17] },
-    )));
-    let metrics = evaluate::<Backend>(model, device, items);
+        items,
+    );
 
     assert_eq!(metrics, (0.20209138, 0.017994177));
 }
