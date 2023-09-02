@@ -58,8 +58,8 @@ fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
         binned_x.round() as i32
     }
 
-    for (&p, &t) in pred.iter().zip(true_val.iter()) {
-        let bin = get_bin(p, 20.0);
+    for (p, t) in pred.iter().zip(true_val) {
+        let bin = get_bin(*p, 20.0);
         groups.entry(bin).or_insert_with(Vec::new).push((p, t));
     }
 
