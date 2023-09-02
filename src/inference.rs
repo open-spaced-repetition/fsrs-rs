@@ -118,5 +118,8 @@ fn test_evaluate() {
         items,
     );
 
-    assert_eq!(metrics, (0.20209138, 0.017994177));
+    assert!([metrics.0, metrics.1]
+        .iter()
+        .zip([0.20209138, 0.017994177])
+        .all(|(x, y)| (x - y).abs() < f32::EPSILON)); // use assert_eq! will cause mac and linux to fail.
 }
