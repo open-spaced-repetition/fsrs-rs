@@ -124,7 +124,8 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
                 self.stability_after_failure(stability.clone(), new_d.clone(), r.clone());
             let new_s = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
             // mask padding zeros for rating
-            let new_s = new_s.mask_where(rating.equal_elem(0), stability);
+            let new_s = new_s.mask_where(rating.clone().equal_elem(0), stability);
+            let new_d = new_d.mask_where(rating.equal_elem(0), difficulty);
             (new_s.clamp(0.1, 36500.0), new_d)
         }
     }
@@ -143,9 +144,6 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             let rating = ratings.clone().slice([i..i + 1]).transpose();
             // [batch_size, 1]
             (stability, difficulty) = self.step(i, delta_t, rating, stability, difficulty);
-            // dbg!("stability: {}", &stability);
-            // dbg!("difficulty: {}", &difficulty);
-            // dbg!()
         }
         (stability, difficulty)
     }

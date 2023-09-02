@@ -15,17 +15,29 @@ use burn::{
     train::LearnerBuilder,
 };
 use burn_train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
+use core::marker::PhantomData;
 use log::info;
 use std::sync::{Arc, Mutex};
 
-impl<B: Backend<FloatElem = f32>> Model<B> {
-    fn bceloss(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
+pub struct BCELoss<B: Backend> {
+    backend: PhantomData<B>,
+}
+
+impl<B: Backend> BCELoss<B> {
+    pub fn new() -> Self {
+        Self {
+            backend: PhantomData,
+        }
+    }
+    pub fn forward(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
         let loss: Tensor<B, 2> =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
         info!("loss: {}", &loss);
         loss.mean().neg()
     }
+}
 
+impl<B: Backend<FloatElem = f32>> Model<B> {
     pub fn forward_classification(
         &self,
         t_historys: Tensor<B, 2>,
@@ -41,22 +53,10 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
             stability.clone(),
         );
         let logits = Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 1);
-        info!("stability: {}", &stability);
-        info!(
-            "delta_ts: {}",
-            &delta_ts.clone().unsqueeze::<2>().transpose()
-        );
-        info!("retention: {}", &retention);
-        info!("logits: {}", &logits);
-        info!(
-            "labels: {}",
-            &labels.clone().unsqueeze::<2>().float().transpose()
-        );
-        let loss = self.bceloss(
+        let loss = BCELoss::new().forward(
             retention,
             labels.clone().unsqueeze::<2>().float().transpose(),
         );
-        info!("loss: {}", &loss);
         ClassificationOutput::new(loss, logits, labels)
     }
 }
