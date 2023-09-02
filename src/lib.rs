@@ -5,6 +5,7 @@ mod convertor;
 mod cosine_annealing;
 mod dataset;
 mod error;
+mod inference;
 mod model;
 mod optimal_retention;
 mod pre_training;
