@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use burn::tensor::Tensor;
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
@@ -23,13 +25,50 @@ pub fn evaluate<B: Backend<FloatElem = f32>>(
     model: Model<B>,
     device: B::Device,
     items: Vec<FSRSItem>,
-) -> Tensor<B, 1> {
+) -> (f32, f32) {
     let batcher = FSRSBatcher::<B>::new(device);
     let batch = batcher.batch(items);
     let (_stability, _difficulty, retention) = infer::<B>(model, batch.clone());
+    let pred: Vec<f32> = retention.clone().squeeze::<1>(1).to_data().value;
+    let true_val: Vec<f32> = batch.labels.clone().float().to_data().value;
+    let rmse = calibration_rmse(pred, true_val);
     let loss =
         BCELoss::<B>::new().forward(retention, batch.labels.unsqueeze::<2>().float().transpose());
-    loss
+    (loss.to_data().value[0], rmse)
+}
+
+fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
+    if pred.len() != true_val.len() {
+        panic!("Vectors pred and true_val must have the same length");
+    }
+
+    let mut groups: HashMap<i32, Vec<(f32, f32)>> = HashMap::new();
+
+    fn get_bin(x: f32, bins: f32) -> i32 {
+        let log_base = f32::ln(bins);
+        let binned_x = (x * log_base).exp().round();
+        binned_x.round() as i32
+    }
+
+    for (p, t) in pred.iter().zip(true_val.iter()) {
+        let bin = get_bin(*p, 20.0);
+        groups.entry(bin).or_insert_with(Vec::new).push((*p, *t));
+    }
+
+    let mut total_sum = 0.0;
+    let mut total_count = 0.0;
+
+    for (_bin, group) in groups.iter() {
+        let count = group.len() as f32;
+        let pred_mean = group.iter().map(|(p, _)| *p).sum::<f32>() / count;
+        let true_mean = group.iter().map(|(_, t)| *t).sum::<f32>() / count;
+
+        let rmse = (pred_mean - true_mean).powi(2);
+        total_sum += rmse * count;
+        total_count += count;
+    }
+
+    (total_sum / total_count).sqrt()
 }
 
 #[test]
@@ -46,8 +85,12 @@ fn test_evaluate() {
 
     let items = anki21_sample_file_converted_to_fsrs();
 
-    let loss = evaluate(Model::<Backend>::new(config.clone()), device, items.clone());
-    dbg!(&loss);
+    let metrics = evaluate(Model::<Backend>::new(config.clone()), device, items.clone());
+
+    assert_eq!(metrics, (
+        0.20820294,
+        0.043400552,
+    ));
 
     let mut model = Model::<Backend>::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
@@ -72,6 +115,10 @@ fn test_evaluate() {
         ],
         Shape { dims: [17] },
     )));
-    let loss = evaluate::<Backend>(model, device, items);
-    dbg!(&loss);
+    let metrics = evaluate::<Backend>(model, device, items);
+
+    assert_eq!(metrics, (
+        0.20209138,
+        0.017994177,
+    ));
 }
