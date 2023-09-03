@@ -144,7 +144,7 @@ impl ProgressState {
     }
 
     pub fn current(&self) -> usize {
-        (self.epoch - 1) * self.items_total + self.items_processed
+        self.epoch.saturating_sub(1) * self.items_total + self.items_processed
     }
 
     pub fn total(&self) -> usize {
