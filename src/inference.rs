@@ -79,50 +79,55 @@ fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
     (total_sum / total_count).sqrt()
 }
 
-#[test]
-fn test_evaluate() {
-    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let items = anki21_sample_file_converted_to_fsrs();
+    #[test]
+    fn test_evaluate() {
+        use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
 
-    let metrics = evaluate(
-        [
-            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
-            0.29, 2.61,
-        ],
-        items.clone(),
-    );
+        let items = anki21_sample_file_converted_to_fsrs();
 
-    assert!([metrics.0, metrics.1]
-        .iter()
-        .zip([0.20820294, 0.043400552])
-        .all(|(x, y)| (x - y).abs() < f32::EPSILON));
+        let metrics = evaluate(
+            [
+                0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
+                1.26, 0.29, 2.61,
+            ],
+            items.clone(),
+        );
 
-    let metrics = evaluate(
-        [
-            0.81497127,
-            1.5411042,
-            4.007436,
-            9.045982,
-            4.956448,
-            1.3552042,
-            1.0985811,
-            0.007904565,
-            1.6491636,
-            0.13996966,
-            1.0704349,
-            2.3238432,
-            0.034056284,
-            0.35500556,
-            1.5469967,
-            0.10132355,
-            2.7867608,
-        ],
-        items,
-    );
+        assert!([metrics.0, metrics.1]
+            .iter()
+            .zip([0.20820294, 0.043400552])
+            .all(|(x, y)| (x - y).abs() < f32::EPSILON));
 
-    assert!([metrics.0, metrics.1]
-        .iter()
-        .zip([0.20209138, 0.017994177])
-        .all(|(x, y)| (x - y).abs() < f32::EPSILON)); // use assert_eq! will cause mac and linux to fail.
+        let metrics = evaluate(
+            [
+                0.81497127,
+                1.5411042,
+                4.007436,
+                9.045982,
+                4.956448,
+                1.3552042,
+                1.0985811,
+                0.007904565,
+                1.6491636,
+                0.13996966,
+                1.0704349,
+                2.3238432,
+                0.034056284,
+                0.35500556,
+                1.5469967,
+                0.10132355,
+                2.7867608,
+            ],
+            items,
+        );
+
+        assert!([metrics.0, metrics.1]
+            .iter()
+            .zip([0.20209138, 0.017994177])
+            .all(|(x, y)| (x - y).abs() < f32::EPSILON)); // use assert_eq! will cause mac and linux to fail.
+    }
 }
