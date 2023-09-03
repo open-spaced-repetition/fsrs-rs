@@ -23,6 +23,7 @@ jobs:
       - name: Run checks
         run: .github/workflows/check.sh
 
+      - uses: dprint/check@v2.2
   build-macos:
     runs-on: macos-latest
     steps:
