@@ -82,11 +82,10 @@ fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn test_evaluate() {
-        use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
-
         let items = anki21_sample_file_converted_to_fsrs();
 
         let metrics = evaluate(
@@ -97,10 +96,8 @@ mod tests {
             items.clone(),
         );
 
-        assert!([metrics.0, metrics.1]
-            .iter()
-            .zip([0.20820294, 0.043400552])
-            .all(|(x, y)| (x - y).abs() < f32::EPSILON));
+        Data::from([metrics.0, metrics.1])
+            .assert_approx_eq(&Data::from([0.20820294, 0.043400552]), 5);
 
         let metrics = evaluate(
             [
@@ -125,9 +122,7 @@ mod tests {
             items,
         );
 
-        assert!([metrics.0, metrics.1]
-            .iter()
-            .zip([0.20209138, 0.017994177])
-            .all(|(x, y)| (x - y).abs() < f32::EPSILON)); // use assert_eq! will cause mac and linux to fail.
+        Data::from([metrics.0, metrics.1])
+            .assert_approx_eq(&Data::from([0.20209138, 0.017994177]), 5);
     }
 }

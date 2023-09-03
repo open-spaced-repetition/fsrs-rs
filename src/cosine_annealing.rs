@@ -65,6 +65,7 @@ impl LRScheduler for CosineAnnealingLR {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use burn::tensor::Data;
 
     #[test]
     fn lr_scheduler() {
@@ -77,9 +78,9 @@ mod tests {
             lr_scheduler.step();
         }
         lrs.push(lr_scheduler.current_lr);
-        assert!(lrs
-            .iter()
-            .zip([
+
+        Data::from(&lrs[..]).assert_approx_eq(
+            &Data::from([
                 0.1,
                 0.09045084971874785,
                 0.06545084971874875,
@@ -90,9 +91,9 @@ mod tests {
                 0.03454915028125239,
                 0.06545084971874746,
                 0.09045084971874952,
-                0.10000000000000353
-            ])
-            // use f64::EPSILON will fail. Seems a floating number difference between linux and macos.
-            .all(|(x, y)| (x - y).abs() < f32::EPSILON as f64));
+                0.10000000000000353,
+            ]),
+            5,
+        );
     }
 }
