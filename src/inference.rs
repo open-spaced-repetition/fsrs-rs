@@ -93,7 +93,10 @@ fn test_evaluate() {
         items.clone(),
     );
 
-    assert_eq!(metrics, (0.20820294, 0.043400552));
+    assert!([metrics.0, metrics.1]
+        .iter()
+        .zip([0.20820294, 0.043400552])
+        .all(|(x, y)| (x - y).abs() < f32::EPSILON));
 
     let metrics = evaluate(
         [
