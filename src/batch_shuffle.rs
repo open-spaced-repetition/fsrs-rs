@@ -69,7 +69,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn batch_shuffle() {

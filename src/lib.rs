@@ -1,7 +1,8 @@
 #![allow(clippy::single_range_in_vec_init)]
 
 mod batch_shuffle;
-mod convertor;
+#[cfg(test)]
+mod convertor_tests;
 mod cosine_annealing;
 mod dataset;
 mod error;

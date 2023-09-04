@@ -286,7 +286,7 @@ fn train<B: ADBackend<FloatElem = f32>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::pre_training::pretrain;
     use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::NdArrayAutodiffBackend;

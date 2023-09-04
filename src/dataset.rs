@@ -143,7 +143,7 @@ pub fn split_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn from_anki() {

@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_pretrain() {
-        use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+        use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
         assert_eq!(
             pretrain(anki21_sample_file_converted_to_fsrs()).unwrap(),
             [0.81497127, 1.5411042, 4.007436, 9.045982,]

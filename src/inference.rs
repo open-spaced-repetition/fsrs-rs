@@ -82,7 +82,7 @@ fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn test_evaluate() {
