@@ -9,12 +9,13 @@ use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
 use crate::dataset::FSRSBatch;
 use crate::dataset::FSRSBatcher;
+use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
-use crate::FSRSItem;
+use crate::{FSRSError, FSRSItem};
 
 fn infer<B: Backend<FloatElem = f32>>(
-    model: Model<B>,
+    model: &Model<B>,
     batch: FSRSBatch<B>,
 ) -> (Tensor<B, 2>, Tensor<B, 2>, Tensor<B, 2>) {
     let (stability, difficulty) = model.forward(batch.t_historys, batch.r_historys);
@@ -25,24 +26,55 @@ fn infer<B: Backend<FloatElem = f32>>(
     (stability, difficulty, retention)
 }
 
-pub fn evaluate(weights: [f32; 17], items: Vec<FSRSItem>) -> (f32, f32) {
+#[derive(Debug, Clone, Copy)]
+pub struct ItemProgress {
+    pub current: usize,
+    pub total: usize,
+}
+
+pub fn evaluate<F>(weights: [f32; 17], items: Vec<FSRSItem>, mut progress: F) -> Result<(f32, f32)>
+where
+    F: FnMut(ItemProgress) -> bool,
+{
     type Backend = NdArrayBackend<f32>;
     let device = NdArrayDevice::Cpu;
     let batcher = FSRSBatcher::<Backend>::new(device);
-    let batch = batcher.batch(items);
     let config = ModelConfig::default();
     let mut model = Model::<Backend>::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
         weights.to_vec(),
         Shape { dims: [17] },
     )));
-    let (_stability, _difficulty, retention) = infer::<Backend>(model, batch.clone());
-    let pred = retention.clone().squeeze::<1>(1).to_data().value;
-    let true_val = batch.labels.clone().float().to_data().value;
-    let rmse = calibration_rmse(pred, true_val);
-    let loss = BCELoss::<Backend>::new()
-        .forward(retention, batch.labels.unsqueeze::<2>().float().transpose());
-    (loss.to_data().value[0], rmse)
+    let mut all_pred = vec![];
+    let mut all_true_val = vec![];
+    let mut all_retention = vec![];
+    let mut all_labels = vec![];
+    let mut progress_info = ItemProgress {
+        current: 0,
+        total: items.len(),
+    };
+    for chunk in items.chunks(512) {
+        let batch = batcher.batch(chunk.to_vec());
+        let (_stability, _difficulty, retention) = infer::<Backend>(&model, batch.clone());
+        let pred = retention.clone().squeeze::<1>(1).to_data().value;
+        all_pred.extend(pred);
+        let true_val = batch.labels.clone().float().to_data().value;
+        all_true_val.extend(true_val);
+        all_retention.push(retention);
+        all_labels.push(batch.labels);
+        progress_info.current += chunk.len();
+        if !progress(progress_info) {
+            return Err(FSRSError::Interrupted);
+        }
+    }
+    let rmse = calibration_rmse(all_pred, all_true_val);
+    let all_retention = Tensor::cat(all_retention, 0);
+    let all_labels = Tensor::cat(all_labels, 0)
+        .unsqueeze::<2>()
+        .float()
+        .transpose();
+    let loss = BCELoss::<Backend>::new().forward(all_retention, all_labels);
+    Ok((loss.to_data().value[0], rmse))
 }
 
 fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
@@ -94,7 +126,9 @@ mod tests {
                 1.26, 0.29, 2.61,
             ],
             items.clone(),
-        );
+            |_| true,
+        )
+        .unwrap();
 
         Data::from([metrics.0, metrics.1])
             .assert_approx_eq(&Data::from([0.20820294, 0.043400552]), 5);
@@ -120,7 +154,9 @@ mod tests {
                 2.7867608,
             ],
             items,
-        );
+            |_| true,
+        )
+        .unwrap();
 
         Data::from([metrics.0, metrics.1])
             .assert_approx_eq(&Data::from([0.20209138, 0.017994177]), 5);

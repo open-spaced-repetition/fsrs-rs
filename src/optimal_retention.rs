@@ -1,4 +1,5 @@
 use crate::error::{FSRSError, Result};
+use crate::inference::ItemProgress;
 use burn::config::Config;
 use itertools::izip;
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
@@ -323,19 +324,22 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
     memorized_cnt_per_day[memorized_cnt_per_day.len() - 1]
 }
 
-/// Progress function is passed a value from 0-9 indicating completion. If it returns
-/// false, we terminate early.
 pub fn find_optimal_retention<F>(config: &SimulatorConfig, mut progress: F) -> Result<f64>
 where
-    F: FnMut(usize) -> bool,
+    F: FnMut(ItemProgress) -> bool,
 {
     let mut low = 0.75;
     let mut high = 0.95;
     let mut optimal_retention = 0.85;
     let epsilon = 0.01;
     let mut iter = 0;
+    let mut progress_info = ItemProgress {
+        current: 0,
+        total: 10,
+    };
     while high - low > epsilon && iter < 10 {
         iter += 1;
+        progress_info.current += 1;
         let mid1 = low + (high - low) / 3.0;
         let mid2 = high - (high - low) / 3.0;
         fn sample_several(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
@@ -355,7 +359,7 @@ where
 
         optimal_retention = (high + low) / 2.0;
         // dbg!(iter, optimal_retention);
-        if !(progress(iter)) {
+        if !(progress(progress_info)) {
             return Err(FSRSError::Interrupted);
         }
     }
