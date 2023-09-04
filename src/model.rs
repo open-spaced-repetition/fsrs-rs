@@ -164,18 +164,13 @@ impl ModelConfig {
 
 #[cfg(test)]
 mod tests {
-    use burn::tensor::Data;
-    use burn_autodiff::ADBackendDecorator;
-    use burn_ndarray::NdArrayBackend;
-    type Backend = ADBackendDecorator<NdArrayBackend<f32>>;
     use super::*;
+    use crate::test_helpers::{Model, Tensor};
+    use burn::tensor::Data;
 
     #[test]
     fn w() {
-        use burn::tensor::Data;
-        use burn_ndarray::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(ModelConfig::default());
+        let model = Model::new(ModelConfig::default());
         assert_eq!(
             model.w().to_data(),
             Data::from([
@@ -202,13 +197,9 @@ mod tests {
 
     #[test]
     fn power_forgetting_curve() {
-        use burn::tensor::Data;
-        use burn_ndarray::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(ModelConfig::default());
-        let delta_t = Tensor::<Backend, 2>::from_floats([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]);
-        let stability =
-            Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [4.0], [2.0]]);
+        let model = Model::new(ModelConfig::default());
+        let delta_t = Tensor::<2>::from_floats([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]);
+        let stability = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0], [4.0], [2.0]]);
         let retention = model.power_forgetting_curve(delta_t, stability);
         assert_eq!(
             retention.to_data(),
@@ -225,11 +216,8 @@ mod tests {
 
     #[test]
     fn init_stability() {
-        use burn::tensor::Data;
-        use burn_ndarray::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(ModelConfig::default());
-        let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
+        let model = Model::new(ModelConfig::default());
+        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
@@ -239,11 +227,8 @@ mod tests {
 
     #[test]
     fn init_difficulty() {
-        use burn::tensor::Data;
-        use burn_ndarray::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(ModelConfig::default());
-        let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
+        let model = Model::new(ModelConfig::default());
+        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
@@ -253,14 +238,12 @@ mod tests {
 
     #[test]
     fn forward() {
-        use burn_ndarray::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
-        let model = Model::<Backend>::new(ModelConfig::default());
-        let delta_ts = Tensor::<Backend, 2>::from_floats([
+        let model = Model::new(ModelConfig::default());
+        let delta_ts = Tensor::<2>::from_floats([
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
         ]);
-        let ratings = Tensor::<Backend, 2>::from_floats([
+        let ratings = Tensor::<2>::from_floats([
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
         ]);
@@ -271,9 +254,9 @@ mod tests {
 
     #[test]
     fn next_difficulty() {
-        let model = Model::<Backend>::new(ModelConfig::default());
-        let difficulty = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
-        let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
+        let model = Model::new(ModelConfig::default());
+        let difficulty = Tensor::<2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
+        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
         assert_eq!(
@@ -290,11 +273,11 @@ mod tests {
 
     #[test]
     fn next_stability() {
-        let model = Model::<Backend>::new(ModelConfig::default());
-        let stability = Tensor::<Backend, 2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
-        let difficulty = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
-        let retention = Tensor::<Backend, 2>::from_floats([[0.9], [0.8], [0.7], [0.6]]);
-        let rating = Tensor::<Backend, 2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
+        let model = Model::new(ModelConfig::default());
+        let stability = Tensor::<2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
+        let difficulty = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
+        let retention = Tensor::<2>::from_floats([[0.9], [0.8], [0.7], [0.6]]);
+        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),

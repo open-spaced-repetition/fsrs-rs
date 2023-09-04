@@ -10,7 +10,7 @@ license = "BSD-3-Clause"
 git = "https://github.com/burn-rs/burn.git"
 rev = "36446e8d35694a9158f97e85e44b84544b8c4afb"
 default-features = false
-features = ["std", "train"]
+features = ["std", "train", "ndarray", "autodiff"]
 
 [dev-dependencies.burn]
 git = "https://github.com/burn-rs/burn.git"
@@ -18,8 +18,6 @@ rev = "36446e8d35694a9158f97e85e44b84544b8c4afb"
 features = ["dataset-sqlite-bundled"]
 
 [dependencies]
-burn-autodiff = { git = "https://github.com/burn-rs/burn.git", rev = "36446e8d35694a9158f97e85e44b84544b8c4afb" }
-burn-ndarray = { git = "https://github.com/burn-rs/burn.git", rev = "36446e8d35694a9158f97e85e44b84544b8c4afb" }
 itertools = "0.11.0"
 log = "0.4"
 ndarray = "0.15.6"

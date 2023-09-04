@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use crate::model::ModelConfig;
+use burn::backend::ndarray::NdArrayDevice;
+use burn::backend::NdArrayBackend;
 use burn::module::Param;
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
-use burn_ndarray::NdArrayBackend;
-use burn_ndarray::NdArrayDevice;
 
 use crate::dataset::FSRSBatch;
 use crate::dataset::FSRSBatcher;

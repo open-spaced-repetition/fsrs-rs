@@ -1,6 +1,8 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::dataset::FSRSBatcher;
+    use burn::backend::ndarray::NdArrayDevice;
+    use burn::backend::NdArrayAutodiffBackend;
     use burn::data::dataloader::batcher::Batcher;
     use burn::tensor::Data;
     use chrono::prelude::*;
@@ -335,11 +337,8 @@ pub(crate) mod tests {
             ]
         );
 
-        use burn_ndarray::NdArrayDevice;
         let device = NdArrayDevice::Cpu;
-        use burn_ndarray::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
-        let batcher = FSRSBatcher::<Backend>::new(device);
+        let batcher = FSRSBatcher::<NdArrayAutodiffBackend>::new(device);
         let res = batcher.batch(vec![fsrs_items.pop().unwrap()]);
         assert_eq!(res.delta_ts.into_scalar(), 64.0);
         assert_eq!(

@@ -6,6 +6,8 @@ use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use crate::FSRSError;
+use burn::backend::ndarray::NdArrayDevice;
+use burn::backend::NdArrayAutodiffBackend;
 use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder};
 use burn::tensor::backend::Backend;
@@ -191,10 +193,6 @@ pub fn compute_weights(
     items: Vec<FSRSItem>,
     progress: Option<Arc<Mutex<ProgressState>>>,
 ) -> Result<Vec<f32>> {
-    use burn_ndarray::NdArrayBackend;
-    use burn_ndarray::NdArrayDevice;
-    type Backend = NdArrayBackend<f32>;
-    type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
     let device = NdArrayDevice::Cpu;
 
     let (pre_trainset, trainset) = split_data(items);
@@ -207,7 +205,7 @@ pub fn compute_weights(
         AdamConfig::new(),
     );
 
-    let model = train::<AutodiffBackend>(
+    let model = train::<NdArrayAutodiffBackend>(
         trainset,
         &config,
         device,
@@ -290,6 +288,8 @@ mod tests {
     use super::*;
     use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
     use crate::pre_training::pretrain;
+    use burn::backend::ndarray::NdArrayDevice;
+    use burn::backend::NdArrayAutodiffBackend;
     use burn::module::Module;
     use burn::record::Recorder;
     use std::path::Path;
@@ -300,10 +300,6 @@ mod tests {
             println!("Skipping test in CI");
             return;
         }
-        use burn_ndarray::NdArrayBackend;
-        use burn_ndarray::NdArrayDevice;
-        type Backend = NdArrayBackend<f32>;
-        type AutodiffBackend = burn_autodiff::ADBackendDecorator<Backend>;
         let device = NdArrayDevice::Cpu;
 
         let artifact_dir = "./tmp/fsrs";
@@ -329,7 +325,8 @@ mod tests {
             .expect("Save without error");
 
         let model_trained =
-            train::<AutodiffBackend>(trainset, &config, device, None, Some(artifact_dir)).unwrap();
+            train::<NdArrayAutodiffBackend>(trainset, &config, device, None, Some(artifact_dir))
+                .unwrap();
 
         config
             .save(
