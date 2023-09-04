@@ -386,7 +386,7 @@ pub(crate) mod tests {
     fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
         RevlogEntry {
             review_kind: review_kind as usize,
-            id: ((NEXT_DAY_AT - days_ago * 86400) * 1000).into(),
+            id: ((NEXT_DAY_AT - days_ago * 86400) * 1000),
             ..Default::default()
         }
     }

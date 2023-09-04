@@ -5,16 +5,17 @@ use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
+use crate::FSRSError;
 use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
-use burn::train::{ClassificationOutput, TrainOutput, TrainStep, ValidStep};
+use burn::train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
+use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
 use burn::{
     config::Config, data::dataloader::DataLoaderBuilder, module::Param, tensor::backend::ADBackend,
     train::LearnerBuilder,
 };
-use burn_train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
 use core::marker::PhantomData;
 use log::info;
 use std::sync::{Arc, Mutex};
@@ -114,21 +115,40 @@ impl<B: Backend<FloatElem = f32>> ValidStep<FSRSBatch<B>, ClassificationOutput<B
 }
 
 #[derive(Debug, Default)]
-pub struct ProgressInfo {
+pub struct ProgressState {
     pub epoch: usize,
     pub epoch_total: usize,
     pub items_processed: usize,
     pub items_total: usize,
+    pub want_abort: bool,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone, Default)]
 pub struct ProgressCollector {
-    pub state: Arc<Mutex<ProgressInfo>>,
+    pub state: Arc<Mutex<ProgressState>>,
+    pub interrupter: TrainingInterrupter,
 }
 
 impl ProgressCollector {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(state: Arc<Mutex<ProgressState>>) -> Self {
+        Self {
+            state,
+            ..Default::default()
+        }
+    }
+}
+
+impl ProgressState {
+    pub fn new_shared() -> Arc<Mutex<Self>> {
+        Default::default()
+    }
+
+    pub fn current(&self) -> usize {
+        (self.epoch - 1) * self.items_total + self.items_processed
+    }
+
+    pub fn total(&self) -> usize {
+        self.epoch_total * self.items_total
     }
 }
 
@@ -143,6 +163,9 @@ impl DashboardRenderer for ProgressCollector {
         info.epoch_total = item.epoch_total;
         info.items_processed = item.progress.items_processed;
         info.items_total = item.progress.items_total;
+        if info.want_abort {
+            self.interrupter.stop();
+        }
     }
 
     fn render_valid(&mut self, _item: TrainingProgress) {}
@@ -166,7 +189,7 @@ pub(crate) struct TrainingConfig {
 
 pub fn compute_weights(
     items: Vec<FSRSItem>,
-    progress: Option<ProgressCollector>,
+    progress: Option<Arc<Mutex<ProgressState>>>,
 ) -> Result<Vec<f32>> {
     use burn_ndarray::NdArrayBackend;
     use burn_ndarray::NdArrayDevice;
@@ -184,9 +207,15 @@ pub fn compute_weights(
         AdamConfig::new(),
     );
 
-    let model = train::<AutodiffBackend>(trainset, &config, device, progress, None);
+    let model = train::<AutodiffBackend>(
+        trainset,
+        &config,
+        device,
+        progress.map(ProgressCollector::new),
+        None,
+    );
 
-    Ok(model.w.val().to_data().value)
+    Ok(model?.w.val().to_data().value)
 }
 
 fn train<B: ADBackend<FloatElem = f32>>(
@@ -196,7 +225,7 @@ fn train<B: ADBackend<FloatElem = f32>>(
     progress: Option<ProgressCollector>,
     // used in testing
     artifact_dir: Option<&str>,
-) -> Model<B> {
+) -> Result<Model<B>> {
     B::seed(config.seed);
 
     // Training data
@@ -222,17 +251,21 @@ fn train<B: ADBackend<FloatElem = f32>>(
     let mut builder = LearnerBuilder::new(artifact_dir.unwrap_or_default())
         .devices(vec![device])
         .num_epochs(config.num_epochs);
-    // options only required when testing
-    if artifact_dir.is_some() {
+    let interrupter = builder.interrupter();
+
+    if let Some(mut progress) = progress {
+        progress.interrupter = interrupter.clone();
+        builder = builder.renderer(progress).log_to_file(false)
+    } else if artifact_dir.is_some() {
+        // options only required when testing
         builder = builder
             .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
         // .metric_train_plot(AccuracyMetric::new())
         // .metric_valid_plot(AccuracyMetric::new())
         // .metric_train_plot(LossMetric::new())
         // .metric_valid_plot(LossMetric::new())
-    } else if let Some(progress) = progress {
-        builder = builder.renderer(progress).log_to_file(false)
     }
+
     let learner = builder.build(
         config.model.init::<B>(),
         config.optimizer.init(),
@@ -240,11 +273,16 @@ fn train<B: ADBackend<FloatElem = f32>>(
     );
 
     let mut model_trained = learner.fit(dataloader_train, dataloader_valid);
+
+    if interrupter.should_stop() {
+        return Err(FSRSError::Interrupted);
+    }
+
     info!("trained weights: {}", &model_trained.w.val());
     model_trained.w = Param::from(weight_clipper(model_trained.w.val()));
     info!("clipped weights: {}", &model_trained.w.val());
 
-    model_trained
+    Ok(model_trained)
 }
 
 #[cfg(test)]
@@ -291,7 +329,7 @@ mod tests {
             .expect("Save without error");
 
         let model_trained =
-            train::<AutodiffBackend>(trainset, &config, device, None, Some(artifact_dir));
+            train::<AutodiffBackend>(trainset, &config, device, None, Some(artifact_dir)).unwrap();
 
         config
             .save(

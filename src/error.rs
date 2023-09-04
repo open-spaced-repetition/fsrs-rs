@@ -1,8 +1,9 @@
 use snafu::Snafu;
 
 #[derive(Snafu, Debug)]
-pub enum FsrsError {
+pub enum FSRSError {
     NotEnoughData,
+    Interrupted,
 }
 
-pub type Result<T, E = FsrsError> = std::result::Result<T, E>;
+pub type Result<T, E = FSRSError> = std::result::Result<T, E>;
