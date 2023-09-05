@@ -1,3 +1,5 @@
+use crate::error::{FSRSError, Result};
+use crate::inference::ItemProgress;
 use burn::config::Config;
 use itertools::izip;
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
@@ -40,21 +42,21 @@ impl From<Column> for SliceInfoElem {
 
 #[derive(Config, Debug)]
 pub struct SimulatorConfig {
-    w: [f64; 17],
+    pub w: [f64; 17],
     #[config(default = 10000)]
-    deck_size: usize,
+    pub deck_size: usize,
     #[config(default = 365)]
-    learn_span: usize,
+    pub learn_span: usize,
     #[config(default = 1800.0)]
-    max_cost_perday: f64,
+    pub max_cost_perday: f64,
     #[config(default = 36500.0)]
-    max_ivl: f64,
+    pub max_ivl: f64,
     #[config(default = 10.0)]
-    recall_cost: f64,
+    pub recall_cost: f64,
     #[config(default = 50.0)]
-    forget_cost: f64,
+    pub forget_cost: f64,
     #[config(default = 20.0)]
-    learn_cost: f64,
+    pub learn_cost: f64,
 }
 
 fn stability_after_success(w: [f64; 17], s: f64, r: f64, d: f64, response: usize) -> f64 {
@@ -322,14 +324,22 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
     memorized_cnt_per_day[memorized_cnt_per_day.len() - 1]
 }
 
-pub fn find_optimal_retention(config: &SimulatorConfig) -> f64 {
+pub fn find_optimal_retention<F>(config: &SimulatorConfig, mut progress: F) -> Result<f64>
+where
+    F: FnMut(ItemProgress) -> bool,
+{
     let mut low = 0.75;
     let mut high = 0.95;
     let mut optimal_retention = 0.85;
     let epsilon = 0.01;
     let mut iter = 0;
+    let mut progress_info = ItemProgress {
+        current: 0,
+        total: 10,
+    };
     while high - low > epsilon && iter < 10 {
         iter += 1;
+        progress_info.current += 1;
         let mid1 = low + (high - low) / 3.0;
         let mid2 = high - (high - low) / 3.0;
         fn sample_several(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
@@ -348,9 +358,12 @@ pub fn find_optimal_retention(config: &SimulatorConfig) -> f64 {
         }
 
         optimal_retention = (high + low) / 2.0;
-        dbg!(iter, optimal_retention);
+        // dbg!(iter, optimal_retention);
+        if !(progress(progress_info)) {
+            return Err(FSRSError::Interrupted);
+        }
     }
-    optimal_retention
+    Ok(optimal_retention)
 }
 
 #[cfg(test)]
@@ -373,7 +386,7 @@ mod tests {
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
         ]);
-        let optimal_retention = find_optimal_retention(&config);
+        let optimal_retention = find_optimal_retention(&config, |_v| true).unwrap();
         assert_eq!(optimal_retention, 0.8179164761469289)
     }
 }

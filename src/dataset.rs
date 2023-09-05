@@ -143,7 +143,7 @@ pub fn split_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
     fn from_anki() {
@@ -152,9 +152,9 @@ mod tests {
         let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
         dbg!(dataset.get(704).unwrap());
 
-        use burn_ndarray::NdArrayDevice;
+        use burn::backend::ndarray::NdArrayDevice;
         let device = NdArrayDevice::Cpu;
-        use burn_ndarray::NdArrayBackend;
+        use burn::backend::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
         let batcher = FSRSBatcher::<Backend>::new(device);
         use burn::data::dataloader::DataLoaderBuilder;
@@ -174,8 +174,8 @@ mod tests {
 
     #[test]
     fn batcher() {
-        use burn_ndarray::NdArrayBackend;
-        use burn_ndarray::NdArrayDevice;
+        use burn::backend::ndarray::NdArrayDevice;
+        use burn::backend::NdArrayBackend;
         type Backend = NdArrayBackend<f32>;
         let device = NdArrayDevice::Cpu;
         let batcher = FSRSBatcher::<Backend>::new(device);

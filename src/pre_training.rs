@@ -1,4 +1,4 @@
-use crate::error::{FsrsError, Result};
+use crate::error::{FSRSError, Result};
 use crate::FSRSItem;
 use itertools::Itertools;
 use ndarray::Array1;
@@ -179,7 +179,7 @@ fn smooth_and_fill(
     let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
 
     match rating_stability.len() {
-        0 => return Err(FsrsError::NotEnoughData),
+        0 => return Err(FSRSError::NotEnoughData),
         1 => {
             let rating = rating_stability.keys().next().unwrap();
             let factor = rating_stability[rating] / r_s0_default[rating];
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_pretrain() {
-        use crate::convertor::tests::anki21_sample_file_converted_to_fsrs;
+        use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
         assert_eq!(
             pretrain(anki21_sample_file_converted_to_fsrs()).unwrap(),
             [0.81497127, 1.5411042, 4.007436, 9.045982,]
