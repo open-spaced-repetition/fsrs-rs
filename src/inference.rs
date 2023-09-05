@@ -119,17 +119,11 @@ mod tests {
 
     #[test]
     fn test_get_bin() {
-        let mut pred = Vec::with_capacity(100);
-        for i in 0..101 {
-            pred.push(i as f32 / 100.0);
-        }
-        let mut bin = Vec::with_capacity(100);
-        for p in pred.iter() {
-            bin.push(get_bin(*p, 20));
-        }
+        let pred = (0..101).map(|i| i as f32 / 100.0).collect::<Vec<_>>();
+        let bin = pred.iter().map(|p| get_bin(*p, 20)).collect::<Vec<_>>();
         assert_eq!(
             bin,
-            vec![
+            [
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4,
                 4, 4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10,
