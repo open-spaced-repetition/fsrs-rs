@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_get_bin() {
-        let pred = (0..101).map(|i| i as f32 / 100.0).collect::<Vec<_>>();
+        let pred = (0..=100).map(|i| i as f32 / 100.0).collect::<Vec<_>>();
         let bin = pred.iter().map(|p| get_bin(*p, 20)).collect::<Vec<_>>();
         assert_eq!(
             bin,
