@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::{Add, Sub};
 
 use crate::model::ModelConfig;
 use burn::backend::ndarray::NdArrayDevice;
@@ -77,6 +78,12 @@ where
     Ok((loss.to_data().value[0], rmse))
 }
 
+fn get_bin(x: f32, bins: i32) -> i32 {
+    let log_base = (bins.add(1) as f32).ln();
+    let binned_x = (x * log_base).exp().floor().sub(1.0);
+    (binned_x as i32).min(bins - 1).max(0)
+}
+
 fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
     if pred.len() != true_val.len() {
         panic!("Vectors pred and true_val must have the same length");
@@ -84,14 +91,8 @@ fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
 
     let mut groups = HashMap::new();
 
-    fn get_bin(x: f32, bins: f32) -> i32 {
-        let log_base = bins.ln();
-        let binned_x = (x * log_base).exp().round();
-        binned_x.round() as i32
-    }
-
     for (p, t) in pred.iter().zip(true_val) {
-        let bin = get_bin(*p, 20.0);
+        let bin = get_bin(*p, 20);
         groups.entry(bin).or_insert_with(Vec::new).push((p, t));
     }
 
@@ -117,6 +118,21 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
+    fn test_get_bin() {
+        let pred = (0..=100).map(|i| i as f32 / 100.0).collect::<Vec<_>>();
+        let bin = pred.iter().map(|p| get_bin(*p, 20)).collect::<Vec<_>>();
+        assert_eq!(
+            bin,
+            [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4,
+                4, 4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10,
+                11, 11, 11, 12, 12, 13, 13, 14, 14, 14, 15, 15, 16, 17, 17, 18, 18, 19, 19
+            ]
+        );
+    }
+
+    #[test]
     fn test_evaluate() {
         let items = anki21_sample_file_converted_to_fsrs();
 
@@ -131,7 +147,7 @@ mod tests {
         .unwrap();
 
         Data::from([metrics.0, metrics.1])
-            .assert_approx_eq(&Data::from([0.20820294, 0.043400552]), 5);
+            .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
         let metrics = evaluate(
             [
@@ -139,19 +155,19 @@ mod tests {
                 1.5411042,
                 4.007436,
                 9.045982,
-                4.956448,
-                1.3552042,
-                1.0985811,
-                0.007904565,
-                1.6491636,
-                0.13996966,
-                1.0704349,
-                2.3238432,
-                0.034056284,
-                0.35500556,
-                1.5469967,
-                0.10132355,
-                2.7867608,
+                4.9264183,
+                1.039322,
+                0.93803364,
+                0.0,
+                1.5530516,
+                0.10299722,
+                0.9981442,
+                2.210701,
+                0.018248068,
+                0.3422524,
+                1.3384504,
+                0.22278537,
+                2.6646678,
             ],
             items,
             |_| true,
@@ -159,6 +175,6 @@ mod tests {
         .unwrap();
 
         Data::from([metrics.0, metrics.1])
-            .assert_approx_eq(&Data::from([0.20209138, 0.017994177]), 5);
+            .assert_approx_eq(&Data::from([0.20206251, 0.017628053]), 5);
     }
 }
