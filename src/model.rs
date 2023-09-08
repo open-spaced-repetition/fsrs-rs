@@ -97,7 +97,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         difficulty - self.w().slice([6..7]) * (rating - 3)
     }
 
-    fn step(
+    pub fn step(
         &self,
         i: usize,
         delta_t: Tensor<B, 2>,
