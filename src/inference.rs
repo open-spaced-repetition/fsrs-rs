@@ -27,7 +27,7 @@ fn infer<B: Backend<FloatElem = f32>>(
     (stability, difficulty, retention)
 }
 
-fn weights_to_modela(weights: [f32; 17]) -> Model<NdArrayBackend<f32>> {
+fn weights_to_modela(weights: &[f32; 17]) -> Model<NdArrayBackend<f32>> {
     type Backend = NdArrayBackend<f32>;
     let config = ModelConfig::default();
     let mut model = Model::<Backend>::new(config);
@@ -38,7 +38,7 @@ fn weights_to_modela(weights: [f32; 17]) -> Model<NdArrayBackend<f32>> {
     model
 }
 
-pub fn calc_memo_state(weights: [f32; 17], item: FSRSItem) -> (f32, f32) {
+pub fn calc_memo_state(weights: &[f32; 17], item: FSRSItem) -> (f32, f32) {
     type Backend = NdArrayBackend<f32>;
     let model = weights_to_modela(weights);
     let (time_history, rating_history) = item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
@@ -57,7 +57,7 @@ pub fn calc_memo_state(weights: [f32; 17], item: FSRSItem) -> (f32, f32) {
 }
 
 pub fn next_memo_state(
-    weights: [f32; 17],
+    weights: &[f32; 17],
     review: FSRSReview,
     i: usize,
     last_s: f32,
@@ -97,7 +97,7 @@ pub struct ItemProgress {
     pub total: usize,
 }
 
-pub fn evaluate<F>(weights: [f32; 17], items: Vec<FSRSItem>, mut progress: F) -> Result<(f32, f32)>
+pub fn evaluate<F>(weights: &[f32; 17], items: Vec<FSRSItem>, mut progress: F) -> Result<(f32, f32)>
 where
     F: FnMut(ItemProgress) -> bool,
 {
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_memo_state() {
-        let weights = [
+        let weights = &[
             0.81497127,
             1.5411042,
             4.007436,
@@ -264,7 +264,7 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
 
         let metrics = evaluate(
-            [
+            &[
                 0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
                 1.26, 0.29, 2.61,
             ],
@@ -277,7 +277,7 @@ mod tests {
             .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
         let metrics = evaluate(
-            [
+            &[
                 0.81497127,
                 1.5411042,
                 4.007436,
