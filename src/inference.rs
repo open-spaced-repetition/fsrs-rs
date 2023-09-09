@@ -15,6 +15,9 @@ use crate::model::Model;
 use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem, FSRSReview};
 
+/// This is a slice for efficiency, but should always be 17 in length.
+type Weights = [f32];
+
 fn infer<B: Backend<FloatElem = f32>>(
     model: &Model<B>,
     batch: FSRSBatch<B>,
@@ -27,7 +30,7 @@ fn infer<B: Backend<FloatElem = f32>>(
     (stability, difficulty, retention)
 }
 
-fn weights_to_modela(weights: &[f32; 17]) -> Model<NdArrayBackend<f32>> {
+fn weights_to_modela(weights: &Weights) -> Model<NdArrayBackend<f32>> {
     type Backend = NdArrayBackend<f32>;
     let config = ModelConfig::default();
     let mut model = Model::<Backend>::new(config);
@@ -38,7 +41,7 @@ fn weights_to_modela(weights: &[f32; 17]) -> Model<NdArrayBackend<f32>> {
     model
 }
 
-pub fn calc_memo_state(weights: &[f32; 17], item: FSRSItem) -> (f32, f32) {
+pub fn calc_memo_state(weights: &Weights, item: FSRSItem) -> (f32, f32) {
     type Backend = NdArrayBackend<f32>;
     let model = weights_to_modela(weights);
     let (time_history, rating_history) = item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
@@ -57,7 +60,7 @@ pub fn calc_memo_state(weights: &[f32; 17], item: FSRSItem) -> (f32, f32) {
 }
 
 pub fn next_memo_state(
-    weights: &[f32; 17],
+    weights: &Weights,
     review: FSRSReview,
     i: usize,
     last_s: f32,
@@ -97,7 +100,7 @@ pub struct ItemProgress {
     pub total: usize,
 }
 
-pub fn evaluate<F>(weights: &[f32; 17], items: Vec<FSRSItem>, mut progress: F) -> Result<(f32, f32)>
+pub fn evaluate<F>(weights: &Weights, items: Vec<FSRSItem>, mut progress: F) -> Result<(f32, f32)>
 where
     F: FnMut(ItemProgress) -> bool,
 {
