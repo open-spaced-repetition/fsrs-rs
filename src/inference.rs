@@ -41,7 +41,7 @@ fn weights_to_modela(weights: &Weights) -> Model<NdArrayBackend<f32>> {
     model
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct MemoryState {
     pub stability: f32,
     pub difficulty: f32,
@@ -112,7 +112,7 @@ pub fn next_interval(stability: f32, request_retention: f32) -> u32 {
 }
 
 impl FSRSItem {
-    pub fn next_intervals(&self, weights: &Weights, request_retention: f32) -> NextIntervals {
+    pub fn next_states(&self, weights: &Weights, request_retention: f32) -> NextStates {
         // determine previous stability
         let model = weights_to_modela(weights);
         let size = self.reviews.len() - 1;
@@ -168,21 +168,33 @@ impl FSRSItem {
             )
         });
 
-        NextIntervals {
-            again: next_interval(next_states.next().unwrap().stability, request_retention),
-            hard: next_interval(next_states.next().unwrap().stability, request_retention),
-            good: next_interval(next_states.next().unwrap().stability, request_retention),
-            easy: next_interval(next_states.next().unwrap().stability, request_retention),
+        let mut get_next_state = || {
+            let memory = next_states.next().unwrap();
+            let interval = next_interval(memory.stability, request_retention);
+            ItemState { memory, interval }
+        };
+
+        NextStates {
+            again: get_next_state(),
+            hard: get_next_state(),
+            good: get_next_state(),
+            easy: get_next_state(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NextIntervals {
-    pub again: u32,
-    pub hard: u32,
-    pub good: u32,
-    pub easy: u32,
+#[derive(Debug, Clone, PartialEq)]
+pub struct NextStates {
+    pub again: ItemState,
+    pub hard: ItemState,
+    pub good: ItemState,
+    pub easy: ItemState,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ItemState {
+    pub memory: MemoryState,
+    pub interval: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -395,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn next_intervals() {
+    fn next_states() {
         let item = FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -421,12 +433,36 @@ mod tests {
             ],
         };
         assert_eq!(
-            item.next_intervals(WEIGHTS, 0.9),
-            NextIntervals {
-                again: 5,
-                hard: 26,
-                good: 51,
-                easy: 121,
+            item.next_states(WEIGHTS, 0.9),
+            NextStates {
+                again: ItemState {
+                    memory: MemoryState {
+                        stability: 4.5604353,
+                        difficulty: 8.881129,
+                    },
+                    interval: 5
+                },
+                hard: ItemState {
+                    memory: MemoryState {
+                        stability: 26.111229,
+                        difficulty: 7.9430957
+                    },
+                    interval: 26,
+                },
+                good: ItemState {
+                    memory: MemoryState {
+                        stability: 51.344814,
+                        difficulty: 7.005062
+                    },
+                    interval: 51,
+                },
+                easy: ItemState {
+                    memory: MemoryState {
+                        stability: 121.01552,
+                        difficulty: 6.0670285
+                    },
+                    interval: 121,
+                }
             }
         )
     }

@@ -9,17 +9,17 @@ use criterion::criterion_main;
 use criterion::Criterion;
 use fsrs_optimizer::FSRSItem;
 use fsrs_optimizer::FSRSReview;
-use fsrs_optimizer::NextIntervals;
+use fsrs_optimizer::NextStates;
 use itertools::Itertools;
 
-pub(crate) fn next_intervals(weights: &[f32], past_reviews: usize) -> NextIntervals {
+pub(crate) fn next_states(weights: &[f32], past_reviews: usize) -> NextStates {
     let review = FSRSReview {
         rating: 3,
         delta_t: 21,
     };
     let reviews = repeat(review.clone()).take(past_reviews + 1).collect_vec();
     let item = FSRSItem { reviews };
-    item.next_intervals(weights, 0.9)
+    item.next_states(weights, 0.9)
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -43,17 +43,17 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         2.6646678,
     ];
 
-    c.bench_function("next_intervals_1", |b| {
-        b.iter(|| black_box(next_intervals(weights, 1)))
+    c.bench_function("next_states_1", |b| {
+        b.iter(|| black_box(next_states(weights, 1)))
     });
-    c.bench_function("next_intervals_10", |b| {
-        b.iter(|| black_box(next_intervals(weights, 10)))
+    c.bench_function("next_states_10", |b| {
+        b.iter(|| black_box(next_states(weights, 10)))
     });
-    c.bench_function("next_intervals_100", |b| {
-        b.iter(|| black_box(next_intervals(weights, 100)))
+    c.bench_function("next_states_100", |b| {
+        b.iter(|| black_box(next_states(weights, 100)))
     });
-    c.bench_function("next_intervals_1000", |b| {
-        b.iter(|| black_box(next_intervals(weights, 1000)))
+    c.bench_function("next_states_1000", |b| {
+        b.iter(|| black_box(next_states(weights, 1000)))
     });
 }
 
