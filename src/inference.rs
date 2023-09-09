@@ -41,7 +41,24 @@ fn weights_to_modela(weights: &Weights) -> Model<NdArrayBackend<f32>> {
     model
 }
 
-pub fn calc_memo_state(weights: &Weights, item: FSRSItem) -> (f32, f32) {
+#[derive(Debug, PartialEq)]
+pub struct MemoryState {
+    pub stability: f32,
+    pub difficulty: f32,
+}
+
+impl MemoryState {
+    fn new<B: Backend<FloatElem = f32>>(
+        (stability, difficulty): (Tensor<B, 2>, Tensor<B, 2>),
+    ) -> Self {
+        MemoryState {
+            stability: stability.to_data().value[0],
+            difficulty: difficulty.to_data().value[0],
+        }
+    }
+}
+
+pub fn calc_memo_state(weights: &Weights, item: FSRSItem) -> MemoryState {
     type Backend = NdArrayBackend<f32>;
     let model = weights_to_modela(weights);
     let (time_history, rating_history) = item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
@@ -55,17 +72,15 @@ pub fn calc_memo_state(weights: &Weights, item: FSRSItem) -> (f32, f32) {
     )
     .unsqueeze()
     .transpose();
-    let (stability, difficulty) = model.forward(time_history, rating_history);
-    (stability.to_data().value[0], difficulty.to_data().value[0])
+    MemoryState::new(model.forward(time_history, rating_history))
 }
 
 pub fn next_memo_state(
     weights: &Weights,
     review: FSRSReview,
     i: usize,
-    last_s: f32,
-    last_d: f32,
-) -> (f32, f32) {
+    last_state: MemoryState,
+) -> MemoryState {
     type Backend = NdArrayBackend<f32>;
     let model = weights_to_modela(weights);
     let delta_t = Tensor::<Backend, 1>::from_data(Data::new(
@@ -78,14 +93,16 @@ pub fn next_memo_state(
         Tensor::<Backend, 1>::from_data(Data::new(vec![review.rating as f32], Shape { dims: [1] }))
             .unsqueeze()
             .transpose();
-    let stability = Tensor::<Backend, 1>::from_data(Data::new(vec![last_s], Shape { dims: [1] }))
-        .unsqueeze()
-        .transpose();
-    let difficulty = Tensor::<Backend, 1>::from_data(Data::new(vec![last_d], Shape { dims: [1] }))
-        .unsqueeze()
-        .transpose();
-    let (stability, difficulty) = model.step(i, delta_t, rating, stability, difficulty);
-    (stability.to_data().value[0], difficulty.to_data().value[0])
+    let stability =
+        Tensor::<Backend, 1>::from_data(Data::new(vec![last_state.stability], Shape { dims: [1] }))
+            .unsqueeze();
+    let difficulty = Tensor::<Backend, 1>::from_data(Data::new(
+        vec![last_state.difficulty],
+        Shape { dims: [1] },
+    ))
+    .unsqueeze()
+    .transpose();
+    MemoryState::new(model.step(i, delta_t, rating, stability, difficulty))
 }
 
 pub fn next_interval(stability: f32, request_retention: f32) -> i32 {
@@ -239,7 +256,13 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(calc_memo_state(weights, item), (51.344814, 7.005062,));
+        assert_eq!(
+            calc_memo_state(weights, item),
+            MemoryState {
+                stability: 51.344814,
+                difficulty: 7.005062
+            }
+        );
 
         let review = FSRSReview {
             rating: 3,
@@ -247,8 +270,19 @@ mod tests {
         };
 
         assert_eq!(
-            next_memo_state(weights, review, 5, 20.925528, 7.005062),
-            (51.344814, 7.005062)
+            next_memo_state(
+                weights,
+                review,
+                5,
+                MemoryState {
+                    stability: 20.925528,
+                    difficulty: 7.005062
+                },
+            ),
+            MemoryState {
+                stability: 51.344814,
+                difficulty: 7.005062
+            }
         );
     }
 

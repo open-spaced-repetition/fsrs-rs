@@ -12,6 +12,7 @@ use fsrs_optimizer::next_interval;
 use fsrs_optimizer::next_memo_state;
 use fsrs_optimizer::FSRSItem;
 use fsrs_optimizer::FSRSReview;
+use fsrs_optimizer::MemoryState;
 use itertools::Itertools;
 
 pub(crate) fn benchmark_review_next(weights: &[f32]) {
@@ -19,8 +20,16 @@ pub(crate) fn benchmark_review_next(weights: &[f32]) {
         rating: 3,
         delta_t: 21,
     };
-    let (s, _d) = next_memo_state(weights, review, 5, 20.925528, 7.005062);
-    assert_eq!(51, next_interval(s, 0.9));
+    let state = next_memo_state(
+        weights,
+        review,
+        5,
+        MemoryState {
+            stability: 20.925528,
+            difficulty: 7.005062,
+        },
+    );
+    assert_eq!(51, next_interval(state.stability, 0.9));
 }
 
 pub(crate) fn benchmark_review_all(weights: &[f32], past_reviews: usize) {
