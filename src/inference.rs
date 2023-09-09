@@ -58,6 +58,10 @@ impl MemoryState {
     }
 }
 
+pub fn current_retrievability(stability: f32, days_elapsed_since_review: u32) -> f32 {
+    (days_elapsed_since_review as f32 / (stability * 9.0) + 1.0).powf(-1.0)
+}
+
 pub fn calc_memo_state(weights: &Weights, item: FSRSItem) -> MemoryState {
     type Backend = NdArrayBackend<f32>;
     let model = weights_to_modela(weights);
