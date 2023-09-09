@@ -105,10 +105,84 @@ pub fn next_memo_state(
     MemoryState::new(model.step(i, delta_t, rating, stability, difficulty))
 }
 
-pub fn next_interval(stability: f32, request_retention: f32) -> i32 {
+pub fn next_interval(stability: f32, request_retention: f32) -> u32 {
     (9.0 * stability * (1.0 / request_retention - 1.0))
         .round()
-        .max(1.0) as i32
+        .max(1.0) as u32
+}
+
+impl FSRSItem {
+    pub fn next_intervals(&self, weights: &Weights, request_retention: f32) -> NextIntervals {
+        // determine previous stability
+        let model = weights_to_modela(weights);
+        let size = self.reviews.len() - 1;
+        let (time_history, rating_history) = self
+            .reviews
+            .iter()
+            .take(size)
+            .map(|r| (r.delta_t, r.rating))
+            .unzip();
+        let time_history = Tensor::<NdArrayBackend, 1>::from_data(
+            Data::new(time_history, Shape { dims: [size] }).convert(),
+        )
+        .unsqueeze()
+        .transpose();
+        let rating_history = Tensor::<NdArrayBackend, 1>::from_data(
+            Data::new(rating_history, Shape { dims: [size] }).convert(),
+        )
+        .unsqueeze()
+        .transpose();
+        let previous_state = MemoryState::new(model.forward(time_history, rating_history));
+        // then next stability for each answer button
+        let delta_t = Tensor::<NdArrayBackend, 1>::from_data(Data::new(
+            vec![self.reviews.last().unwrap().delta_t as f32],
+            Shape { dims: [1] },
+        ))
+        .unsqueeze()
+        .transpose();
+        let stability = Tensor::<NdArrayBackend, 1>::from_data(Data::new(
+            vec![previous_state.stability],
+            Shape { dims: [1] },
+        ))
+        .unsqueeze();
+        let difficulty = Tensor::<NdArrayBackend, 1>::from_data(Data::new(
+            vec![previous_state.difficulty],
+            Shape { dims: [1] },
+        ))
+        .unsqueeze()
+        .transpose();
+        let mut next_states = [1.0, 2.0, 3.0, 4.0].into_iter().map(|rating| {
+            MemoryState::new(
+                model.step(
+                    size + 1,
+                    delta_t.clone(),
+                    Tensor::<NdArrayBackend, 1>::from_data(Data::new(
+                        vec![rating],
+                        Shape { dims: [1] },
+                    ))
+                    .unsqueeze()
+                    .transpose(),
+                    stability.clone(),
+                    difficulty.clone(),
+                ),
+            )
+        });
+
+        NextIntervals {
+            again: next_interval(next_states.next().unwrap().stability, request_retention),
+            hard: next_interval(next_states.next().unwrap().stability, request_retention),
+            good: next_interval(next_states.next().unwrap().stability, request_retention),
+            easy: next_interval(next_states.next().unwrap().stability, request_retention),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NextIntervals {
+    pub again: u32,
+    pub hard: u32,
+    pub good: u32,
+    pub easy: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -196,6 +270,26 @@ mod tests {
     use super::*;
     use crate::{convertor_tests::anki21_sample_file_converted_to_fsrs, FSRSReview};
 
+    static WEIGHTS: &[f32] = &[
+        0.81497127,
+        1.5411042,
+        4.007436,
+        9.045982,
+        4.9264183,
+        1.039322,
+        0.93803364,
+        0.0,
+        1.5530516,
+        0.10299722,
+        0.9981442,
+        2.210701,
+        0.018248068,
+        0.3422524,
+        1.3384504,
+        0.22278537,
+        2.6646678,
+    ];
+
     #[test]
     fn test_get_bin() {
         let pred = (0..=100).map(|i| i as f32 / 100.0).collect::<Vec<_>>();
@@ -213,25 +307,6 @@ mod tests {
 
     #[test]
     fn test_memo_state() {
-        let weights = &[
-            0.81497127,
-            1.5411042,
-            4.007436,
-            9.045982,
-            4.9264183,
-            1.039322,
-            0.93803364,
-            0.0,
-            1.5530516,
-            0.10299722,
-            0.9981442,
-            2.210701,
-            0.018248068,
-            0.3422524,
-            1.3384504,
-            0.22278537,
-            2.6646678,
-        ];
         let item = FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -257,7 +332,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            calc_memo_state(weights, item),
+            calc_memo_state(WEIGHTS, item),
             MemoryState {
                 stability: 51.344814,
                 difficulty: 7.005062
@@ -271,7 +346,7 @@ mod tests {
 
         assert_eq!(
             next_memo_state(
-                weights,
+                WEIGHTS,
                 review,
                 5,
                 MemoryState {
@@ -313,32 +388,46 @@ mod tests {
         Data::from([metrics.0, metrics.1])
             .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
-        let metrics = evaluate(
-            &[
-                0.81497127,
-                1.5411042,
-                4.007436,
-                9.045982,
-                4.9264183,
-                1.039322,
-                0.93803364,
-                0.0,
-                1.5530516,
-                0.10299722,
-                0.9981442,
-                2.210701,
-                0.018248068,
-                0.3422524,
-                1.3384504,
-                0.22278537,
-                2.6646678,
-            ],
-            items,
-            |_| true,
-        )
-        .unwrap();
+        let metrics = evaluate(WEIGHTS, items, |_| true).unwrap();
 
         Data::from([metrics.0, metrics.1])
             .assert_approx_eq(&Data::from([0.20206251, 0.017628053]), 5);
+    }
+
+    #[test]
+    fn next_intervals() {
+        let item = FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 1,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 1,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 3,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 8,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 21,
+                },
+            ],
+        };
+        assert_eq!(
+            item.next_intervals(WEIGHTS, 0.9),
+            NextIntervals {
+                again: 5,
+                hard: 26,
+                good: 51,
+                easy: 121,
+            }
+        )
     }
 }

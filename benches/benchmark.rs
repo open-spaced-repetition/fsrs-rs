@@ -7,39 +7,19 @@ use std::iter::repeat;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use fsrs_optimizer::calc_memo_state;
-use fsrs_optimizer::next_interval;
-use fsrs_optimizer::next_memo_state;
 use fsrs_optimizer::FSRSItem;
 use fsrs_optimizer::FSRSReview;
-use fsrs_optimizer::MemoryState;
+use fsrs_optimizer::NextIntervals;
 use itertools::Itertools;
 
-pub(crate) fn benchmark_review_next(weights: &[f32]) {
-    let review = FSRSReview {
-        rating: 3,
-        delta_t: 21,
-    };
-    let state = next_memo_state(
-        weights,
-        review,
-        5,
-        MemoryState {
-            stability: 20.925528,
-            difficulty: 7.005062,
-        },
-    );
-    assert_eq!(51, next_interval(state.stability, 0.9));
-}
-
-pub(crate) fn benchmark_review_all(weights: &[f32], past_reviews: usize) {
+pub(crate) fn next_intervals(weights: &[f32], past_reviews: usize) -> NextIntervals {
     let review = FSRSReview {
         rating: 3,
         delta_t: 21,
     };
     let reviews = repeat(review.clone()).take(past_reviews + 1).collect_vec();
     let item = FSRSItem { reviews };
-    calc_memo_state(weights, item);
+    item.next_intervals(weights, 0.9)
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -63,20 +43,17 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         2.6646678,
     ];
 
-    c.bench_function("review_next", |b| {
-        b.iter(|| black_box(benchmark_review_next(weights)))
+    c.bench_function("next_intervals_1", |b| {
+        b.iter(|| black_box(next_intervals(weights, 1)))
     });
-    c.bench_function("review_all_1", |b| {
-        b.iter(|| black_box(benchmark_review_all(weights, 1)))
+    c.bench_function("next_intervals_10", |b| {
+        b.iter(|| black_box(next_intervals(weights, 10)))
     });
-    c.bench_function("review_all_10", |b| {
-        b.iter(|| black_box(benchmark_review_all(weights, 10)))
+    c.bench_function("next_intervals_100", |b| {
+        b.iter(|| black_box(next_intervals(weights, 100)))
     });
-    c.bench_function("review_all_100", |b| {
-        b.iter(|| black_box(benchmark_review_all(weights, 100)))
-    });
-    c.bench_function("review_all_1000", |b| {
-        b.iter(|| black_box(benchmark_review_all(weights, 1000)))
+    c.bench_function("next_intervals_1000", |b| {
+        b.iter(|| black_box(next_intervals(weights, 1000)))
     });
 }
 
