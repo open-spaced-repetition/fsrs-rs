@@ -3,7 +3,7 @@ use crate::inference::ItemProgress;
 use crate::FSRS;
 use burn::config::Config;
 use burn::tensor::backend::Backend;
-use itertools::izip;
+use itertools::{izip, Itertools};
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
@@ -44,7 +44,7 @@ impl From<Column> for SliceInfoElem {
 
 #[derive(Config, Debug)]
 pub struct SimulatorConfig {
-    pub w: [f64; 17],
+    pub w: Vec<f32>,
     #[config(default = 10000)]
     pub deck_size: usize,
     #[config(default = 365)]
@@ -61,7 +61,7 @@ pub struct SimulatorConfig {
     pub learn_cost: f64,
 }
 
-fn stability_after_success(w: [f64; 17], s: f64, r: f64, d: f64, response: usize) -> f64 {
+fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -> f64 {
     let hard_penalty = if response == 1 { w[15] } else { 1.0 };
     let easy_bonus = if response == 3 { w[16] } else { 1.0 };
     s * (1.0
@@ -73,7 +73,7 @@ fn stability_after_success(w: [f64; 17], s: f64, r: f64, d: f64, response: usize
             * easy_bonus)
 }
 
-fn stability_after_failure(w: [f64; 17], s: f64, r: f64, d: f64) -> f64 {
+fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
     s.min(w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
         .max(0.1)
 }
@@ -89,6 +89,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         forget_cost,
         learn_cost,
     } = config.clone();
+    let w = w.into_iter().map(|v| v as f64).collect_vec();
 
     let mut card_table = Array2::<f64>::zeros((Column::COUNT, deck_size));
     card_table
@@ -237,7 +238,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         )
         .filter(|(.., &condition)| condition)
         .for_each(|(new_stab, &stab, &retr, &diff, ..)| {
-            *new_stab = stability_after_failure(w, stab, retr, diff);
+            *new_stab = stability_after_failure(&w, stab, retr, diff);
         });
 
         // Iterate over slices and apply stability_after_success function
@@ -251,7 +252,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         )
         .filter(|(.., &condition)| condition)
         .for_each(|(new_stab, &rating, &stab, &retr, &diff, _)| {
-            *new_stab = stability_after_success(w, stab, retr, diff, rating);
+            *new_stab = stability_after_success(&w, stab, retr, diff, rating);
         });
 
         // Initialize a new Array1 to store updated difficulty values
@@ -374,15 +375,12 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
 mod tests {
     use super::*;
     use crate::DEFAULT_WEIGHTS;
-    use itertools::Itertools;
 
-    fn weights() -> [f64; 17] {
+    fn weights() -> Vec<f32> {
         DEFAULT_WEIGHTS
             .into_iter()
-            .map(|v| *v as f64)
-            .collect_vec()
-            .try_into()
-            .unwrap()
+            .copied()
+            .collect()
     }
 
     #[test]
