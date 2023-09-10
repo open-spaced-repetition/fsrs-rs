@@ -19,5 +19,5 @@ pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
 pub use inference::{ItemProgress, ItemState, MemoryState, NextStates};
 pub use model::Fsrs;
-pub use optimal_retention::{find_optimal_retention, SimulatorConfig};
+pub use optimal_retention::SimulatorConfig;
 pub use training::ProgressState;
