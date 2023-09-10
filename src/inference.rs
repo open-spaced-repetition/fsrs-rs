@@ -154,7 +154,7 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
         let loss = BCELoss::<B>::new().forward(all_retention, all_labels);
         Ok(ModelEvaluation {
             log_loss: loss.to_data().value[0],
-            rmse,
+            rmse_bins: rmse,
         })
     }
 
@@ -165,7 +165,7 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
 
 pub struct ModelEvaluation {
     pub log_loss: f32,
-    pub rmse: f32,
+    pub rmse_bins: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -335,13 +335,13 @@ mod tests {
 
         let metrics = model.evaluate(items.clone(), |_| true).unwrap();
 
-        Data::from([metrics.log_loss, metrics.rmse])
+        Data::from([metrics.log_loss, metrics.rmse_bins])
             .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
         let model = FSRS::new(Some(WEIGHTS));
         let metrics = model.evaluate(items, |_| true).unwrap();
 
-        Data::from([metrics.log_loss, metrics.rmse])
+        Data::from([metrics.log_loss, metrics.rmse_bins])
             .assert_approx_eq(&Data::from([0.20206251, 0.017628053]), 5);
     }
 
