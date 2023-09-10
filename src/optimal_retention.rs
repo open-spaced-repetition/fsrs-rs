@@ -373,26 +373,32 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DEFAULT_WEIGHTS;
+    use itertools::Itertools;
 
-    #[test]
-    fn test_simulator() {
-        let config = SimulatorConfig::new([
-            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
-            0.29, 2.61,
-        ]);
-        let memorization = simulate(&config, 0.9, None);
-        assert_eq!(memorization, 3832.250006134299)
+    fn weights() -> [f64; 17] {
+        DEFAULT_WEIGHTS
+            .into_iter()
+            .map(|v| *v as f64)
+            .collect_vec()
+            .try_into()
+            .unwrap()
     }
 
     #[test]
-    fn test_find_optimal_retention() {
-        let config = SimulatorConfig::new([
-            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
-            0.29, 2.61,
-        ]);
-        let optimal_retention = FSRS::new(None)
+    fn simulator() {
+        let config = SimulatorConfig::new(weights());
+        let memorization = simulate(&config, 0.9, None);
+        assert_eq!(memorization, 3832.250011460164)
+    }
+
+    #[test]
+    fn optimal_retention() -> Result<()> {
+        let config = SimulatorConfig::new(weights());
+        let optimal_retention = FSRS::new(None)?
             .optimal_retention(&config, |_v| true)
             .unwrap();
-        assert_eq!(optimal_retention, 0.8179164761469289)
+        assert_eq!(optimal_retention, 0.8179164761469289);
+        Ok(())
     }
 }

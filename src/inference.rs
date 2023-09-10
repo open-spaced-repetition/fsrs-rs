@@ -15,6 +15,11 @@ use crate::{FSRSError, FSRSItem};
 /// This is a slice for efficiency, but should always be 17 in length.
 pub type Weights = [f32];
 
+pub static DEFAULT_WEIGHTS: &[f32] = &[
+    0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29,
+    2.61,
+];
+
 fn infer<B: Backend<FloatElem = f32>>(
     model: &Model<B>,
     batch: FSRSBatch<B>,
@@ -263,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_memo_state() {
+    fn test_memo_state() -> Result<()> {
         let item = FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -288,9 +293,9 @@ mod tests {
                 },
             ],
         };
-        let inf = FSRS::new(Some(WEIGHTS));
+        let fsrs = FSRS::new(Some(WEIGHTS))?;
         assert_eq!(
-            inf.memory_state(item),
+            fsrs.memory_state(item),
             MemoryState {
                 stability: 51.344814,
                 difficulty: 7.005062
@@ -298,7 +303,7 @@ mod tests {
         );
 
         assert_eq!(
-            inf.next_states(
+            fsrs.next_states(
                 Some(MemoryState {
                     stability: 20.925528,
                     difficulty: 7.005062
@@ -313,6 +318,7 @@ mod tests {
                 difficulty: 7.005062
             }
         );
+        Ok(())
     }
 
     #[test]
@@ -326,27 +332,28 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate() {
+    fn test_evaluate() -> Result<()> {
         let items = anki21_sample_file_converted_to_fsrs();
-        let model = FSRS::new(Some(&[
+        let fsrs = FSRS::new(Some(&[
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
-        ]));
+        ]))?;
 
-        let metrics = model.evaluate(items.clone(), |_| true).unwrap();
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
             .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
-        let model = FSRS::new(Some(WEIGHTS));
-        let metrics = model.evaluate(items, |_| true).unwrap();
+        let fsrs = FSRS::new(Some(WEIGHTS))?;
+        let metrics = fsrs.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
             .assert_approx_eq(&Data::from([0.20206251, 0.017628053]), 5);
+        Ok(())
     }
 
     #[test]
-    fn next_states() {
+    fn next_states() -> Result<()> {
         let item = FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -367,10 +374,10 @@ mod tests {
                 },
             ],
         };
-        let inf = FSRS::new(Some(WEIGHTS));
-        let state = inf.memory_state(item);
+        let fsrs = FSRS::new(Some(WEIGHTS))?;
+        let state = fsrs.memory_state(item);
         assert_eq!(
-            inf.next_states(Some(state), 0.9, 21),
+            fsrs.next_states(Some(state), 0.9, 21),
             NextStates {
                 again: ItemState {
                     memory: MemoryState {
@@ -401,6 +408,7 @@ mod tests {
                     interval: 121,
                 }
             }
-        )
+        );
+        Ok(())
     }
 }

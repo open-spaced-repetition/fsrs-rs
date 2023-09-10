@@ -1,4 +1,6 @@
+use crate::error::{FSRSError, Result};
 use crate::inference::Weights;
+use crate::DEFAULT_WEIGHTS;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArrayBackend;
 use burn::{
@@ -325,20 +327,29 @@ pub struct FSRS<B: Backend<FloatElem = f32> = NdArrayBackend> {
 }
 
 impl FSRS<NdArrayBackend> {
-    pub fn new(weights: Option<&Weights>) -> Self {
+    /// - Weights must be provided before running commands that need them.
+    /// - Weights may be an empty slice to use the default values instead.
+    pub fn new(weights: Option<&Weights>) -> Result<Self> {
         Self::new_with_backend(weights, NdArrayDevice::Cpu)
     }
 }
 
 impl<B: Backend<FloatElem = f32>> FSRS<B> {
     pub fn new_with_backend<B2: Backend<FloatElem = f32>>(
-        weights: Option<&Weights>,
+        mut weights: Option<&Weights>,
         device: B2::Device,
-    ) -> FSRS<B2> {
-        FSRS {
+    ) -> Result<FSRS<B2>> {
+        if let Some(weights) = &mut weights {
+            if weights.is_empty() {
+                *weights = DEFAULT_WEIGHTS
+            } else if weights.len() != 17 {
+                return Err(FSRSError::InvalidWeights);
+            }
+        }
+        Ok(FSRS {
             model: weights.map(weights_to_model),
             device,
-        }
+        })
     }
 
     pub(crate) fn model(&self) -> &Model<B> {
