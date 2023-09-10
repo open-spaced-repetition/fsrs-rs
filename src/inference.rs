@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::model::{Fsrs, MemoryStateTensors};
+use crate::model::{FSRS, MemoryStateTensors};
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
@@ -63,7 +63,7 @@ fn next_interval(stability: f32, request_retention: f32) -> u32 {
         .max(1.0) as u32
 }
 
-impl<B: Backend<FloatElem = f32>> Fsrs<B> {
+impl<B: Backend<FloatElem = f32>> FSRS<B> {
     pub fn memory_state(&self, item: FSRSItem) -> MemoryState {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
@@ -288,7 +288,7 @@ mod tests {
                 },
             ],
         };
-        let inf = Fsrs::new(Some(WEIGHTS));
+        let inf = FSRS::new(Some(WEIGHTS));
         assert_eq!(
             inf.memory_state(item),
             MemoryState {
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn test_evaluate() {
         let items = anki21_sample_file_converted_to_fsrs();
-        let model = Fsrs::new(Some(&[
+        let model = FSRS::new(Some(&[
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
         ]));
@@ -338,7 +338,7 @@ mod tests {
         Data::from([metrics.log_loss, metrics.rmse])
             .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
-        let model = Fsrs::new(Some(WEIGHTS));
+        let model = FSRS::new(Some(WEIGHTS));
         let metrics = model.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse])
@@ -367,7 +367,7 @@ mod tests {
                 },
             ],
         };
-        let inf = Fsrs::new(Some(WEIGHTS));
+        let inf = FSRS::new(Some(WEIGHTS));
         let state = inf.memory_state(item);
         assert_eq!(
             inf.next_states(Some(state), 0.9, 21),

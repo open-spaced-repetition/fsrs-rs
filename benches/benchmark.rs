@@ -8,12 +8,12 @@ use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
 use fsrs_optimizer::FSRSReview;
-use fsrs_optimizer::Fsrs;
+use fsrs_optimizer::FSRS;
 use fsrs_optimizer::NextStates;
 use fsrs_optimizer::{FSRSItem, MemoryState};
 use itertools::Itertools;
 
-pub(crate) fn calc_mem(inf: &Fsrs, past_reviews: usize) -> MemoryState {
+pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize) -> MemoryState {
     let review = FSRSReview {
         rating: 3,
         delta_t: 21,
@@ -22,7 +22,7 @@ pub(crate) fn calc_mem(inf: &Fsrs, past_reviews: usize) -> MemoryState {
     inf.memory_state(FSRSItem { reviews })
 }
 
-pub(crate) fn next_states(inf: &Fsrs) -> NextStates {
+pub(crate) fn next_states(inf: &FSRS) -> NextStates {
     inf.next_states(
         Some(MemoryState {
             stability: 51.344814,
@@ -34,7 +34,7 @@ pub(crate) fn next_states(inf: &Fsrs) -> NextStates {
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
-    let inf = Fsrs::new(Some(&[
+    let inf = FSRS::new(Some(&[
         0.81497127,
         1.5411042,
         4.007436,

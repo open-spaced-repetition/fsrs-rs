@@ -319,23 +319,23 @@ mod tests {
 
 /// This is the main structure provided by this crate. It can be used
 /// for both weight training, and for reviews.
-pub struct Fsrs<B: Backend<FloatElem = f32> = NdArrayBackend> {
+pub struct FSRS<B: Backend<FloatElem = f32> = NdArrayBackend> {
     model: Option<Model<B>>,
     device: B::Device,
 }
 
-impl Fsrs<NdArrayBackend> {
+impl FSRS<NdArrayBackend> {
     pub fn new(weights: Option<&Weights>) -> Self {
         Self::new_with_backend(weights, NdArrayDevice::Cpu)
     }
 }
 
-impl<B: Backend<FloatElem = f32>> Fsrs<B> {
+impl<B: Backend<FloatElem = f32>> FSRS<B> {
     pub fn new_with_backend<B2: Backend<FloatElem = f32>>(
         weights: Option<&Weights>,
         device: B2::Device,
-    ) -> Fsrs<B2> {
-        Fsrs {
+    ) -> FSRS<B2> {
+        FSRS {
             model: weights.map(weights_to_model),
             device,
         }

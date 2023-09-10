@@ -1,6 +1,6 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::ItemProgress;
-use crate::Fsrs;
+use crate::FSRS;
 use burn::config::Config;
 use burn::tensor::backend::Backend;
 use itertools::izip;
@@ -326,7 +326,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
     memorized_cnt_per_day[memorized_cnt_per_day.len() - 1]
 }
 
-impl<B: Backend<FloatElem = f32>> Fsrs<B> {
+impl<B: Backend<FloatElem = f32>> FSRS<B> {
     pub fn optimal_retention<F>(&self, config: &SimulatorConfig, mut progress: F) -> Result<f64>
     where
         F: FnMut(ItemProgress) -> bool,
@@ -390,7 +390,7 @@ mod tests {
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
         ]);
-        let optimal_retention = Fsrs::new(None)
+        let optimal_retention = FSRS::new(None)
             .optimal_retention(&config, |_v| true)
             .unwrap();
         assert_eq!(optimal_retention, 0.8179164761469289)
