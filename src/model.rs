@@ -325,14 +325,21 @@ pub struct Fsrs<B: Backend<FloatElem = f32> = NdArrayBackend> {
 
 impl Fsrs<NdArrayBackend> {
     pub fn new(weights: Option<&Weights>) -> Self {
-        Self {
-            model: weights.map(weights_to_model),
-            device: NdArrayDevice::Cpu,
-        }
+        Self::new_with_backend(weights, NdArrayDevice::Cpu)
     }
 }
 
 impl<B: Backend<FloatElem = f32>> Fsrs<B> {
+    pub fn new_with_backend<B2: Backend<FloatElem = f32>>(
+        weights: Option<&Weights>,
+        device: B2::Device,
+    ) -> Fsrs<B2> {
+        Fsrs {
+            model: weights.map(weights_to_model),
+            device,
+        }
+    }
+
     pub(crate) fn model(&self) -> &Model<B> {
         self.model
             .as_ref()
@@ -344,10 +351,9 @@ impl<B: Backend<FloatElem = f32>> Fsrs<B> {
     }
 }
 
-pub(crate) fn weights_to_model(weights: &Weights) -> Model<NdArrayBackend<f32>> {
-    type Backend = NdArrayBackend<f32>;
+pub(crate) fn weights_to_model<B: Backend<FloatElem = f32>>(weights: &Weights) -> Model<B> {
     let config = ModelConfig::default();
-    let mut model = Model::<Backend>::new(config);
+    let mut model = Model::<B>::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
         weights.to_vec(),
         Shape { dims: [17] },

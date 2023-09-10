@@ -7,8 +7,8 @@ use std::iter::repeat;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use fsrs_optimizer::model::Fsrs;
 use fsrs_optimizer::FSRSReview;
+use fsrs_optimizer::Fsrs;
 use fsrs_optimizer::NextStates;
 use fsrs_optimizer::{FSRSItem, MemoryState};
 use itertools::Itertools;
@@ -34,7 +34,7 @@ pub(crate) fn next_states(inf: &Fsrs) -> NextStates {
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
-    let inf = Fsrs::new(&[
+    let inf = Fsrs::new(Some(&[
         0.81497127,
         1.5411042,
         4.007436,
@@ -52,7 +52,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         1.3384504,
         0.22278537,
         2.6646678,
-    ]);
+    ]));
 
     c.bench_function("calc_mem", |b| b.iter(|| black_box(calc_mem(&inf, 100))));
     c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&inf))));
