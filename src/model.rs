@@ -317,7 +317,8 @@ mod tests {
     }
 }
 
-/// This wraps our internal model and provides our public API.
+/// This is the main structure provided by this crate. It can be used
+/// for both weight training, and for reviews.
 pub struct Fsrs<B: Backend<FloatElem = f32> = NdArrayBackend> {
     model: Option<Model<B>>,
     device: B::Device,

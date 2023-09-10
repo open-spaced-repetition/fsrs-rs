@@ -327,11 +327,7 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
 }
 
 impl<B: Backend<FloatElem = f32>> Fsrs<B> {
-    pub fn find_optimal_retention<F>(
-        &self,
-        config: &SimulatorConfig,
-        mut progress: F,
-    ) -> Result<f64>
+    pub fn optimal_retention<F>(&self, config: &SimulatorConfig, mut progress: F) -> Result<f64>
     where
         F: FnMut(ItemProgress) -> bool,
     {
@@ -395,7 +391,7 @@ mod tests {
             0.29, 2.61,
         ]);
         let optimal_retention = Fsrs::new(None)
-            .find_optimal_retention(&config, |_v| true)
+            .optimal_retention(&config, |_v| true)
             .unwrap();
         assert_eq!(optimal_retention, 0.8179164761469289)
     }

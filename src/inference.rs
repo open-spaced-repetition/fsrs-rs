@@ -64,7 +64,7 @@ fn next_interval(stability: f32, request_retention: f32) -> u32 {
 }
 
 impl<B: Backend<FloatElem = f32>> Fsrs<B> {
-    pub fn calculate_memory(&self, item: FSRSItem) -> MemoryState {
+    pub fn memory_state(&self, item: FSRSItem) -> MemoryState {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
@@ -290,7 +290,7 @@ mod tests {
         };
         let inf = Fsrs::new(Some(WEIGHTS));
         assert_eq!(
-            inf.calculate_memory(item),
+            inf.memory_state(item),
             MemoryState {
                 stability: 51.344814,
                 difficulty: 7.005062
@@ -368,7 +368,7 @@ mod tests {
             ],
         };
         let inf = Fsrs::new(Some(WEIGHTS));
-        let state = inf.calculate_memory(item);
+        let state = inf.memory_state(item);
         assert_eq!(
             inf.next_states(Some(state), 0.9, 21),
             NextStates {

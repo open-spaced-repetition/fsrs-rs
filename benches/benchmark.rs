@@ -19,7 +19,7 @@ pub(crate) fn calc_mem(inf: &Fsrs, past_reviews: usize) -> MemoryState {
         delta_t: 21,
     };
     let reviews = repeat(review.clone()).take(past_reviews + 1).collect_vec();
-    inf.calculate_memory(FSRSItem { reviews })
+    inf.memory_state(FSRSItem { reviews })
 }
 
 pub(crate) fn next_states(inf: &Fsrs) -> NextStates {
