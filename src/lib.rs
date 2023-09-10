@@ -17,7 +17,7 @@ mod weight_clipper;
 
 pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
-pub use inference::{ItemProgress, ItemState, MemoryState, NextStates, ModelEvaluation};
+pub use inference::{ItemProgress, ItemState, MemoryState, ModelEvaluation, NextStates};
 pub use model::FSRS;
 pub use optimal_retention::SimulatorConfig;
 pub use training::ProgressState;
