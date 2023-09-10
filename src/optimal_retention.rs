@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::ItemProgress;
+use crate::inference::{ItemProgress, Weights};
 use crate::FSRS;
 use burn::config::Config;
 use burn::tensor::backend::Backend;
@@ -44,7 +44,6 @@ impl From<Column> for SliceInfoElem {
 
 #[derive(Config, Debug)]
 pub struct SimulatorConfig {
-    pub w: Vec<f32>,
     #[config(default = 10000)]
     pub deck_size: usize,
     #[config(default = 365)]
@@ -78,9 +77,8 @@ fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
         .max(0.1)
 }
 
-fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>) -> f64 {
+fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: Option<u64>) -> f64 {
     let SimulatorConfig {
-        w,
         deck_size,
         learn_span,
         max_cost_perday,
@@ -89,8 +87,6 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
         forget_cost,
         learn_cost,
     } = config.clone();
-    let w = w.into_iter().map(|v| v as f64).collect_vec();
-
     let mut card_table = Array2::<f64>::zeros((Column::COUNT, deck_size));
     card_table
         .slice_mut(s![Column::Due, ..])
@@ -328,10 +324,16 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
 }
 
 impl<B: Backend<FloatElem = f32>> FSRS<B> {
-    pub fn optimal_retention<F>(&self, config: &SimulatorConfig, mut progress: F) -> Result<f64>
+    pub fn optimal_retention<F>(
+        &self,
+        config: &SimulatorConfig,
+        weights: &Weights,
+        mut progress: F,
+    ) -> Result<f64>
     where
         F: FnMut(ItemProgress) -> bool,
     {
+        let weights = weights.into_iter().map(|v| *v as f64).collect_vec();
         let mut low = 0.75;
         let mut high = 0.95;
         let mut optimal_retention = 0.85;
@@ -346,14 +348,14 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
             progress_info.current += 1;
             let mid1 = low + (high - low) / 3.0;
             let mid2 = high - (high - low) / 3.0;
-            fn sample_several(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
+            let sample_several = |n, mid| {
                 (0..n)
-                    .map(|i| simulate(config, mid, Some((i + 42).try_into().unwrap())))
+                    .map(|i| simulate(config, &weights, mid, Some((i + 42).try_into().unwrap())))
                     .sum::<f64>()
                     / n as f64
-            }
-            let memorization1 = sample_several(3, config, mid1);
-            let memorization2 = sample_several(3, config, mid2);
+            };
+            let memorization1 = sample_several(3, mid1);
+            let memorization2 = sample_several(3, mid2);
 
             if memorization1 > memorization2 {
                 high = mid2;
@@ -376,25 +378,23 @@ mod tests {
     use super::*;
     use crate::DEFAULT_WEIGHTS;
 
-    fn weights() -> Vec<f32> {
-        DEFAULT_WEIGHTS
-            .into_iter()
-            .copied()
-            .collect()
-    }
-
     #[test]
     fn simulator() {
-        let config = SimulatorConfig::new(weights());
-        let memorization = simulate(&config, 0.9, None);
+        let config = SimulatorConfig::new();
+        let memorization = simulate(
+            &config,
+            &DEFAULT_WEIGHTS.into_iter().map(|v| *v as f64).collect_vec(),
+            0.9,
+            None,
+        );
         assert_eq!(memorization, 3832.250011460164)
     }
 
     #[test]
     fn optimal_retention() -> Result<()> {
-        let config = SimulatorConfig::new(weights());
+        let config = SimulatorConfig::new();
         let optimal_retention = FSRS::new(None)?
-            .optimal_retention(&config, |_v| true)
+            .optimal_retention(&config, DEFAULT_WEIGHTS, |_v| true)
             .unwrap();
         assert_eq!(optimal_retention, 0.8179164761469289);
         Ok(())
