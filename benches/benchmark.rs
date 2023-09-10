@@ -1,29 +1,40 @@
 // Copyright: Ankitects Pty Ltd and contributors
 // License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 
+use burn::backend::ndarray::NdArrayBackend;
 use std::hint::black_box;
 use std::iter::repeat;
 
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use fsrs_optimizer::FSRSItem;
 use fsrs_optimizer::FSRSReview;
 use fsrs_optimizer::NextStates;
+use fsrs_optimizer::{FSRSItem, Inferencer, MemoryState};
 use itertools::Itertools;
 
-pub(crate) fn next_states(weights: &[f32], past_reviews: usize) -> NextStates {
+pub(crate) fn calc_mem(inf: &Inferencer, past_reviews: usize) -> MemoryState {
     let review = FSRSReview {
         rating: 3,
         delta_t: 21,
     };
     let reviews = repeat(review.clone()).take(past_reviews + 1).collect_vec();
-    let item = FSRSItem { reviews };
-    item.next_states(weights, 0.9)
+    inf.calculate_memory(FSRSItem { reviews })
+}
+
+pub(crate) fn next_states(inf: &Inferencer) -> NextStates {
+    inf.next_states(
+        Some(MemoryState {
+            stability: 51.344814,
+            difficulty: 7.005062,
+        }),
+        0.9,
+        21,
+    )
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
-    let weights = &[
+    let inf = Inferencer::new(&[
         0.81497127,
         1.5411042,
         4.007436,
@@ -41,20 +52,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         1.3384504,
         0.22278537,
         2.6646678,
-    ];
+    ]);
 
-    c.bench_function("next_states_1", |b| {
-        b.iter(|| black_box(next_states(weights, 1)))
-    });
-    c.bench_function("next_states_10", |b| {
-        b.iter(|| black_box(next_states(weights, 10)))
-    });
-    c.bench_function("next_states_100", |b| {
-        b.iter(|| black_box(next_states(weights, 100)))
-    });
-    c.bench_function("next_states_1000", |b| {
-        b.iter(|| black_box(next_states(weights, 1000)))
-    });
+    c.bench_function("calc_mem", |b| b.iter(|| black_box(calc_mem(&inf, 100))));
+    c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&inf))));
 }
 
 criterion_group!(benches, criterion_benchmark);

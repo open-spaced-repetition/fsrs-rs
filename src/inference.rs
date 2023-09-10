@@ -13,7 +13,7 @@ use crate::dataset::FSRSBatcher;
 use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
-use crate::{FSRSError, FSRSItem, FSRSReview};
+use crate::{FSRSError, FSRSItem};
 
 /// This is a slice for efficiency, but should always be 17 in length.
 type Weights = [f32];
@@ -41,7 +41,7 @@ fn weights_to_model(weights: &Weights) -> Model<NdArrayBackend<f32>> {
     model
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemoryState {
     pub stability: f32,
     pub difficulty: f32,
@@ -75,33 +75,13 @@ pub fn current_retrievability(stability: f32, days_elapsed_since_review: u32) ->
     (days_elapsed_since_review as f32 / (stability * 9.0) + 1.0).powf(-1.0)
 }
 
-pub fn next_memo_state(
-    weights: &Weights,
-    review: FSRSReview,
-    last_state: Option<MemoryState>,
-) -> MemoryState {
-    type Backend = NdArrayBackend<f32>;
-    let model = weights_to_model(weights);
-    let delta_t = Tensor::<Backend, 1>::from_data(Data::new(
-        vec![review.delta_t as f32],
-        Shape { dims: [1] },
-    ))
-    .unsqueeze()
-    .transpose();
-    let rating =
-        Tensor::<Backend, 1>::from_data(Data::new(vec![review.rating as f32], Shape { dims: [1] }))
-            .unsqueeze()
-            .transpose();
-    MemoryState::from(model.step(delta_t, rating, last_state.map(Into::into)))
-}
-
-pub fn next_interval(stability: f32, request_retention: f32) -> u32 {
+fn next_interval(stability: f32, request_retention: f32) -> u32 {
     (9.0 * stability * (1.0 / request_retention - 1.0))
         .round()
         .max(1.0) as u32
 }
 
-pub struct Inferencer<B: Backend<FloatElem = f32>> {
+pub struct Inferencer<B: Backend<FloatElem = f32> = NdArrayBackend> {
     model: Model<B>,
 }
 
@@ -128,78 +108,42 @@ impl<B: Backend<FloatElem = f32>> Inferencer<B> {
                 .transpose();
         self.model.forward(time_history, rating_history).into()
     }
-}
 
-impl FSRSItem {
-    pub fn next_states(&self, weights: &Weights, request_retention: f32) -> NextStates {
-        todo!()
-        // determine previous stability
-        // let model = weights_to_modela(weights);
-        // let size = self.reviews.len() - 1;
-        // let (time_history, rating_history) = self
-        //     .reviews
-        //     .iter()
-        //     .take(size)
-        //     .map(|r| (r.delta_t, r.rating))
-        //     .unzip();
-        // let time_history = Tensor::<NdArrayBackend, 1>::from_data(
-        //     Data::new(time_history, Shape { dims: [size] }).convert(),
-        // )
-        // .unsqueeze()
-        // .transpose();
-        // let rating_history = Tensor::<NdArrayBackend, 1>::from_data(
-        //     Data::new(rating_history, Shape { dims: [size] }).convert(),
-        // )
-        // .unsqueeze()
-        // .transpose();
-        // let previous_state = MemoryState::from(model.forward(time_history, rating_history));
-        // // then next stability for each answer button
-        // let delta_t = Tensor::<NdArrayBackend, 1>::from_data(Data::new(
-        //     vec![self.reviews.last().unwrap().delta_t as f32],
-        //     Shape { dims: [1] },
-        // ))
-        // .unsqueeze()
-        // .transpose();
-        // let stability = Tensor::<NdArrayBackend, 1>::from_data(Data::new(
-        //     vec![previous_state.stability],
-        //     Shape { dims: [1] },
-        // ))
-        // .unsqueeze();
-        // let difficulty = Tensor::<NdArrayBackend, 1>::from_data(Data::new(
-        //     vec![previous_state.difficulty],
-        //     Shape { dims: [1] },
-        // ))
-        // .unsqueeze()
-        // .transpose();
-        // let mut next_states = [1.0, 2.0, 3.0, 4.0].into_iter().map(|rating| {
-        //     MemoryState::new(
-        //         model.step(
-        //             delta_t.clone(),
-        //             Tensor::<NdArrayBackend, 1>::from_data(Data::new(
-        //                 vec![rating],
-        //                 Shape { dims: [1] },
-        //             ))
-        //             .unsqueeze()
-        //             .transpose(),
-        //
-        //             stability.clone(),
-        //             difficulty.clone(),
-        //         ),
-        //     )
-        // });
-        //
-        // let mut get_next_state = || {
-        //     let memory = next_states.next().unwrap();
-        //     let interval = next_interval(memory.stability, request_retention);
-        //     ItemState { memory, interval }
-        // };
-        //
-        // NextStates {
-        //     again: get_next_state(),
-        //     hard: get_next_state(),
-        //     good: get_next_state(),
-        //     easy: get_next_state(),
-        // }
+    pub fn next_states(
+        &self,
+        state: Option<MemoryState>,
+        desired_retention: f32,
+        days_elapsed: u32,
+    ) -> NextStates {
+        let delta_t =
+            Tensor::<B, 1>::from_data(Data::new(vec![days_elapsed as f32], Shape { dims: [1] }))
+                .unsqueeze()
+                .transpose();
+        let state = state.map(MemoryStateTensors::from);
+        let mut next_states = (1..=4).map(|rating| {
+            MemoryState::from(
+                self.model.step(
+                    delta_t.clone(),
+                    Tensor::<B, 1>::from_data(Data::new(vec![rating as f32], Shape { dims: [1] }))
+                        .unsqueeze()
+                        .transpose(),
+                    state.clone(),
+                ),
+            )
+        });
+
+        let mut get_next_state = || {
+            let memory = next_states.next().unwrap();
+            let interval = next_interval(memory.stability, desired_retention);
+            ItemState { memory, interval }
+        };
+
+        NextStates {
+            again: get_next_state(),
+            hard: get_next_state(),
+            good: get_next_state(),
+            easy: get_next_state(),
+        }
     }
 }
 
@@ -372,20 +316,17 @@ mod tests {
             }
         );
 
-        let review = FSRSReview {
-            rating: 3,
-            delta_t: 21,
-        };
-
         assert_eq!(
-            next_memo_state(
-                WEIGHTS,
-                review,
+            inf.next_states(
                 Some(MemoryState {
                     stability: 20.925528,
                     difficulty: 7.005062
                 }),
-            ),
+                0.9,
+                21
+            )
+            .good
+            .memory,
             MemoryState {
                 stability: 51.344814,
                 difficulty: 7.005062
@@ -446,14 +387,12 @@ mod tests {
                     rating: 3,
                     delta_t: 8,
                 },
-                FSRSReview {
-                    rating: 3,
-                    delta_t: 21,
-                },
             ],
         };
+        let inf = Inferencer::new(WEIGHTS);
+        let state = inf.calculate_memory(item);
         assert_eq!(
-            item.next_states(WEIGHTS, 0.9),
+            inf.next_states(Some(state), 0.9, 21),
             NextStates {
                 again: ItemState {
                     memory: MemoryState {
