@@ -1,4 +1,5 @@
 use crate::inference::Weights;
+use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArrayBackend;
 use burn::{
     config::Config,
@@ -316,14 +317,17 @@ mod tests {
     }
 }
 
+/// This wraps our internal model and provides our public API.
 pub struct FsrsModel<B: Backend<FloatElem = f32> = NdArrayBackend> {
     pub(crate) model: Model<B>,
+    pub(crate) device: B::Device,
 }
 
 impl FsrsModel<NdArrayBackend> {
     pub fn new(weights: &Weights) -> Self {
         Self {
             model: weights_to_model(weights),
+            device: NdArrayDevice::Cpu,
         }
     }
 }

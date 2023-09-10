@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::model::{weights_to_model, FsrsModel, MemoryStateTensors};
-use burn::backend::ndarray::NdArrayDevice;
-use burn::backend::NdArrayBackend;
+use crate::model::{FsrsModel, MemoryStateTensors};
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
@@ -121,6 +119,51 @@ impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
             easy: get_next_state(),
         }
     }
+
+    pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        let batcher = FSRSBatcher::new(self.device.clone());
+        let mut all_predictions = vec![];
+        let mut all_true_val = vec![];
+        let mut all_retention = vec![];
+        let mut all_labels = vec![];
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: items.len(),
+        };
+        for chunk in items.chunks(512) {
+            let batch = batcher.batch(chunk.to_vec());
+            let (_state, retention) = infer::<B>(&self.model, batch.clone());
+            let pred = retention.clone().squeeze::<1>(1).to_data().value;
+            all_predictions.extend(pred);
+            let true_val = batch.labels.clone().float().to_data().value;
+            all_true_val.extend(true_val);
+            all_retention.push(retention);
+            all_labels.push(batch.labels);
+            progress_info.current += chunk.len();
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+        let rmse = calibration_rmse(all_predictions, all_true_val);
+        let all_retention = Tensor::cat(all_retention, 0);
+        let all_labels = Tensor::cat(all_labels, 0)
+            .unsqueeze::<2>()
+            .float()
+            .transpose();
+        let loss = BCELoss::<B>::new().forward(all_retention, all_labels);
+        Ok(ModelEvaluation {
+            log_loss: loss.to_data().value[0],
+            rmse,
+        })
+    }
+}
+
+pub struct ModelEvaluation {
+    pub log_loss: f32,
+    pub rmse: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,46 +184,6 @@ pub struct ItemState {
 pub struct ItemProgress {
     pub current: usize,
     pub total: usize,
-}
-
-pub fn evaluate<F>(weights: &Weights, items: Vec<FSRSItem>, mut progress: F) -> Result<(f32, f32)>
-where
-    F: FnMut(ItemProgress) -> bool,
-{
-    type Backend = NdArrayBackend<f32>;
-    let device = NdArrayDevice::Cpu;
-    let batcher = FSRSBatcher::<Backend>::new(device);
-    let model = weights_to_model(weights);
-    let mut all_pred = vec![];
-    let mut all_true_val = vec![];
-    let mut all_retention = vec![];
-    let mut all_labels = vec![];
-    let mut progress_info = ItemProgress {
-        current: 0,
-        total: items.len(),
-    };
-    for chunk in items.chunks(512) {
-        let batch = batcher.batch(chunk.to_vec());
-        let (_state, retention) = infer::<Backend>(&model, batch.clone());
-        let pred = retention.clone().squeeze::<1>(1).to_data().value;
-        all_pred.extend(pred);
-        let true_val = batch.labels.clone().float().to_data().value;
-        all_true_val.extend(true_val);
-        all_retention.push(retention);
-        all_labels.push(batch.labels);
-        progress_info.current += chunk.len();
-        if !progress(progress_info) {
-            return Err(FSRSError::Interrupted);
-        }
-    }
-    let rmse = calibration_rmse(all_pred, all_true_val);
-    let all_retention = Tensor::cat(all_retention, 0);
-    let all_labels = Tensor::cat(all_labels, 0)
-        .unsqueeze::<2>()
-        .float()
-        .transpose();
-    let loss = BCELoss::<Backend>::new().forward(all_retention, all_labels);
-    Ok((loss.to_data().value[0], rmse))
 }
 
 fn get_bin(x: f32, bins: i32) -> i32 {
@@ -323,23 +326,20 @@ mod tests {
     #[test]
     fn test_evaluate() {
         let items = anki21_sample_file_converted_to_fsrs();
+        let model = FsrsModel::new(&[
+            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
+            0.29, 2.61,
+        ]);
 
-        let metrics = evaluate(
-            &[
-                0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
-                1.26, 0.29, 2.61,
-            ],
-            items.clone(),
-            |_| true,
-        )
-        .unwrap();
+        let metrics = model.evaluate(items.clone(), |_| true).unwrap();
 
-        Data::from([metrics.0, metrics.1])
+        Data::from([metrics.log_loss, metrics.rmse])
             .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
-        let metrics = evaluate(WEIGHTS, items, |_| true).unwrap();
+        let model = FsrsModel::new(WEIGHTS);
+        let metrics = model.evaluate(items, |_| true).unwrap();
 
-        Data::from([metrics.0, metrics.1])
+        Data::from([metrics.log_loss, metrics.rmse])
             .assert_approx_eq(&Data::from([0.20206251, 0.017628053]), 5);
     }
 
