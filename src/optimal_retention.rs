@@ -1,6 +1,6 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Weights};
-use crate::FSRS;
+use crate::{DEFAULT_WEIGHTS, FSRS};
 use burn::config::Config;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
@@ -234,7 +234,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         )
         .filter(|(.., &condition)| condition)
         .for_each(|(new_stab, &stab, &retr, &diff, ..)| {
-            *new_stab = stability_after_failure(&w, stab, retr, diff);
+            *new_stab = stability_after_failure(w, stab, retr, diff);
         });
 
         // Iterate over slices and apply stability_after_success function
@@ -248,7 +248,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         )
         .filter(|(.., &condition)| condition)
         .for_each(|(new_stab, &rating, &stab, &retr, &diff, _)| {
-            *new_stab = stability_after_success(&w, stab, retr, diff, rating);
+            *new_stab = stability_after_success(w, stab, retr, diff, rating);
         });
 
         // Initialize a new Array1 to store updated difficulty values
@@ -333,7 +333,16 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
     where
         F: FnMut(ItemProgress) -> bool,
     {
-        let weights = weights.into_iter().map(|v| *v as f64).collect_vec();
+        let weights = if weights.is_empty() {
+            DEFAULT_WEIGHTS
+        } else if weights.len() != 17 {
+            return Err(FSRSError::InvalidWeights);
+        } else {
+            weights
+        }
+        .iter()
+        .map(|v| *v as f64)
+        .collect_vec();
         let mut low = 0.75;
         let mut high = 0.95;
         let mut optimal_retention = 0.85;
@@ -383,7 +392,7 @@ mod tests {
         let config = SimulatorConfig::new();
         let memorization = simulate(
             &config,
-            &DEFAULT_WEIGHTS.into_iter().map(|v| *v as f64).collect_vec(),
+            &DEFAULT_WEIGHTS.iter().map(|v| *v as f64).collect_vec(),
             0.9,
             None,
         );
