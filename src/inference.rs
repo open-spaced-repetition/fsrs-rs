@@ -69,6 +69,8 @@ fn next_interval(stability: f32, request_retention: f32) -> u32 {
 }
 
 impl<B: Backend<FloatElem = f32>> FSRS<B> {
+    /// Calculate the current memory state for a given card's history of reviews.
+    /// Weights must have been provided when calling FSRS::new().
     pub fn memory_state(&self, item: FSRSItem) -> MemoryState {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
@@ -84,6 +86,8 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
         self.model().forward(time_history, rating_history).into()
     }
 
+    /// The intervals and memory states for each answer button.
+    /// Weights must have been provided when calling FSRS::new().
     pub fn next_states(
         &self,
         state: Option<MemoryState>,
@@ -122,6 +126,8 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
         }
     }
 
+    /// Determine how well the model and weights predict performance.
+    /// Weights must have been provided when calling FSRS::new().
     pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
     where
         F: FnMut(ItemProgress) -> bool,
@@ -163,6 +169,8 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
         })
     }
 
+    /// How well the user is likely to remember the item after `days_elapsed` since the previous
+    /// review.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32) -> f32 {
         (days_elapsed as f32 / (state.stability * 9.0) + 1.0).powf(-1.0)
     }

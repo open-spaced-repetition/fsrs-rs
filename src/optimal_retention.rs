@@ -324,6 +324,8 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
 }
 
 impl<B: Backend<FloatElem = f32>> FSRS<B> {
+    /// For the given simulator parameters and weights, determine the suggested `desired_retention`
+    /// value.
     pub fn optimal_retention<F>(
         &self,
         config: &SimulatorConfig,
