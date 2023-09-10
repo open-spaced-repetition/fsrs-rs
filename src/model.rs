@@ -127,7 +127,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         } else {
             (
                 self.init_stability(rating.clone()),
-                self.init_difficulty(rating).clamp(1.0, 10.0)
+                self.init_difficulty(rating).clamp(1.0, 10.0),
             )
         };
         MemoryStateTensors {

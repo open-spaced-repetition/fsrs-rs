@@ -30,7 +30,7 @@ fn infer<B: Backend<FloatElem = f32>>(
     (state, retention)
 }
 
-fn weights_to_modela(weights: &Weights) -> Model<NdArrayBackend<f32>> {
+fn weights_to_model(weights: &Weights) -> Model<NdArrayBackend<f32>> {
     type Backend = NdArrayBackend<f32>;
     let config = ModelConfig::default();
     let mut model = Model::<Backend>::new(config);
@@ -75,30 +75,13 @@ pub fn current_retrievability(stability: f32, days_elapsed_since_review: u32) ->
     (days_elapsed_since_review as f32 / (stability * 9.0) + 1.0).powf(-1.0)
 }
 
-pub fn calc_memo_state(weights: &Weights, item: FSRSItem) -> MemoryState {
-    type Backend = NdArrayBackend<f32>;
-    let model = weights_to_modela(weights);
-    let (time_history, rating_history) = item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
-    let size = item.reviews.len();
-    let time_history =
-        Tensor::<Backend, 1>::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
-            .unsqueeze()
-            .transpose();
-    let rating_history = Tensor::<Backend, 1>::from_data(
-        Data::new(rating_history, Shape { dims: [size] }).convert(),
-    )
-    .unsqueeze()
-    .transpose();
-    MemoryState::from(model.forward(time_history, rating_history))
-}
-
 pub fn next_memo_state(
     weights: &Weights,
     review: FSRSReview,
     last_state: Option<MemoryState>,
 ) -> MemoryState {
     type Backend = NdArrayBackend<f32>;
-    let model = weights_to_modela(weights);
+    let model = weights_to_model(weights);
     let delta_t = Tensor::<Backend, 1>::from_data(Data::new(
         vec![review.delta_t as f32],
         Shape { dims: [1] },
@@ -116,6 +99,35 @@ pub fn next_interval(stability: f32, request_retention: f32) -> u32 {
     (9.0 * stability * (1.0 / request_retention - 1.0))
         .round()
         .max(1.0) as u32
+}
+
+pub struct Inferencer<B: Backend<FloatElem = f32>> {
+    model: Model<B>,
+}
+
+impl Inferencer<NdArrayBackend> {
+    pub fn new(weights: &Weights) -> Self {
+        Self {
+            model: weights_to_model(weights),
+        }
+    }
+}
+
+impl<B: Backend<FloatElem = f32>> Inferencer<B> {
+    pub fn calculate_memory(&self, item: FSRSItem) -> MemoryState {
+        let (time_history, rating_history) =
+            item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
+        let size = item.reviews.len();
+        let time_history =
+            Tensor::<B, 1>::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
+                .unsqueeze()
+                .transpose();
+        let rating_history =
+            Tensor::<B, 1>::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
+                .unsqueeze()
+                .transpose();
+        self.model.forward(time_history, rating_history).into()
+    }
 }
 
 impl FSRSItem {
@@ -218,7 +230,7 @@ where
     type Backend = NdArrayBackend<f32>;
     let device = NdArrayDevice::Cpu;
     let batcher = FSRSBatcher::<Backend>::new(device);
-    let model = weights_to_modela(weights);
+    let model = weights_to_model(weights);
     let mut all_pred = vec![];
     let mut all_true_val = vec![];
     let mut all_retention = vec![];
@@ -351,8 +363,9 @@ mod tests {
                 },
             ],
         };
+        let inf = Inferencer::new(WEIGHTS);
         assert_eq!(
-            calc_memo_state(WEIGHTS, item),
+            inf.calculate_memory(item),
             MemoryState {
                 stability: 51.344814,
                 difficulty: 7.005062
