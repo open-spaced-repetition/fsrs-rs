@@ -5,9 +5,8 @@ use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
-use crate::FSRSError;
-use burn::backend::ndarray::NdArrayDevice;
-use burn::backend::NdArrayAutodiffBackend;
+use crate::{FSRSError, FsrsModel};
+use burn::autodiff::ADBackendDecorator;
 use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder};
 use burn::tensor::backend::Backend;
@@ -189,31 +188,32 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-pub fn compute_weights(
-    items: Vec<FSRSItem>,
-    progress: Option<Arc<Mutex<ProgressState>>>,
-) -> Result<Vec<f32>> {
-    let device = NdArrayDevice::Cpu;
+impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
+    pub fn compute_weights(
+        &mut self,
+        items: Vec<FSRSItem>,
+        progress: Option<Arc<Mutex<ProgressState>>>,
+    ) -> Result<Vec<f32>> {
+        let (pre_trainset, trainset) = split_data(items);
+        let initial_stability = pretrain(pre_trainset)?;
+        let config = TrainingConfig::new(
+            ModelConfig {
+                freeze_stability: true,
+                initial_stability: Some(initial_stability),
+            },
+            AdamConfig::new(),
+        );
 
-    let (pre_trainset, trainset) = split_data(items);
-    let initial_stability = pretrain(pre_trainset)?;
-    let config = TrainingConfig::new(
-        ModelConfig {
-            freeze_stability: true,
-            initial_stability: Some(initial_stability),
-        },
-        AdamConfig::new(),
-    );
+        let model = train::<ADBackendDecorator<B>>(
+            trainset,
+            &config,
+            self.device(),
+            progress.map(ProgressCollector::new),
+            None,
+        );
 
-    let model = train::<NdArrayAutodiffBackend>(
-        trainset,
-        &config,
-        device,
-        progress.map(ProgressCollector::new),
-        None,
-    );
-
-    Ok(model?.w.val().to_data().value)
+        Ok(model?.w.val().to_data().value)
+    }
 }
 
 fn train<B: ADBackend<FloatElem = f32>>(

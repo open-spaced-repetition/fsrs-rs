@@ -80,7 +80,7 @@ impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
             Tensor::<B, 1>::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
                 .unsqueeze()
                 .transpose();
-        self.model.forward(time_history, rating_history).into()
+        self.model().forward(time_history, rating_history).into()
     }
 
     pub fn next_states(
@@ -94,9 +94,10 @@ impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
                 .unsqueeze()
                 .transpose();
         let state = state.map(MemoryStateTensors::from);
+        let model = self.model();
         let mut next_states = (1..=4).map(|rating| {
             MemoryState::from(
-                self.model.step(
+                model.step(
                     delta_t.clone(),
                     Tensor::<B, 1>::from_data(Data::new(vec![rating as f32], Shape { dims: [1] }))
                         .unsqueeze()
@@ -124,7 +125,7 @@ impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
     where
         F: FnMut(ItemProgress) -> bool,
     {
-        let batcher = FSRSBatcher::new(self.device.clone());
+        let batcher = FSRSBatcher::new(self.device());
         let mut all_predictions = vec![];
         let mut all_true_val = vec![];
         let mut all_retention = vec![];
@@ -133,9 +134,10 @@ impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
             current: 0,
             total: items.len(),
         };
+        let model = self.model();
         for chunk in items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
-            let (_state, retention) = infer::<B>(&self.model, batch.clone());
+            let (_state, retention) = infer::<B>(model, batch.clone());
             let pred = retention.clone().squeeze::<1>(1).to_data().value;
             all_predictions.extend(pred);
             let true_val = batch.labels.clone().float().to_data().value;
@@ -286,7 +288,7 @@ mod tests {
                 },
             ],
         };
-        let inf = FsrsModel::new(WEIGHTS);
+        let inf = FsrsModel::new(Some(WEIGHTS));
         assert_eq!(
             inf.calculate_memory(item),
             MemoryState {
@@ -326,17 +328,17 @@ mod tests {
     #[test]
     fn test_evaluate() {
         let items = anki21_sample_file_converted_to_fsrs();
-        let model = FsrsModel::new(&[
+        let model = FsrsModel::new(Some(&[
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
-        ]);
+        ]));
 
         let metrics = model.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse])
             .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
 
-        let model = FsrsModel::new(WEIGHTS);
+        let model = FsrsModel::new(Some(WEIGHTS));
         let metrics = model.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse])
@@ -365,7 +367,7 @@ mod tests {
                 },
             ],
         };
-        let inf = FsrsModel::new(WEIGHTS);
+        let inf = FsrsModel::new(Some(WEIGHTS));
         let state = inf.calculate_memory(item);
         assert_eq!(
             inf.next_states(Some(state), 0.9, 21),

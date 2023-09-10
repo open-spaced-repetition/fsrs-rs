@@ -319,16 +319,28 @@ mod tests {
 
 /// This wraps our internal model and provides our public API.
 pub struct FsrsModel<B: Backend<FloatElem = f32> = NdArrayBackend> {
-    pub(crate) model: Model<B>,
-    pub(crate) device: B::Device,
+    model: Option<Model<B>>,
+    device: B::Device,
 }
 
 impl FsrsModel<NdArrayBackend> {
-    pub fn new(weights: &Weights) -> Self {
+    pub fn new(weights: Option<&Weights>) -> Self {
         Self {
-            model: weights_to_model(weights),
+            model: weights.map(weights_to_model),
             device: NdArrayDevice::Cpu,
         }
+    }
+}
+
+impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
+    pub(crate) fn model(&self) -> &Model<B> {
+        self.model
+            .as_ref()
+            .expect("command requires weights to be set on creation")
+    }
+
+    pub(crate) fn device(&self) -> B::Device {
+        self.device.clone()
     }
 }
 

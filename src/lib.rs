@@ -20,4 +20,4 @@ pub use error::{FSRSError, Result};
 pub use inference::{current_retrievability, ItemProgress, ItemState, MemoryState, NextStates};
 pub use model::FsrsModel;
 pub use optimal_retention::{find_optimal_retention, SimulatorConfig};
-pub use training::{compute_weights, ProgressState};
+pub use training::ProgressState;
