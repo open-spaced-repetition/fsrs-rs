@@ -1,3 +1,6 @@
+use crate::inference::Weights;
+use burn::backend::ndarray::NdArrayDevice;
+use burn::backend::NdArrayBackend;
 use burn::{
     config::Config,
     module::{Module, Param},
@@ -97,56 +100,67 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
         difficulty - self.w().slice([6..7]) * (rating - 3)
     }
 
-    pub fn step(
+    pub(crate) fn step(
         &self,
-        i: usize,
         delta_t: Tensor<B, 2>,
         rating: Tensor<B, 2>,
-        stability: Tensor<B, 2>,
-        difficulty: Tensor<B, 2>,
-    ) -> (Tensor<B, 2>, Tensor<B, 2>) {
-        if i == 0 {
-            let new_s = self.init_stability(rating.clone());
-            let new_d = self.init_difficulty(rating.clone());
-            (new_s.clamp(0.1, 36500.0), new_d.clamp(1.0, 10.0))
-        } else {
-            let r = self.power_forgetting_curve(delta_t, stability.clone());
-            let new_d = self.next_difficulty(difficulty.clone(), rating.clone());
-            let new_d = self.mean_reversion(new_d);
-            let new_d = new_d.clamp(1.0, 10.0);
-            let s_recall = self.stability_after_success(
-                stability.clone(),
-                new_d.clone(),
-                r.clone(),
+        state: Option<MemoryStateTensors<B>>,
+    ) -> MemoryStateTensors<B> {
+        let (new_s, new_d) = if let Some(state) = state {
+            let retention = self.power_forgetting_curve(delta_t, state.stability.clone());
+            let mut new_difficulty = self.next_difficulty(state.difficulty.clone(), rating.clone());
+            new_difficulty = self.mean_reversion(new_difficulty).clamp(1.0, 10.0);
+            let stability_after_success = self.stability_after_success(
+                state.stability.clone(),
+                new_difficulty.clone(),
+                retention.clone(),
                 rating.clone(),
             );
-            let s_forget: Tensor<B, 2> =
-                self.stability_after_failure(stability.clone(), new_d.clone(), r.clone());
-            let new_s = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
+            let stability_after_failure: Tensor<B, 2> = self.stability_after_failure(
+                state.stability.clone(),
+                new_difficulty.clone(),
+                retention.clone(),
+            );
+            let mut new_stability = stability_after_success
+                .mask_where(rating.clone().equal_elem(1), stability_after_failure);
             // mask padding zeros for rating
-            let new_s = new_s.mask_where(rating.clone().equal_elem(0), stability);
-            let new_d = new_d.mask_where(rating.equal_elem(0), difficulty);
-            (new_s.clamp(0.1, 36500.0), new_d)
+            new_stability = new_stability.mask_where(rating.clone().equal_elem(0), state.stability);
+            new_difficulty = new_difficulty.mask_where(rating.equal_elem(0), state.difficulty);
+            (new_stability, new_difficulty)
+        } else {
+            (
+                self.init_stability(rating.clone()),
+                self.init_difficulty(rating).clamp(1.0, 10.0),
+            )
+        };
+        MemoryStateTensors {
+            stability: new_s.clamp(0.1, 36500.0),
+            difficulty: new_d,
         }
     }
 
-    pub fn forward(
+    pub(crate) fn forward(
         &self,
         delta_ts: Tensor<B, 2>,
         ratings: Tensor<B, 2, Float>,
-    ) -> (Tensor<B, 2>, Tensor<B, 2>) {
-        let [seq_len, batch_size] = delta_ts.dims();
-        let mut stability = Tensor::zeros([batch_size, 1]);
-        let mut difficulty = Tensor::zeros([batch_size, 1]);
+    ) -> MemoryStateTensors<B> {
+        let [seq_len, _batch_size] = delta_ts.dims();
+        let mut state = None;
         for i in 0..seq_len {
             let delta_t = delta_ts.clone().slice([i..i + 1]).transpose();
             // [batch_size, 1]
             let rating = ratings.clone().slice([i..i + 1]).transpose();
             // [batch_size, 1]
-            (stability, difficulty) = self.step(i, delta_t, rating, stability, difficulty);
+            state = Some(self.step(delta_t, rating, state));
         }
-        (stability, difficulty)
+        state.unwrap()
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MemoryStateTensors<B: Backend> {
+    pub stability: Tensor<B, 2>,
+    pub difficulty: Tensor<B, 2>,
 }
 
 #[derive(Config, Module, Debug, Default)]
@@ -247,9 +261,8 @@ mod tests {
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
         ]);
-        let (stability, difficulty) = model.forward(delta_ts, ratings);
-        dbg!(&stability);
-        dbg!(&difficulty);
+        let state = model.forward(delta_ts, ratings);
+        dbg!(&state);
     }
 
     #[test]
@@ -302,4 +315,49 @@ mod tests {
             Data::from([[2.074517], [14.560361], [51.15574], [152.6869]])
         )
     }
+}
+
+/// This is the main structure provided by this crate. It can be used
+/// for both weight training, and for reviews.
+pub struct FSRS<B: Backend<FloatElem = f32> = NdArrayBackend> {
+    model: Option<Model<B>>,
+    device: B::Device,
+}
+
+impl FSRS<NdArrayBackend> {
+    pub fn new(weights: Option<&Weights>) -> Self {
+        Self::new_with_backend(weights, NdArrayDevice::Cpu)
+    }
+}
+
+impl<B: Backend<FloatElem = f32>> FSRS<B> {
+    pub fn new_with_backend<B2: Backend<FloatElem = f32>>(
+        weights: Option<&Weights>,
+        device: B2::Device,
+    ) -> FSRS<B2> {
+        FSRS {
+            model: weights.map(weights_to_model),
+            device,
+        }
+    }
+
+    pub(crate) fn model(&self) -> &Model<B> {
+        self.model
+            .as_ref()
+            .expect("command requires weights to be set on creation")
+    }
+
+    pub(crate) fn device(&self) -> B::Device {
+        self.device.clone()
+    }
+}
+
+pub(crate) fn weights_to_model<B: Backend<FloatElem = f32>>(weights: &Weights) -> Model<B> {
+    let config = ModelConfig::default();
+    let mut model = Model::<B>::new(config);
+    model.w = Param::from(Tensor::from_floats(Data::new(
+        weights.to_vec(),
+        Shape { dims: [17] },
+    )));
+    model
 }

@@ -1,6 +1,8 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::ItemProgress;
+use crate::FSRS;
 use burn::config::Config;
+use burn::tensor::backend::Backend;
 use itertools::izip;
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
 use ndarray_rand::rand_distr::Distribution;
@@ -324,46 +326,48 @@ fn simulate(config: &SimulatorConfig, request_retention: f64, seed: Option<u64>)
     memorized_cnt_per_day[memorized_cnt_per_day.len() - 1]
 }
 
-pub fn find_optimal_retention<F>(config: &SimulatorConfig, mut progress: F) -> Result<f64>
-where
-    F: FnMut(ItemProgress) -> bool,
-{
-    let mut low = 0.75;
-    let mut high = 0.95;
-    let mut optimal_retention = 0.85;
-    let epsilon = 0.01;
-    let mut iter = 0;
-    let mut progress_info = ItemProgress {
-        current: 0,
-        total: 10,
-    };
-    while high - low > epsilon && iter < 10 {
-        iter += 1;
-        progress_info.current += 1;
-        let mid1 = low + (high - low) / 3.0;
-        let mid2 = high - (high - low) / 3.0;
-        fn sample_several(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
-            (0..n)
-                .map(|i| simulate(config, mid, Some((i + 42).try_into().unwrap())))
-                .sum::<f64>()
-                / n as f64
-        }
-        let memorization1 = sample_several(3, config, mid1);
-        let memorization2 = sample_several(3, config, mid2);
+impl<B: Backend<FloatElem = f32>> FSRS<B> {
+    pub fn optimal_retention<F>(&self, config: &SimulatorConfig, mut progress: F) -> Result<f64>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        let mut low = 0.75;
+        let mut high = 0.95;
+        let mut optimal_retention = 0.85;
+        let epsilon = 0.01;
+        let mut iter = 0;
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: 10,
+        };
+        while high - low > epsilon && iter < 10 {
+            iter += 1;
+            progress_info.current += 1;
+            let mid1 = low + (high - low) / 3.0;
+            let mid2 = high - (high - low) / 3.0;
+            fn sample_several(n: usize, config: &SimulatorConfig, mid: f64) -> f64 {
+                (0..n)
+                    .map(|i| simulate(config, mid, Some((i + 42).try_into().unwrap())))
+                    .sum::<f64>()
+                    / n as f64
+            }
+            let memorization1 = sample_several(3, config, mid1);
+            let memorization2 = sample_several(3, config, mid2);
 
-        if memorization1 > memorization2 {
-            high = mid2;
-        } else {
-            low = mid1;
-        }
+            if memorization1 > memorization2 {
+                high = mid2;
+            } else {
+                low = mid1;
+            }
 
-        optimal_retention = (high + low) / 2.0;
-        // dbg!(iter, optimal_retention);
-        if !(progress(progress_info)) {
-            return Err(FSRSError::Interrupted);
+            optimal_retention = (high + low) / 2.0;
+            // dbg!(iter, optimal_retention);
+            if !(progress(progress_info)) {
+                return Err(FSRSError::Interrupted);
+            }
         }
+        Ok(optimal_retention)
     }
-    Ok(optimal_retention)
 }
 
 #[cfg(test)]
@@ -386,7 +390,9 @@ mod tests {
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
         ]);
-        let optimal_retention = find_optimal_retention(&config, |_v| true).unwrap();
+        let optimal_retention = FSRS::new(None)
+            .optimal_retention(&config, |_v| true)
+            .unwrap();
         assert_eq!(optimal_retention, 0.8179164761469289)
     }
 }
