@@ -5,7 +5,7 @@ use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
-use crate::{FSRSError, FsrsModel};
+use crate::{FSRSError, Fsrs};
 use burn::autodiff::ADBackendDecorator;
 use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder};
@@ -188,7 +188,7 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
+impl<B: Backend<FloatElem = f32>> Fsrs<B> {
     pub fn compute_weights(
         &mut self,
         items: Vec<FSRSItem>,
