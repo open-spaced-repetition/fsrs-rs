@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::model::{FSRS, MemoryStateTensors};
+use crate::model::{MemoryStateTensors, FSRS};
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 

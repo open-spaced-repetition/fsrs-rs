@@ -8,8 +8,8 @@ use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
 use fsrs::FSRSReview;
-use fsrs::FSRS;
 use fsrs::NextStates;
+use fsrs::FSRS;
 use fsrs::{FSRSItem, MemoryState};
 use itertools::Itertools;
 
