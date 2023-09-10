@@ -50,10 +50,10 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     ) -> ClassificationOutput<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
-        let (stability, _difficulty) = self.forward(t_historys, r_historys);
+        let state = self.forward(t_historys, r_historys);
         let retention = self.power_forgetting_curve(
             delta_ts.clone().unsqueeze::<2>().transpose(),
-            stability.clone(),
+            state.stability,
         );
         let logits = Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 1);
         let loss = BCELoss::new().forward(
