@@ -7,10 +7,10 @@ use std::iter::repeat;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use fsrs_optimizer::FSRSReview;
-use fsrs_optimizer::FSRS;
-use fsrs_optimizer::NextStates;
-use fsrs_optimizer::{FSRSItem, MemoryState};
+use fsrs::FSRSReview;
+use fsrs::FSRS;
+use fsrs::NextStates;
+use fsrs::{FSRSItem, MemoryState};
 use itertools::Itertools;
 
 pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize) -> MemoryState {
