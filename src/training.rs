@@ -190,7 +190,7 @@ pub(crate) struct TrainingConfig {
 
 impl<B: Backend<FloatElem = f32>> FSRS<B> {
     pub fn compute_weights(
-        &mut self,
+        &self,
         items: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<ProgressState>>>,
     ) -> Result<Vec<f32>> {

@@ -12,7 +12,7 @@ git = "https://github.com/burn-rs/burn.git"
 rev = "dbc5f0a340136251170138f8825062b42ed2d096"
 # path = "../burn/burn"
 default-features = false
-features = ["std", "train-minimal", "autodiff", "dataset", "ndarray"]
+features = ["std", "train-minimal", "autodiff", "dataset-minimal", "ndarray"]
 
 [dev-dependencies.burn]
 # version = "0.10.0"
