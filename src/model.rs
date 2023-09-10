@@ -1,3 +1,5 @@
+use crate::inference::Weights;
+use burn::backend::NdArrayBackend;
 use burn::{
     config::Config,
     module::{Module, Param},
@@ -312,4 +314,27 @@ mod tests {
             Data::from([[2.074517], [14.560361], [51.15574], [152.6869]])
         )
     }
+}
+
+pub struct FsrsModel<B: Backend<FloatElem = f32> = NdArrayBackend> {
+    pub(crate) model: Model<B>,
+}
+
+impl FsrsModel<NdArrayBackend> {
+    pub fn new(weights: &Weights) -> Self {
+        Self {
+            model: weights_to_model(weights),
+        }
+    }
+}
+
+pub(crate) fn weights_to_model(weights: &Weights) -> Model<NdArrayBackend<f32>> {
+    type Backend = NdArrayBackend<f32>;
+    let config = ModelConfig::default();
+    let mut model = Model::<Backend>::new(config);
+    model.w = Param::from(Tensor::from_floats(Data::new(
+        weights.to_vec(),
+        Shape { dims: [17] },
+    )));
+    model
 }

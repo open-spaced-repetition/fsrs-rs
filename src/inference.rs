@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::model::{MemoryStateTensors, ModelConfig};
+use crate::model::{weights_to_model, FsrsModel, MemoryStateTensors};
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArrayBackend;
-use burn::module::Param;
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
@@ -16,7 +15,7 @@ use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem};
 
 /// This is a slice for efficiency, but should always be 17 in length.
-type Weights = [f32];
+pub type Weights = [f32];
 
 fn infer<B: Backend<FloatElem = f32>>(
     model: &Model<B>,
@@ -28,17 +27,6 @@ fn infer<B: Backend<FloatElem = f32>>(
         state.stability.clone(),
     );
     (state, retention)
-}
-
-fn weights_to_model(weights: &Weights) -> Model<NdArrayBackend<f32>> {
-    type Backend = NdArrayBackend<f32>;
-    let config = ModelConfig::default();
-    let mut model = Model::<Backend>::new(config);
-    model.w = Param::from(Tensor::from_floats(Data::new(
-        weights.to_vec(),
-        Shape { dims: [17] },
-    )));
-    model
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -81,19 +69,7 @@ fn next_interval(stability: f32, request_retention: f32) -> u32 {
         .max(1.0) as u32
 }
 
-pub struct Inferencer<B: Backend<FloatElem = f32> = NdArrayBackend> {
-    model: Model<B>,
-}
-
-impl Inferencer<NdArrayBackend> {
-    pub fn new(weights: &Weights) -> Self {
-        Self {
-            model: weights_to_model(weights),
-        }
-    }
-}
-
-impl<B: Backend<FloatElem = f32>> Inferencer<B> {
+impl<B: Backend<FloatElem = f32>> FsrsModel<B> {
     pub fn calculate_memory(&self, item: FSRSItem) -> MemoryState {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
@@ -307,7 +283,7 @@ mod tests {
                 },
             ],
         };
-        let inf = Inferencer::new(WEIGHTS);
+        let inf = FsrsModel::new(WEIGHTS);
         assert_eq!(
             inf.calculate_memory(item),
             MemoryState {
@@ -389,7 +365,7 @@ mod tests {
                 },
             ],
         };
-        let inf = Inferencer::new(WEIGHTS);
+        let inf = FsrsModel::new(WEIGHTS);
         let state = inf.calculate_memory(item);
         assert_eq!(
             inf.next_states(Some(state), 0.9, 21),
