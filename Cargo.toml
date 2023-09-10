@@ -7,15 +7,19 @@ license = "BSD-3-Clause"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies.burn]
+# version = "0.10.0"
 git = "https://github.com/burn-rs/burn.git"
-rev = "36446e8d35694a9158f97e85e44b84544b8c4afb"
+rev = "dbc5f0a340136251170138f8825062b42ed2d096"
+# path = "../burn/burn"
 default-features = false
-features = ["std", "train", "ndarray", "autodiff"]
+features = ["std", "train-minimal", "autodiff", "dataset", "ndarray"]
 
 [dev-dependencies.burn]
+# version = "0.10.0"
 git = "https://github.com/burn-rs/burn.git"
-rev = "36446e8d35694a9158f97e85e44b84544b8c4afb"
-features = ["dataset-sqlite-bundled"]
+rev = "dbc5f0a340136251170138f8825062b42ed2d096"
+# path = "../burn/burn"
+features = ["train", "dataset-sqlite-bundled"]
 
 [dependencies]
 itertools = "0.11.0"
