@@ -34,7 +34,7 @@ pub(crate) fn next_states(inf: &FSRS) -> NextStates {
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
-    let inf = FSRS::new(Some(&[
+    let fsrs = FSRS::new(Some(&[
         0.81497127,
         1.5411042,
         4.007436,
@@ -52,10 +52,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         1.3384504,
         0.22278537,
         2.6646678,
-    ]));
+    ]))
+    .unwrap();
 
-    c.bench_function("calc_mem", |b| b.iter(|| black_box(calc_mem(&inf, 100))));
-    c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&inf))));
+    c.bench_function("calc_mem", |b| b.iter(|| black_box(calc_mem(&fsrs, 100))));
+    c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&fsrs))));
 }
 
 criterion_group!(benches, criterion_benchmark);

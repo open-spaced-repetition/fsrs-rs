@@ -1,4 +1,6 @@
+use crate::error::{FSRSError, Result};
 use crate::inference::Weights;
+use crate::DEFAULT_WEIGHTS;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArrayBackend;
 use burn::{
@@ -176,6 +178,60 @@ impl ModelConfig {
     }
 }
 
+/// This is the main structure provided by this crate. It can be used
+/// for both weight training, and for reviews.
+pub struct FSRS<B: Backend<FloatElem = f32> = NdArrayBackend> {
+    model: Option<Model<B>>,
+    device: B::Device,
+}
+
+impl FSRS<NdArrayBackend> {
+    /// - Weights must be provided before running commands that need them.
+    /// - Weights may be an empty slice to use the default values instead.
+    pub fn new(weights: Option<&Weights>) -> Result<Self> {
+        Self::new_with_backend(weights, NdArrayDevice::Cpu)
+    }
+}
+
+impl<B: Backend<FloatElem = f32>> FSRS<B> {
+    pub fn new_with_backend<B2: Backend<FloatElem = f32>>(
+        mut weights: Option<&Weights>,
+        device: B2::Device,
+    ) -> Result<FSRS<B2>> {
+        if let Some(weights) = &mut weights {
+            if weights.is_empty() {
+                *weights = DEFAULT_WEIGHTS
+            } else if weights.len() != 17 {
+                return Err(FSRSError::InvalidWeights);
+            }
+        }
+        Ok(FSRS {
+            model: weights.map(weights_to_model),
+            device,
+        })
+    }
+
+    pub(crate) fn model(&self) -> &Model<B> {
+        self.model
+            .as_ref()
+            .expect("command requires weights to be set on creation")
+    }
+
+    pub(crate) fn device(&self) -> B::Device {
+        self.device.clone()
+    }
+}
+
+pub(crate) fn weights_to_model<B: Backend<FloatElem = f32>>(weights: &Weights) -> Model<B> {
+    let config = ModelConfig::default();
+    let mut model = Model::<B>::new(config);
+    model.w = Param::from(Tensor::from_floats(Data::new(
+        weights.to_vec(),
+        Shape { dims: [17] },
+    )));
+    model
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,49 +371,11 @@ mod tests {
             Data::from([[2.074517], [14.560361], [51.15574], [152.6869]])
         )
     }
-}
 
-/// This is the main structure provided by this crate. It can be used
-/// for both weight training, and for reviews.
-pub struct FSRS<B: Backend<FloatElem = f32> = NdArrayBackend> {
-    model: Option<Model<B>>,
-    device: B::Device,
-}
-
-impl FSRS<NdArrayBackend> {
-    pub fn new(weights: Option<&Weights>) -> Self {
-        Self::new_with_backend(weights, NdArrayDevice::Cpu)
+    #[test]
+    fn fsrs() {
+        assert!(FSRS::new(Some(&[])).is_ok());
+        assert!(!FSRS::new(Some(&[1.])).is_ok());
+        assert!(FSRS::new(Some(DEFAULT_WEIGHTS)).is_ok());
     }
-}
-
-impl<B: Backend<FloatElem = f32>> FSRS<B> {
-    pub fn new_with_backend<B2: Backend<FloatElem = f32>>(
-        weights: Option<&Weights>,
-        device: B2::Device,
-    ) -> FSRS<B2> {
-        FSRS {
-            model: weights.map(weights_to_model),
-            device,
-        }
-    }
-
-    pub(crate) fn model(&self) -> &Model<B> {
-        self.model
-            .as_ref()
-            .expect("command requires weights to be set on creation")
-    }
-
-    pub(crate) fn device(&self) -> B::Device {
-        self.device.clone()
-    }
-}
-
-pub(crate) fn weights_to_model<B: Backend<FloatElem = f32>>(weights: &Weights) -> Model<B> {
-    let config = ModelConfig::default();
-    let mut model = Model::<B>::new(config);
-    model.w = Param::from(Tensor::from_floats(Data::new(
-        weights.to_vec(),
-        Shape { dims: [17] },
-    )));
-    model
 }

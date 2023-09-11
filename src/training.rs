@@ -189,6 +189,7 @@ pub(crate) struct TrainingConfig {
 }
 
 impl<B: Backend<FloatElem = f32>> FSRS<B> {
+    /// Calculate appropriate weights for the provided review history.
     pub fn compute_weights(
         &self,
         items: Vec<FSRSItem>,
