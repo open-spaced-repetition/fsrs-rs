@@ -9,34 +9,112 @@ use itertools::Itertools;
 use rusqlite::Connection;
 use rusqlite::{Result, Row};
 
+use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::{FSRSItem, FSRSReview};
 
-// keep these in sync with the anki code: https://github.com/ankitects/anki/blob/740528eaf913ff4bb9d112d494a10e84fd01365a/rslib/src/revlog/mod.rs#L64-L74
-const LEARNING: usize = 0;
-const REVIEW: usize = 1;
-const RELEARNING: usize = 2;
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RevlogEntry {
+    pub id: i64,
+    pub cid: i64,
+    pub usn: i32,
+    /// - In the V1 scheduler, 3 represents easy in the learning case.
+    /// - 0 represents manual rescheduling.
+    pub button_chosen: u8,
+    /// Positive values are in days, negative values in seconds.
+    pub interval: i32,
+    /// Positive values are in days, negative values in seconds.
+    pub last_interval: i32,
+    /// Card's ease after answering, stored as 10x the %, eg 2500 represents
+    /// 250%.
+    pub ease_factor: u32,
+    /// Amount of milliseconds taken to answer the card.
+    pub taken_millis: u32,
+    pub review_kind: RevlogReviewKind,
+}
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct RevlogEntry {
-    id: i64,
-    cid: i64,
-    button_chosen: i32,
-    review_kind: usize,
-    delta_t: i32,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum RevlogReviewKind {
+    #[default]
+    Learning = 0,
+    Review = 1,
+    Relearning = 2,
+    /// Old Anki versions called this "Cram" or "Early", and assigned it when
+    /// reviewing cards ahead. It is now only used for filtered decks with
+    /// rescheduling disabled.
+    Filtered = 3,
+    Manual = 4,
+}
+
+impl rusqlite::types::FromSql for RevlogReviewKind {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value {
+            rusqlite::types::ValueRef::Integer(i) => match i {
+                0 => Ok(RevlogReviewKind::Learning),
+                1 => Ok(RevlogReviewKind::Review),
+                2 => Ok(RevlogReviewKind::Relearning),
+                3 => Ok(RevlogReviewKind::Filtered),
+                4 => Ok(RevlogReviewKind::Manual),
+                _ => Err(rusqlite::types::FromSqlError::InvalidType),
+            },
+            _ => Err(rusqlite::types::FromSqlError::InvalidType),
+        }
+    }
 }
 
 fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
     Ok(RevlogEntry {
         id: row.get(0)?,
         cid: row.get(1)?,
-        button_chosen: row.get(2)?,
-        review_kind: row.get(3).unwrap_or_default(),
-        delta_t: 0,
+        usn: row.get(2)?,
+        button_chosen: row.get(3)?,
+        interval: row.get(4)?,
+        last_interval: row.get(5)?,
+        ease_factor: row.get(6)?,
+        taken_millis: row.get(7)?,
+        review_kind: row.get(8)?,
     })
 }
 
-fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chrono::NaiveDate {
-    let timestamp_seconds = timestamp - next_day_starts_at * 3600 * 1000; // 剪去指定小时数
+fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| entry.review_kind != Filtered)
+        .collect()
+}
+
+fn filter_out_set_due_date(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            (entry.review_kind != Manual && entry.button_chosen != 0) || entry.ease_factor == 0
+        })
+        .collect()
+}
+
+fn remove_revlog_before_forget(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+    let mut forget_index = 0;
+    for (index, entry) in entries.iter().enumerate() {
+        if (entry.review_kind == Manual || entry.button_chosen == 0) && entry.ease_factor == 0 {
+            forget_index = index + 1;
+        }
+    }
+    entries[forget_index..].to_vec()
+}
+
+fn remove_revlog_before_last_first_learn(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+    let mut last_first_learn_index = 0;
+    for (index, entry) in entries.iter().enumerate().rev() {
+        if entry.review_kind == Learning {
+            last_first_learn_index = index;
+        } else if last_first_learn_index != 0 {
+            break;
+        }
+    }
+    entries[last_first_learn_index..].to_vec()
+}
+
+fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> NaiveDate {
+    let timestamp_seconds = timestamp - next_day_starts_at * 3600 * 1000;
     let datetime = Utc
         .timestamp_millis_opt(timestamp_seconds)
         .unwrap()
@@ -44,81 +122,40 @@ fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chr
     datetime.date_naive()
 }
 
-/// Given a list of revlog entries for a single card with length n, we create
-/// n-1 FSRS items, where each item contains the history of the preceding reviews.
-fn convert_to_fsrs_items(
-    mut entries: Vec<RevlogEntry>,
+fn keep_first_revlog_same_date(
+    entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,
     timezone: Tz,
-) -> Option<Vec<FSRSItem>> {
-    // Find the index of the first RevlogEntry in the last continuous group where review_kind = LEARNING
-    // 寻找最后一组连续 review_kind = LEARNING 的第一个 RevlogEntry 的索引
-    let mut index_to_keep = 0;
-    let mut i = entries.len();
-
-    while i > 0 {
-        i -= 1;
-        if entries[i].review_kind == LEARNING {
-            index_to_keep = i;
-        } else if index_to_keep != 0 {
-            // Found a continuous group of review_kind = LEARNING, exit the loop
-            // 找到了连续的 review_kind = LEARNING 的组，退出循环
-            break;
-        }
-    }
-
-    // Remove all entries before this RevlogEntry
-    // 删除此 RevlogEntry 之前的所有条目
-    entries.drain(..index_to_keep);
-
-    // we ignore cards that don't start in the learning state
-    if let Some(entry) = entries.first() {
-        if entry.review_kind != LEARNING {
-            return None;
-        }
-    } else {
-        // no revlog entries
-        return None;
-    }
-
-    // Convert the timestamp and keep the first RevlogEntry for each date
-    // 转换时间戳并保留每个日期的第一个 RevlogEntry
+) -> Vec<RevlogEntry> {
+    let mut entries = entries.clone();
     let mut unique_dates = std::collections::HashSet::new();
     entries.retain(|entry| {
         let date = convert_to_date(entry.id, next_day_starts_at, timezone);
         unique_dates.insert(date)
     });
+    entries
+}
 
-    // Compute delta_t for the remaining RevlogEntries
-    // 计算其余 RevlogEntry 的 delta_t
+/// Given a list of revlog entries for a single card with length n, we create
+/// n-1 FSRS items, where each item contains the history of the preceding reviews.
+
+fn convert_to_fsrs_items(
+    mut entries: Vec<RevlogEntry>,
+    next_day_starts_at: i64,
+    timezone: Tz,
+) -> Option<Vec<FSRSItem>> {
+    entries = filter_out_cram(entries);
+    entries = filter_out_set_due_date(entries);
+    entries = remove_revlog_before_forget(entries);
+    entries = remove_revlog_before_last_first_learn(entries);
+    entries = keep_first_revlog_same_date(entries, next_day_starts_at, timezone);
+
     for i in 1..entries.len() {
         let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
         let date_previous = convert_to_date(entries[i - 1].id, next_day_starts_at, timezone);
-        entries[i].delta_t = (date_current - date_previous).num_days() as i32;
+        entries[i].last_interval = (date_current - date_previous).num_days() as i32;
     }
 
-    // Find the RevlogEntry with review_kind = LEARNING where the preceding RevlogEntry has review_kind of REVIEW or RELEARN, then remove it and all following RevlogEntries
-    // 找到 review_kind = LEARNING 且前一个 RevlogEntry 的 review_kind 是 REVIEW 或 RELEARN 的 RevlogEntry，然后删除其及其之后的所有 RevlogEntry
-    if let Some(index_to_remove) = entries.windows(2).enumerate().find_map(|(i, window)| {
-        if (window[0].review_kind == REVIEW || window[0].review_kind == RELEARNING)
-            && window[1].review_kind == LEARNING
-        {
-            // Return the index of the first RevlogEntry that meets the condition
-            // 返回第一个符合条件的 RevlogEntry 的索引
-            Some(i + 1)
-        } else {
-            None
-        }
-    }) {
-        // Truncate from 0 to index_to_remove, removing all subsequent entries
-        // 截取从 0 到 index_to_remove 的部分，删除其后的所有条目
-        entries.truncate(index_to_remove);
-    }
-
-    // Compute i, r_history, t_history
-    // 计算 i, r_history, t_history
-    // Except for the first entry, the remaining entries add the preceding button_chosen and delta_t to r_history and t_history
-    // 除了第一个条目，其余条目将前面的 button_chosen 和 delta_t 加入 r_history 和 t_history
     Some(
         entries
             .iter()
@@ -129,8 +166,8 @@ fn convert_to_fsrs_items(
                     .iter()
                     .take(idx + 1)
                     .map(|r| FSRSReview {
-                        rating: r.button_chosen,
-                        delta_t: r.delta_t,
+                        rating: r.button_chosen as i32,
+                        delta_t: r.last_interval.max(0),
                     })
                     .collect();
                 FSRSItem { reviews }
@@ -185,11 +222,9 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
     // This sql query will be remove in the futrue. See https://github.com/open-spaced-repetition/fsrs-optimizer-burn/pull/14#issuecomment-1685895643
     let revlogs = db
         .prepare_cached(&format!(
-            "SELECT id, cid, ease, type
+            "SELECT *
         FROM revlog
-        WHERE (type != 4 OR ivl <= 0)
-        AND (factor != 0 or type != 3)
-        AND id < ?1
+        WHERE id < ?1
         AND cid < ?2
         AND cid IN (
             SELECT id
@@ -217,10 +252,10 @@ fn conversion_works() {
         .collect_vec()];
     assert_eq!(revlogs.len(), 24394);
     let fsrs_items = anki_to_fsrs(revlogs);
-    assert_eq!(fsrs_items.len(), 14290);
+    assert_eq!(fsrs_items.len(), 14121);
     assert_eq!(
         fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
-        49382 + 14290
+        48510 + 14121
     );
 
     // convert a subset and check it matches expectations
@@ -370,20 +405,13 @@ fn ordering_of_inputs_should_not_change() {
     );
 }
 
-enum RevlogReviewKind {
-    Learning = 0,
-    Review = 1,
-    // Relearning = 2,
-    // Filtered = 3,
-    // Manual = 4,
-}
-
 const NEXT_DAY_AT: i64 = 86400 * 100;
 
 fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
     RevlogEntry {
-        review_kind: review_kind as usize,
+        review_kind,
         id: ((NEXT_DAY_AT - days_ago * 86400) * 1000),
+        button_chosen: 3,
         ..Default::default()
     }
 }
@@ -402,11 +430,11 @@ fn delta_t_is_correct() -> Result<()> {
         Some(vec![FSRSItem {
             reviews: vec![
                 FSRSReview {
-                    rating: 0,
+                    rating: 3,
                     delta_t: 0
                 },
                 FSRSReview {
-                    rating: 0,
+                    rating: 3,
                     delta_t: 1
                 }
             ]
@@ -428,11 +456,11 @@ fn delta_t_is_correct() -> Result<()> {
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 0
                     },
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 2
                     }
                 ]
@@ -440,15 +468,15 @@ fn delta_t_is_correct() -> Result<()> {
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 0
                     },
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 2
                     },
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 3
                     }
                 ]
@@ -456,19 +484,19 @@ fn delta_t_is_correct() -> Result<()> {
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 0
                     },
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 2
                     },
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 3
                     },
                     FSRSReview {
-                        rating: 0,
+                        rating: 3,
                         delta_t: 5
                     }
                 ]
@@ -477,4 +505,501 @@ fn delta_t_is_correct() -> Result<()> {
     );
 
     Ok(())
+}
+#[test]
+fn test_filter_out_cram() {
+    let revlog_vec = vec![
+        RevlogEntry {
+            id: 1581372672843,
+            cid: 1559078645460,
+            usn: 5212,
+            button_chosen: 1,
+            interval: -60,
+            last_interval: -60,
+            ease_factor: 0,
+            taken_millis: 38942,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1694423345134,
+            cid: 1559078645460,
+            usn: 12394,
+            button_chosen: 3,
+            interval: 131,
+            last_interval: 73,
+            ease_factor: 1750,
+            taken_millis: 30443,
+            review_kind: Review,
+        },
+        RevlogEntry {
+            id: 1694422345134,
+            cid: 1559078645460,
+            usn: -1,
+            button_chosen: 3,
+            interval: -1200,
+            last_interval: -600,
+            ease_factor: 0,
+            taken_millis: 2231,
+            review_kind: Filtered,
+        },
+        RevlogEntry {
+            id: 1694423345134,
+            cid: 1559078645460,
+            usn: 12394,
+            button_chosen: 3,
+            interval: 131,
+            last_interval: 73,
+            ease_factor: 1750,
+            taken_millis: 30443,
+            review_kind: Review,
+        },
+    ];
+    let revlog_vec = filter_out_cram(revlog_vec);
+    assert_eq!(
+        revlog_vec,
+        vec![
+            RevlogEntry {
+                id: 1581372672843,
+                cid: 1559078645460,
+                usn: 5212,
+                button_chosen: 1,
+                interval: -60,
+                last_interval: -60,
+                ease_factor: 0,
+                taken_millis: 38942,
+                review_kind: Learning,
+            },
+            RevlogEntry {
+                id: 1694423345134,
+                cid: 1559078645460,
+                usn: 12394,
+                button_chosen: 3,
+                interval: 131,
+                last_interval: 73,
+                ease_factor: 1750,
+                taken_millis: 30443,
+                review_kind: Review,
+            },
+            RevlogEntry {
+                id: 1694423345134,
+                cid: 1559078645460,
+                usn: 12394,
+                button_chosen: 3,
+                interval: 131,
+                last_interval: 73,
+                ease_factor: 1750,
+                taken_millis: 30443,
+                review_kind: Review,
+            },
+        ]
+    );
+}
+
+#[test]
+fn test_filter_out_set_due_date() {
+    let revlog_vec = vec![
+        RevlogEntry {
+            id: 1581544939407,
+            cid: 1559457421654,
+            usn: 5226,
+            button_chosen: 3,
+            interval: -600,
+            last_interval: -60,
+            ease_factor: 0,
+            taken_millis: 6979,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1581545802767,
+            cid: 1559457421654,
+            usn: 5226,
+            button_chosen: 3,
+            interval: 1,
+            last_interval: -600,
+            ease_factor: 2500,
+            taken_millis: 21297,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1581629454703,
+            cid: 1559457421654,
+            usn: -1,
+            button_chosen: 0,
+            interval: 302,
+            last_interval: 302,
+            ease_factor: 2150,
+            taken_millis: 0,
+            review_kind: Manual,
+        },
+        RevlogEntry {
+            id: 1582012577455,
+            cid: 1559457421654,
+            usn: 11054,
+            button_chosen: 3,
+            interval: 270,
+            last_interval: 161,
+            ease_factor: 2150,
+            taken_millis: 31190,
+            review_kind: Review,
+        },
+    ];
+    let revlog_vec = filter_out_set_due_date(revlog_vec);
+    assert_eq!(
+        revlog_vec,
+        vec![
+            RevlogEntry {
+                id: 1581544939407,
+                cid: 1559457421654,
+                usn: 5226,
+                button_chosen: 3,
+                interval: -600,
+                last_interval: -60,
+                ease_factor: 0,
+                taken_millis: 6979,
+                review_kind: Learning,
+            },
+            RevlogEntry {
+                id: 1581545802767,
+                cid: 1559457421654,
+                usn: 5226,
+                button_chosen: 3,
+                interval: 1,
+                last_interval: -600,
+                ease_factor: 2500,
+                taken_millis: 21297,
+                review_kind: Learning,
+            },
+            RevlogEntry {
+                id: 1582012577455,
+                cid: 1559457421654,
+                usn: 11054,
+                button_chosen: 3,
+                interval: 270,
+                last_interval: 161,
+                ease_factor: 2150,
+                taken_millis: 31190,
+                review_kind: Review,
+            },
+        ]
+    );
+}
+
+#[test]
+fn test_remove_revlog_before_forget() {
+    let revlog_vec = vec![
+        RevlogEntry {
+            id: 1581372095493,
+            cid: 1559076329057,
+            usn: 5212,
+            button_chosen: 1,
+            interval: -60,
+            last_interval: -60,
+            ease_factor: 0,
+            taken_millis: 60000,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1694422513063,
+            cid: 1559076329057,
+            usn: -1,
+            button_chosen: 0,
+            interval: 0,
+            last_interval: 228,
+            ease_factor: 0,
+            taken_millis: 0,
+            review_kind: Manual,
+        },
+        RevlogEntry {
+            id: 1694422651447,
+            cid: 1559076329057,
+            usn: -1,
+            button_chosen: 3,
+            interval: -1200,
+            last_interval: -60,
+            ease_factor: 0,
+            taken_millis: 7454,
+            review_kind: Learning,
+        },
+    ];
+    let revlog_vec = remove_revlog_before_forget(revlog_vec);
+    assert_eq!(
+        revlog_vec,
+        vec![RevlogEntry {
+            id: 1694422651447,
+            cid: 1559076329057,
+            usn: -1,
+            button_chosen: 3,
+            interval: -1200,
+            last_interval: -60,
+            ease_factor: 0,
+            taken_millis: 7454,
+            review_kind: Learning,
+        },]
+    );
+}
+
+#[test]
+fn test_remove_revlog_before_last_first_learn() {
+    let revlog_vec = vec![
+        RevlogEntry {
+            id: 1250450107406,
+            cid: 1249409627511,
+            usn: 0,
+            button_chosen: 3,
+            interval: 44,
+            last_interval: 14,
+            ease_factor: 2000,
+            taken_millis: 9827,
+            review_kind: Review,
+        },
+        RevlogEntry {
+            id: 1254407572859,
+            cid: 1249409627511,
+            usn: 0,
+            button_chosen: 3,
+            interval: 90,
+            last_interval: 44,
+            ease_factor: 2000,
+            taken_millis: 11187,
+            review_kind: Review,
+        },
+        RevlogEntry {
+            id: 1601346317001,
+            cid: 1249409627511,
+            usn: 6235,
+            button_chosen: 2,
+            interval: -330,
+            last_interval: -60,
+            ease_factor: 2500,
+            taken_millis: 36376,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1601346783928,
+            cid: 1249409627511,
+            usn: 6235,
+            button_chosen: 3,
+            interval: -600,
+            last_interval: -60,
+            ease_factor: 2500,
+            taken_millis: 16249,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1601349355546,
+            cid: 1249409627511,
+            usn: 6235,
+            button_chosen: 3,
+            interval: 1,
+            last_interval: -600,
+            ease_factor: 2500,
+            taken_millis: 13272,
+            review_kind: Learning,
+        },
+    ];
+    let revlog_vec = remove_revlog_before_last_first_learn(revlog_vec);
+    // dbg!(&revlog_vec);
+    assert_eq!(
+        revlog_vec,
+        vec![
+            RevlogEntry {
+                id: 1601346317001,
+                cid: 1249409627511,
+                usn: 6235,
+                button_chosen: 2,
+                interval: -330,
+                last_interval: -60,
+                ease_factor: 2500,
+                taken_millis: 36376,
+                review_kind: Learning,
+            },
+            RevlogEntry {
+                id: 1601346783928,
+                cid: 1249409627511,
+                usn: 6235,
+                button_chosen: 3,
+                interval: -600,
+                last_interval: -60,
+                ease_factor: 2500,
+                taken_millis: 16249,
+                review_kind: Learning,
+            },
+            RevlogEntry {
+                id: 1601349355546,
+                cid: 1249409627511,
+                usn: 6235,
+                button_chosen: 3,
+                interval: 1,
+                last_interval: -600,
+                ease_factor: 2500,
+                taken_millis: 13272,
+                review_kind: Learning,
+            },
+        ]
+    );
+
+    let revlog_vec = vec![
+        RevlogEntry {
+            id: 1224652906547,
+            cid: 1224124699235,
+            usn: 0,
+            button_chosen: 3,
+            interval: 0,
+            last_interval: 0,
+            ease_factor: 2498,
+            taken_millis: 50562,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1225062601238,
+            cid: 1224124699235,
+            usn: 0,
+            button_chosen: 4,
+            interval: 4,
+            last_interval: 0,
+            ease_factor: 2498,
+            taken_millis: 22562,
+            review_kind: Relearning,
+        },
+        RevlogEntry {
+            id: 1389281322102,
+            cid: 1224124699235,
+            usn: 866,
+            button_chosen: 4,
+            interval: 4,
+            last_interval: -60,
+            ease_factor: 2500,
+            taken_millis: 22559,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1389894643706,
+            cid: 1224124699235,
+            usn: 889,
+            button_chosen: 3,
+            interval: 9,
+            last_interval: 4,
+            ease_factor: 2500,
+            taken_millis: 14763,
+            review_kind: Review,
+        },
+    ];
+
+    let revlog_vec = remove_revlog_before_last_first_learn(revlog_vec);
+    assert_eq!(
+        revlog_vec,
+        vec![
+            RevlogEntry {
+                id: 1389281322102,
+                cid: 1224124699235,
+                usn: 866,
+                button_chosen: 4,
+                interval: 4,
+                last_interval: -60,
+                ease_factor: 2500,
+                taken_millis: 22559,
+                review_kind: Learning,
+            },
+            RevlogEntry {
+                id: 1389894643706,
+                cid: 1224124699235,
+                usn: 889,
+                button_chosen: 3,
+                interval: 9,
+                last_interval: 4,
+                ease_factor: 2500,
+                taken_millis: 14763,
+                review_kind: Review,
+            },
+        ]
+    );
+}
+
+#[test]
+fn test_keep_first_revlog_same_date() {
+    let revlog_vec = vec![
+        RevlogEntry {
+            id: 1581372095493,
+            cid: 1559076329057,
+            usn: 5212,
+            button_chosen: 1,
+            interval: -60,
+            last_interval: -60,
+            ease_factor: 0,
+            taken_millis: 60000,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1581372260598,
+            cid: 1559076329057,
+            usn: 5212,
+            button_chosen: 3,
+            interval: -600,
+            last_interval: -60,
+            ease_factor: 0,
+            taken_millis: 46425,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1581406251414,
+            cid: 1559076329057,
+            usn: 5213,
+            button_chosen: 2,
+            interval: -600,
+            last_interval: -600,
+            ease_factor: 0,
+            taken_millis: 17110,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1581407568344,
+            cid: 1559076329057,
+            usn: 5213,
+            button_chosen: 3,
+            interval: 1,
+            last_interval: -600,
+            ease_factor: 2500,
+            taken_millis: 8861,
+            review_kind: Learning,
+        },
+        RevlogEntry {
+            id: 1581454426227,
+            cid: 1559076329057,
+            usn: 5215,
+            button_chosen: 3,
+            interval: 3,
+            last_interval: 1,
+            ease_factor: 2500,
+            taken_millis: 13128,
+            review_kind: Review,
+        },
+    ];
+    let revlog_vec = keep_first_revlog_same_date(revlog_vec, 4, Tz::Asia__Shanghai);
+    assert_eq!(
+        revlog_vec,
+        vec![
+            RevlogEntry {
+                id: 1581372095493,
+                cid: 1559076329057,
+                usn: 5212,
+                button_chosen: 1,
+                interval: -60,
+                last_interval: -60,
+                ease_factor: 0,
+                taken_millis: 60000,
+                review_kind: Learning,
+            },
+            RevlogEntry {
+                id: 1581454426227,
+                cid: 1559076329057,
+                usn: 5215,
+                button_chosen: 3,
+                interval: 3,
+                last_interval: 1,
+                ease_factor: 2500,
+                taken_millis: 13128,
+                review_kind: Review,
+            },
+        ]
+    )
 }
