@@ -317,6 +317,13 @@ mod tests {
             Data::from([[2.074517], [14.560361], [51.15574], [152.6869]])
         )
     }
+
+    #[test]
+    fn fsrs() {
+        assert!(FSRS::new(Some(&[])).is_ok());
+        assert!(!FSRS::new(Some(&[1.])).is_ok());
+        assert!(FSRS::new(Some(DEFAULT_WEIGHTS)).is_ok());
+    }
 }
 
 /// This is the main structure provided by this crate. It can be used

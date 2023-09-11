@@ -404,10 +404,10 @@ mod tests {
     #[test]
     fn optimal_retention() -> Result<()> {
         let config = SimulatorConfig::new();
-        let optimal_retention = FSRS::new(None)?
-            .optimal_retention(&config, DEFAULT_WEIGHTS, |_v| true)
-            .unwrap();
+        let fsrs = FSRS::new(None)?;
+        let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
         assert_eq!(optimal_retention, 0.8179164761469289);
+        assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
 }
