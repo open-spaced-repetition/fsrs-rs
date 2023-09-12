@@ -1,7 +1,6 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Weights};
 use crate::{DEFAULT_WEIGHTS, FSRS};
-use burn::config::Config;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
@@ -42,22 +41,33 @@ impl From<Column> for SliceInfoElem {
     }
 }
 
-#[derive(Config, Debug)]
+#[derive(Debug, Clone)]
 pub struct SimulatorConfig {
-    #[config(default = 10000)]
     pub deck_size: usize,
-    #[config(default = 365)]
     pub learn_span: usize,
-    #[config(default = 1800.0)]
     pub max_cost_perday: f64,
-    #[config(default = 36500.0)]
     pub max_ivl: f64,
-    #[config(default = 10.0)]
-    pub recall_cost: f64,
-    #[config(default = 50.0)]
+    pub recall_costs: [f64; 3],
     pub forget_cost: f64,
-    #[config(default = 20.0)]
     pub learn_cost: f64,
+    pub first_rating_prob: [f64; 4],
+    pub review_rating_prob: [f64; 3],
+}
+
+impl Default for SimulatorConfig {
+    fn default() -> SimulatorConfig {
+        SimulatorConfig {
+            deck_size: 10000,
+            learn_span: 365,
+            max_cost_perday: 1800.0,
+            max_ivl: 36500.0,
+            recall_costs: [14.0, 10.0, 6.0],
+            forget_cost: 50.0,
+            learn_cost: 20.0,
+            first_rating_prob: [0.15, 0.2, 0.6, 0.05],
+            review_rating_prob: [0.3, 0.6, 0.1],
+        }
+    }
 }
 
 fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -> f64 {
@@ -83,9 +93,11 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         learn_span,
         max_cost_perday,
         max_ivl,
-        recall_cost,
+        recall_costs,
         forget_cost,
         learn_cost,
+        first_rating_prob,
+        review_rating_prob,
     } = config.clone();
     let mut card_table = Array2::<f64>::zeros((Column::COUNT, deck_size));
     card_table
@@ -99,11 +111,9 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
     let mut memorized_cnt_per_day = Array1::<f64>::zeros(learn_span);
 
     let first_rating_choices = [0, 1, 2, 3];
-    let first_rating_prob = [0.15, 0.2, 0.6, 0.05];
     let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
 
     let review_rating_choices = [1, 2, 3];
-    let review_rating_prob = [0.3, 0.6, 0.1];
     let review_rating_dist = WeightedIndex::new(review_rating_prob).unwrap();
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
@@ -162,14 +172,22 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
             .and(&retrievability)
             .map_collect(|&rand_val, &retriev_val| rand_val > retriev_val);
 
-        // Update 'cost' column based on 'need_review' and 'forget'
-        izip!(&mut cost, &need_review, &forget)
-            .filter(|(_, &need_review_flag, _)| need_review_flag)
-            .for_each(|(cost, _, &forget_flag)| {
+        // Sample 'rating' for 'need_review' entries
+        let mut ratings = Array1::zeros(deck_size);
+        izip!(&mut ratings, &need_review)
+            .filter(|(_, &need_review_flag)| need_review_flag)
+            .for_each(|(rating, _)| {
+                *rating = review_rating_choices[review_rating_dist.sample(&mut rng)]
+            });
+
+        // Update 'cost' column based on 'need_review', 'forget' and 'ratings'
+        izip!(&mut cost, &need_review, &forget, &ratings)
+            .filter(|(_, &need_review_flag, _, _)| need_review_flag)
+            .for_each(|(cost, _, &forget_flag, &rating)| {
                 *cost = if forget_flag {
                     forget_cost
                 } else {
-                    recall_cost
+                    recall_costs[rating - 1]
                 }
             });
 
@@ -209,18 +227,12 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
                     need_learn_flag && (cum_cost <= max_cost_perday)
                 });
 
-        let mut ratings = Array1::zeros(deck_size);
-        izip!(&mut ratings, &true_review, &true_learn).for_each(
-            |(rating, &true_review_flag, &true_learn_flag)| {
-                *rating = if true_learn_flag {
-                    first_rating_choices[first_rating_dist.sample(&mut rng)]
-                } else if true_review_flag {
-                    review_rating_choices[review_rating_dist.sample(&mut rng)]
-                } else {
-                    *rating
-                }
-            },
-        );
+        // Sample 'rating' for 'true_learn' entries
+        izip!(&mut ratings, &true_learn)
+            .filter(|(_, &true_learn_flag)| true_learn_flag)
+            .for_each(|(rating, _)| {
+                *rating = first_rating_choices[first_rating_dist.sample(&mut rng)]
+            });
 
         let mut new_stability = old_stability.to_owned();
         let old_difficulty = card_table.slice(s![Column::Difficulty, ..]);
@@ -365,8 +377,8 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
                     .sum::<f64>()
                     / n as f64
             };
-            let memorization1 = sample_several(3, mid1);
-            let memorization2 = sample_several(3, mid2);
+            let memorization1 = sample_several(5, mid1);
+            let memorization2 = sample_several(5, mid2);
 
             if memorization1 > memorization2 {
                 high = mid2;
@@ -391,22 +403,22 @@ mod tests {
 
     #[test]
     fn simulator() {
-        let config = SimulatorConfig::new();
+        let config = SimulatorConfig::default();
         let memorization = simulate(
             &config,
             &DEFAULT_WEIGHTS.iter().map(|v| *v as f64).collect_vec(),
             0.9,
             None,
         );
-        assert_eq!(memorization, 3832.250011460164)
+        assert_eq!(memorization, 3694.751153228867)
     }
 
     #[test]
     fn optimal_retention() -> Result<()> {
-        let config = SimulatorConfig::new();
+        let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8179164761469289);
+        assert_eq!(optimal_retention, 0.7967001981405275);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
