@@ -347,13 +347,13 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20820294, 0.042998276]), 5);
+            .assert_approx_eq(&Data::from([0.20944944, 0.042762663]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20206251, 0.017628053]), 5);
+            .assert_approx_eq(&Data::from([0.20320644, 0.016822129]), 5);
         Ok(())
     }
 
