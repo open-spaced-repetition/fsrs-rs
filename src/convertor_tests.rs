@@ -65,15 +65,15 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
     type Error = rusqlite::Error;
     fn try_from(row: &Row<'_>) -> Result<Self> {
         Ok(RevlogEntry {
-        id: row.get(0)?,
-        cid: row.get(1)?,
-        usn: row.get(2)?,
-        button_chosen: row.get(3)?,
-        interval: row.get(4)?,
-        last_interval: row.get(5)?,
-        ease_factor: row.get(6)?,
-        taken_millis: row.get(7)?,
-        review_kind: row.get(8)?,
+            id: row.get(0)?,
+            cid: row.get(1)?,
+            usn: row.get(2)?,
+            button_chosen: row.get(3)?,
+            interval: row.get(4)?,
+            last_interval: row.get(5)?,
+            ease_factor: row.get(6)?,
+            taken_millis: row.get(7)?,
+            review_kind: row.get(8)?,
         })
     }
 }
