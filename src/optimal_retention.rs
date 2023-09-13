@@ -335,7 +335,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
     memorized_cnt_per_day[memorized_cnt_per_day.len() - 1]
 }
 
-impl<B: Backend<FloatElem = f32>> FSRS<B> {
+impl<B: Backend> FSRS<B> {
     /// For the given simulator parameters and weights, determine the suggested `desired_retention`
     /// value.
     pub fn optimal_retention<F>(

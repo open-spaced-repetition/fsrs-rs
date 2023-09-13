@@ -39,7 +39,7 @@ impl<B: Backend> BCELoss<B> {
     }
 }
 
-impl<B: Backend<FloatElem = f32>> Model<B> {
+impl<B: Backend> Model<B> {
     pub fn forward_classification(
         &self,
         t_historys: Tensor<B, 2>,
@@ -63,7 +63,7 @@ impl<B: Backend<FloatElem = f32>> Model<B> {
     }
 }
 
-impl<B: ADBackend<FloatElem = f32>> Model<B> {
+impl<B: ADBackend> Model<B> {
     fn freeze_initial_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
         let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
@@ -74,7 +74,7 @@ impl<B: ADBackend<FloatElem = f32>> Model<B> {
     }
 }
 
-impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
+impl<B: ADBackend> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
     fn step(&self, batch: FSRSBatch<B>) -> TrainOutput<ClassificationOutput<B>> {
         let item = self.forward_classification(
             batch.t_historys,
@@ -104,7 +104,7 @@ impl<B: ADBackend<FloatElem = f32>> TrainStep<FSRSBatch<B>, ClassificationOutput
     }
 }
 
-impl<B: Backend<FloatElem = f32>> ValidStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
+impl<B: Backend> ValidStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
     fn step(&self, batch: FSRSBatch<B>) -> ClassificationOutput<B> {
         self.forward_classification(
             batch.t_historys,
@@ -188,7 +188,7 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-impl<B: Backend<FloatElem = f32>> FSRS<B> {
+impl<B: Backend> FSRS<B> {
     /// Calculate appropriate weights for the provided review history.
     pub fn compute_weights(
         &self,
@@ -213,11 +213,11 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
             None,
         );
 
-        Ok(model?.w.val().to_data().value)
+        Ok(model?.w.val().to_data().convert().value)
     }
 }
 
-fn train<B: ADBackend<FloatElem = f32>>(
+fn train<B: ADBackend>(
     items: Vec<FSRSItem>,
     config: &TrainingConfig,
     device: B::Device,

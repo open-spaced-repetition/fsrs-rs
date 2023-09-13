@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem};
+use burn::tensor::ElementConversion;
 
 /// This is a slice for efficiency, but should always be 17 in length.
 pub type Weights = [f32];
@@ -20,7 +21,7 @@ pub static DEFAULT_WEIGHTS: &[f32] = &[
     2.61,
 ];
 
-fn infer<B: Backend<FloatElem = f32>>(
+fn infer<B: Backend>(
     model: &Model<B>,
     batch: FSRSBatch<B>,
 ) -> (MemoryStateTensors<B>, Tensor<B, 2>) {
@@ -38,22 +39,25 @@ pub struct MemoryState {
     pub difficulty: f32,
 }
 
-impl<B: Backend<FloatElem = f32>> From<MemoryStateTensors<B>> for MemoryState {
+impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
     fn from(m: MemoryStateTensors<B>) -> Self {
         MemoryState {
-            stability: m.stability.to_data().value[0],
-            difficulty: m.difficulty.to_data().value[0],
+            stability: m.stability.to_data().value[0].elem(),
+            difficulty: m.difficulty.to_data().value[0].elem(),
         }
     }
 }
 
-impl<B: Backend<FloatElem = f32>> From<MemoryState> for MemoryStateTensors<B> {
+impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     fn from(m: MemoryState) -> Self {
         MemoryStateTensors {
-            stability: Tensor::<B, 1>::from_data(Data::new(vec![m.stability], Shape { dims: [1] }))
-                .unsqueeze(),
+            stability: Tensor::<B, 1>::from_data(Data::new(
+                vec![m.stability.elem()],
+                Shape { dims: [1] },
+            ))
+            .unsqueeze(),
             difficulty: Tensor::<B, 1>::from_data(Data::new(
-                vec![m.difficulty],
+                vec![m.difficulty.elem()],
                 Shape { dims: [1] },
             ))
             .unsqueeze()
@@ -68,7 +72,7 @@ fn next_interval(stability: f32, request_retention: f32) -> u32 {
         .max(1.0) as u32
 }
 
-impl<B: Backend<FloatElem = f32>> FSRS<B> {
+impl<B: Backend> FSRS<B> {
     /// Calculate the current memory state for a given card's history of reviews.
     /// Weights must have been provided when calling FSRS::new().
     pub fn memory_state(&self, item: FSRSItem) -> MemoryState {
@@ -95,7 +99,7 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
         days_elapsed: u32,
     ) -> NextStates {
         let delta_t =
-            Tensor::<B, 1>::from_data(Data::new(vec![days_elapsed as f32], Shape { dims: [1] }))
+            Tensor::<B, 1>::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }))
                 .unsqueeze()
                 .transpose();
         let state = state.map(MemoryStateTensors::from);
@@ -104,7 +108,7 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
             MemoryState::from(
                 model.step(
                     delta_t.clone(),
-                    Tensor::<B, 1>::from_data(Data::new(vec![rating as f32], Shape { dims: [1] }))
+                    Tensor::<B, 1>::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }))
                         .unsqueeze()
                         .transpose(),
                     state.clone(),
@@ -145,9 +149,9 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
         for chunk in items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
             let (_state, retention) = infer::<B>(model, batch.clone());
-            let pred = retention.clone().squeeze::<1>(1).to_data().value;
+            let pred: Vec<f32> = retention.clone().squeeze::<1>(1).to_data().convert().value;
             all_predictions.extend(pred);
-            let true_val = batch.labels.clone().float().to_data().value;
+            let true_val: Vec<f32> = batch.labels.clone().float().to_data().convert().value;
             all_true_val.extend(true_val);
             all_retention.push(retention);
             all_labels.push(batch.labels);
@@ -164,7 +168,7 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
             .transpose();
         let loss = BCELoss::<B>::new().forward(all_retention, all_labels);
         Ok(ModelEvaluation {
-            log_loss: loss.to_data().value[0],
+            log_loss: loss.to_data().value[0].elem(),
             rmse_bins: rmse,
         })
     }
