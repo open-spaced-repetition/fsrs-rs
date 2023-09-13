@@ -25,14 +25,17 @@ pub(crate) struct RevlogEntry {
     delta_t: i32,
 }
 
-fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
-    Ok(RevlogEntry {
-        id: row.get(0)?,
-        cid: row.get(1)?,
-        button_chosen: row.get(2)?,
-        review_kind: row.get(3).unwrap_or_default(),
-        delta_t: 0,
-    })
+impl TryFrom<&Row<'_>> for RevlogEntry {
+    type Error = rusqlite::Error;
+    fn try_from(row: &Row<'_>) -> Result<Self> {
+        Ok(RevlogEntry {
+            id: row.get(0)?,
+            cid: row.get(1)?,
+            button_chosen: row.get(2)?,
+            review_kind: row.get(3).unwrap_or_default(),
+            delta_t: 0,
+        })
+    }
 }
 
 fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> chrono::NaiveDate {
@@ -200,7 +203,7 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
         )
         order by cid"
         ))?
-        .query_and_then((current_timestamp, current_timestamp), row_to_revlog_entry)?
+        .query_and_then((current_timestamp, current_timestamp), |x| x.try_into())?
         .collect::<Result<Vec<_>>>()?;
     Ok(revlogs)
 }
