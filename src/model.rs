@@ -15,7 +15,7 @@ pub struct Model<B: Backend> {
     pub config: ModelConfig,
 }
 
-impl<B: Backend<FloatElem = f32>> Model<B> {
+impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
         let initial_stability = config.initial_stability.unwrap_or([0.4, 0.6, 2.4, 5.8]);
@@ -173,14 +173,14 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
-    pub fn init<B: Backend<FloatElem = f32>>(&self) -> Model<B> {
+    pub fn init<B: Backend>(&self) -> Model<B> {
         Model::new(self.clone())
     }
 }
 
 /// This is the main structure provided by this crate. It can be used
 /// for both weight training, and for reviews.
-pub struct FSRS<B: Backend<FloatElem = f32> = NdArrayBackend> {
+pub struct FSRS<B: Backend = NdArrayBackend> {
     model: Option<Model<B>>,
     device: B::Device,
 }
@@ -193,8 +193,8 @@ impl FSRS<NdArrayBackend> {
     }
 }
 
-impl<B: Backend<FloatElem = f32>> FSRS<B> {
-    pub fn new_with_backend<B2: Backend<FloatElem = f32>>(
+impl<B: Backend> FSRS<B> {
+    pub fn new_with_backend<B2: Backend>(
         mut weights: Option<&Weights>,
         device: B2::Device,
     ) -> Result<FSRS<B2>> {
@@ -222,7 +222,7 @@ impl<B: Backend<FloatElem = f32>> FSRS<B> {
     }
 }
 
-pub(crate) fn weights_to_model<B: Backend<FloatElem = f32>>(weights: &Weights) -> Model<B> {
+pub(crate) fn weights_to_model<B: Backend>(weights: &Weights) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::<B>::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
