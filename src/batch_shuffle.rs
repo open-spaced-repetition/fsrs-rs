@@ -69,7 +69,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
+    use crate::{convertor_tests::anki21_sample_file_converted_to_fsrs, FSRSItem, FSRSReview};
 
     #[test]
     fn batch_shuffle() {
@@ -78,9 +78,253 @@ mod tests {
         let batch_size = 10;
         let seed = 42;
         let batch_shuffled_dataset = BatchShuffledDataset::with_seed(dataset, batch_size, seed);
-        for i in 0..batch_shuffled_dataset.len().min(batch_size) {
-            dbg!(batch_shuffled_dataset.get(i).unwrap());
-        }
+        assert_eq!(
+            (0..batch_shuffled_dataset.len().min(batch_size))
+                .map(|i| batch_shuffled_dataset.get(i).unwrap())
+                .collect::<Vec<_>>(),
+            [
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 8,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 21,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 7,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 19,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 8,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 19,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 5,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 11,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 6,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 17,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 8,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 20,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 8,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 5,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 5,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 9,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 19,
+                        }
+                    ],
+                },
+            ]
+        );
     }
 
     #[test]
