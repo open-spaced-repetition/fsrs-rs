@@ -61,8 +61,10 @@ impl rusqlite::types::FromSql for RevlogReviewKind {
     }
 }
 
-fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
-    Ok(RevlogEntry {
+impl TryFrom<&Row<'_>> for RevlogEntry {
+    type Error = rusqlite::Error;
+    fn try_from(row: &Row<'_>) -> Result<Self> {
+        Ok(RevlogEntry {
         id: row.get(0)?,
         cid: row.get(1)?,
         usn: row.get(2)?,
@@ -72,7 +74,8 @@ fn row_to_revlog_entry(row: &Row) -> Result<RevlogEntry> {
         ease_factor: row.get(6)?,
         taken_millis: row.get(7)?,
         review_kind: row.get(8)?,
-    })
+        })
+    }
 }
 
 fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
@@ -235,7 +238,7 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
         )
         order by cid"
         ))?
-        .query_and_then((current_timestamp, current_timestamp), row_to_revlog_entry)?
+        .query_and_then((current_timestamp, current_timestamp), |x| x.try_into())?
         .collect::<Result<Vec<_>>>()?;
     Ok(revlogs)
 }

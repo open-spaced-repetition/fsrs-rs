@@ -254,11 +254,11 @@ fn train<B: ADBackend<FloatElem = f32>>(
 
     if let Some(mut progress) = progress {
         progress.interrupter = interrupter.clone();
-        builder = builder.renderer(progress).log_to_file(false)
+        builder = builder.renderer(progress).log_to_file(false);
     } else if artifact_dir.is_some() {
         // options only required when testing
         builder = builder
-            .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new())
+            .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
         // .metric_train_plot(AccuracyMetric::new())
         // .metric_valid_plot(AccuracyMetric::new())
         // .metric_train_plot(LossMetric::new())
@@ -303,7 +303,7 @@ mod tests {
         }
         let device = NdArrayDevice::Cpu;
 
-        let artifact_dir = "./tmp/fsrs";
+        let artifact_dir = Path::new("./tmp/fsrs");
 
         let (pre_trainset, trainset) = split_data(anki21_sample_file_converted_to_fsrs());
         let initial_stability = pretrain(pre_trainset).unwrap();
@@ -317,32 +317,22 @@ mod tests {
 
         std::fs::create_dir_all(artifact_dir).unwrap();
         config
-            .save(
-                Path::new(artifact_dir)
-                    .join("config.json")
-                    .to_str()
-                    .unwrap(),
-            )
+            .save(artifact_dir.join("config.json"))
             .expect("Save without error");
 
-        let model_trained =
-            train::<NdArrayAutodiffBackend>(trainset, &config, device, None, Some(artifact_dir))
-                .unwrap();
+        let model_trained = train::<NdArrayAutodiffBackend>(
+            trainset,
+            &config,
+            device,
+            None,
+            Some(artifact_dir.to_string_lossy().as_ref()),
+        )
+        .unwrap();
 
-        config
-            .save(
-                Path::new(artifact_dir)
-                    .join("config.json")
-                    .to_str()
-                    .unwrap(),
-            )
-            .unwrap();
+        config.save(artifact_dir.join("config.json")).unwrap();
 
         PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
-            .record(
-                model_trained.into_record(),
-                Path::new(artifact_dir).join("model"),
-            )
+            .record(model_trained.into_record(), artifact_dir.join("model"))
             .expect("Failed to save trained model");
     }
 }
