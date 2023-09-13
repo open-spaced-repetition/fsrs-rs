@@ -160,7 +160,7 @@ impl<B: Backend> FSRS<B> {
                 return Err(FSRSError::Interrupted);
             }
         }
-        let rmse = calibration_rmse(all_predictions, all_true_val);
+        let rmse = calibration_rmse(&all_predictions, &all_true_val);
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0)
             .unsqueeze::<2>()
@@ -180,6 +180,7 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct ModelEvaluation {
     pub log_loss: f32,
     pub rmse_bins: f32,
@@ -211,7 +212,7 @@ fn get_bin(x: f32, bins: i32) -> i32 {
     (binned_x as i32).min(bins - 1).max(0)
 }
 
-fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
+fn calibration_rmse(pred: &[f32], true_val: &[f32]) -> f32 {
     if pred.len() != true_val.len() {
         panic!("Vectors pred and true_val must have the same length");
     }
@@ -226,7 +227,7 @@ fn calibration_rmse(pred: Vec<f32>, true_val: Vec<f32>) -> f32 {
     let mut total_sum = 0.0;
     let mut total_count = 0.0;
 
-    for (_bin, group) in groups.iter() {
+    for group in groups.values() {
         let count = group.len() as f32;
         let pred_mean = group.iter().map(|(p, _)| *p).sum::<f32>() / count;
         let true_mean = group.iter().map(|(_, t)| *t).sum::<f32>() / count;
