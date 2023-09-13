@@ -95,12 +95,15 @@ fn filter_out_set_due_date(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
 }
 
 fn remove_revlog_before_forget(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
-    let mut forget_index = 0;
-    for (index, entry) in entries.iter().enumerate() {
-        if (entry.review_kind == Manual || entry.button_chosen == 0) && entry.ease_factor == 0 {
-            forget_index = index + 1;
-        }
-    }
+    let forget_index = entries
+        .iter()
+        .enumerate()
+        .filter(|(.., entry)| {
+            (entry.review_kind == Manual || entry.button_chosen == 0) && entry.ease_factor == 0
+        })
+        .last()
+        .map(|(index, ..)| index + 1)
+        .unwrap_or_default();
     entries[forget_index..].to_vec()
 }
 
