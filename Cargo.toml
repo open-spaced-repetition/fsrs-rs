@@ -9,7 +9,7 @@ license = "BSD-3-Clause"
 [dependencies.burn]
 # version = "0.10.0"
 git = "https://github.com/burn-rs/burn.git"
-rev = "251ec00070eb67b65e6efb6f3fe449ed3f00a741"
+rev = "e7a65e24c4e88110f2bf6b3a29ac456a12c2ca0c"
 # path = "../burn/burn"
 default-features = false
 features = ["std", "train-minimal", "autodiff", "dataset-minimal", "ndarray"]
@@ -17,7 +17,7 @@ features = ["std", "train-minimal", "autodiff", "dataset-minimal", "ndarray"]
 [dev-dependencies.burn]
 # version = "0.10.0"
 git = "https://github.com/burn-rs/burn.git"
-rev = "251ec00070eb67b65e6efb6f3fe449ed3f00a741"
+rev = "e7a65e24c4e88110f2bf6b3a29ac456a12c2ca0c"
 # path = "../burn/burn"
 features = ["train", "dataset-sqlite-bundled"]
 

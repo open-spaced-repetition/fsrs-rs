@@ -7,8 +7,9 @@ use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use crate::{FSRSError, FSRS};
 use burn::autodiff::ADBackendDecorator;
+use burn::module::Module;
 use burn::optim::AdamConfig;
-use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder};
+use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 use burn::train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
@@ -19,6 +20,7 @@ use burn::{
 };
 use core::marker::PhantomData;
 use log::info;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub struct BCELoss<B: Backend> {
@@ -210,7 +212,6 @@ impl<B: Backend> FSRS<B> {
             &config,
             self.device(),
             progress.map(ProgressCollector::new),
-            None,
         );
 
         Ok(model?.w.val().to_data().convert().value)
@@ -222,8 +223,6 @@ fn train<B: ADBackend>(
     config: &TrainingConfig,
     device: B::Device,
     progress: Option<ProgressCollector>,
-    // used in testing
-    artifact_dir: Option<&str>,
 ) -> Result<Model<B>> {
     B::seed(config.seed);
 
@@ -247,22 +246,31 @@ fn train<B: ADBackend>(
         config.learning_rate,
     );
 
-    let mut builder = LearnerBuilder::new(artifact_dir.unwrap_or_default())
+    let artifact_dir = std::env::var("BURN_LOG");
+
+    let mut builder = LearnerBuilder::new(&artifact_dir.clone().unwrap_or_default())
         .devices(vec![device])
-        .num_epochs(config.num_epochs);
+        .num_epochs(config.num_epochs)
+        .log_to_file(false);
     let interrupter = builder.interrupter();
 
     if let Some(mut progress) = progress {
         progress.interrupter = interrupter.clone();
-        builder = builder.renderer(progress).log_to_file(false);
-    } else if artifact_dir.is_some() {
-        // options only required when testing
+        builder = builder.renderer(progress);
+    } else {
+        // comment out if you want to see text interface
+        builder = builder.renderer(NoProgress {});
+        // builder = builder
+        //     .metric_train_plot(AccuracyMetric::new())
+        //     .metric_valid_plot(AccuracyMetric::new())
+        //     .metric_train_plot(LossMetric::new())
+        //     .metric_valid_plot(LossMetric::new());
+    }
+
+    if artifact_dir.is_ok() {
         builder = builder
+            .log_to_file(true)
             .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
-        // .metric_train_plot(AccuracyMetric::new())
-        // .metric_valid_plot(AccuracyMetric::new())
-        // .metric_train_plot(LossMetric::new())
-        // .metric_valid_plot(LossMetric::new())
     }
 
     let learner = builder.build(
@@ -281,7 +289,28 @@ fn train<B: ADBackend>(
     model_trained.w = Param::from(weight_clipper(model_trained.w.val()));
     info!("clipped weights: {}", &model_trained.w.val());
 
+    if let Ok(path) = artifact_dir {
+        PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
+            .record(
+                model_trained.clone().into_record(),
+                Path::new(&path).join("model"),
+            )
+            .expect("Failed to save trained model");
+    }
+
     Ok(model_trained)
+}
+
+struct NoProgress {}
+
+impl DashboardRenderer for NoProgress {
+    fn update_train(&mut self, _state: DashboardMetricState) {}
+
+    fn update_valid(&mut self, _state: DashboardMetricState) {}
+
+    fn render_train(&mut self, _item: TrainingProgress) {}
+
+    fn render_valid(&mut self, _item: TrainingProgress) {}
 }
 
 #[cfg(test)]
@@ -291,9 +320,6 @@ mod tests {
     use crate::pre_training::pretrain;
     use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::NdArrayAutodiffBackend;
-    use burn::module::Module;
-    use burn::record::Recorder;
-    use std::path::Path;
 
     #[test]
     fn training() {
@@ -302,8 +328,6 @@ mod tests {
             return;
         }
         let device = NdArrayDevice::Cpu;
-
-        let artifact_dir = Path::new("./tmp/fsrs");
 
         let (pre_trainset, trainset) = split_data(anki21_sample_file_converted_to_fsrs());
         let initial_stability = pretrain(pre_trainset).unwrap();
@@ -315,24 +339,7 @@ mod tests {
             AdamConfig::new(),
         );
 
-        std::fs::create_dir_all(artifact_dir).unwrap();
-        config
-            .save(artifact_dir.join("config.json"))
-            .expect("Save without error");
-
-        let model_trained = train::<NdArrayAutodiffBackend>(
-            trainset,
-            &config,
-            device,
-            None,
-            Some(artifact_dir.to_string_lossy().as_ref()),
-        )
-        .unwrap();
-
-        config.save(artifact_dir.join("config.json")).unwrap();
-
-        PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
-            .record(model_trained.into_record(), artifact_dir.join("model"))
-            .expect("Failed to save trained model");
+        let _model_trained =
+            train::<NdArrayAutodiffBackend>(trainset, &config, device, None).unwrap();
     }
 }
