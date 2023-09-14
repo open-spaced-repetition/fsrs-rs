@@ -19,7 +19,7 @@ impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
         let initial_stability = config.initial_stability.unwrap_or([0.4, 0.6, 2.4, 5.8]);
-        let mut initial_params = Vec::new();
+        let mut initial_params = vec![];
         initial_params.extend_from_slice(&initial_stability);
         initial_params.extend_from_slice(&[
             4.93, 0.94, 0.86, 0.01, // difficulty
@@ -180,6 +180,7 @@ impl ModelConfig {
 
 /// This is the main structure provided by this crate. It can be used
 /// for both weight training, and for reviews.
+#[derive(Debug, Clone)]
 pub struct FSRS<B: Backend = NdArrayBackend> {
     model: Option<Model<B>>,
     device: B::Device,

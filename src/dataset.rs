@@ -152,7 +152,21 @@ mod tests {
         use burn::data::dataloader::Dataset;
 
         let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
-        dbg!(dataset.get(704).unwrap());
+        assert_eq!(
+            dataset.get(704).unwrap(),
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 2,
+                    },
+                ],
+            }
+        );
 
         use burn::backend::ndarray::NdArrayDevice;
         let device = NdArrayDevice::Cpu;
