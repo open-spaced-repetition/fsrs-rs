@@ -94,7 +94,7 @@ impl<B: Backend> FSRS<B> {
     /// Weights must have been provided when calling FSRS::new().
     pub fn next_states(
         &self,
-        state: Option<MemoryState>,
+        current_memory_state: Option<MemoryState>,
         desired_retention: f32,
         days_elapsed: u32,
     ) -> NextStates {
@@ -102,22 +102,30 @@ impl<B: Backend> FSRS<B> {
             Tensor::<B, 1>::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }))
                 .unsqueeze()
                 .transpose();
-        let state = state.map(MemoryStateTensors::from);
+        let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
         let model = self.model();
-        let mut next_states = (1..=4).map(|rating| {
-            MemoryState::from(
-                model.step(
-                    delta_t.clone(),
-                    Tensor::<B, 1>::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }))
+        let mut next_memory_states = (1..=4).map(|rating| {
+            if let (Some(current_memory_state), 0) = (current_memory_state, days_elapsed) {
+                // When there's an existing memory state and no days have elapsed, we leave it unchanged.
+                current_memory_state
+            } else {
+                MemoryState::from(
+                    model.step(
+                        delta_t.clone(),
+                        Tensor::<B, 1>::from_data(Data::new(
+                            vec![rating.elem()],
+                            Shape { dims: [1] },
+                        ))
                         .unsqueeze()
                         .transpose(),
-                    state.clone(),
-                ),
-            )
+                        current_memory_state_tensors.clone(),
+                    ),
+                )
+            }
         });
 
         let mut get_next_state = || {
-            let memory = next_states.next().unwrap();
+            let memory = next_memory_states.next().unwrap();
             let interval = next_interval(memory.stability, desired_retention);
             ItemState { memory, interval }
         };
@@ -136,6 +144,9 @@ impl<B: Backend> FSRS<B> {
     where
         F: FnMut(ItemProgress) -> bool,
     {
+        if items.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
         let batcher = FSRSBatcher::new(self.device());
         let mut all_predictions = vec![];
         let mut all_true_val = vec![];
@@ -419,6 +430,21 @@ mod tests {
                 }
             }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn states_are_unchaged_when_no_days_elapsed() -> Result<()> {
+        let fsrs = FSRS::new(Some(&[]))?;
+        // the first time a card is seen, a memory state must be set
+        let mut state_a = fsrs.next_states(None, 1.0, 0).again.memory;
+        // but if no days have elapsed and it's reviewed again, the state should be unchanged
+        let state_b = fsrs.next_states(Some(state_a), 1.0, 0).again.memory;
+        assert_eq!(state_a, state_b);
+        // if a day elapses, it's counted
+        state_a = fsrs.next_states(Some(state_a), 1.0, 1).again.memory;
+        assert_ne!(state_a, state_b);
+
         Ok(())
     }
 }
