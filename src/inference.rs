@@ -144,6 +144,9 @@ impl<B: Backend> FSRS<B> {
     where
         F: FnMut(ItemProgress) -> bool,
     {
+        if items.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
         let batcher = FSRSBatcher::new(self.device());
         let mut all_predictions = vec![];
         let mut all_true_val = vec![];
