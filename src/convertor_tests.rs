@@ -314,12 +314,18 @@ fn extract_simulator_config_from_revlog() {
     assert_eq!(learn_cost, 8.980446);
 
     let forget_cost = {
-        let tmp1 = revlogs
+        let review_kind_to_total_millis = revlogs
             .iter()
             .sorted_by(|a, b| a.cid.cmp(&b.cid).then(a.id.cmp(&b.id)))
-            .group_by(|r| r.review_kind);
-
-        let review_kind_to_total_millis = tmp1
+            .group_by(|r| r.review_kind)
+            /*
+                for example:
+                o  x x  o o x x x o o x x o x
+                  |<->|    |<--->|   |<->| |<>|
+                x means forgotten, there are 4 consecutive sets of internal relearning in this card.
+                So each group is counted separately, and each group is summed up internally.(following code)
+                Finally averaging all groups, so sort by cid and id.
+            */
             .into_iter()
             .map(|(review_kind, group)| {
                 let total_millis: u32 = group.into_iter().map(|r| r.taken_millis).sum();
