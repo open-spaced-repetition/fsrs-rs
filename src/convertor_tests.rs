@@ -327,9 +327,9 @@ fn extract_simulator_config_from_revlog() {
         .group_by(|r| r.0)
         .into_iter()
         .map(|(review_kind, group)| {
-            let group_vec: Vec<_> = group.collect();
+            let group_vec = group.into_iter().map(|r| r.1).collect_vec();
             let average_secs =
-                group_vec.iter().map(|r| r.1).sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
+                group_vec.iter().sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
             (review_kind, average_secs)
         })
         .collect::<HashMap<_, _>>();
@@ -374,8 +374,8 @@ fn conversion_works() {
         .flatten()
         .collect_vec();
     assert_eq!(
-        &fsrs_items,
-        &[
+        fsrs_items,
+        [
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
