@@ -252,8 +252,7 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
 fn extract_simulator_config_from_revlog() {
     let revlogs = read_collection().unwrap();
     let first_rating_count = revlogs
-        .clone()
-        .into_iter()
+        .iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
         .counts_by(|r| r.button_chosen);
     let first_rating_prob = first_rating_count
@@ -273,8 +272,7 @@ fn extract_simulator_config_from_revlog() {
     ];
     assert_eq!(first_rating_prob, [0.15339181, 0.0, 0.15339181, 0.6932164,]);
     let review_rating_count = revlogs
-        .clone()
-        .into_iter()
+        .iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen != 1)
         .counts_by(|r| r.button_chosen);
     let review_rating_prob = review_rating_count
@@ -294,8 +292,7 @@ fn extract_simulator_config_from_revlog() {
     assert_eq!(review_rating_prob, [0.07380187, 0.90085745, 0.025340684,]);
 
     let recall_costs = revlogs
-        .clone()
-        .into_iter()
+        .iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Review)
         .sorted_by(|a, b| a.button_chosen.cmp(&b.button_chosen))
         .group_by(|r| r.button_chosen)
@@ -308,23 +305,17 @@ fn extract_simulator_config_from_revlog() {
             (button_chosen, average_secs)
         })
         .collect::<HashMap<_, _>>();
-    let learn_cost = revlogs
-        .clone()
-        .into_iter()
-        .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
-        .map(|r| r.taken_millis)
-        .sum::<u32>() as f32
-        / revlogs
-            .clone()
-            .into_iter()
+    let learn_cost = {
+        let revlogs_filter = revlogs
+            .iter()
             .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
-            .count() as f32
-        / 1000.0;
+            .map(|r| r.taken_millis);
+        revlogs_filter.clone().sum::<u32>() as f32 / revlogs_filter.count() as f32 / 1000.0 as f32
+    };
     assert_eq!(learn_cost, 8.980446);
 
     let forget_cost = revlogs
-        .clone()
-        .into_iter()
+        .iter()
         .sorted_by(|a, b| a.id.cmp(&b.id))
         .group_by(|r| r.review_kind)
         .into_iter()
@@ -342,6 +333,7 @@ fn extract_simulator_config_from_revlog() {
             (review_kind, average_secs)
         })
         .collect::<HashMap<_, _>>();
+
     let forget_cost = forget_cost
         .get(&RevlogReviewKind::Relearning)
         .copied()
