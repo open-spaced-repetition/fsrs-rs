@@ -14,7 +14,7 @@ use rusqlite::{Result, Row};
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::{FSRSItem, FSRSReview};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RevlogEntry {
     pub id: i64,
     pub cid: i64,
@@ -313,25 +313,37 @@ fn extract_simulator_config_from_revlog() {
     };
     assert_eq!(learn_cost, 8.980446);
 
-    let forget_cost = revlogs
-        .iter()
-        .sorted_by(|a, b| a.id.cmp(&b.id))
-        .group_by(|r| r.review_kind)
-        .into_iter()
-        .map(|(review_kind, group)| {
-            let total_millis: u32 = group.into_iter().map(|r| r.taken_millis).sum();
-            (review_kind, total_millis)
-        })
-        .sorted_by(|a, b| a.0.cmp(&b.0))
-        .group_by(|r| r.0)
-        .into_iter()
-        .map(|(review_kind, group)| {
-            let group_vec = group.into_iter().map(|r| r.1).collect_vec();
-            let average_secs =
-                group_vec.iter().sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
-            (review_kind, average_secs)
-        })
-        .collect::<HashMap<_, _>>();
+    let forget_cost = {
+        // wait for modify
+        let tmp1 = revlogs
+            .iter()
+            .sorted_by(|a, b| a.id.cmp(&b.id))
+            .group_by(|r| r.review_kind);
+
+        let review_kind_to_total_millis = tmp1
+            .into_iter()
+            .map(|(review_kind, group)| {
+                let total_millis: u32 = group.into_iter().map(|r| r.taken_millis).sum();
+                (review_kind, total_millis)
+            })
+            .collect_vec();
+
+        let mut group_sec_by_review_kind = HashMap::new();
+        for (review_kind, sec) in review_kind_to_total_millis.into_iter() {
+            group_sec_by_review_kind
+                .entry(review_kind)
+                .or_insert_with(Vec::new)
+                .push(sec)
+        }
+
+        group_sec_by_review_kind
+            .into_iter()
+            .map(|(review_kind, group)| {
+                let average_secs = group.iter().sum::<u32>() as f32 / group.len() as f32 / 1000.0;
+                (review_kind, average_secs)
+            })
+            .collect::<HashMap<_, _>>()
+    };
 
     let forget_cost = forget_cost
         .get(&RevlogReviewKind::Relearning)
