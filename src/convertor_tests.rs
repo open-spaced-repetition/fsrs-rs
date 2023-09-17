@@ -256,7 +256,7 @@ fn extract_simulator_config_from_revlog() {
         .into_iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
         .counts_by(|r| r.button_chosen);
-    let first_rating_prob: HashMap<_, _> = first_rating_count
+    let first_rating_prob = first_rating_count
         .iter()
         .map(|(button_chosen, count)| {
             (
@@ -264,12 +264,12 @@ fn extract_simulator_config_from_revlog() {
                 *count as f32 / first_rating_count.values().sum::<usize>() as f32,
             )
         })
-        .collect();
-    let first_rating_prob: [f32; 4] = [
-        *first_rating_prob.get(&1).unwrap_or(&0.0),
-        *first_rating_prob.get(&2).unwrap_or(&0.0),
-        *first_rating_prob.get(&3).unwrap_or(&0.0),
-        *first_rating_prob.get(&4).unwrap_or(&0.0),
+        .collect::<HashMap<_, _>>();
+    let first_rating_prob = [
+        first_rating_prob.get(&1).copied().unwrap_or_default(),
+        first_rating_prob.get(&2).copied().unwrap_or_default(),
+        first_rating_prob.get(&3).copied().unwrap_or_default(),
+        first_rating_prob.get(&4).copied().unwrap_or_default(),
     ];
     assert_eq!(first_rating_prob, [0.15339181, 0.0, 0.15339181, 0.6932164,]);
     let review_rating_count = revlogs
@@ -277,7 +277,7 @@ fn extract_simulator_config_from_revlog() {
         .into_iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen != 1)
         .counts_by(|r| r.button_chosen);
-    let review_rating_prob: HashMap<_, _> = review_rating_count
+    let review_rating_prob = review_rating_count
         .iter()
         .map(|(button_chosen, count)| {
             (
@@ -285,15 +285,15 @@ fn extract_simulator_config_from_revlog() {
                 *count as f32 / review_rating_count.values().sum::<usize>() as f32,
             )
         })
-        .collect();
-    let review_rating_prob: [f32; 3] = [
-        *review_rating_prob.get(&2).unwrap_or(&0.0),
-        *review_rating_prob.get(&3).unwrap_or(&0.0),
-        *review_rating_prob.get(&4).unwrap_or(&0.0),
+        .collect::<HashMap<_, _>>();
+    let review_rating_prob = [
+        review_rating_prob.get(&2).copied().unwrap_or_default(),
+        review_rating_prob.get(&3).copied().unwrap_or_default(),
+        review_rating_prob.get(&4).copied().unwrap_or_default(),
     ];
     assert_eq!(review_rating_prob, [0.07380187, 0.90085745, 0.025340684,]);
 
-    let recall_costs: HashMap<_, _> = revlogs
+    let recall_costs = revlogs
         .clone()
         .into_iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Review)
@@ -307,7 +307,7 @@ fn extract_simulator_config_from_revlog() {
                 / 1000.0;
             (button_chosen, average_secs)
         })
-        .collect();
+        .collect::<HashMap<_, _>>();
     let learn_cost = revlogs
         .clone()
         .into_iter()
@@ -322,7 +322,7 @@ fn extract_simulator_config_from_revlog() {
         / 1000.0;
     assert_eq!(learn_cost, 8.980446);
 
-    let forget_cost: HashMap<_, _> = revlogs
+    let forget_cost = revlogs
         .clone()
         .into_iter()
         .sorted_by(|a, b| a.id.cmp(&b.id))
@@ -332,9 +332,7 @@ fn extract_simulator_config_from_revlog() {
             let total_millis: u32 = group.into_iter().map(|r| r.taken_millis).sum();
             (review_kind, total_millis)
         })
-        .collect_vec()
-        .into_iter()
-        .sorted_by(|a, b| Ord::cmp(&a.0, &b.0))
+        .sorted_by(|a, b| a.0.cmp(&b.0))
         .group_by(|r| r.0)
         .into_iter()
         .map(|(review_kind, group)| {
@@ -343,17 +341,18 @@ fn extract_simulator_config_from_revlog() {
                 group_vec.iter().map(|r| r.1).sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
             (review_kind, average_secs)
         })
-        .collect();
+        .collect::<HashMap<_, _>>();
     let forget_cost = forget_cost
         .get(&RevlogReviewKind::Relearning)
-        .unwrap_or(&0.0)
-        + recall_costs.get(&1).unwrap_or(&0.0);
+        .copied()
+        .unwrap_or_default()
+        + recall_costs.get(&1).copied().unwrap_or_default();
     assert_eq!(forget_cost, 20.662834);
 
-    let recall_costs: [f32; 3] = [
-        *recall_costs.get(&2).unwrap_or(&0.0),
-        *recall_costs.get(&3).unwrap_or(&0.0),
-        *recall_costs.get(&4).unwrap_or(&0.0),
+    let recall_costs = [
+        recall_costs.get(&2).copied().unwrap_or_default(),
+        recall_costs.get(&3).copied().unwrap_or_default(),
+        recall_costs.get(&4).copied().unwrap_or_default(),
     ];
     assert_eq!(recall_costs, [9.047336, 7.774851, 5.149275,]);
 }
