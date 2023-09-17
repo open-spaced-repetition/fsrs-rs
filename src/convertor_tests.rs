@@ -314,10 +314,9 @@ fn extract_simulator_config_from_revlog() {
     assert_eq!(learn_cost, 8.980446);
 
     let forget_cost = {
-        // wait for modify
         let tmp1 = revlogs
             .iter()
-            .sorted_by(|a, b| a.id.cmp(&b.id))
+            .sorted_by(|a, b| a.cid.cmp(&b.cid).then(a.id.cmp(&b.id)))
             .group_by(|r| r.review_kind);
 
         let review_kind_to_total_millis = tmp1
@@ -350,7 +349,7 @@ fn extract_simulator_config_from_revlog() {
         .copied()
         .unwrap_or_default()
         + recall_costs.get(&1).copied().unwrap_or_default();
-    assert_eq!(forget_cost, 20.662834);
+    assert_eq!(forget_cost, 23.481838);
 
     let recall_costs = [
         recall_costs.get(&2).copied().unwrap_or_default(),
