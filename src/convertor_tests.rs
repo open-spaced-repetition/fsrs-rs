@@ -298,10 +298,9 @@ fn extract_simulator_config_from_revlog() {
         .group_by(|r| r.button_chosen)
         .into_iter()
         .map(|(button_chosen, group)| {
-            let group_vec: Vec<_> = group.collect();
-            let average_secs = group_vec.iter().map(|r| r.taken_millis).sum::<u32>() as f32
-                / group_vec.len() as f32
-                / 1000.0;
+            let group_vec = group.into_iter().map(|r| r.taken_millis).collect_vec();
+            let average_secs =
+                group_vec.iter().sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
             (button_chosen, average_secs)
         })
         .collect::<HashMap<_, _>>();
@@ -310,7 +309,7 @@ fn extract_simulator_config_from_revlog() {
             .iter()
             .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
             .map(|r| r.taken_millis);
-        revlogs_filter.clone().sum::<u32>() as f32 / revlogs_filter.count() as f32 / 1000.0 as f32
+        revlogs_filter.clone().sum::<u32>() as f32 / revlogs_filter.count() as f32 / 1000.0
     };
     assert_eq!(learn_cost, 8.980446);
 
