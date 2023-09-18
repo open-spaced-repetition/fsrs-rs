@@ -256,7 +256,7 @@ fn extract_simulator_config_from_revlog() {
         let mut arr = [Default::default(); 4];
         first_rating_count
             .iter()
-            .filter(|(&button_chosen, ..)| button_chosen > 0)
+            .filter(|(&button_chosen, ..)| button_chosen >= 1)
             .for_each(|(button_chosen, count)| {
                 arr[*button_chosen as usize - 1] =
                     *count as f32 / first_rating_count.values().sum::<usize>() as f32
@@ -269,19 +269,17 @@ fn extract_simulator_config_from_revlog() {
         .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen != 1)
         .counts_by(|r| r.button_chosen);
     let review_rating_prob = {
-        let mut arr = [Default::default(); 5];
+        let mut arr = [Default::default(); 3];
         review_rating_count
             .iter()
+            .filter(|(&button_chosen, ..)| button_chosen >= 2)
             .for_each(|(button_chosen, count)| {
-                arr[*button_chosen as usize] =
+                arr[*button_chosen as usize - 2] =
                     *count as f32 / review_rating_count.values().sum::<usize>() as f32;
             });
         arr
     };
-    assert_eq!(
-        review_rating_prob[2..=4],
-        [0.07380187, 0.90085745, 0.025340684,]
-    );
+    assert_eq!(review_rating_prob, [0.07380187, 0.90085745, 0.025340684,]);
 
     let recall_costs = {
         let mut arr = [Default::default(); 5];
