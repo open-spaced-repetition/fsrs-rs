@@ -258,14 +258,9 @@ fn extract_simulator_config_from_revlog() {
         let mut arr = [Default::default(); 5];
         first_rating_count
             .iter()
-            .map(|(button_chosen, count)| {
-                (
-                    *button_chosen,
-                    *count as f32 / first_rating_count.values().sum::<usize>() as f32,
-                )
-            })
-            .for_each(|(i, v)| {
-                arr[i as usize] = v;
+            .for_each(|(button_chosen, count)| {
+                arr[*button_chosen as usize] =
+                    *count as f32 / first_rating_count.values().sum::<usize>() as f32
             });
         arr
     };
