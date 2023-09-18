@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::FSRSBatcher;
 use crate::dataset::{FSRSItem, FSRSReview};
@@ -331,20 +329,17 @@ fn extract_simulator_config_from_revlog() {
                 (review_kind, total_millis)
             })
             .collect_vec();
-
-        let mut group_sec_by_review_kind = HashMap::new();
+        let mut group_sec_by_review_kind: [Vec<_>; 5] = Default::default();
         for (review_kind, sec) in review_kind_to_total_millis.into_iter() {
-            group_sec_by_review_kind
-                .entry(review_kind)
-                .or_insert_with(Vec::new)
-                .push(sec)
+            group_sec_by_review_kind[review_kind as usize].push(sec)
         }
         let mut arr = [Default::default(); 5];
         group_sec_by_review_kind
-            .into_iter()
+            .iter()
+            .enumerate()
             .for_each(|(review_kind, group)| {
                 let average_secs = group.iter().sum::<u32>() as f32 / group.len() as f32 / 1000.0;
-                arr[review_kind as usize] = average_secs
+                arr[review_kind] = average_secs
             });
         arr
     };
