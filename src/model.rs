@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn fsrs() {
         assert!(FSRS::new(Some(&[])).is_ok());
-        assert!(!FSRS::new(Some(&[1.])).is_ok());
+        assert!(FSRS::new(Some(&[1.])).is_err());
         assert!(FSRS::new(Some(DEFAULT_WEIGHTS)).is_ok());
     }
 }

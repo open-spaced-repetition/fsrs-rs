@@ -13,3 +13,4 @@ target/
 
 tmp/
 *.anki21
+*.anki21.zip
