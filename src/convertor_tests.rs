@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
+use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::FSRSBatcher;
+use crate::dataset::{FSRSItem, FSRSReview};
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArrayAutodiffBackend;
 use burn::data::dataloader::batcher::Batcher;
@@ -10,9 +12,6 @@ use chrono_tz::Tz;
 use itertools::Itertools;
 use rusqlite::Connection;
 use rusqlite::{Result, Row};
-
-use crate::convertor_tests::RevlogReviewKind::*;
-use crate::dataset::{FSRSItem, FSRSReview};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RevlogEntry {
@@ -255,55 +254,60 @@ fn extract_simulator_config_from_revlog() {
         .iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
         .counts_by(|r| r.button_chosen);
-    let first_rating_prob = first_rating_count
-        .iter()
-        .map(|(button_chosen, count)| {
-            (
-                *button_chosen,
-                *count as f32 / first_rating_count.values().sum::<usize>() as f32,
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let first_rating_prob = [
-        first_rating_prob.get(&1).copied().unwrap_or_default(),
-        first_rating_prob.get(&2).copied().unwrap_or_default(),
-        first_rating_prob.get(&3).copied().unwrap_or_default(),
-        first_rating_prob.get(&4).copied().unwrap_or_default(),
-    ];
-    assert_eq!(first_rating_prob, [0.15339181, 0.0, 0.15339181, 0.6932164,]);
+    let first_rating_prob = {
+        let mut arr = [Default::default(); 5];
+        first_rating_count
+            .iter()
+            .map(|(button_chosen, count)| {
+                (
+                    *button_chosen,
+                    *count as f32 / first_rating_count.values().sum::<usize>() as f32,
+                )
+            })
+            .for_each(|(i, v)| {
+                arr[i as usize] = v;
+            });
+        arr
+    };
+    assert_eq!(
+        first_rating_prob[1..=4],
+        [0.15339181, 0.0, 0.15339181, 0.6932164,]
+    );
     let review_rating_count = revlogs
         .iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen != 1)
         .counts_by(|r| r.button_chosen);
-    let review_rating_prob = review_rating_count
-        .iter()
-        .map(|(button_chosen, count)| {
-            (
-                *button_chosen,
-                *count as f32 / review_rating_count.values().sum::<usize>() as f32,
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let review_rating_prob = [
-        review_rating_prob.get(&2).copied().unwrap_or_default(),
-        review_rating_prob.get(&3).copied().unwrap_or_default(),
-        review_rating_prob.get(&4).copied().unwrap_or_default(),
-    ];
-    assert_eq!(review_rating_prob, [0.07380187, 0.90085745, 0.025340684,]);
+    let review_rating_prob = {
+        let mut arr = [Default::default(); 5];
+        review_rating_count
+            .iter()
+            .for_each(|(button_chosen, count)| {
+                arr[*button_chosen as usize] =
+                    *count as f32 / review_rating_count.values().sum::<usize>() as f32;
+            });
+        arr
+    };
+    assert_eq!(
+        review_rating_prob[2..=4],
+        [0.07380187, 0.90085745, 0.025340684,]
+    );
 
-    let recall_costs = revlogs
-        .iter()
-        .filter(|r| r.review_kind == RevlogReviewKind::Review)
-        .sorted_by(|a, b| a.button_chosen.cmp(&b.button_chosen))
-        .group_by(|r| r.button_chosen)
-        .into_iter()
-        .map(|(button_chosen, group)| {
-            let group_vec = group.into_iter().map(|r| r.taken_millis).collect_vec();
-            let average_secs =
-                group_vec.iter().sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
-            (button_chosen, average_secs)
-        })
-        .collect::<HashMap<_, _>>();
+    let recall_costs = {
+        let mut arr = [Default::default(); 5];
+        revlogs
+            .iter()
+            .filter(|r| r.review_kind == RevlogReviewKind::Review)
+            .sorted_by(|a, b| a.button_chosen.cmp(&b.button_chosen))
+            .group_by(|r| r.button_chosen)
+            .into_iter()
+            .for_each(|(button_chosen, group)| {
+                let group_vec = group.into_iter().map(|r| r.taken_millis).collect_vec();
+                let average_secs =
+                    group_vec.iter().sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
+                arr[button_chosen as usize] = average_secs
+            });
+        arr
+    };
     let learn_cost = {
         let revlogs_filter = revlogs
             .iter()
@@ -340,29 +344,20 @@ fn extract_simulator_config_from_revlog() {
                 .or_insert_with(Vec::new)
                 .push(sec)
         }
-
+        let mut arr = [Default::default(); 5];
         group_sec_by_review_kind
             .into_iter()
-            .map(|(review_kind, group)| {
+            .for_each(|(review_kind, group)| {
                 let average_secs = group.iter().sum::<u32>() as f32 / group.len() as f32 / 1000.0;
-                (review_kind, average_secs)
-            })
-            .collect::<HashMap<_, _>>()
+                arr[review_kind as usize] = average_secs
+            });
+        arr
     };
 
-    let forget_cost = forget_cost
-        .get(&RevlogReviewKind::Relearning)
-        .copied()
-        .unwrap_or_default()
-        + recall_costs.get(&1).copied().unwrap_or_default();
+    let forget_cost = forget_cost[RevlogReviewKind::Relearning as usize] + recall_costs[1];
     assert_eq!(forget_cost, 23.481838);
 
-    let recall_costs = [
-        recall_costs.get(&2).copied().unwrap_or_default(),
-        recall_costs.get(&3).copied().unwrap_or_default(),
-        recall_costs.get(&4).copied().unwrap_or_default(),
-    ];
-    assert_eq!(recall_costs, [9.047336, 7.774851, 5.149275,]);
+    assert_eq!(recall_costs[2..=4], [9.047336, 7.774851, 5.149275,]);
 }
 
 // This test currently expects the following .anki21 file to be placed in tests/data/:
