@@ -253,19 +253,17 @@ fn extract_simulator_config_from_revlog() {
         .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
         .counts_by(|r| r.button_chosen);
     let first_rating_prob = {
-        let mut arr = [Default::default(); 5];
+        let mut arr = [Default::default(); 4];
         first_rating_count
             .iter()
+            .filter(|(&button_chosen, ..)| button_chosen > 0)
             .for_each(|(button_chosen, count)| {
-                arr[*button_chosen as usize] =
+                arr[*button_chosen as usize - 1] =
                     *count as f32 / first_rating_count.values().sum::<usize>() as f32
             });
         arr
     };
-    assert_eq!(
-        first_rating_prob[1..=4],
-        [0.15339181, 0.0, 0.15339181, 0.6932164,]
-    );
+    assert_eq!(first_rating_prob, [0.15339181, 0.0, 0.15339181, 0.6932164,]);
     let review_rating_count = revlogs
         .iter()
         .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen != 1)
