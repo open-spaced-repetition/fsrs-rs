@@ -8,7 +8,11 @@ pub(crate) fn weight_clipper<B: Backend>(weights: Tensor<B, 1>) -> Tensor<B, 1> 
 
 pub(crate) fn clip_weights(weights: &Weights) -> Vec<f32> {
     // https://regex101.com/r/21mXNI/1
-    const CLAMPS: [(f32, f32); 13] = [
+    const CLAMPS: [(f32, f32); 17] = [
+        (0.1, 100.0),
+        (0.1, 100.0),
+        (0.1, 100.0),
+        (0.1, 100.0),
         (1.0, 10.0),
         (0.1, 5.0),
         (0.1, 5.0),
@@ -27,7 +31,6 @@ pub(crate) fn clip_weights(weights: &Weights) -> Vec<f32> {
     let mut weights = weights.to_vec();
     weights
         .iter_mut()
-        .skip(4)
         .zip(CLAMPS)
         .for_each(|(w, (low, high))| *w = w.clamp(low, high));
     weights
@@ -40,17 +43,12 @@ mod tests {
 
     #[test]
     fn weight_clipper_works() {
-        let tensor = Tensor::from_floats([
-            0.0, -1000.0, 1000.0, 0.0, // Ignored
-            1000.0, -1000.0, 1.0, 0.25, -0.1,
-        ]); // Clamped (1.0, 10.0),(0.1, 5.0),(0.1, 5.0),(0.0, 0.5),
+        let tensor =
+            Tensor::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1]);
 
         let param: Tensor<1> = weight_clipper(tensor);
         let values = &param.to_data().value;
 
-        assert_eq!(
-            values,
-            &[0.0, -1000.0, 1000.0, 0.0, 10.0, 0.1, 1.0, 0.25, 0.0]
-        );
+        assert_eq!(values, &[0.1, 0.1, 100.0, 0.1, 10.0, 0.1, 1.0, 0.25, 0.0]);
     }
 }
