@@ -1,5 +1,6 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::Weights;
+use crate::weight_clipper::clip_weights;
 use crate::DEFAULT_WEIGHTS;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArrayBackend;
@@ -227,7 +228,7 @@ pub(crate) fn weights_to_model<B: Backend>(weights: &Weights) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::<B>::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
-        weights.to_vec(),
+        clip_weights(weights),
         Shape { dims: [17] },
     )));
     model
