@@ -70,14 +70,14 @@ mod tests {
     #[test]
     fn lr_scheduler() {
         let mut lr_scheduler = CosineAnnealingLR::init(100000.0, 1.0e-1);
-        let mut lrs = vec![];
-        for i in 0..200000 {
-            if i % 20000 == 0 {
-                lrs.push(lr_scheduler.current_lr);
-            }
-            lr_scheduler.step();
-        }
-        lrs.push(lr_scheduler.current_lr);
+
+        let lrs = (0..=200000)
+            .map(|_| {
+                lr_scheduler.step();
+                lr_scheduler.current_lr
+            })
+            .step_by(20000)
+            .collect::<Vec<_>>();
 
         Data::from(&lrs[..]).assert_approx_eq(
             &Data::from([
