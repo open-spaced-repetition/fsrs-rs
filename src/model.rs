@@ -44,6 +44,10 @@ impl<B: Backend> Model<B> {
         self.w.val()
     }
 
+    fn get(&self, n: usize) -> Tensor<B, 1> {
+        self.w.val().slice([n..(n + 1)])
+    }
+
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
         (t / (s * 9) + 1).powf(-1.0)
     }
@@ -62,10 +66,10 @@ impl<B: Backend> Model<B> {
             Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.w().slice([16..17]));
 
         last_s.clone()
-            * (self.w().slice([8..9]).exp()
+            * (self.get(8).exp()
                 * (-new_d + 11)
-                * (-self.w().slice([9..10]) * last_s.log()).exp()
-                * (((-r + 1) * self.w().slice([10..11])).exp() - 1)
+                * (-self.get(9) * last_s.log()).exp()
+                * (((-r + 1) * self.get(10)).exp() - 1)
                 * hard_penalty
                 * easy_bonus
                 + 1)
@@ -77,14 +81,14 @@ impl<B: Backend> Model<B> {
         new_d: Tensor<B, 1>,
         r: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
-        self.w().slice([11..12])
-            * (-self.w().slice([12..13]) * new_d.log()).exp()
-            * ((self.w().slice([13..14]) * (last_s + 1).log()).exp() - 1)
-            * ((-r + 1) * self.w().slice([14..15])).exp()
+        self.get(11)
+            * (-self.get(12) * new_d.log()).exp()
+            * ((self.get(13) * (last_s + 1).log()).exp() - 1)
+            * ((-r + 1) * self.get(14)).exp()
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w().slice([7..8]) * (self.w().slice([4..5]) - new_d.clone()) + new_d
+        self.get(7) * (self.get(4) - new_d.clone()) + new_d
     }
 
     fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -92,11 +96,11 @@ impl<B: Backend> Model<B> {
     }
 
     fn init_difficulty(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w().slice([4..5]) - self.w().slice([5..6]) * (rating - 3)
+        self.get(4) - self.get(5) * (rating - 3)
     }
 
     fn next_difficulty(&self, difficulty: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        difficulty - self.w().slice([6..7]) * (rating - 3)
+        difficulty - self.get(6) * (rating - 3)
     }
 
     pub(crate) fn step(
