@@ -260,8 +260,8 @@ mod tests {
     #[test]
     fn power_forgetting_curve() {
         let model = Model::new(ModelConfig::default());
-        let delta_t = Tensor::<2>::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0].map(|x| [x]));
-        let stability = Tensor::<2>::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0].map(|x| [x]));
+        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0].map(|x| [x]));
+        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0].map(|x| [x]));
         let retention = model.power_forgetting_curve(delta_t, stability);
         assert_eq!(
             retention.to_data(),
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn init_stability() {
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::<2>::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0].map(|x| [x]));
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0].map(|x| [x]));
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn init_difficulty() {
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::<2>::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0].map(|x| [x]));
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0].map(|x| [x]));
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
@@ -294,11 +294,11 @@ mod tests {
     #[test]
     fn forward() {
         let model = Model::new(ModelConfig::default());
-        let delta_ts = Tensor::<2>::from_floats([
+        let delta_ts = Tensor::from_floats([
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
         ]);
-        let ratings = Tensor::<2>::from_floats([
+        let ratings = Tensor::from_floats([
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
         ]);
@@ -309,8 +309,8 @@ mod tests {
     #[test]
     fn next_difficulty() {
         let model = Model::new(ModelConfig::default());
-        let difficulty = Tensor::<2>::from_floats([5.0; 4].map(|x| [x]));
-        let rating = Tensor::<2>::from_floats([1.0, 2.0, 3.0, 4.0].map(|x| [x]));
+        let difficulty = Tensor::from_floats([5.0; 4].map(|x| [x]));
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0].map(|x| [x]));
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
         assert_eq!(
@@ -328,10 +328,10 @@ mod tests {
     #[test]
     fn next_stability() {
         let model = Model::new(ModelConfig::default());
-        let stability = Tensor::<2>::from_floats([5.0; 4].map(|x| [x]));
-        let difficulty = Tensor::<2>::from_floats([1.0, 2.0, 3.0, 4.0].map(|x| [x]));
-        let retention = Tensor::<2>::from_floats([0.9, 0.8, 0.7, 0.6].map(|x| [x]));
-        let rating = Tensor::<2>::from_floats([1.0, 2.0, 3.0, 4.0].map(|x| [x]));
+        let stability = Tensor::from_floats([5.0; 4].map(|x| [x]));
+        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0].map(|x| [x]));
+        let retention = Tensor::from_floats([0.9, 0.8, 0.7, 0.6].map(|x| [x]));
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0].map(|x| [x]));
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),

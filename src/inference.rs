@@ -51,12 +51,9 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
 impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     fn from(m: MemoryState) -> Self {
         MemoryStateTensors {
-            stability: Tensor::<B, 1>::from_data(Data::new(
-                vec![m.stability.elem()],
-                Shape { dims: [1] },
-            ))
-            .unsqueeze(),
-            difficulty: Tensor::<B, 1>::from_data(Data::new(
+            stability: Tensor::from_data(Data::new(vec![m.stability.elem()], Shape { dims: [1] }))
+                .unsqueeze(),
+            difficulty: Tensor::from_data(Data::new(
                 vec![m.difficulty.elem()],
                 Shape { dims: [1] },
             ))
@@ -80,11 +77,11 @@ impl<B: Backend> FSRS<B> {
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
         let time_history =
-            Tensor::<B, 1>::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
+            Tensor::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
                 .unsqueeze()
                 .transpose();
         let rating_history =
-            Tensor::<B, 1>::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
+            Tensor::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
                 .unsqueeze()
                 .transpose();
         self.model().forward(time_history, rating_history).into()
@@ -98,10 +95,9 @@ impl<B: Backend> FSRS<B> {
         desired_retention: f32,
         days_elapsed: u32,
     ) -> NextStates {
-        let delta_t =
-            Tensor::<B, 1>::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }))
-                .unsqueeze()
-                .transpose();
+        let delta_t = Tensor::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }))
+            .unsqueeze()
+            .transpose();
         let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
@@ -112,12 +108,9 @@ impl<B: Backend> FSRS<B> {
                 MemoryState::from(
                     model.step(
                         delta_t.clone(),
-                        Tensor::<B, 1>::from_data(Data::new(
-                            vec![rating.elem()],
-                            Shape { dims: [1] },
-                        ))
-                        .unsqueeze()
-                        .transpose(),
+                        Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }))
+                            .unsqueeze()
+                            .transpose(),
                         current_memory_state_tensors.clone(),
                     ),
                 )
