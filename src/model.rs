@@ -50,10 +50,6 @@ impl<B: Backend> Model<B> {
         }
     }
 
-    fn w(&self) -> Tensor<B, 1> {
-        self.w.val()
-    }
-
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
         (t / (s * 9) + 1).powf(-1.0)
     }
@@ -98,7 +94,7 @@ impl<B: Backend> Model<B> {
     }
 
     fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w().select(0, rating.clone().int() - 1)
+        self.w.val().select(0, rating.clone().int() - 1)
     }
 
     fn init_difficulty(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -250,7 +246,7 @@ mod tests {
     fn w() {
         let model = Model::new(ModelConfig::default());
         assert_eq!(
-            model.w().to_data(),
+            model.w.val().to_data(),
             Data::from([
                 0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
                 1.26, 0.29, 2.61
