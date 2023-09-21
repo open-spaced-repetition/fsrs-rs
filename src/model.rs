@@ -60,10 +60,9 @@ impl<B: Backend> Model<B> {
         rating: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
         let batch_size = rating.dims()[0];
-        let hard_penalty = Tensor::ones([batch_size])
-            .mask_where(rating.clone().equal_elem(2), self.w().slice([15..16]));
-        let easy_bonus =
-            Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.w().slice([16..17]));
+        let hard_penalty =
+            Tensor::ones([batch_size]).mask_where(rating.clone().equal_elem(2), self.get(15));
+        let easy_bonus = Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.get(16));
 
         last_s.clone()
             * (self.get(8).exp()
