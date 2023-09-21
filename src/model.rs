@@ -16,6 +16,16 @@ pub struct Model<B: Backend> {
     pub config: ModelConfig,
 }
 
+trait Get<B: Backend, const N: usize> {
+    fn get(&self, n: usize) -> Tensor<B, N>;
+}
+
+impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
+    fn get(&self, n: usize) -> Tensor<B, N> {
+        self.clone().slice([n..(n + 1)])
+    }
+}
+
 impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
@@ -44,10 +54,6 @@ impl<B: Backend> Model<B> {
         self.w.val()
     }
 
-    fn get(&self, n: usize) -> Tensor<B, 1> {
-        self.w.val().slice([n..(n + 1)])
-    }
-
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
         (t / (s * 9) + 1).powf(-1.0)
     }
@@ -61,14 +67,15 @@ impl<B: Backend> Model<B> {
     ) -> Tensor<B, 1> {
         let batch_size = rating.dims()[0];
         let hard_penalty =
-            Tensor::ones([batch_size]).mask_where(rating.clone().equal_elem(2), self.get(15));
-        let easy_bonus = Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.get(16));
+            Tensor::ones([batch_size]).mask_where(rating.clone().equal_elem(2), self.w.get(15));
+        let easy_bonus =
+            Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.w.get(16));
 
         last_s.clone()
-            * (self.get(8).exp()
+            * (self.w.get(8).exp()
                 * (-new_d + 11)
-                * (-self.get(9) * last_s.log()).exp()
-                * (((-r + 1) * self.get(10)).exp() - 1)
+                * (-self.w.get(9) * last_s.log()).exp()
+                * (((-r + 1) * self.w.get(10)).exp() - 1)
                 * hard_penalty
                 * easy_bonus
                 + 1)
@@ -80,14 +87,14 @@ impl<B: Backend> Model<B> {
         new_d: Tensor<B, 1>,
         r: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
-        self.get(11)
-            * (-self.get(12) * new_d.log()).exp()
-            * ((self.get(13) * (last_s + 1).log()).exp() - 1)
-            * ((-r + 1) * self.get(14)).exp()
+        self.w.get(11)
+            * (-self.w.get(12) * new_d.log()).exp()
+            * ((self.w.get(13) * (last_s + 1).log()).exp() - 1)
+            * ((-r + 1) * self.w.get(14)).exp()
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.get(7) * (self.get(4) - new_d.clone()) + new_d
+        self.w.get(7) * (self.w.get(4) - new_d.clone()) + new_d
     }
 
     fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -95,11 +102,11 @@ impl<B: Backend> Model<B> {
     }
 
     fn init_difficulty(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.get(4) - self.get(5) * (rating - 3)
+        self.w.get(4) - self.w.get(5) * (rating - 3)
     }
 
     fn next_difficulty(&self, difficulty: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        difficulty - self.get(6) * (rating - 3)
+        difficulty - self.w.get(6) * (rating - 3)
     }
 
     pub(crate) fn step(
@@ -149,9 +156,9 @@ impl<B: Backend> Model<B> {
         let [seq_len, _batch_size] = delta_ts.dims();
         let mut state = None;
         for i in 0..seq_len {
-            let delta_t = delta_ts.clone().slice([i..i + 1]).squeeze(0);
+            let delta_t = delta_ts.clone().get(i).squeeze(0);
             // [batch_size]
-            let rating = ratings.clone().slice([i..i + 1]).squeeze(0);
+            let rating = ratings.clone().get(i).squeeze(0);
             // [batch_size]
             state = Some(self.step(delta_t, rating, state));
         }
