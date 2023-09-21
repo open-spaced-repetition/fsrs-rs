@@ -19,15 +19,17 @@ pub struct Model<B: Backend> {
 impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
-        let initial_stability = config.initial_stability.unwrap_or([0.4, 0.6, 2.4, 5.8]);
-        let mut initial_params = vec![];
-        initial_params.extend_from_slice(&initial_stability);
-        initial_params.extend_from_slice(&[
-            4.93, 0.94, 0.86, 0.01, // difficulty
-            1.49, 0.14, 0.94, // success
-            2.18, 0.05, 0.34, 1.26, // failure
-            0.29, 2.61, // hard penalty, easy bonus
-        ]);
+        let initial_params = config
+            .initial_stability
+            .unwrap_or([0.4, 0.6, 2.4, 5.8])
+            .into_iter()
+            .chain([
+                4.93, 0.94, 0.86, 0.01, // difficulty
+                1.49, 0.14, 0.94, // success
+                2.18, 0.05, 0.34, 1.26, // failure
+                0.29, 2.61, // hard penalty, easy bonus
+            ])
+            .collect();
 
         Self {
             w: Param::from(Tensor::from_floats(Data::new(

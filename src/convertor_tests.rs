@@ -128,11 +128,10 @@ fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> Nai
 }
 
 fn keep_first_revlog_same_date(
-    entries: Vec<RevlogEntry>,
+    mut entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,
     timezone: Tz,
 ) -> Vec<RevlogEntry> {
-    let mut entries = entries.clone();
     let mut unique_dates = std::collections::HashSet::new();
     entries.retain(|entry| {
         let date = convert_to_date(entry.id, next_day_starts_at, timezone);
