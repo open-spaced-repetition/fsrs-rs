@@ -156,9 +156,9 @@ impl<B: Backend> Model<B> {
         let [seq_len, _batch_size] = delta_ts.dims();
         let mut state = None;
         for i in 0..seq_len {
-            let delta_t = delta_ts.clone().get(i).squeeze(0);
+            let delta_t = delta_ts.get(i).squeeze(0);
             // [batch_size]
-            let rating = ratings.clone().get(i).squeeze(0);
+            let rating = ratings.get(i).squeeze(0);
             // [batch_size]
             state = Some(self.step(delta_t, rating, state));
         }
