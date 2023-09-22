@@ -24,12 +24,9 @@ pub static DEFAULT_WEIGHTS: &[f32] = &[
 fn infer<B: Backend>(
     model: &Model<B>,
     batch: FSRSBatch<B>,
-) -> (MemoryStateTensors<B>, Tensor<B, 2>) {
+) -> (MemoryStateTensors<B>, Tensor<B, 1>) {
     let state = model.forward(batch.t_historys, batch.r_historys);
-    let retention = model.power_forgetting_curve(
-        batch.delta_ts.clone().unsqueeze::<2>().transpose(),
-        state.stability.clone(),
-    );
+    let retention = model.power_forgetting_curve(batch.delta_ts.clone(), state.stability.clone());
     (state, retention)
 }
 
@@ -51,17 +48,11 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
 impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     fn from(m: MemoryState) -> Self {
         MemoryStateTensors {
-            stability: Tensor::<B, 1>::from_data(Data::new(
-                vec![m.stability.elem()],
-                Shape { dims: [1] },
-            ))
-            .unsqueeze(),
-            difficulty: Tensor::<B, 1>::from_data(Data::new(
+            stability: Tensor::from_data(Data::new(vec![m.stability.elem()], Shape { dims: [1] })),
+            difficulty: Tensor::from_data(Data::new(
                 vec![m.difficulty.elem()],
                 Shape { dims: [1] },
-            ))
-            .unsqueeze()
-            .transpose(),
+            )),
         }
     }
 }
@@ -80,11 +71,11 @@ impl<B: Backend> FSRS<B> {
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
         let time_history =
-            Tensor::<B, 1>::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
+            Tensor::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
                 .unsqueeze()
                 .transpose();
         let rating_history =
-            Tensor::<B, 1>::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
+            Tensor::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
                 .unsqueeze()
                 .transpose();
         self.model().forward(time_history, rating_history).into()
@@ -98,10 +89,7 @@ impl<B: Backend> FSRS<B> {
         desired_retention: f32,
         days_elapsed: u32,
     ) -> NextStates {
-        let delta_t =
-            Tensor::<B, 1>::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }))
-                .unsqueeze()
-                .transpose();
+        let delta_t = Tensor::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }));
         let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
@@ -109,18 +97,11 @@ impl<B: Backend> FSRS<B> {
                 // When there's an existing memory state and no days have elapsed, we leave it unchanged.
                 current_memory_state
             } else {
-                MemoryState::from(
-                    model.step(
-                        delta_t.clone(),
-                        Tensor::<B, 1>::from_data(Data::new(
-                            vec![rating.elem()],
-                            Shape { dims: [1] },
-                        ))
-                        .unsqueeze()
-                        .transpose(),
-                        current_memory_state_tensors.clone(),
-                    ),
-                )
+                MemoryState::from(model.step(
+                    delta_t.clone(),
+                    Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] })),
+                    current_memory_state_tensors.clone(),
+                ))
             }
         });
 
@@ -160,7 +141,7 @@ impl<B: Backend> FSRS<B> {
         for chunk in items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
             let (_state, retention) = infer::<B>(model, batch.clone());
-            let pred: Vec<f32> = retention.clone().squeeze::<1>(1).to_data().convert().value;
+            let pred: Vec<f32> = retention.clone().to_data().convert().value;
             all_predictions.extend(pred);
             let true_val: Vec<f32> = batch.labels.clone().float().to_data().convert().value;
             all_true_val.extend(true_val);
@@ -173,10 +154,7 @@ impl<B: Backend> FSRS<B> {
         }
         let rmse = calibration_rmse(&all_predictions, &all_true_val);
         let all_retention = Tensor::cat(all_retention, 0);
-        let all_labels = Tensor::cat(all_labels, 0)
-            .unsqueeze::<2>()
-            .float()
-            .transpose();
+        let all_labels = Tensor::cat(all_labels, 0).float();
         let loss = BCELoss::<B>::new().forward(all_retention, all_labels);
         Ok(ModelEvaluation {
             log_loss: loss.to_data().value[0].elem(),

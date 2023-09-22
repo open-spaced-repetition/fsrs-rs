@@ -33,8 +33,8 @@ impl<B: Backend> BCELoss<B> {
             backend: PhantomData,
         }
     }
-    pub fn forward(&self, retentions: Tensor<B, 2>, labels: Tensor<B, 2>) -> Tensor<B, 1> {
-        let loss: Tensor<B, 2> =
+    pub fn forward(&self, retentions: Tensor<B, 1>, labels: Tensor<B, 1>) -> Tensor<B, 1> {
+        let loss: Tensor<B, 1> =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
         info!("loss: {}", &loss);
         loss.mean().neg()
@@ -52,15 +52,10 @@ impl<B: Backend> Model<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys);
-        let retention = self.power_forgetting_curve(
-            delta_ts.clone().unsqueeze::<2>().transpose(),
-            state.stability,
-        );
-        let logits = Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 1);
-        let loss = BCELoss::new().forward(
-            retention,
-            labels.clone().unsqueeze::<2>().float().transpose(),
-        );
+        let retention = self.power_forgetting_curve(delta_ts.clone(), state.stability);
+        let logits =
+            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).unsqueeze::<2>();
+        let loss = BCELoss::new().forward(retention, labels.clone().float());
         ClassificationOutput::new(loss, logits, labels)
     }
 }

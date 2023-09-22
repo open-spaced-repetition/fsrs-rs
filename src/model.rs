@@ -16,18 +16,30 @@ pub struct Model<B: Backend> {
     pub config: ModelConfig,
 }
 
+trait Get<B: Backend, const N: usize> {
+    fn get(&self, n: usize) -> Tensor<B, N>;
+}
+
+impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
+    fn get(&self, n: usize) -> Tensor<B, N> {
+        self.clone().slice([n..(n + 1)])
+    }
+}
+
 impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
-        let initial_stability = config.initial_stability.unwrap_or([0.4, 0.6, 2.4, 5.8]);
-        let mut initial_params = vec![];
-        initial_params.extend_from_slice(&initial_stability);
-        initial_params.extend_from_slice(&[
-            4.93, 0.94, 0.86, 0.01, // difficulty
-            1.49, 0.14, 0.94, // success
-            2.18, 0.05, 0.34, 1.26, // failure
-            0.29, 2.61, // hard penalty, easy bonus
-        ]);
+        let initial_params = config
+            .initial_stability
+            .unwrap_or([0.4, 0.6, 2.4, 5.8])
+            .into_iter()
+            .chain([
+                4.93, 0.94, 0.86, 0.01, // difficulty
+                1.49, 0.14, 0.94, // success
+                2.18, 0.05, 0.34, 1.26, // failure
+                0.29, 2.61, // hard penalty, easy bonus
+            ])
+            .collect();
 
         Self {
             w: Param::from(Tensor::from_floats(Data::new(
@@ -38,34 +50,28 @@ impl<B: Backend> Model<B> {
         }
     }
 
-    fn w(&self) -> Tensor<B, 2> {
-        self.w.val().unsqueeze().transpose()
-    }
-
-    pub fn power_forgetting_curve(&self, t: Tensor<B, 2>, s: Tensor<B, 2>) -> Tensor<B, 2> {
+    pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
         (t / (s * 9) + 1).powf(-1.0)
     }
 
     fn stability_after_success(
         &self,
-        last_s: Tensor<B, 2>,
-        new_d: Tensor<B, 2>,
-        r: Tensor<B, 2>,
-        rating: Tensor<B, 2>,
-    ) -> Tensor<B, 2> {
+        last_s: Tensor<B, 1>,
+        new_d: Tensor<B, 1>,
+        r: Tensor<B, 1>,
+        rating: Tensor<B, 1>,
+    ) -> Tensor<B, 1> {
         let batch_size = rating.dims()[0];
-        let hard_penalty = Tensor::ones([batch_size, 1]).mask_where(
-            rating.clone().equal_elem(2),
-            self.w().slice([15..16]).unsqueeze(),
-        );
-        let easy_bonus = Tensor::ones([batch_size, 1])
-            .mask_where(rating.equal_elem(4), self.w().slice([16..17]).unsqueeze());
+        let hard_penalty =
+            Tensor::ones([batch_size]).mask_where(rating.clone().equal_elem(2), self.w.get(15));
+        let easy_bonus =
+            Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.w.get(16));
 
         last_s.clone()
-            * (self.w().slice([8..9]).exp()
+            * (self.w.get(8).exp()
                 * (-new_d + 11)
-                * (-self.w().slice([9..10]) * last_s.log()).exp()
-                * (((-r + 1) * self.w().slice([10..11])).exp() - 1)
+                * (-self.w.get(9) * last_s.log()).exp()
+                * (((-r + 1) * self.w.get(10)).exp() - 1)
                 * hard_penalty
                 * easy_bonus
                 + 1)
@@ -73,40 +79,36 @@ impl<B: Backend> Model<B> {
 
     fn stability_after_failure(
         &self,
-        last_s: Tensor<B, 2>,
-        new_d: Tensor<B, 2>,
-        r: Tensor<B, 2>,
-    ) -> Tensor<B, 2> {
-        self.w().slice([11..12])
-            * (-self.w().slice([12..13]) * new_d.log()).exp()
-            * ((self.w().slice([13..14]) * (last_s + 1).log()).exp() - 1)
-            * ((-r + 1) * self.w().slice([14..15])).exp()
+        last_s: Tensor<B, 1>,
+        new_d: Tensor<B, 1>,
+        r: Tensor<B, 1>,
+    ) -> Tensor<B, 1> {
+        self.w.get(11)
+            * (-self.w.get(12) * new_d.log()).exp()
+            * ((self.w.get(13) * (last_s + 1).log()).exp() - 1)
+            * ((-r + 1) * self.w.get(14)).exp()
     }
 
-    fn mean_reversion(&self, new_d: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.w().slice([7..8]) * (self.w().slice([4..5]) - new_d.clone()) + new_d
+    fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
+        self.w.get(7) * (self.w.get(4) - new_d.clone()) + new_d
     }
 
-    fn init_stability(&self, rating: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.w()
-            .squeeze::<1>(1)
-            .select(0, rating.clone().squeeze::<1>(1).int() - 1)
-            .unsqueeze()
-            .transpose()
+    fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
+        self.w.val().select(0, rating.clone().int() - 1)
     }
 
-    fn init_difficulty(&self, rating: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.w().slice([4..5]) - self.w().slice([5..6]) * (rating - 3)
+    fn init_difficulty(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
+        self.w.get(4) - self.w.get(5) * (rating - 3)
     }
 
-    fn next_difficulty(&self, difficulty: Tensor<B, 2>, rating: Tensor<B, 2>) -> Tensor<B, 2> {
-        difficulty - self.w().slice([6..7]) * (rating - 3)
+    fn next_difficulty(&self, difficulty: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
+        difficulty - self.w.get(6) * (rating - 3)
     }
 
     pub(crate) fn step(
         &self,
-        delta_t: Tensor<B, 2>,
-        rating: Tensor<B, 2>,
+        delta_t: Tensor<B, 1>,
+        rating: Tensor<B, 1>,
         state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let (new_s, new_d) = if let Some(state) = state {
@@ -119,7 +121,7 @@ impl<B: Backend> Model<B> {
                 retention.clone(),
                 rating.clone(),
             );
-            let stability_after_failure: Tensor<B, 2> = self.stability_after_failure(
+            let stability_after_failure: Tensor<B, 1> = self.stability_after_failure(
                 state.stability.clone(),
                 new_difficulty.clone(),
                 retention.clone(),
@@ -150,10 +152,10 @@ impl<B: Backend> Model<B> {
         let [seq_len, _batch_size] = delta_ts.dims();
         let mut state = None;
         for i in 0..seq_len {
-            let delta_t = delta_ts.clone().slice([i..i + 1]).transpose();
-            // [batch_size, 1]
-            let rating = ratings.clone().slice([i..i + 1]).transpose();
-            // [batch_size, 1]
+            let delta_t = delta_ts.get(i).squeeze(0);
+            // [batch_size]
+            let rating = ratings.get(i).squeeze(0);
+            // [batch_size]
             state = Some(self.step(delta_t, rating, state));
         }
         state.unwrap()
@@ -162,8 +164,8 @@ impl<B: Backend> Model<B> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct MemoryStateTensors<B: Backend> {
-    pub stability: Tensor<B, 2>,
-    pub difficulty: Tensor<B, 2>,
+    pub stability: Tensor<B, 1>,
+    pub difficulty: Tensor<B, 1>,
 }
 
 #[derive(Config, Module, Debug, Default)]
@@ -244,25 +246,10 @@ mod tests {
     fn w() {
         let model = Model::new(ModelConfig::default());
         assert_eq!(
-            model.w().to_data(),
+            model.w.val().to_data(),
             Data::from([
-                [0.4],
-                [0.6],
-                [2.4],
-                [5.8],
-                [4.93],
-                [0.94],
-                [0.86],
-                [0.01],
-                [1.49],
-                [0.14],
-                [0.94],
-                [2.18],
-                [0.05],
-                [0.34],
-                [1.26],
-                [0.29],
-                [2.61]
+                0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
+                1.26, 0.29, 2.61
             ])
         )
     }
@@ -270,52 +257,45 @@ mod tests {
     #[test]
     fn power_forgetting_curve() {
         let model = Model::new(ModelConfig::default());
-        let delta_t = Tensor::<2>::from_floats([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]);
-        let stability = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0], [4.0], [2.0]]);
+        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0]);
         let retention = model.power_forgetting_curve(delta_t, stability);
         assert_eq!(
             retention.to_data(),
-            Data::from([
-                [1.0],
-                [0.9473684],
-                [0.9310345],
-                [0.92307687],
-                [0.9],
-                [0.7826087]
-            ])
+            Data::from([1.0, 0.9473684, 0.9310345, 0.92307687, 0.9, 0.7826087])
         )
     }
 
     #[test]
     fn init_stability() {
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0]);
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
-            Data::from([[0.4], [0.6], [2.4], [5.8], [0.4], [0.6]])
+            Data::from([0.4, 0.6, 2.4, 5.8, 0.4, 0.6])
         )
     }
 
     #[test]
     fn init_difficulty() {
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0], [1.0], [2.0]]);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0]);
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
-            Data::from([[6.81], [5.87], [4.93], [3.9899998], [6.81], [5.87]])
+            Data::from([6.81, 5.87, 4.93, 3.9899998, 6.81, 5.87])
         )
     }
 
     #[test]
     fn forward() {
         let model = Model::new(ModelConfig::default());
-        let delta_ts = Tensor::<2>::from_floats([
+        let delta_ts = Tensor::from_floats([
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
         ]);
-        let ratings = Tensor::<2>::from_floats([
+        let ratings = Tensor::from_floats([
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
         ]);
@@ -326,29 +306,29 @@ mod tests {
     #[test]
     fn next_difficulty() {
         let model = Model::new(ModelConfig::default());
-        let difficulty = Tensor::<2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
-        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
+        let difficulty = Tensor::from_floats([5.0; 4]);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0]);
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([[6.7200003], [5.86], [5.0], [4.14]])
+            Data::from([6.7200003, 5.86, 5.0, 4.14])
         );
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([[6.7021003], [5.8507], [4.9993], [4.1478996]])
+            Data::from([6.7021003, 5.8507, 4.9993, 4.1478996])
         )
     }
 
     #[test]
     fn next_stability() {
         let model = Model::new(ModelConfig::default());
-        let stability = Tensor::<2>::from_floats([[5.0], [5.0], [5.0], [5.0]]);
-        let difficulty = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
-        let retention = Tensor::<2>::from_floats([[0.9], [0.8], [0.7], [0.6]]);
-        let rating = Tensor::<2>::from_floats([[1.0], [2.0], [3.0], [4.0]]);
+        let stability = Tensor::from_floats([5.0; 4]);
+        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0]);
+        let retention = Tensor::from_floats([0.9, 0.8, 0.7, 0.6]);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0]);
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),
@@ -358,19 +338,19 @@ mod tests {
         s_recall.clone().backward();
         assert_eq!(
             s_recall.to_data(),
-            Data::from([[22.454704], [14.560361], [51.15574], [152.6869]])
+            Data::from([22.454704, 14.560361, 51.15574, 152.6869])
         );
         let s_forget = model.stability_after_failure(stability, difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
-            Data::from([[2.074517], [2.2729328], [2.526406], [2.8247323]])
+            Data::from([2.074517, 2.2729328, 2.526406, 2.8247323])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
         assert_eq!(
             next_stability.to_data(),
-            Data::from([[2.074517], [14.560361], [51.15574], [152.6869]])
+            Data::from([2.074517, 14.560361, 51.15574, 152.6869])
         )
     }
 
