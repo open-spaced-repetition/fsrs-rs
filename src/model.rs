@@ -26,6 +26,18 @@ impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
     }
 }
 
+trait Pow<B: Backend, const N: usize> {
+    // https://github.com/burn-rs/burn/issues/590 , after that finished, just remove this trait and below impl, all will ok.
+    fn pow(&self, other: Tensor<B, N>) -> Tensor<B, N>;
+}
+
+impl<B: Backend, const N: usize> Pow<B, N> for Tensor<B, N> {
+    fn pow(&self, other: Tensor<B, N>) -> Tensor<B, N> {
+        // a ^ b => exp(ln(a^b)) => exp(b ln (a))
+        (self.clone().log() * other).exp()
+    }
+}
+
 impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
@@ -70,7 +82,7 @@ impl<B: Backend> Model<B> {
         last_s.clone()
             * (self.w.get(8).exp()
                 * (-new_d + 11)
-                * (-self.w.get(9) * last_s.log()).exp()
+                * (last_s.pow(-self.w.get(9)))
                 * (((-r + 1) * self.w.get(10)).exp() - 1)
                 * hard_penalty
                 * easy_bonus
@@ -84,8 +96,8 @@ impl<B: Backend> Model<B> {
         r: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
         self.w.get(11)
-            * (-self.w.get(12) * new_d.log()).exp()
-            * ((self.w.get(13) * (last_s + 1).log()).exp() - 1)
+            * new_d.pow(-self.w.get(12))
+            * ((last_s + 1).pow(self.w.get(13)) - 1)
             * ((-r + 1) * self.w.get(14)).exp()
     }
 

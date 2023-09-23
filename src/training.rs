@@ -34,7 +34,7 @@ impl<B: Backend> BCELoss<B> {
         }
     }
     pub fn forward(&self, retentions: Tensor<B, 1>, labels: Tensor<B, 1>) -> Tensor<B, 1> {
-        let loss: Tensor<B, 1> =
+        let loss =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
         info!("loss: {}", &loss);
         loss.mean().neg()
