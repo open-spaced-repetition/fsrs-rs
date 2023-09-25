@@ -157,7 +157,7 @@ pub fn filter_outlier(items: Vec<FSRSItem>) -> Vec<FSRSItem> {
         let mut sub_groups: Vec<(&i32, &Vec<FSRSItem>)> = delta_t_groups.iter().collect();
 
         // 按子组大小升序排序，大小相同的按 delta_t 降序排序
-        sub_groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+        sub_groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
 
         // 计算总大小
         let total = sub_groups.iter().map(|(_, vec)| vec.len()).sum::<usize>();
