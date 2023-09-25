@@ -136,28 +136,29 @@ impl From<Vec<FSRSItem>> for FSRSDataset {
 }
 
 pub fn filter_outlier(items: Vec<FSRSItem>) -> Vec<FSRSItem> {
-    let mut groups: HashMap<i32, HashMap<i32, Vec<FSRSItem>>> = HashMap::new();
+    let mut groups = HashMap::<i32, HashMap<i32, Vec<FSRSItem>>>::new();
 
     // 首先按照第一个 review 的 rating 和第二个 review 的 delta 进行分组
     for item in items.iter() {
         let (first_review, second_review) = (item.reviews.first().unwrap(), item.current());
-        let rating_group = groups
-            .entry(first_review.rating)
-            .or_insert_with(HashMap::new);
-        let delta_t_group = rating_group
-            .entry(second_review.delta_t)
-            .or_insert_with(Vec::new);
+        let rating_group = groups.entry(first_review.rating).or_default();
+        let delta_t_group = rating_group.entry(second_review.delta_t).or_default();
         delta_t_group.push(item.clone());
     }
 
-    let mut filtered_items = Vec::new();
+    let mut filtered_items = vec![];
 
     // 对每个按 rating 分组的子组进一步处理
     for (_rating, delta_t_groups) in groups.iter() {
-        let mut sub_groups: Vec<(&i32, &Vec<FSRSItem>)> = delta_t_groups.iter().collect();
+        let mut sub_groups = delta_t_groups.iter().collect::<Vec<_>>();
 
         // 按子组大小升序排序，大小相同的按 delta_t 降序排序
-        sub_groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
+        sub_groups.sort_by(|(delta_t_a, subv_a), (delta_t_b, subv_b)| {
+            subv_b
+                .len()
+                .cmp(&subv_a.len())
+                .then(delta_t_a.cmp(delta_t_b))
+        });
 
         // 计算总大小
         let total = sub_groups.iter().map(|(_, vec)| vec.len()).sum::<usize>();
