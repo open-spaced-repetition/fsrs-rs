@@ -479,6 +479,19 @@ mod tests {
                 difficulty: 9.956561
             }
         );
+        let interval = 15;
+        let ease_factor = 2.0;
+        let fsrs_factor = fsrs
+            .next_states(
+                Some(fsrs.memory_state_from_sm2(ease_factor, interval as f32)),
+                0.9,
+                interval,
+            )
+            .good
+            .memory
+            .stability
+            / interval as f32;
+        assert!((fsrs_factor - ease_factor).abs() < 0.01);
         Ok(())
     }
 }
