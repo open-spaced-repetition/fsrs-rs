@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::model::{MemoryStateTensors, FSRS};
+use crate::model::{Get, MemoryStateTensors, FSRS};
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
@@ -79,6 +79,41 @@ impl<B: Backend> FSRS<B> {
                 .unsqueeze()
                 .transpose();
         self.model().forward(time_history, rating_history).into()
+    }
+
+    /// If a card has incomplete learning history, memory state can be approximated from
+    /// current sm2 values.
+    /// Weights must have been provided when calling FSRS::new().
+    pub fn memory_state_from_sm2(&self, ease_factor: f32, interval: f32) -> MemoryState {
+        let stability = interval.max(0.1);
+        let w = &self.model().w;
+        let w8: f32 = w.get(8).into_scalar().elem();
+        let w9: f32 = w.get(9).into_scalar().elem();
+        let w10: f32 = w.get(10).into_scalar().elem();
+        let difficulty = 11.0
+            - (ease_factor - 1.0) / (w8.exp() * stability.powf(-w9) * ((0.1 * w10).exp() - 1.0));
+        MemoryState {
+            stability,
+            difficulty: difficulty.clamp(1.0, 10.0),
+        }
+    }
+
+    /// Calculate the next interval for the current memory state, for rescheduling. Stability
+    /// should be provided except when the card is new. Rating is ignored except when card is new.
+    /// Weights must have been provided when calling FSRS::new().
+    pub fn next_interval(
+        &self,
+        stability: Option<f32>,
+        desired_retention: f32,
+        rating: u32,
+    ) -> u32 {
+        let stability = stability.unwrap_or_else(|| {
+            // get initial stability for new card
+            let rating = Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }));
+            let model = self.model();
+            model.init_stability(rating.clone()).into_scalar().elem()
+        });
+        next_interval(stability, desired_retention)
     }
 
     /// The intervals and memory states for each answer button.
@@ -408,6 +443,7 @@ mod tests {
                 }
             }
         );
+        assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121);
         Ok(())
     }
 
@@ -423,6 +459,39 @@ mod tests {
         state_a = fsrs.next_states(Some(state_a), 1.0, 1).again.memory;
         assert_ne!(state_a, state_b);
 
+        Ok(())
+    }
+
+    #[test]
+    fn memory_from_sm2() -> Result<()> {
+        let fsrs = FSRS::new(Some(&[]))?;
+        assert_eq!(
+            fsrs.memory_state_from_sm2(2.5, 10.0),
+            MemoryState {
+                stability: 10.0,
+                difficulty: 6.265295
+            }
+        );
+        assert_eq!(
+            fsrs.memory_state_from_sm2(1.3, 20.0),
+            MemoryState {
+                stability: 20.0,
+                difficulty: 9.956561
+            }
+        );
+        let interval = 15;
+        let ease_factor = 2.0;
+        let fsrs_factor = fsrs
+            .next_states(
+                Some(fsrs.memory_state_from_sm2(ease_factor, interval as f32)),
+                0.9,
+                interval,
+            )
+            .good
+            .memory
+            .stability
+            / interval as f32;
+        assert!((fsrs_factor - ease_factor).abs() < 0.01);
         Ok(())
     }
 }

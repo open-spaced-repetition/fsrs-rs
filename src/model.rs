@@ -16,7 +16,7 @@ pub struct Model<B: Backend> {
     pub config: ModelConfig,
 }
 
-trait Get<B: Backend, const N: usize> {
+pub(crate) trait Get<B: Backend, const N: usize> {
     fn get(&self, n: usize) -> Tensor<B, N>;
 }
 
@@ -105,7 +105,7 @@ impl<B: Backend> Model<B> {
         self.w.get(7) * (self.w.get(4) - new_d.clone()) + new_d
     }
 
-    fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
+    pub(crate) fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
         self.w.val().select(0, rating.clone().int() - 1)
     }
 
