@@ -165,7 +165,7 @@ pub fn filter_outlier(items: Vec<FSRSItem>) -> Vec<FSRSItem> {
         let mut has_been_removed = 0;
 
         for (_delta_t, sub_group) in sub_groups.iter().rev() {
-            if has_been_removed + sub_group.len() > (total as f64 * 0.05).ceil() as usize {
+            if has_been_removed + sub_group.len() > total / 20 {
                 filtered_items.extend_from_slice(sub_group);
             } else {
                 has_been_removed += sub_group.len();
