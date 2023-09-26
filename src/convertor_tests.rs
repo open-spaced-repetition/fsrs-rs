@@ -170,8 +170,8 @@ fn convert_to_fsrs_items(
                     .iter()
                     .take(idx + 1)
                     .map(|r| FSRSReview {
-                        rating: r.button_chosen as i32,
-                        delta_t: r.last_interval.max(0),
+                        rating: r.button_chosen as u32,
+                        delta_t: r.last_interval.max(0) as u32,
                     })
                     .collect();
                 FSRSItem { reviews }

@@ -4,7 +4,7 @@ use itertools::Itertools;
 use ndarray::Array1;
 use std::collections::HashMap;
 
-static R_S0_DEFAULT_ARRAY: &[(i32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)];
+static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)];
 
 pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> Result<[f32; 4]> {
     let pretrainset = create_pretrain_data(fsrs_items);
@@ -13,8 +13,8 @@ pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> Result<[f32; 4]> {
     smooth_and_fill(&mut rating_stability.clone(), &rating_count)
 }
 
-type FirstRating = i32;
-type Count = i32;
+type FirstRating = u32;
+type Count = u32;
 
 fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<FirstRating, Vec<AverageRecall>> {
     // filter FSRSItem instances with exactly 2 reviews.
@@ -73,7 +73,7 @@ fn total_rating_count(
 ) -> HashMap<FirstRating, Count> {
     let mut rating_count = HashMap::new();
     for (first_rating, data) in pretrainset {
-        let count = data.iter().map(|d| d.count).sum::<f32>() as i32;
+        let count = data.iter().map(|d| d.count).sum::<f32>() as u32;
         rating_count.insert(*first_rating, count);
     }
     rating_count
@@ -110,12 +110,12 @@ fn append_default_point(data: &mut Vec<AverageRecall>, default_s0: f32) {
 
 fn search_parameters(
     mut pretrainset: HashMap<FirstRating, Vec<AverageRecall>>,
-) -> HashMap<i32, f32> {
+) -> HashMap<u32, f32> {
     let mut optimal_stabilities = HashMap::new();
     let epsilon = f32::EPSILON;
 
     for (first_rating, data) in &mut pretrainset {
-        let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
+        let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
         let default_s0 = r_s0_default[first_rating];
 
         append_default_point(data, default_s0);
@@ -153,8 +153,8 @@ fn search_parameters(
 }
 
 fn smooth_and_fill(
-    rating_stability: &mut HashMap<i32, f32>,
-    rating_count: &HashMap<i32, i32>,
+    rating_stability: &mut HashMap<u32, f32>,
+    rating_count: &HashMap<u32, u32>,
 ) -> Result<[f32; 4]> {
     for &(small_rating, big_rating) in &[(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
         if let (Some(&small_value), Some(&big_value)) = (
@@ -176,7 +176,7 @@ fn smooth_and_fill(
 
     let mut init_s0 = vec![];
 
-    let r_s0_default: HashMap<i32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
+    let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
 
     match rating_stability.len() {
         0 => return Err(FSRSError::NotEnoughData),
@@ -388,12 +388,7 @@ mod tests {
         let pretrainset = split_data(anki21_sample_file_converted_to_fsrs()).0;
         assert_eq!(
             pretrain(pretrainset).unwrap(),
-            [
-                0.9475789070129395,
-                1.6981172561645508,
-                4.073766708374023,
-                9.028032302856445,
-            ],
+            [0.947_578_9, 1.698_117_3, 4.073_766_7, 9.028_032,],
         )
     }
 

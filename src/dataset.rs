@@ -20,9 +20,9 @@ pub struct FSRSItem {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct FSRSReview {
     /// 1-4
-    pub rating: i32,
+    pub rating: u32,
     /// The number of days that passed
-    pub delta_t: i32,
+    pub delta_t: u32,
 }
 
 impl FSRSItem {
@@ -136,7 +136,7 @@ impl From<Vec<FSRSItem>> for FSRSDataset {
 }
 
 pub fn filter_outlier(items: Vec<FSRSItem>) -> Vec<FSRSItem> {
-    let mut groups = HashMap::<i32, HashMap<i32, Vec<FSRSItem>>>::new();
+    let mut groups = HashMap::<u32, HashMap<u32, Vec<FSRSItem>>>::new();
 
     // 首先按照第一个 review 的 rating 和第二个 review 的 delta 进行分组
     for item in items.iter() {
