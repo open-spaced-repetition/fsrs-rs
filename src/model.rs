@@ -16,7 +16,7 @@ pub struct Model<B: Backend> {
     pub config: ModelConfig,
 }
 
-trait Get<B: Backend, const N: usize> {
+pub(crate) trait Get<B: Backend, const N: usize> {
     fn get(&self, n: usize) -> Tensor<B, N>;
 }
 

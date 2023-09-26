@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::model::{MemoryStateTensors, FSRS};
+use crate::model::{Get, MemoryStateTensors, FSRS};
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
@@ -79,6 +79,23 @@ impl<B: Backend> FSRS<B> {
                 .unsqueeze()
                 .transpose();
         self.model().forward(time_history, rating_history).into()
+    }
+
+    /// If a card has incomplete learning history, memory state can be approximated from
+    /// current sm2 values.
+    /// Weights must have been provided when calling FSRS::new().
+    pub fn memory_state_from_sm2(&self, ease_factor: f32, interval: f32) -> MemoryState {
+        let stability = interval.max(0.1);
+        let w = &self.model().w;
+        let w8: f32 = w.get(8).into_scalar().elem();
+        let w9: f32 = w.get(9).into_scalar().elem();
+        let w10: f32 = w.get(10).into_scalar().elem();
+        let difficulty = 11.0
+            - (ease_factor - 1.0) / (w8.exp() * stability.powf(-w9) * ((0.1 * w10).exp() - 1.0));
+        MemoryState {
+            stability,
+            difficulty: difficulty.clamp(1.0, 10.0),
+        }
     }
 
     /// The intervals and memory states for each answer button.
@@ -423,6 +440,26 @@ mod tests {
         state_a = fsrs.next_states(Some(state_a), 1.0, 1).again.memory;
         assert_ne!(state_a, state_b);
 
+        Ok(())
+    }
+
+    #[test]
+    fn memory_from_sm2() -> Result<()> {
+        let fsrs = FSRS::new(Some(&[]))?;
+        assert_eq!(
+            fsrs.memory_state_from_sm2(2.5, 10.0),
+            MemoryState {
+                stability: 10.0,
+                difficulty: 6.265295
+            }
+        );
+        assert_eq!(
+            fsrs.memory_state_from_sm2(1.3, 20.0),
+            MemoryState {
+                stability: 20.0,
+                difficulty: 9.956561
+            }
+        );
         Ok(())
     }
 }
