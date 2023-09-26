@@ -36,7 +36,7 @@ impl<B: Backend> BCELoss<B> {
     pub fn forward(&self, retentions: Tensor<B, 1>, labels: Tensor<B, 1>) -> Tensor<B, 1> {
         let loss =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
-        info!("loss: {}", &loss);
+        // info!("loss: {}", &loss);
         loss.mean().neg()
     }
 }
@@ -175,13 +175,13 @@ pub(crate) struct TrainingConfig {
     pub optimizer: AdamConfig,
     #[config(default = 16)]
     pub num_epochs: usize,
-    #[config(default = 512)]
+    #[config(default = 1024)]
     pub batch_size: usize,
     #[config(default = 4)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-3)]
+    #[config(default = 1e-2)]
     pub learning_rate: f64,
 }
 
@@ -222,7 +222,7 @@ fn train<B: ADBackend>(
     B::seed(config.seed);
 
     // Training data
-    let dataset_size = items.len();
+    let iterations = (items.len() / config.batch_size + 1) * config.num_epochs;
     let batcher_train = FSRSBatcher::<B>::new(device.clone());
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
@@ -236,10 +236,7 @@ fn train<B: ADBackend>(
     let batcher_valid = FSRSBatcher::<B::InnerBackend>::new(device.clone());
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid).build(FSRSDataset::from(vec![]));
 
-    let lr_scheduler = CosineAnnealingLR::init(
-        (dataset_size * config.num_epochs) as f64,
-        config.learning_rate,
-    );
+    let lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
 
     let artifact_dir = std::env::var("BURN_LOG");
 
