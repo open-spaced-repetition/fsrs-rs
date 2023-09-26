@@ -3,7 +3,6 @@ use crate::FSRSItem;
 use itertools::Itertools;
 use ndarray::Array1;
 use std::collections::HashMap;
-use std::iter::Iterator;
 
 static R_S0_DEFAULT_ARRAY: &[(i32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)];
 
@@ -92,19 +91,20 @@ fn loss(
     default_s0: f32,
 ) -> f32 {
     let y_pred = power_forgetting_curve(delta_t, init_s0);
-    let diff = recall - &y_pred;
-    let weight = count * count;
-    let weighted_diff = &diff * &diff * &weight;
-    let rmse = (weighted_diff.sum() / weight.sum()).sqrt();
-    let l1 = (init_s0 - default_s0).abs() / weight.sum();
-    rmse + l1
+    let logloss = (-(recall * y_pred.clone().mapv_into(|v| v.ln())
+        + (1.0 - recall) * (1.0 - &y_pred).mapv_into(|v| v.ln()))
+        * count
+        / count.sum())
+    .sum();
+    let l1 = (init_s0 - default_s0).abs() / count.sum() / 16.0;
+    logloss + l1
 }
 
 fn append_default_point(data: &mut Vec<AverageRecall>, default_s0: f32) {
     data.push(AverageRecall {
         delta_t: default_s0,
         recall: 0.9,
-        count: 10.0,
+        count: 16.0,
     });
 }
 
@@ -326,6 +326,8 @@ fn smooth_and_fill(
 
 #[cfg(test)]
 mod tests {
+    use crate::dataset::split_data;
+
     use super::*;
 
     #[test]
@@ -339,14 +341,13 @@ mod tests {
 
     #[test]
     fn test_loss() {
-        let delta_t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
-        let recall = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
-        let count = Array1::from(vec![100.0, 100.0, 100.0, 100.0]);
+        let delta_t = Array1::from(vec![1.0, 2.0, 3.0]);
+        let recall = Array1::from(vec![0.9, 0.8181818, 0.75]);
+        let count = Array1::from(vec![100.0, 100.0, 100.0]);
         let init_s0 = 1.0;
-        let expected = 0.0;
         let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
-        assert_eq!(actual, expected);
-        assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.07147003);
+        assert_eq!(actual, 0.45385247);
+        assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.48355862);
     }
 
     #[test]
@@ -377,16 +378,22 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset);
-        let expected = [(4, 1.0714815)].into_iter().collect();
+        let expected = [(4, 1.2444091)].into_iter().collect();
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn test_pretrain() {
         use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
+        let pretrainset = split_data(anki21_sample_file_converted_to_fsrs()).0;
         assert_eq!(
-            pretrain(anki21_sample_file_converted_to_fsrs()).unwrap(),
-            [0.81497127, 1.5411042, 4.007436, 9.045982,]
+            pretrain(pretrainset).unwrap(),
+            [
+                0.9475789070129395,
+                1.6981172561645508,
+                4.073766708374023,
+                9.028032302856445,
+            ],
         )
     }
 
