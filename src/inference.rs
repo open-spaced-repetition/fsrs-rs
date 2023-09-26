@@ -98,6 +98,24 @@ impl<B: Backend> FSRS<B> {
         }
     }
 
+    /// Calculate the next interval for the current memory state, for rescheduling. Stability
+    /// should be provided except when the card is new. Rating is ignored except when card is new.
+    /// Weights must have been provided when calling FSRS::new().
+    pub fn next_interval(
+        &self,
+        stability: Option<f32>,
+        desired_retention: f32,
+        rating: u32,
+    ) -> u32 {
+        let stability = stability.unwrap_or_else(|| {
+            // get initial stability for new card
+            let rating = Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }));
+            let model = self.model();
+            model.init_stability(rating.clone()).into_scalar().elem()
+        });
+        next_interval(stability, desired_retention)
+    }
+
     /// The intervals and memory states for each answer button.
     /// Weights must have been provided when calling FSRS::new().
     pub fn next_states(
@@ -425,6 +443,7 @@ mod tests {
                 }
             }
         );
+        assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121);
         Ok(())
     }
 
