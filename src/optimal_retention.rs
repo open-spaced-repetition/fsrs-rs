@@ -52,6 +52,7 @@ pub struct SimulatorConfig {
     pub learn_cost: f64,
     pub first_rating_prob: [f64; 4],
     pub review_rating_prob: [f64; 3],
+    pub loss_aversion: f64,
 }
 
 impl Default for SimulatorConfig {
@@ -66,6 +67,7 @@ impl Default for SimulatorConfig {
             learn_cost: 20.0,
             first_rating_prob: [0.15, 0.2, 0.6, 0.05],
             review_rating_prob: [0.3, 0.6, 0.1],
+            loss_aversion: 2.5,
         }
     }
 }
@@ -98,6 +100,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         learn_cost,
         first_rating_prob,
         review_rating_prob,
+        loss_aversion,
     } = config.clone();
     let mut card_table = Array2::<f64>::zeros((Column::COUNT, deck_size));
     card_table
@@ -185,7 +188,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
             .filter(|(_, &need_review_flag, _, _)| need_review_flag)
             .for_each(|(cost, _, &forget_flag, &rating)| {
                 *cost = if forget_flag {
-                    forget_cost
+                    forget_cost * loss_aversion
                 } else {
                     recall_costs[rating - 1]
                 }
@@ -410,7 +413,7 @@ mod tests {
             0.9,
             None,
         );
-        assert_eq!(memorization, 3694.751153228867)
+        assert_eq!(memorization, 2542.50223082592)
     }
 
     #[test]
@@ -418,7 +421,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.7967001981405275);
+        assert_eq!(optimal_retention, 0.8687319006249048);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
