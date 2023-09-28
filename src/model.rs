@@ -9,6 +9,7 @@ use burn::{
     module::{Module, Param},
     tensor::{backend::Backend, Data, Float, Shape, Tensor},
 };
+use wasm_bindgen::prelude::*;
 
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
@@ -199,6 +200,21 @@ impl ModelConfig {
 pub struct FSRS<B: Backend = NdArrayBackend> {
     model: Option<Model<B>>,
     device: B::Device,
+}
+
+#[wasm_bindgen]
+pub struct FSRSwasm(FSRS<NdArrayBackend>);
+
+#[wasm_bindgen]
+impl FSRSwasm {
+    pub fn next_interval(
+        &self,
+        stability: Option<f32>,
+        desired_retention: f32,
+        rating: u32,
+    ) -> u32 {
+        self.0.next_interval(stability, desired_retention, rating)
+    }
 }
 
 impl FSRS<NdArrayBackend> {
