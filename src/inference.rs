@@ -176,9 +176,9 @@ impl<B: Backend> FSRS<B> {
         for chunk in items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
             let (_state, retention) = infer::<B>(model, batch.clone());
-            let pred: Vec<f32> = retention.clone().to_data().convert().value;
+            let pred = retention.clone().to_data().convert::<f32>().value;
             all_predictions.extend(pred);
-            let true_val: Vec<f32> = batch.labels.clone().float().to_data().convert().value;
+            let true_val = batch.labels.clone().to_data().convert::<f32>().value;
             all_true_val.extend(true_val);
             all_retention.push(retention);
             all_labels.push(batch.labels);
@@ -190,7 +190,7 @@ impl<B: Backend> FSRS<B> {
         let rmse = calibration_rmse(&all_predictions, &all_true_val);
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
-        let loss = BCELoss::<B>::new().forward(all_retention, all_labels);
+        let loss = BCELoss::new().forward(all_retention, all_labels);
         Ok(ModelEvaluation {
             log_loss: loss.to_data().value[0].elem(),
             rmse_bins: rmse,

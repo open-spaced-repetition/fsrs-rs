@@ -105,7 +105,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         review_rating_prob,
         loss_aversion,
     } = config.clone();
-    let mut card_table = Array2::<f64>::zeros((Column::COUNT, deck_size));
+    let mut card_table = Array2::zeros((Column::COUNT, deck_size));
     card_table
         .slice_mut(s![Column::Due, ..])
         .fill(learn_span as f64);
@@ -114,7 +114,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
 
     // let mut review_cnt_per_day = Array1::<f64>::zeros(learn_span);
     // let mut learn_cnt_per_day = Array1::<f64>::zeros(learn_span);
-    let mut memorized_cnt_per_day = Array1::<f64>::zeros(learn_span);
+    let mut memorized_cnt_per_day = Array1::zeros(learn_span);
 
     let first_rating_choices = [0, 1, 2, 3];
     let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
@@ -384,7 +384,7 @@ impl<B: Backend> FSRS<B> {
             let mid2 = high - (high - low) / 3.0;
 
             let sample_several = |n: usize, mid: f64| -> Result<f64, FSRSError> {
-                let out: Vec<f64> = (0..n)
+                let out = (0..n)
                     .into_par_iter()
                     .map(|i| {
                         let result =
