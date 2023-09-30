@@ -206,8 +206,7 @@ fn smooth_and_fill(
                     rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
                 (None, Some(&r2), Some(&r3), None) => {
-                    let r4 = r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2);
-                    rating_stability.insert(4, r4);
+                    rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
                     rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
                 (Some(&r1), None, None, Some(&r4)) => {
