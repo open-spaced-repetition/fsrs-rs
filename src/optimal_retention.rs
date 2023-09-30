@@ -354,7 +354,7 @@ impl<B: Backend> FSRS<B> {
         F: FnMut(ItemProgress) -> bool + Send,
     {
         let weights = if weights.is_empty() {
-            DEFAULT_WEIGHTS
+            &DEFAULT_WEIGHTS
         } else if weights.len() != 17 {
             return Err(FSRSError::InvalidWeights);
         } else {
