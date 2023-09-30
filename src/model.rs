@@ -43,7 +43,7 @@ impl<B: Backend> Model<B> {
     pub fn new(config: ModelConfig) -> Self {
         let initial_params = config
             .initial_stability
-            .unwrap_or([0.4, 0.6, 2.4, 5.8])
+            .unwrap_or(<[f32; 4]>::try_from(&DEFAULT_WEIGHTS[0..4]).unwrap())
             .into_iter()
             .chain([
                 4.93, 0.94, 0.86, 0.01, // difficulty
@@ -216,7 +216,7 @@ impl<B: Backend> FSRS<B> {
     ) -> Result<FSRS<B2>> {
         if let Some(weights) = &mut weights {
             if weights.is_empty() {
-                *weights = DEFAULT_WEIGHTS
+                *weights = DEFAULT_WEIGHTS.as_slice()
             } else if weights.len() != 17 {
                 return Err(FSRSError::InvalidWeights);
             }
@@ -257,13 +257,7 @@ mod tests {
     #[test]
     fn w() {
         let model = Model::new(ModelConfig::default());
-        assert_eq!(
-            model.w.val().to_data(),
-            Data::from([
-                0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34,
-                1.26, 0.29, 2.61
-            ])
-        )
+        assert_eq!(model.w.val().to_data(), Data::from(DEFAULT_WEIGHTS))
     }
 
     #[test]
@@ -370,6 +364,6 @@ mod tests {
     fn fsrs() {
         assert!(FSRS::new(Some(&[])).is_ok());
         assert!(FSRS::new(Some(&[1.])).is_err());
-        assert!(FSRS::new(Some(DEFAULT_WEIGHTS)).is_ok());
+        assert!(FSRS::new(Some(DEFAULT_WEIGHTS.as_slice())).is_ok());
     }
 }

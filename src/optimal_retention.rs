@@ -11,6 +11,9 @@ use rand::{
     rngs::StdRng,
     SeedableRng,
 };
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
+use std::sync::{Arc, Mutex};
 use strum::EnumCount;
 
 #[derive(Debug, EnumCount)]
@@ -348,10 +351,10 @@ impl<B: Backend> FSRS<B> {
         mut progress: F,
     ) -> Result<f64>
     where
-        F: FnMut(ItemProgress) -> bool,
+        F: FnMut(ItemProgress) -> bool + Send,
     {
         let weights = if weights.is_empty() {
-            DEFAULT_WEIGHTS
+            &DEFAULT_WEIGHTS
         } else if weights.len() != 17 {
             return Err(FSRSError::InvalidWeights);
         } else {
@@ -365,35 +368,53 @@ impl<B: Backend> FSRS<B> {
         let mut optimal_retention = 0.85;
         let epsilon = 0.01;
         let mut iter = 0;
+
         let mut progress_info = ItemProgress {
             current: 0,
-            total: 10,
+            total: 100,
         };
+        let inc_progress = Arc::new(Mutex::new(move || {
+            progress_info.current += 1;
+            progress(progress_info)
+        }));
+
         while high - low > epsilon && iter < 10 {
             iter += 1;
-            progress_info.current += 1;
             let mid1 = low + (high - low) / 3.0;
             let mid2 = high - (high - low) / 3.0;
-            let sample_several = |n, mid| {
-                (0..n)
-                    .map(|i| simulate(config, &weights, mid, Some((i + 42).try_into().unwrap())))
-                    .sum::<f64>()
-                    / n as f64
-            };
-            let memorization1 = sample_several(5, mid1);
-            let memorization2 = sample_several(5, mid2);
 
-            if memorization1 > memorization2 {
+            let sample_several = |n: usize, mid: f64| -> Result<f64, FSRSError> {
+                let out: Vec<f64> = (0..n)
+                    .into_par_iter()
+                    .map(|i| {
+                        let result =
+                            simulate(config, &weights, mid, Some((i + 42).try_into().unwrap()));
+                        if !(inc_progress.lock().unwrap()()) {
+                            return Err(FSRSError::Interrupted);
+                        }
+                        Ok(result)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(out.iter().sum::<f64>() / n as f64)
+            };
+
+            let mut memorization1 = None;
+            let mut memorization2 = None;
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    memorization1 = Some(sample_several(5, mid1));
+                });
+                s.spawn(|_| {
+                    memorization2 = Some(sample_several(5, mid2));
+                });
+            });
+            if memorization1.unwrap()? > memorization2.unwrap()? {
                 high = mid2;
             } else {
                 low = mid1;
             }
 
             optimal_retention = (high + low) / 2.0;
-            // dbg!(iter, optimal_retention);
-            if !(progress(progress_info)) {
-                return Err(FSRSError::Interrupted);
-            }
         }
         Ok(optimal_retention)
     }

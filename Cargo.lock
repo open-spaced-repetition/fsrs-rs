@@ -774,6 +774,7 @@ dependencies = [
  "ndarray",
  "ndarray-rand",
  "rand",
+ "rayon",
  "rusqlite",
  "serde",
  "snafu",
