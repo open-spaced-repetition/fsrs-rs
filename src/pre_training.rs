@@ -71,12 +71,13 @@ struct AverageRecall {
 fn total_rating_count(
     pretrainset: &HashMap<FirstRating, Vec<AverageRecall>>,
 ) -> HashMap<FirstRating, Count> {
-    let mut rating_count = HashMap::new();
-    for (first_rating, data) in pretrainset {
-        let count = data.iter().map(|d| d.count).sum::<f32>() as u32;
-        rating_count.insert(*first_rating, count);
-    }
-    rating_count
+    pretrainset
+        .iter()
+        .map(|(first_rating, data)| {
+            let count = data.iter().map(|d| d.count).sum::<f32>() as u32;
+            (*first_rating, count)
+        })
+        .collect()
 }
 
 fn power_forgetting_curve(t: &Array1<f32>, s: f32) -> Array1<f32> {
