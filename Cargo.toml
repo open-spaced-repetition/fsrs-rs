@@ -27,6 +27,7 @@ log = "0.4"
 ndarray = "0.15.6"
 ndarray-rand = "0.14.0"
 rand = "0.8.5"
+rayon = "1.8.0"
 serde = "1.0.188"
 snafu = "0.7.5"
 strum = { version = "0.25.0", features = ["derive"] }
