@@ -175,9 +175,21 @@ pub fn filter_outlier(items: Vec<FSRSItem>) -> Vec<FSRSItem> {
     filtered_items
 }
 
-pub fn split_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
+fn stratified_kfold(mut trainset: Vec<FSRSItem>, n_splits: usize) -> Vec<Vec<FSRSItem>> {
+    trainset.sort_by(|a, b| a.reviews.len().cmp(&b.reviews.len()));
+    let mut groups = vec![vec![]; n_splits];
+    for (i, item) in trainset.into_iter().enumerate() {
+        groups[i % n_splits].push(item);
+    }
+    groups
+}
+
+pub fn split_data(items: Vec<FSRSItem>, n_splits: usize) -> (Vec<FSRSItem>, Vec<Vec<FSRSItem>>) {
     let (pretrainset, trainset) = items.into_iter().partition(|item| item.reviews.len() == 2);
-    (filter_outlier(pretrainset), trainset)
+    (
+        filter_outlier(pretrainset),
+        stratified_kfold(filter_outlier(trainset), n_splits),
+    )
 }
 
 #[cfg(test)]

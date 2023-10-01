@@ -207,8 +207,9 @@ impl<B: Backend> FSRS<B> {
         items: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<ProgressState>>>,
     ) -> Result<Vec<f32>> {
+        let n_splits = 5;
         let average_recall = calculate_average_recall(&items);
-        let (pre_trainset, trainset) = split_data(items);
+        let (pre_trainset, trainsets) = split_data(items, n_splits);
         let initial_stability = pretrain(pre_trainset, average_recall)?;
         let config = TrainingConfig::new(
             ModelConfig {
@@ -218,14 +219,35 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new(),
         );
 
-        let model = train::<ADBackendDecorator<B>>(
-            trainset,
-            &config,
-            self.device(),
-            progress.map(ProgressCollector::new),
-        );
+        let mut weights_sets: Vec<Vec<f32>> = Vec::new();
 
-        Ok(model?.w.val().to_data().convert().value)
+        for i in 0..n_splits {
+            let trainset = trainsets
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .flat_map(|(_, trainset)| trainset.clone())
+                .collect();
+
+            let model = train::<ADBackendDecorator<B>>(
+                trainset,
+                &config,
+                self.device(),
+                progress.clone().map(ProgressCollector::new),
+            );
+            weights_sets.push(model?.w.val().to_data().convert().value)
+        }
+
+        let average_weights = weights_sets
+            .iter()
+            .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
+                sum.iter().zip(weights.iter()).map(|(a, b)| a + b).collect()
+            })
+            .iter()
+            .map(|&sum| sum / 5.0)
+            .collect();
+
+        Ok(average_weights)
     }
 }
 
@@ -335,9 +357,10 @@ mod tests {
             println!("Skipping test in CI");
             return;
         }
+        let n_splits = 5;
         let device = NdArrayDevice::Cpu;
         let items = anki21_sample_file_converted_to_fsrs();
-        let (pre_trainset, trainset) = split_data(items);
+        let (pre_trainset, trainsets) = split_data(items, n_splits);
         let average_recall = calculate_average_recall(&pre_trainset);
         let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
         let config = TrainingConfig::new(
@@ -348,7 +371,29 @@ mod tests {
             AdamConfig::new(),
         );
 
-        let _model_trained =
-            train::<NdArrayAutodiffBackend>(trainset, &config, device, None).unwrap();
+        let mut weights_sets: Vec<Vec<f32>> = Vec::new();
+
+        for i in 0..n_splits {
+            let trainset = trainsets
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .flat_map(|(_, trainset)| trainset.clone())
+                .collect();
+            let model = train::<NdArrayAutodiffBackend>(trainset, &config, device, None);
+            weights_sets.push(model.unwrap().w.val().to_data().convert().value)
+        }
+
+        dbg!(&weights_sets);
+
+        let average_weights: Vec<f32> = weights_sets
+            .iter()
+            .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
+                sum.iter().zip(weights.iter()).map(|(a, b)| a + b).collect()
+            })
+            .iter()
+            .map(|&sum| sum / n_splits as f32)
+            .collect();
+        dbg!(average_weights);
     }
 }
