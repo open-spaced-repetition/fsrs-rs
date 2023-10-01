@@ -13,7 +13,7 @@ use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 use burn::train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
-use burn::train::metric::LossMetric;
+
 use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
 use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
 use core::marker::PhantomData;
