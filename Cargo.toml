@@ -30,8 +30,8 @@ rand = "0.8.5"
 rayon = "1.8.0"
 serde = "1.0.188"
 snafu = "0.7.5"
-strum = { version = "0.25.0", features = ["derive"] }
 spin = { version = "0.9.8", features = ["mutex", "spin_mutex"] }
+strum = { version = "0.25.0", features = ["derive"] }
 
 [dev-dependencies]
 chrono = { version = "0.4.26", default-features = false, features = ["std", "clock"] }
