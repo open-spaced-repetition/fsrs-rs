@@ -122,7 +122,16 @@ fn search_parameters(
         append_default_point(data, default_s0);
 
         let delta_t = Array1::from_iter(data.iter().map(|d| d.delta_t));
-        let recall = Array1::from_iter(data.iter().map(|d| d.recall));
+
+        let recall = {
+            // Laplace smoothing
+            //  (real_recall * n + average_recall * 1) / (n + 1)
+            let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
+            let n = real_recall.len();
+            let average_recall = real_recall.mean().unwrap();
+            (real_recall * n as f32 + average_recall * 1f32) / (n + 1) as f32
+        };
+
         let count = Array1::from_iter(data.iter().map(|d| d.count));
 
         let mut low = 0.1;
@@ -330,7 +339,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset);
-        let expected = [(4, 1.2444091)].into_iter().collect();
+        let expected = [(4, 1.2569346)].into_iter().collect();
         assert_eq!(actual, expected);
     }
 
@@ -340,7 +349,7 @@ mod tests {
         let pretrainset = split_data(anki21_sample_file_converted_to_fsrs()).0;
         assert_eq!(
             pretrain(pretrainset).unwrap(),
-            [0.947_578_9, 1.698_117_3, 4.073_766_7, 9.028_032,],
+            [0.905_568_36, 1.632_586_6, 3.951_925_8, 8.389_788,],
         )
     }
 
