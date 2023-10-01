@@ -261,7 +261,7 @@ fn train<B: ADBackend>(
 
     // Training data
     let iterations = (items.len() / config.batch_size + 1) * config.num_epochs;
-    let batcher_train = FSRSBatcher::<B>::new(device.clone());
+    let batcher_train = FSRSBatcher::new(device.clone());
     let dataloader_train = DataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
         .build(BatchShuffledDataset::with_seed(
@@ -271,7 +271,7 @@ fn train<B: ADBackend>(
         ));
 
     // We don't use any validation data
-    let batcher_valid = FSRSBatcher::<B::InnerBackend>::new(device.clone());
+    let batcher_valid = FSRSBatcher::new(device.clone());
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid).build(FSRSDataset::from(vec![]));
 
     let lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
@@ -303,11 +303,7 @@ fn train<B: ADBackend>(
             .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
     }
 
-    let learner = builder.build(
-        config.model.init::<B>(),
-        config.optimizer.init(),
-        lr_scheduler,
-    );
+    let learner = builder.build(config.model.init(), config.optimizer.init(), lr_scheduler);
 
     let mut model_trained = learner.fit(dataloader_train, dataloader_valid);
 
