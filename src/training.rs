@@ -245,7 +245,7 @@ impl<B: Backend> FSRS<B> {
                 sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
             })
             .par_iter()
-            .map(|&sum| sum / 5.0)
+            .map(|&sum| sum / n_splits as f32)
             .collect();
 
         Ok(average_weights)
