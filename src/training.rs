@@ -20,6 +20,7 @@ use burn::{
 };
 use core::marker::PhantomData;
 use log::info;
+use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -223,7 +224,7 @@ impl<B: Backend> FSRS<B> {
 
         for i in 0..n_splits {
             let trainset = trainsets
-                .iter()
+                .par_iter()
                 .enumerate()
                 .filter(|&(j, _)| j != i)
                 .flat_map(|(_, trainset)| trainset.clone())
@@ -241,9 +242,9 @@ impl<B: Backend> FSRS<B> {
         let average_weights = weights_sets
             .iter()
             .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
-                sum.iter().zip(weights.iter()).map(|(a, b)| a + b).collect()
+                sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
             })
-            .iter()
+            .par_iter()
             .map(|&sum| sum / 5.0)
             .collect();
 
@@ -371,7 +372,7 @@ mod tests {
 
         for i in 0..n_splits {
             let trainset = trainsets
-                .iter()
+                .par_iter()
                 .enumerate()
                 .filter(|&(j, _)| j != i)
                 .flat_map(|(_, trainset)| trainset.clone())
@@ -385,9 +386,9 @@ mod tests {
         let average_weights: Vec<f32> = weights_sets
             .iter()
             .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
-                sum.iter().zip(weights.iter()).map(|(a, b)| a + b).collect()
+                sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
             })
-            .iter()
+            .par_iter()
             .map(|&sum| sum / n_splits as f32)
             .collect();
         dbg!(average_weights);
