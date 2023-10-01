@@ -185,6 +185,21 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
 }
 
+pub fn calculate_average_recall(items: &Vec<FSRSItem>) -> f32 {
+    let (total_recall, total_reviews) = items
+        .iter()
+        .flat_map(|item| item.reviews.iter())
+        .fold((0u32, 0u32), |(sum, count), review| {
+            (sum + if review.rating == 1 { 0 } else { 1 }, count + 1)
+        });
+
+    if total_reviews == 0 {
+        return 0.0;
+    }
+
+    total_recall as f32 / total_reviews as f32
+}
+
 impl<B: Backend> FSRS<B> {
     /// Calculate appropriate weights for the provided review history.
     pub fn compute_weights(
@@ -192,8 +207,9 @@ impl<B: Backend> FSRS<B> {
         items: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<ProgressState>>>,
     ) -> Result<Vec<f32>> {
+        let average_recall = calculate_average_recall(&items);
         let (pre_trainset, trainset) = split_data(items);
-        let initial_stability = pretrain(pre_trainset)?;
+        let initial_stability = pretrain(pre_trainset, average_recall)?;
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,
@@ -320,9 +336,10 @@ mod tests {
             return;
         }
         let device = NdArrayDevice::Cpu;
-
-        let (pre_trainset, trainset) = split_data(anki21_sample_file_converted_to_fsrs());
-        let initial_stability = pretrain(pre_trainset).unwrap();
+        let items = anki21_sample_file_converted_to_fsrs();
+        let (pre_trainset, trainset) = split_data(items);
+        let average_recall = calculate_average_recall(&pre_trainset);
+        let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,

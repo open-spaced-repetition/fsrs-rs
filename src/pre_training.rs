@@ -6,10 +6,10 @@ use std::collections::HashMap;
 
 static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)];
 
-pub fn pretrain(fsrs_items: Vec<FSRSItem>) -> Result<[f32; 4]> {
+pub fn pretrain(fsrs_items: Vec<FSRSItem>, average_recall: f32) -> Result<[f32; 4]> {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(&pretrainset);
-    let rating_stability = search_parameters(pretrainset);
+    let rating_stability = search_parameters(pretrainset, average_recall);
     smooth_and_fill(&mut rating_stability.clone(), &rating_count)
 }
 
@@ -111,17 +111,10 @@ fn append_default_point(data: &mut Vec<AverageRecall>, default_s0: f32) {
 
 fn search_parameters(
     mut pretrainset: HashMap<FirstRating, Vec<AverageRecall>>,
+    average_recall: f32,
 ) -> HashMap<u32, f32> {
     let mut optimal_stabilities = HashMap::new();
     let epsilon = f32::EPSILON;
-
-    let average_recall = {
-        let all_delta_t = pretrainset
-            .values()
-            .flat_map(|data| data.iter().map(|x| x.delta_t));
-        let n = all_delta_t.clone().count();
-        (all_delta_t.clone().map(|x| x as f64).sum::<f64>() / n as f64) as f32
-    };
 
     for (first_rating, data) in &mut pretrainset {
         let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
@@ -136,8 +129,8 @@ fn search_parameters(
             // (real_recall * n + average_recall * 1) / (n + 1)
             // https://github.com/open-spaced-repetition/fsrs4anki/pull/358/files#diff-35b13c8e3466e8bd1231a51c71524fc31a945a8f332290726214d3a6fa7f442aR491
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
-            let n = real_recall.len();
-            (real_recall * n as f32 + average_recall * 1f32) / (n + 1) as f32
+            let n = data.iter().map(|d| d.count).sum::<f32>();
+            (real_recall * n + average_recall * 1.0) / (n + 1.0)
         };
 
         let count = Array1::from_iter(data.iter().map(|d| d.count));
@@ -295,9 +288,9 @@ fn smooth_and_fill(
 
 #[cfg(test)]
 mod tests {
-    use crate::dataset::split_data;
-
     use super::*;
+    use crate::dataset::split_data;
+    use crate::training::calculate_average_recall;
 
     #[test]
     fn test_power_forgetting_curve() {
@@ -346,18 +339,20 @@ mod tests {
                 },
             ],
         )]);
-        let actual = search_parameters(pretrainset);
-        let expected = [(4, 1.2569346)].into_iter().collect();
+        let actual = search_parameters(pretrainset, 0.9);
+        let expected = [(4, 1.2502396)].into_iter().collect();
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn test_pretrain() {
         use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
-        let pretrainset = split_data(anki21_sample_file_converted_to_fsrs()).0;
+        let items = anki21_sample_file_converted_to_fsrs();
+        let average_recall = calculate_average_recall(&items);
+        let pretrainset = split_data(items).0;
         assert_eq!(
-            pretrain(pretrainset).unwrap(),
-            [0.905_568_36, 1.632_586_6, 3.951_925_8, 8.389_788,],
+            pretrain(pretrainset, average_recall).unwrap(),
+            [0.948_268_3, 1.696_434_9, 4.059_253_7, 9.001_528,],
         )
     }
 
