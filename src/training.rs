@@ -51,7 +51,7 @@ impl<B: Backend> Model<B> {
     ) -> ClassificationOutput<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
-        let state = self.forward(t_historys, r_historys);
+        let state = self.forward(t_historys, r_historys, None);
         let retention = self.power_forgetting_curve(delta_ts.clone(), state.stability);
         let logits =
             Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).unsqueeze::<2>();
