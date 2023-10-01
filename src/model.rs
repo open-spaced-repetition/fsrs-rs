@@ -7,7 +7,7 @@ use burn::backend::NdArrayBackend;
 use burn::{
     config::Config,
     module::{Module, Param},
-    tensor::{backend::Backend, Data, Float, Shape, Tensor},
+    tensor::{backend::Backend, Data, Shape, Tensor},
 };
 
 #[derive(Module, Debug)]
@@ -43,7 +43,7 @@ impl<B: Backend> Model<B> {
     pub fn new(config: ModelConfig) -> Self {
         let initial_params = config
             .initial_stability
-            .unwrap_or(<[f32; 4]>::try_from(&DEFAULT_WEIGHTS[0..4]).unwrap())
+            .unwrap_or(DEFAULT_WEIGHTS[0..4].try_into().unwrap())
             .into_iter()
             .chain([
                 4.93, 0.94, 0.86, 0.01, // difficulty
@@ -133,7 +133,7 @@ impl<B: Backend> Model<B> {
                 retention.clone(),
                 rating.clone(),
             );
-            let stability_after_failure: Tensor<B, 1> = self.stability_after_failure(
+            let stability_after_failure = self.stability_after_failure(
                 state.stability.clone(),
                 new_difficulty.clone(),
                 retention.clone(),
@@ -159,7 +159,7 @@ impl<B: Backend> Model<B> {
     pub(crate) fn forward(
         &self,
         delta_ts: Tensor<B, 2>,
-        ratings: Tensor<B, 2, Float>,
+        ratings: Tensor<B, 2>,
     ) -> MemoryStateTensors<B> {
         let [seq_len, _batch_size] = delta_ts.dims();
         let mut state = None;
@@ -240,7 +240,7 @@ impl<B: Backend> FSRS<B> {
 
 pub(crate) fn weights_to_model<B: Backend>(weights: &Weights) -> Model<B> {
     let config = ModelConfig::default();
-    let mut model = Model::<B>::new(config);
+    let mut model = Model::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
         clip_weights(weights),
         Shape { dims: [17] },

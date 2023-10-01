@@ -71,12 +71,13 @@ struct AverageRecall {
 fn total_rating_count(
     pretrainset: &HashMap<FirstRating, Vec<AverageRecall>>,
 ) -> HashMap<FirstRating, Count> {
-    let mut rating_count = HashMap::new();
-    for (first_rating, data) in pretrainset {
-        let count = data.iter().map(|d| d.count).sum::<f32>() as u32;
-        rating_count.insert(*first_rating, count);
-    }
-    rating_count
+    pretrainset
+        .iter()
+        .map(|(first_rating, data)| {
+            let count = data.iter().map(|d| d.count).sum::<f32>() as u32;
+            (*first_rating, count)
+        })
+        .collect()
 }
 
 fn power_forgetting_curve(t: &Array1<f32>, s: f32) -> Array1<f32> {
@@ -156,7 +157,7 @@ fn smooth_and_fill(
     rating_stability: &mut HashMap<u32, f32>,
     rating_count: &HashMap<u32, u32>,
 ) -> Result<[f32; 4]> {
-    for &(small_rating, big_rating) in &[(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
+    for (small_rating, big_rating) in [(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
         if let (Some(&small_value), Some(&big_value)) = (
             rating_stability.get(&small_rating),
             rating_stability.get(&big_rating),
@@ -176,7 +177,10 @@ fn smooth_and_fill(
 
     let mut init_s0 = vec![];
 
-    let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
+    let r_s0_default = R_S0_DEFAULT_ARRAY
+        .iter()
+        .cloned()
+        .collect::<HashMap<_, _>>();
 
     match rating_stability.len() {
         0 => return Err(FSRSError::NotEnoughData),
@@ -187,81 +191,43 @@ fn smooth_and_fill(
         }
         2 => {
             match (
-                rating_stability.contains_key(&1),
-                rating_stability.contains_key(&2),
-                rating_stability.contains_key(&3),
-                rating_stability.contains_key(&4),
+                rating_stability.get(&1),
+                rating_stability.get(&2),
+                rating_stability.get(&3),
+                rating_stability.get(&4),
             ) {
-                (false, false, _, _) => {
-                    rating_stability.insert(
-                        2,
-                        rating_stability[&3].powf(1.0 / (1.0 - w2))
-                            * rating_stability[&4].powf(1.0 - 1.0 / (1.0 - w2)),
-                    );
-                    rating_stability.insert(
-                        1,
-                        f32::powf(rating_stability[&2], 1.0 / w1)
-                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
-                    );
+                (None, None, Some(&r3), Some(&r4)) => {
+                    let r2 = r3.powf(1.0 / (1.0 - w2)) * r4.powf(1.0 - 1.0 / (1.0 - w2));
+                    rating_stability.insert(2, r2);
+                    rating_stability.insert(1, (r2.powf(1.0 / w1)) * (r3.powf(1.0 - 1.0 / w1)));
                 }
-                (false, _, false, _) => {
+                (None, Some(&r2), None, Some(&r4)) => {
+                    let r3 = r2.powf(1.0 - w2) * r4.powf(w2);
+                    rating_stability.insert(3, r3);
+                    rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
+                }
+                (None, Some(&r2), Some(&r3), None) => {
+                    rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
+                    rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
+                }
+                (Some(&r1), None, None, Some(&r4)) => {
+                    let r2 =
+                        r1.powf(w1 / (w1 + w2 - w1 * w2)) * r4.powf(1.0 - w1 / (w1 + w2 - w1 * w2));
+                    rating_stability.insert(2, r2);
                     rating_stability.insert(
                         3,
-                        f32::powf(rating_stability[&2], 1.0 - w2)
-                            * f32::powf(rating_stability[&4], w2),
-                    );
-                    rating_stability.insert(
-                        1,
-                        f32::powf(rating_stability[&2], 1.0 / w1)
-                            * f32::powf(rating_stability[&3], 1.0 - 1.0 / w1),
+                        r1.powf(1.0 - w2 / (w1 + w2 - w1 * w2)) * r4.powf(w2 / (w1 + w2 - w1 * w2)),
                     );
                 }
-                (false, _, _, false) => {
-                    rating_stability.insert(
-                        4,
-                        rating_stability[&2].powf(1.0 - 1.0 / w2)
-                            * rating_stability[&3].powf(1.0 / w2),
-                    );
-                    rating_stability.insert(
-                        1,
-                        rating_stability[&2].powf(1.0 / w1)
-                            * rating_stability[&3].powf(1.0 - 1.0 / w1),
-                    );
+                (Some(&r1), None, Some(&r3), None) => {
+                    let r2 = r1.powf(w1) * r3.powf(1.0 - w1);
+                    rating_stability.insert(2, r2);
+                    rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
                 }
-                (_, false, false, _) => {
-                    rating_stability.insert(
-                        2,
-                        rating_stability[&1].powf(w1 / (w1 + w2 - w1 * w2))
-                            * rating_stability[&4].powf(1.0 - w1 / (w1 + w2 - w1 * w2)),
-                    );
-                    rating_stability.insert(
-                        3,
-                        rating_stability[&1].powf(1.0 - w2 / (w1 + w2 - w1 * w2))
-                            * rating_stability[&4].powf(w2 / (w1 + w2 - w1 * w2)),
-                    );
-                }
-                (_, false, _, false) => {
-                    rating_stability.insert(
-                        2,
-                        rating_stability[&1].powf(w1) * rating_stability[&3].powf(1.0 - w1),
-                    );
-                    rating_stability.insert(
-                        4,
-                        rating_stability[&2].powf(1.0 - 1.0 / w2)
-                            * rating_stability[&3].powf(1.0 / w2),
-                    );
-                }
-                (_, _, false, false) => {
-                    rating_stability.insert(
-                        3,
-                        rating_stability[&1].powf(1.0 - 1.0 / (1.0 - w1))
-                            * rating_stability[&2].powf(1.0 / (1.0 - w1)),
-                    );
-                    rating_stability.insert(
-                        4,
-                        rating_stability[&2].powf(1.0 - 1.0 / w2)
-                            * rating_stability[&3].powf(1.0 / w2),
-                    );
+                (Some(&r1), Some(&r2), None, None) => {
+                    let r3 = r1.powf(1.0 - 1.0 / (1.0 - w1)) * r2.powf(1.0 / (1.0 - w1));
+                    rating_stability.insert(3, r3);
+                    rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
                 }
                 _ => {}
             }
@@ -273,36 +239,22 @@ fn smooth_and_fill(
         }
         3 => {
             match (
-                rating_stability.contains_key(&1),
-                rating_stability.contains_key(&2),
-                rating_stability.contains_key(&3),
-                rating_stability.contains_key(&4),
+                rating_stability.get(&1),
+                rating_stability.get(&2),
+                rating_stability.get(&3),
+                rating_stability.get(&4),
             ) {
-                (false, _, _, _) => {
-                    rating_stability.insert(
-                        1,
-                        rating_stability[&2].powf(1.0 / w1)
-                            * rating_stability[&3].powf(1.0 - 1.0 / w1),
-                    );
+                (None, Some(r2), Some(r3), _) => {
+                    rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
-                (_, false, _, _) => {
-                    rating_stability.insert(
-                        2,
-                        rating_stability[&1].powf(w1) * rating_stability[&3].powf(1.0 - w1),
-                    );
+                (Some(r1), None, Some(r3), _) => {
+                    rating_stability.insert(2, r1.powf(w1) * r3.powf(1.0 - w1));
                 }
-                (_, _, false, _) => {
-                    rating_stability.insert(
-                        3,
-                        rating_stability[&2].powf(1.0 - w2) * rating_stability[&4].powf(w2),
-                    );
+                (_, Some(r2), None, Some(r4)) => {
+                    rating_stability.insert(3, r2.powf(1.0 - w2) * r4.powf(w2));
                 }
-                (_, _, _, false) => {
-                    rating_stability.insert(
-                        4,
-                        rating_stability[&2].powf(1.0 - 1.0 / w2)
-                            * rating_stability[&3].powf(1.0 / w2),
-                    );
+                (_, Some(r2), Some(r3), None) => {
+                    rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
                 }
                 _ => {}
             }
@@ -321,7 +273,7 @@ fn smooth_and_fill(
         }
         _ => {}
     }
-    Ok([init_s0[0], init_s0[1], init_s0[2], init_s0[3]])
+    Ok(init_s0[0..=3].try_into().unwrap())
 }
 
 #[cfg(test)]
