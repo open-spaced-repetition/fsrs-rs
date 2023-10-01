@@ -190,7 +190,7 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
         .iter()
         .flat_map(|item| item.reviews.iter())
         .fold((0u32, 0u32), |(sum, count), review| {
-            (sum + if review.rating == 1 { 0 } else { 1 }, count + 1)
+            (sum + (review.rating > 1) as u32, count + 1)
         });
 
     if total_reviews == 0 {

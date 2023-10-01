@@ -31,7 +31,7 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<FirstRating, Vec<A
     for item in items {
         let first_rating = item.reviews[0].rating;
         let second_delta_t = item.reviews[1].delta_t;
-        let second_label = if item.reviews[1].rating == 1 { 0 } else { 1 };
+        let second_label = (item.reviews[1].rating > 1) as i32;
 
         let inner_map = groups.entry(first_rating).or_insert_with(HashMap::new);
         let ratings = inner_map.entry(second_delta_t).or_insert_with(Vec::new);
