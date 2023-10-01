@@ -178,8 +178,8 @@ pub fn filter_outlier(items: Vec<FSRSItem>) -> Vec<FSRSItem> {
 fn stratified_kfold(mut trainset: Vec<FSRSItem>, n_splits: usize) -> Vec<Vec<FSRSItem>> {
     trainset.sort_by(|a, b| a.reviews.len().cmp(&b.reviews.len()));
     let mut groups = vec![vec![]; n_splits];
-    for (i, item) in trainset.into_iter().enumerate() {
-        groups[i % n_splits].push(item);
+    for (i, item) in (0..n_splits).cycle().zip(trainset.into_iter()) {
+        groups[i].push(item);
     }
     groups
 }
