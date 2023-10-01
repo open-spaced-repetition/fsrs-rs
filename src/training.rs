@@ -185,7 +185,7 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
 }
 
-pub fn calculate_average_recall(items: &Vec<FSRSItem>) -> f32 {
+pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     let (total_recall, total_reviews) = items
         .iter()
         .flat_map(|item| item.reviews.iter())
