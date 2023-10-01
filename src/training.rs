@@ -271,9 +271,7 @@ fn train<B: ADBackend>(
         builder = builder.renderer(progress);
     } else {
         // comment out if you want to see text interface
-        builder = builder
-            .metric_train_plot(LossMetric::new())
-            .renderer(NoProgress {});
+        builder = builder.renderer(NoProgress {});
     }
 
     if artifact_dir.is_ok() {
