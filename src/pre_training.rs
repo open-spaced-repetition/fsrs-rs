@@ -115,6 +115,15 @@ fn search_parameters(
     let mut optimal_stabilities = HashMap::new();
     let epsilon = f32::EPSILON;
 
+    let average_recall = {
+        let all_delta_t = pretrainset
+            .values()
+            .map(|data| data.iter().map(|x| x.delta_t))
+            .flatten();
+        let n = all_delta_t.clone().count();
+        (all_delta_t.clone().map(|x| x as f64).sum::<f64>() / n as f64) as f32
+    };
+
     for (first_rating, data) in &mut pretrainset {
         let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
         let default_s0 = r_s0_default[first_rating];
@@ -129,7 +138,6 @@ fn search_parameters(
             // https://github.com/open-spaced-repetition/fsrs4anki/pull/358/files#diff-35b13c8e3466e8bd1231a51c71524fc31a945a8f332290726214d3a6fa7f442aR491
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
             let n = real_recall.len();
-            let average_recall = real_recall.mean().unwrap();
             (real_recall * n as f32 + average_recall * 1f32) / (n + 1) as f32
         };
 
