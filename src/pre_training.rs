@@ -118,8 +118,7 @@ fn search_parameters(
     let average_recall = {
         let all_delta_t = pretrainset
             .values()
-            .map(|data| data.iter().map(|x| x.delta_t))
-            .flatten();
+            .flat_map(|data| data.iter().map(|x| x.delta_t));
         let n = all_delta_t.clone().count();
         (all_delta_t.clone().map(|x| x as f64).sum::<f64>() / n as f64) as f32
     };
