@@ -25,7 +25,7 @@ fn infer<B: Backend>(
     model: &Model<B>,
     batch: FSRSBatch<B>,
 ) -> (MemoryStateTensors<B>, Tensor<B, 1>) {
-    let state = model.forward(batch.t_historys, batch.r_historys);
+    let state = model.forward(batch.t_historys, batch.r_historys, None);
     let retention = model.power_forgetting_curve(batch.delta_ts.clone(), state.stability.clone());
     (state, retention)
 }
@@ -65,8 +65,11 @@ fn next_interval(stability: f32, request_retention: f32) -> u32 {
 
 impl<B: Backend> FSRS<B> {
     /// Calculate the current memory state for a given card's history of reviews.
+    /// In the case of truncated reviews, [starting_state] can be set to the value of
+    /// [FSRS::memory_state_from_sm2] for the first review. If not provided, the card
+    /// starts as new.
     /// Weights must have been provided when calling FSRS::new().
-    pub fn memory_state(&self, item: FSRSItem) -> MemoryState {
+    pub fn memory_state(&self, item: FSRSItem, starting_state: Option<MemoryState>) -> MemoryState {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
@@ -78,7 +81,9 @@ impl<B: Backend> FSRS<B> {
             Tensor::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
                 .unsqueeze()
                 .transpose();
-        self.model().forward(time_history, rating_history).into()
+        self.model()
+            .forward(time_history, rating_history, starting_state.map(Into::into))
+            .into()
     }
 
     /// If a card has incomplete learning history, memory state can be approximated from
@@ -332,7 +337,7 @@ mod tests {
         };
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         assert_eq!(
-            fsrs.memory_state(item),
+            fsrs.memory_state(item, None),
             MemoryState {
                 stability: 51.344814,
                 difficulty: 7.005062
@@ -409,7 +414,7 @@ mod tests {
             ],
         };
         let fsrs = FSRS::new(Some(WEIGHTS))?;
-        let state = fsrs.memory_state(item);
+        let state = fsrs.memory_state(item, None);
         assert_eq!(
             fsrs.next_states(Some(state), 0.9, 21),
             NextStates {

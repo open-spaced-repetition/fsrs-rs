@@ -156,13 +156,16 @@ impl<B: Backend> Model<B> {
         }
     }
 
+    /// If [starting_state] is provided, it will be used instead of the default initial stability/
+    /// difficulty.
     pub(crate) fn forward(
         &self,
         delta_ts: Tensor<B, 2>,
         ratings: Tensor<B, 2>,
+        starting_state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let [seq_len, _batch_size] = delta_ts.dims();
-        let mut state = None;
+        let mut state = starting_state;
         for i in 0..seq_len {
             let delta_t = delta_ts.get(i).squeeze(0);
             // [batch_size]
@@ -305,7 +308,7 @@ mod tests {
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
             [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
         ]);
-        let state = model.forward(delta_ts, ratings);
+        let state = model.forward(delta_ts, ratings, None);
         dbg!(&state);
     }
 
