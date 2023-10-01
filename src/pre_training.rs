@@ -125,7 +125,8 @@ fn search_parameters(
 
         let recall = {
             // Laplace smoothing
-            //  (real_recall * n + average_recall * 1) / (n + 1)
+            // (real_recall * n + average_recall * 1) / (n + 1)
+            // https://github.com/open-spaced-repetition/fsrs4anki/pull/358/files#diff-35b13c8e3466e8bd1231a51c71524fc31a945a8f332290726214d3a6fa7f442aR491
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
             let n = real_recall.len();
             let average_recall = real_recall.mean().unwrap();
