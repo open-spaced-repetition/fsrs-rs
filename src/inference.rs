@@ -66,8 +66,8 @@ fn next_interval(stability: f32, request_retention: f32) -> u32 {
 impl<B: Backend> FSRS<B> {
     /// Calculate the current memory state for a given card's history of reviews.
     /// In the case of truncated reviews, [starting_state] can be set to the value of
-    /// [FSRS::memory_state_from_sm2] for the first review. If not provided, the card
-    /// starts as new.
+    /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
+    /// in FSRSItem). If not provided, the card starts as new.
     /// Weights must have been provided when calling FSRS::new().
     pub fn memory_state(&self, item: FSRSItem, starting_state: Option<MemoryState>) -> MemoryState {
         let (time_history, rating_history) =
