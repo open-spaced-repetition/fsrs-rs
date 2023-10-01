@@ -349,7 +349,7 @@ mod tests {
         use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
-        let pretrainset = split_data(items, 5).0;
+        let pretrainset = split_data(items, 1).0;
         assert_eq!(
             pretrain(pretrainset, average_recall).unwrap(),
             [0.948_268_3, 1.696_434_9, 4.059_253_7, 9.001_528,],

@@ -188,7 +188,7 @@ pub fn split_data(items: Vec<FSRSItem>, n_splits: usize) -> (Vec<FSRSItem>, Vec<
     let (pretrainset, trainset) = items.into_iter().partition(|item| item.reviews.len() == 2);
     (
         filter_outlier(pretrainset),
-        stratified_kfold(filter_outlier(trainset), n_splits),
+        stratified_kfold(trainset, n_splits),
     )
 }
 
