@@ -18,7 +18,9 @@ use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrup
 use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
 use core::marker::PhantomData;
 use log::info;
-use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -206,7 +208,7 @@ impl<B: Backend> FSRS<B> {
         items: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<ProgressState>>>,
     ) -> Result<Vec<f32>> {
-        let n_splits = 5;
+        let n_splits = 4;
         let average_recall = calculate_average_recall(&items);
         let (pre_trainset, trainsets) = split_data(items, n_splits);
         let initial_stability = pretrain(pre_trainset, average_recall)?;
@@ -218,24 +220,25 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new(),
         );
 
-        let mut weights_sets: Vec<Vec<f32>> = Vec::new();
+        let weights_sets: Vec<Vec<f32>> = (0..n_splits)
+            .into_par_iter()
+            .map(|i| {
+                let trainset = trainsets
+                    .par_iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .flat_map(|(_, trainset)| trainset.clone())
+                    .collect();
 
-        for i in 0..n_splits {
-            let trainset = trainsets
-                .par_iter()
-                .enumerate()
-                .filter(|&(j, _)| j != i)
-                .flat_map(|(_, trainset)| trainset.clone())
-                .collect();
-
-            let model = train::<ADBackendDecorator<B>>(
-                trainset,
-                &config,
-                self.device(),
-                progress.clone().map(ProgressCollector::new),
-            );
-            weights_sets.push(model?.w.val().to_data().convert().value)
-        }
+                let model = train::<ADBackendDecorator<B>>(
+                    trainset,
+                    &config,
+                    self.device(),
+                    progress.clone().map(ProgressCollector::new),
+                );
+                model.unwrap().w.val().to_data().convert().value
+            })
+            .collect();
 
         let average_weights = weights_sets
             .iter()
@@ -354,7 +357,7 @@ mod tests {
             println!("Skipping test in CI");
             return;
         }
-        let n_splits = 5;
+        let n_splits = 4;
         let device = NdArrayDevice::Cpu;
         let items = anki21_sample_file_converted_to_fsrs();
         let (pre_trainset, trainsets) = split_data(items, n_splits);
@@ -371,7 +374,12 @@ mod tests {
         let weights_sets: Vec<Vec<f32>> = (0..n_splits)
             .into_par_iter()
             .map(|i| {
-                let trainset = trainsets[i].clone();
+                let trainset = trainsets
+                    .par_iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .flat_map(|(_, trainset)| trainset.clone())
+                    .collect();
                 let model = train::<NdArrayAutodiffBackend>(trainset, &config, device, None);
                 model.unwrap().w.val().to_data().convert().value
             })
