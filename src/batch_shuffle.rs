@@ -190,12 +190,12 @@ impl<I: Send + Sync + Clone + 'static, O: Send + Sync> DataLoader<O>
         // rng to ensure that each new iteration shuffles the dataset differently.
         let dataset = match &self.rng {
             Some(rng) => {
-                let rng = rng.lock();
+                let mut rng = rng.lock().unwrap();
 
                 Arc::new(BatchShuffledDataset::with_seed(
                     self.dataset.clone(),
                     self.batch_size,
-                    rng.unwrap().sample(Standard),
+                    rng.sample(Standard),
                 ))
             }
             None => self.dataset.clone(),
