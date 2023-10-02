@@ -174,15 +174,15 @@ impl DashboardRenderer for ProgressCollector {
 pub(crate) struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
-    #[config(default = 16)]
+    #[config(default = 5)]
     pub num_epochs: usize,
-    #[config(default = 1024)]
+    #[config(default = 512)]
     pub batch_size: usize,
     #[config(default = 1)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1e-2)]
+    #[config(default = 4e-2)]
     pub learning_rate: f64,
 }
 
@@ -208,7 +208,7 @@ impl<B: Backend> FSRS<B> {
         items: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<ProgressState>>>,
     ) -> Result<Vec<f32>> {
-        let n_splits = 4;
+        let n_splits = 5;
         let average_recall = calculate_average_recall(&items);
         let (pre_trainset, trainsets) = split_data(items, n_splits);
         let initial_stability = pretrain(pre_trainset, average_recall)?;
@@ -357,7 +357,7 @@ mod tests {
             println!("Skipping test in CI");
             return;
         }
-        let n_splits = 4;
+        let n_splits = 5;
         let device = NdArrayDevice::Cpu;
         let items = anki21_sample_file_converted_to_fsrs();
         let (pre_trainset, trainsets) = split_data(items, n_splits);
