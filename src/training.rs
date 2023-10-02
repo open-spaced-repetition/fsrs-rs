@@ -18,6 +18,9 @@ use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrup
 use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
 use core::marker::PhantomData;
 use log::info;
+use rayon::prelude::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -171,15 +174,15 @@ impl DashboardRenderer for ProgressCollector {
 pub(crate) struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
-    #[config(default = 16)]
+    #[config(default = 5)]
     pub num_epochs: usize,
-    #[config(default = 1024)]
+    #[config(default = 512)]
     pub batch_size: usize,
     #[config(default = 1)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1e-2)]
+    #[config(default = 4e-2)]
     pub learning_rate: f64,
 }
 
@@ -205,8 +208,9 @@ impl<B: Backend> FSRS<B> {
         items: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<ProgressState>>>,
     ) -> Result<Vec<f32>> {
+        let n_splits = 5;
         let average_recall = calculate_average_recall(&items);
-        let (pre_trainset, trainset) = split_data(items);
+        let (pre_trainset, trainsets) = split_data(items, n_splits);
         let initial_stability = pretrain(pre_trainset, average_recall)?;
         let config = TrainingConfig::new(
             ModelConfig {
@@ -216,14 +220,36 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new(),
         );
 
-        let model = train::<ADBackendDecorator<B>>(
-            trainset,
-            &config,
-            self.device(),
-            progress.map(ProgressCollector::new),
-        );
+        let weights_sets: Vec<Vec<f32>> = (0..n_splits)
+            .into_par_iter()
+            .map(|i| {
+                let trainset = trainsets
+                    .par_iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .flat_map(|(_, trainset)| trainset.clone())
+                    .collect();
 
-        Ok(model?.w.val().to_data().convert().value)
+                let model = train::<ADBackendDecorator<B>>(
+                    trainset,
+                    &config,
+                    self.device(),
+                    progress.clone().map(ProgressCollector::new),
+                );
+                model.unwrap().w.val().to_data().convert().value
+            })
+            .collect();
+
+        let average_weights = weights_sets
+            .iter()
+            .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
+                sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
+            })
+            .par_iter()
+            .map(|&sum| sum / n_splits as f32)
+            .collect();
+
+        Ok(average_weights)
     }
 }
 
@@ -280,11 +306,7 @@ fn train<B: ADBackend>(
             .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
     }
 
-    let learner = builder.build(
-        config.model.init::<B>(),
-        config.optimizer.init(),
-        lr_scheduler,
-    );
+    let learner = builder.build(config.model.init(), config.optimizer.init(), lr_scheduler);
 
     let mut model_trained = learner.fit(dataloader_train, dataloader_valid);
 
@@ -327,6 +349,7 @@ mod tests {
     use crate::pre_training::pretrain;
     use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::NdArrayAutodiffBackend;
+    use rayon::prelude::IntoParallelIterator;
 
     #[test]
     fn training() {
@@ -334,9 +357,10 @@ mod tests {
             println!("Skipping test in CI");
             return;
         }
+        let n_splits = 5;
         let device = NdArrayDevice::Cpu;
         let items = anki21_sample_file_converted_to_fsrs();
-        let (pre_trainset, trainset) = split_data(items);
+        let (pre_trainset, trainsets) = split_data(items, n_splits);
         let average_recall = calculate_average_recall(&pre_trainset);
         let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
         let config = TrainingConfig::new(
@@ -347,7 +371,30 @@ mod tests {
             AdamConfig::new(),
         );
 
-        let _model_trained =
-            train::<NdArrayAutodiffBackend>(trainset, &config, device, None).unwrap();
+        let weights_sets: Vec<Vec<f32>> = (0..n_splits)
+            .into_par_iter()
+            .map(|i| {
+                let trainset = trainsets
+                    .par_iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .flat_map(|(_, trainset)| trainset.clone())
+                    .collect();
+                let model = train::<NdArrayAutodiffBackend>(trainset, &config, device, None);
+                model.unwrap().w.val().to_data().convert().value
+            })
+            .collect();
+
+        dbg!(&weights_sets);
+
+        let average_weights: Vec<f32> = weights_sets
+            .iter()
+            .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
+                sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
+            })
+            .par_iter()
+            .map(|&sum| sum / n_splits as f32)
+            .collect();
+        dbg!(average_weights);
     }
 }

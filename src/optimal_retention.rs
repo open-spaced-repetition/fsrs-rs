@@ -2,7 +2,7 @@ use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Weights};
 use crate::{DEFAULT_WEIGHTS, FSRS};
 use burn::tensor::backend::Backend;
-use itertools::{izip, Itertools};
+use itertools::izip;
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
@@ -362,7 +362,7 @@ impl<B: Backend> FSRS<B> {
         }
         .iter()
         .map(|v| *v as f64)
-        .collect_vec();
+        .collect::<Vec<_>>();
         let mut low = 0.75;
         let mut high = 0.95;
         let mut optimal_retention = 0.85;
@@ -422,6 +422,8 @@ impl<B: Backend> FSRS<B> {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::*;
     use crate::DEFAULT_WEIGHTS;
 
