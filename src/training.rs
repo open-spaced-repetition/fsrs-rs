@@ -1,4 +1,4 @@
-use crate::batch_shuffle::BatchShuffledDataset;
+use crate::batch_shuffle::{BatchShuffledDataLoaderBuilder, BatchShuffledDataset};
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{split_data, FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
@@ -13,11 +13,9 @@ use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 use burn::train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
+
 use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
-use burn::{
-    config::Config, data::dataloader::DataLoaderBuilder, module::Param, tensor::backend::ADBackend,
-    train::LearnerBuilder,
-};
+use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
 use core::marker::PhantomData;
 use log::info;
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -178,7 +176,7 @@ pub(crate) struct TrainingConfig {
     pub num_epochs: usize,
     #[config(default = 1024)]
     pub batch_size: usize,
-    #[config(default = 4)]
+    #[config(default = 1)]
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
@@ -262,18 +260,24 @@ fn train<B: ADBackend>(
 
     // Training data
     let iterations = (items.len() / config.batch_size + 1) * config.num_epochs;
-    let batcher_train = FSRSBatcher::new(device.clone());
-    let dataloader_train = DataLoaderBuilder::new(batcher_train)
+    let batcher_train = FSRSBatcher::<B>::new(device.clone());
+    let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        .build(BatchShuffledDataset::with_seed(
-            FSRSDataset::from(items),
+        .shuffle(config.seed)
+        .num_workers(config.num_workers)
+        .build(
+            BatchShuffledDataset::with_seed(
+                FSRSDataset::from(items),
+                config.batch_size,
+                config.seed,
+            ),
             config.batch_size,
-            config.seed,
-        ));
+        );
 
     // We don't use any validation data
     let batcher_valid = FSRSBatcher::new(device.clone());
-    let dataloader_valid = DataLoaderBuilder::new(batcher_valid).build(FSRSDataset::from(vec![]));
+    let dataloader_valid = BatchShuffledDataLoaderBuilder::new(batcher_valid)
+        .build(FSRSDataset::from(vec![]), config.batch_size);
 
     let lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
 
@@ -291,11 +295,6 @@ fn train<B: ADBackend>(
     } else {
         // comment out if you want to see text interface
         builder = builder.renderer(NoProgress {});
-        // builder = builder
-        //     .metric_train_plot(AccuracyMetric::new())
-        //     .metric_valid_plot(AccuracyMetric::new())
-        //     .metric_train_plot(LossMetric::new())
-        //     .metric_valid_plot(LossMetric::new());
     }
 
     if artifact_dir.is_ok() {
