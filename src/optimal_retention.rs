@@ -13,7 +13,6 @@ use rand::{
 };
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelRefIterator;
 use std::sync::{Arc, Mutex};
 use strum::EnumCount;
 
@@ -361,7 +360,7 @@ impl<B: Backend> FSRS<B> {
         } else {
             weights
         }
-        .par_iter()
+        .iter()
         .map(|v| *v as f64)
         .collect::<Vec<_>>();
         let mut low = 0.75;

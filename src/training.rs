@@ -174,7 +174,7 @@ impl DashboardRenderer for ProgressCollector {
 pub(crate) struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
-    #[config(default = 16)]
+    #[config(default = 216)]
     pub num_epochs: usize,
     #[config(default = 1024)]
     pub batch_size: usize,
@@ -347,6 +347,7 @@ mod tests {
     use crate::pre_training::pretrain;
     use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::NdArrayAutodiffBackend;
+    use rayon::prelude::IntoParallelIterator;
 
     #[test]
     fn training() {
@@ -368,18 +369,14 @@ mod tests {
             AdamConfig::new(),
         );
 
-        let mut weights_sets: Vec<Vec<f32>> = Vec::new();
-
-        for i in 0..n_splits {
-            let trainset = trainsets
-                .par_iter()
-                .enumerate()
-                .filter(|&(j, _)| j != i)
-                .flat_map(|(_, trainset)| trainset.clone())
-                .collect();
-            let model = train::<NdArrayAutodiffBackend>(trainset, &config, device, None);
-            weights_sets.push(model.unwrap().w.val().to_data().convert().value)
-        }
+        let weights_sets: Vec<Vec<f32>> = (0..n_splits)
+            .into_par_iter()
+            .map(|i| {
+                let trainset = trainsets[i].clone();
+                let model = train::<NdArrayAutodiffBackend>(trainset, &config, device, None);
+                model.unwrap().w.val().to_data().convert().value
+            })
+            .collect();
 
         dbg!(&weights_sets);
 
