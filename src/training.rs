@@ -174,7 +174,7 @@ impl DashboardRenderer for ProgressCollector {
 pub(crate) struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
-    #[config(default = 216)]
+    #[config(default = 16)]
     pub num_epochs: usize,
     #[config(default = 1024)]
     pub batch_size: usize,
