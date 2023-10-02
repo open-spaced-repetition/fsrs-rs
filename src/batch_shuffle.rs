@@ -5,7 +5,7 @@ use burn::data::{
     },
     dataset::{transform::PartialDataset, Dataset},
 };
-use log::info;
+
 use rand::{
     distributions::Standard,
     prelude::{Distribution, SliceRandom},
