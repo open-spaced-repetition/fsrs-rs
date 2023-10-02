@@ -39,7 +39,7 @@ where
         // 创建一个批数索引的向量并打乱
         let mut batch_indices: Vec<_> = (0..num_batches).collect();
         batch_indices.shuffle(rng);
-        info!("batch_indices: {:?}", &batch_indices);
+        // info!("batch_indices: {:?}", &batch_indices);
         // Generate the corresponding item indices for each shuffled batch
         // 为每个打乱的批次生成相应的元素索引
         let mut indices = vec![];
@@ -48,7 +48,7 @@ where
             let end_index = (start_index + batch_size).min(len);
             indices.extend(start_index..end_index);
         }
-        info!("indices: {:?}", &indices);
+        // info!("indices: {:?}", &indices);
         Self {
             dataset,
             indices,
