@@ -12,7 +12,10 @@ use rand::{
     rngs::StdRng,
     Rng, SeedableRng,
 };
-use std::{marker::PhantomData, sync::Arc};
+use std::{
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+};
 
 pub(crate) struct BatchShuffledDataset<D, I> {
     dataset: D,
@@ -83,7 +86,7 @@ pub struct BatchShuffledDataLoader<I, O> {
     strategy: Box<dyn BatchStrategy<I>>,
     dataset: Arc<dyn Dataset<I>>,
     batcher: Arc<dyn Batcher<I, O>>,
-    rng: Option<spin::Mutex<rand::rngs::StdRng>>,
+    rng: Option<Mutex<rand::rngs::StdRng>>,
     batch_size: usize,
 }
 
@@ -112,7 +115,7 @@ impl<I, O> BatchShuffledDataLoader<I, O> {
             strategy,
             dataset,
             batcher,
-            rng: rng.map(spin::Mutex::new),
+            rng: rng.map(Mutex::new),
             batch_size,
         }
     }
@@ -187,12 +190,12 @@ impl<I: Send + Sync + Clone + 'static, O: Send + Sync> DataLoader<O>
         // rng to ensure that each new iteration shuffles the dataset differently.
         let dataset = match &self.rng {
             Some(rng) => {
-                let mut rng = rng.lock();
+                let rng = rng.lock();
 
                 Arc::new(BatchShuffledDataset::with_seed(
                     self.dataset.clone(),
                     self.batch_size,
-                    rng.sample(Standard),
+                    rng.unwrap().sample(Standard),
                 ))
             }
             None => self.dataset.clone(),

@@ -778,7 +778,6 @@ dependencies = [
  "rusqlite",
  "serde",
  "snafu",
- "spin",
  "strum 0.25.0",
 ]
 
