@@ -62,6 +62,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b84bf0a05bbb2a83e5eb6fa36bb6e87baa08193c35ff52bbf6b38d8af2890e46"
 
 [[package]]
+name = "async-trait"
+version = "0.1.73"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc00ceb34980c03614e35a3a4e218276a0a824e911d07651cd0d858a51e8c0f0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.37",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -103,7 +114,7 @@ checksum = "7f30e7476521f6f8af1a1c4c0b8cc94f0bee37d91763d0ca2665f299b6cd8aec"
 [[package]]
 name = "burn"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "burn-core",
  "burn-train",
@@ -112,7 +123,7 @@ dependencies = [
 [[package]]
 name = "burn-autodiff"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "burn-common",
  "burn-tensor",
@@ -124,9 +135,12 @@ dependencies = [
 [[package]]
 name = "burn-common"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
+ "async-trait",
  "const-random",
+ "derive-new",
+ "getrandom",
  "rand",
  "spin",
  "uuid",
@@ -135,7 +149,7 @@ dependencies = [
 [[package]]
 name = "burn-core"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "bincode",
  "burn-autodiff",
@@ -160,7 +174,7 @@ dependencies = [
 [[package]]
 name = "burn-dataset"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "csv",
  "derive-new",
@@ -185,7 +199,7 @@ dependencies = [
 [[package]]
 name = "burn-derive"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "derive-new",
  "proc-macro2",
@@ -196,7 +210,7 @@ dependencies = [
 [[package]]
 name = "burn-ndarray"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "burn-autodiff",
  "burn-common",
@@ -214,8 +228,9 @@ dependencies = [
 [[package]]
 name = "burn-tensor"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
+ "burn-common",
  "burn-tensor-testgen",
  "derive-new",
  "half 2.3.1",
@@ -230,7 +245,7 @@ dependencies = [
 [[package]]
 name = "burn-tensor-testgen"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -240,7 +255,7 @@ dependencies = [
 [[package]]
 name = "burn-train"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c#d06cc2f239c53e7f88dad7e0b2bbe6757a17d66c"
+source = "git+https://github.com/burn-rs/burn.git?rev=163e48c9699b2cc6d67fd7539cbf6821ecbf953b#163e48c9699b2cc6d67fd7539cbf6821ecbf953b"
 dependencies = [
  "burn-core",
  "crossterm",
