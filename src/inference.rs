@@ -95,7 +95,7 @@ impl<B: Backend> FSRS<B> {
         interval: f32,
         sm2_retention: f32,
     ) -> MemoryState {
-        let stability = interval.max(0.1) * 0.9_f32.ln() / sm2_retention.ln();
+        let stability = interval.max(0.1) / (9 * (1 / sm2_retention - 1));
         let w = &self.model().w;
         let w8: f32 = w.get(8).into_scalar().elem();
         let w9: f32 = w.get(9).into_scalar().elem();
