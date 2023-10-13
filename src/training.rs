@@ -236,9 +236,9 @@ impl<B: Backend> FSRS<B> {
                     self.device(),
                     progress.clone().map(ProgressCollector::new),
                 );
-                model.unwrap().w.val().to_data().convert().value
+                Ok(model?.w.val().to_data().convert().value)
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         let average_weights = weights_sets
             .iter()
