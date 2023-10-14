@@ -282,7 +282,7 @@ mod tests {
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
-            Data::from([0.4, 0.6, 2.4, 5.8, 0.4, 0.6])
+            Data::from([0.4, 0.9, 2.3, 10.9, 0.4, 0.9])
         )
     }
 

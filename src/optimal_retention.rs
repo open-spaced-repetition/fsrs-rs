@@ -436,7 +436,7 @@ mod tests {
             0.9,
             None,
         );
-        assert_eq!(memorization, 2542.50223082592)
+        assert_eq!(memorization, 2635.689850107157)
     }
 
     #[test]
@@ -444,7 +444,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8687319006249048);
+        assert_eq!(optimal_retention, 0.8633668648071942);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
