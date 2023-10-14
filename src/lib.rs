@@ -22,4 +22,4 @@ pub use inference::{
 };
 pub use model::FSRS;
 pub use optimal_retention::SimulatorConfig;
-pub use training::ProgressState;
+pub use training::CombinedProgressState;
