@@ -4,7 +4,7 @@ use itertools::Itertools;
 use ndarray::Array1;
 use std::collections::HashMap;
 
-static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[(1, 0.4), (2, 0.6), (3, 2.4), (4, 5.8)];
+static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[(1, 0.4), (2, 0.9), (3, 2.3), (4, 10.9)];
 
 pub fn pretrain(fsrs_items: Vec<FSRSItem>, average_recall: f32) -> Result<[f32; 4]> {
     let pretrainset = create_pretrain_data(fsrs_items);
@@ -340,7 +340,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        let expected = [(4, 1.2502396)].into_iter().collect();
+        let expected = [(4, 1.4098487)].into_iter().collect();
         assert_eq!(actual, expected);
     }
 
@@ -352,15 +352,15 @@ mod tests {
         let pretrainset = split_data(items, 1).0;
         assert_eq!(
             pretrain(pretrainset, average_recall).unwrap(),
-            [0.948_268_3, 1.696_434_9, 4.059_253_7, 9.001_528,],
+            [0.948_268_3, 1.695_154, 4.051_595_7, 9.332_188,],
         )
     }
 
     #[test]
     fn test_smooth_and_fill() {
-        let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.4), (4, 5.8)]);
+        let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.3), (4, 10.9)]);
         let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.4, 0.81906897, 2.4, 5.8,]);
+        assert_eq!(actual, [0.4, 0.8052433, 2.3, 10.9,]);
     }
 }
