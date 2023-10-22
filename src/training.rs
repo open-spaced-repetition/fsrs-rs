@@ -12,7 +12,7 @@ use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
-use burn::train::metric::dashboard::{DashboardMetricState, DashboardRenderer, TrainingProgress};
+use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
 
 use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
 use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
@@ -169,10 +169,10 @@ impl ProgressState {
     }
 }
 
-impl DashboardRenderer for ProgressCollector {
-    fn update_train(&mut self, _state: DashboardMetricState) {}
+impl MetricsRenderer for ProgressCollector {
+    fn update_train(&mut self, _state: MetricState) {}
 
-    fn update_valid(&mut self, _state: DashboardMetricState) {}
+    fn update_valid(&mut self, _state: MetricState) {}
 
     fn render_train(&mut self, item: TrainingProgress) {
         let mut info = self.state.lock().unwrap();
@@ -325,7 +325,7 @@ fn train<B: ADBackend>(
     if artifact_dir.is_ok() {
         builder = builder
             .log_to_file(true)
-            .with_file_checkpointer(10, PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
+            .with_file_checkpointer(PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
     }
 
     let learner = builder.build(config.model.init(), config.optimizer.init(), lr_scheduler);
@@ -354,10 +354,10 @@ fn train<B: ADBackend>(
 
 struct NoProgress {}
 
-impl DashboardRenderer for NoProgress {
-    fn update_train(&mut self, _state: DashboardMetricState) {}
+impl MetricsRenderer for NoProgress {
+    fn update_train(&mut self, _state: MetricState) {}
 
-    fn update_valid(&mut self, _state: DashboardMetricState) {}
+    fn update_valid(&mut self, _state: MetricState) {}
 
     fn render_train(&mut self, _item: TrainingProgress) {}
 
