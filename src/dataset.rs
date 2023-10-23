@@ -186,11 +186,15 @@ fn stratified_kfold(mut trainset: Vec<FSRSItem>, n_splits: usize) -> Vec<Vec<FSR
         })
 }
 
-pub fn split_data(items: Vec<FSRSItem>, n_splits: usize) -> (Vec<FSRSItem>, Vec<Vec<FSRSItem>>) {
+pub fn split_data(
+    items: Vec<FSRSItem>,
+    n_splits: usize,
+) -> (Vec<FSRSItem>, Vec<Vec<FSRSItem>>, Vec<FSRSItem>) {
     let (pretrainset, trainset) = items.into_iter().partition(|item| item.reviews.len() == 2);
     (
         filter_outlier(pretrainset),
-        stratified_kfold(trainset, n_splits),
+        stratified_kfold(trainset.clone(), n_splits),
+        trainset,
     )
 }
 
