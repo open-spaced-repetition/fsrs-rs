@@ -1,4 +1,4 @@
-use burn::{lr_scheduler::LRScheduler, LearningRate};
+use burn::{lr_scheduler::LrScheduler, LearningRate};
 use log::info;
 #[derive(Clone, Debug)]
 pub(crate) struct CosineAnnealingLR {
@@ -21,7 +21,7 @@ impl CosineAnnealingLR {
     }
 }
 
-impl LRScheduler for CosineAnnealingLR {
+impl LrScheduler for CosineAnnealingLR {
     type Record = usize;
 
     fn step(&mut self) -> LearningRate {
