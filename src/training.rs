@@ -12,9 +12,14 @@ use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
+use burn::train::metric::store::{Aggregate, Direction, Split};
+use burn::train::metric::LossMetric;
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
 
-use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
+use burn::train::{
+    ClassificationOutput, MetricEarlyStoppingStrategy, StoppingCondition, TrainOutput, TrainStep,
+    TrainingInterrupter, ValidStep,
+};
 use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
 use core::marker::PhantomData;
 use log::info;
@@ -309,6 +314,12 @@ fn train<B: ADBackend>(
     let artifact_dir = std::env::var("BURN_LOG");
 
     let mut builder = LearnerBuilder::new(&artifact_dir.clone().unwrap_or_default())
+        .early_stopping(MetricEarlyStoppingStrategy::new::<LossMetric<B>>(
+            Aggregate::Mean,
+            Direction::Lowest,
+            Split::Train,
+            StoppingCondition::NoImprovementSince { n_epochs: 1 },
+        ))
         .devices(vec![device])
         .num_epochs(config.num_epochs)
         .log_to_file(false);
