@@ -7,14 +7,21 @@ use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use crate::{FSRSError, FSRS};
 use burn::autodiff::ADBackendDecorator;
+use burn::data::dataloader::DataLoaderBuilder;
 use burn::module::Module;
 use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
+use burn::train::logger::InMemoryMetricLogger;
+use burn::train::metric::store::{Aggregate, Direction, Split};
+use burn::train::metric::LossMetric;
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
 
-use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
+use burn::train::{
+    ClassificationOutput, MetricEarlyStoppingStrategy, StoppingCondition, TrainOutput, TrainStep,
+    TrainingInterrupter, ValidStep,
+};
 use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
 use core::marker::PhantomData;
 use log::info;
@@ -232,7 +239,7 @@ impl<B: Backend> FSRS<B> {
             progress.lock().unwrap().splits = vec![ProgressState::default(); n_splits];
         }
         let average_recall = calculate_average_recall(&items);
-        let (pre_trainset, trainsets) = split_data(items, n_splits);
+        let (pre_trainset, trainsets, testset) = split_data(items, n_splits);
         let initial_stability = pretrain(pre_trainset, average_recall)?;
         let config = TrainingConfig::new(
             ModelConfig {
@@ -254,6 +261,7 @@ impl<B: Backend> FSRS<B> {
 
                 let model = train::<ADBackendDecorator<B>>(
                     trainset,
+                    testset.clone(),
                     &config,
                     self.device(),
                     progress.clone().map(|p| ProgressCollector::new(p, i)),
@@ -276,7 +284,8 @@ impl<B: Backend> FSRS<B> {
 }
 
 fn train<B: ADBackend>(
-    items: Vec<FSRSItem>,
+    trainset: Vec<FSRSItem>,
+    testset: Vec<FSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
     progress: Option<ProgressCollector>,
@@ -284,7 +293,7 @@ fn train<B: ADBackend>(
     B::seed(config.seed);
 
     // Training data
-    let iterations = (items.len() / config.batch_size + 1) * config.num_epochs;
+    let iterations = (trainset.len() / config.batch_size + 1) * config.num_epochs;
     let batcher_train = FSRSBatcher::<B>::new(device.clone());
     let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
@@ -292,23 +301,35 @@ fn train<B: ADBackend>(
         .num_workers(config.num_workers)
         .build(
             BatchShuffledDataset::with_seed(
-                FSRSDataset::from(items),
+                FSRSDataset::from(trainset),
                 config.batch_size,
                 config.seed,
             ),
             config.batch_size,
         );
 
-    // We don't use any validation data
     let batcher_valid = FSRSBatcher::new(device.clone());
-    let dataloader_valid = BatchShuffledDataLoaderBuilder::new(batcher_valid)
-        .build(FSRSDataset::from(vec![]), config.batch_size);
+    let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
+        .batch_size(config.batch_size)
+        .num_workers(config.num_workers)
+        .build(FSRSDataset::from(testset));
 
     let lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
 
     let artifact_dir = std::env::var("BURN_LOG");
 
     let mut builder = LearnerBuilder::new(&artifact_dir.clone().unwrap_or_default())
+        .metric_loggers(
+            InMemoryMetricLogger::default(),
+            InMemoryMetricLogger::default(),
+        )
+        .metric_valid_numeric(LossMetric::new())
+        .early_stopping(MetricEarlyStoppingStrategy::new::<LossMetric<B>>(
+            Aggregate::Mean,
+            Direction::Lowest,
+            Split::Valid,
+            StoppingCondition::NoImprovementSince { n_epochs: 1 },
+        ))
         .devices(vec![device])
         .num_epochs(config.num_epochs)
         .log_to_file(false);
@@ -382,7 +403,7 @@ mod tests {
         let n_splits = 5;
         let device = NdArrayDevice::Cpu;
         let items = anki21_sample_file_converted_to_fsrs();
-        let (pre_trainset, trainsets) = split_data(items, n_splits);
+        let (pre_trainset, trainsets, testset) = split_data(items.clone(), n_splits);
         let average_recall = calculate_average_recall(&pre_trainset);
         let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
         let config = TrainingConfig::new(
@@ -402,7 +423,13 @@ mod tests {
                     .filter(|&(j, _)| j != i)
                     .flat_map(|(_, trainset)| trainset.clone())
                     .collect();
-                let model = train::<NdArrayAutodiffBackend>(trainset, &config, device, None);
+                let model = train::<NdArrayAutodiffBackend>(
+                    trainset,
+                    testset.clone(),
+                    &config,
+                    device,
+                    None,
+                );
                 model.unwrap().w.val().to_data().convert().value
             })
             .collect();
