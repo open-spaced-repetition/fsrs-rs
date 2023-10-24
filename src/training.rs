@@ -13,6 +13,7 @@ use burn::optim::AdamConfig;
 use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
+use burn::train::logger::InMemoryMetricLogger;
 use burn::train::metric::store::{Aggregate, Direction, Split};
 use burn::train::metric::LossMetric;
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
@@ -283,7 +284,7 @@ impl<B: Backend> FSRS<B> {
 }
 
 fn train<B: ADBackend>(
-    transet: Vec<FSRSItem>,
+    trainset: Vec<FSRSItem>,
     testset: Vec<FSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
@@ -292,7 +293,7 @@ fn train<B: ADBackend>(
     B::seed(config.seed);
 
     // Training data
-    let iterations = (transet.len() / config.batch_size + 1) * config.num_epochs;
+    let iterations = (trainset.len() / config.batch_size + 1) * config.num_epochs;
     let batcher_train = FSRSBatcher::<B>::new(device.clone());
     let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
@@ -300,7 +301,7 @@ fn train<B: ADBackend>(
         .num_workers(config.num_workers)
         .build(
             BatchShuffledDataset::with_seed(
-                FSRSDataset::from(transet),
+                FSRSDataset::from(trainset),
                 config.batch_size,
                 config.seed,
             ),
@@ -318,6 +319,10 @@ fn train<B: ADBackend>(
     let artifact_dir = std::env::var("BURN_LOG");
 
     let mut builder = LearnerBuilder::new(&artifact_dir.clone().unwrap_or_default())
+        .metric_loggers(
+            InMemoryMetricLogger::default(),
+            InMemoryMetricLogger::default(),
+        )
         .metric_valid_numeric(LossMetric::new())
         .early_stopping(MetricEarlyStoppingStrategy::new::<LossMetric<B>>(
             Aggregate::Mean,
