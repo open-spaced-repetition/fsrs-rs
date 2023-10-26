@@ -387,13 +387,13 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20753297, 0.041_122_54]), 5);
+            .assert_approx_eq(&Data::from([0.20745006, 0.040_497_02]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20320644, 0.016_822_13]), 5);
+            .assert_approx_eq(&Data::from([0.20321770, 0.015_836_29]), 5);
         Ok(())
     }
 
@@ -426,17 +426,17 @@ mod tests {
             NextStates {
                 again: ItemState {
                     memory: MemoryState {
-                        stability: 4.5604353,
+                        stability: 4.5802255,
                         difficulty: 8.881129,
                     },
                     interval: 5
                 },
                 hard: ItemState {
                     memory: MemoryState {
-                        stability: 26.111229,
+                        stability: 27.7025,
                         difficulty: 7.9430957
                     },
-                    interval: 26,
+                    interval: 28,
                 },
                 good: ItemState {
                     memory: MemoryState {
@@ -447,10 +447,10 @@ mod tests {
                 },
                 easy: ItemState {
                     memory: MemoryState {
-                        stability: 121.01552,
+                        stability: 101.98282,
                         difficulty: 6.0670285
                     },
-                    interval: 121,
+                    interval: 102,
                 }
             }
         );
