@@ -114,7 +114,8 @@ checksum = "7f30e7476521f6f8af1a1c4c0b8cc94f0bee37d91763d0ca2665f299b6cd8aec"
 [[package]]
 name = "burn"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e06bb3dfa90408228c879224e26a8bbf072aa2a68194c9b512f715624525c7cc"
 dependencies = [
  "burn-core",
  "burn-train",
@@ -123,7 +124,8 @@ dependencies = [
 [[package]]
 name = "burn-autodiff"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b20c3ba4141da32bbcc48a4ce33a0fbf09742dfb6f17d6e781f27e076bf06d82"
 dependencies = [
  "burn-common",
  "burn-tensor",
@@ -135,10 +137,10 @@ dependencies = [
 [[package]]
 name = "burn-common"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ce227728da80c4c7f932e66900d285ff6e04b815d77d769fd2ade463acb0d52"
 dependencies = [
  "async-trait",
- "const-random",
  "derive-new",
  "getrandom",
  "rand",
@@ -149,7 +151,8 @@ dependencies = [
 [[package]]
 name = "burn-core"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbbeb7c07436e89d3b7e2445198f5d4142255bf74564eb4dc6cb9898f00d2da5"
 dependencies = [
  "bincode",
  "burn-autodiff",
@@ -174,7 +177,8 @@ dependencies = [
 [[package]]
 name = "burn-dataset"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c7f12f9a55e82d327384e20c394c79e5a414b245fe59c37346e7a98234d1707"
 dependencies = [
  "csv",
  "derive-new",
@@ -199,7 +203,8 @@ dependencies = [
 [[package]]
 name = "burn-derive"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0726d6006ab4f1c65b37b079a8663ad168110976fb57234764495ed8c49a94b6"
 dependencies = [
  "derive-new",
  "proc-macro2",
@@ -210,7 +215,8 @@ dependencies = [
 [[package]]
 name = "burn-ndarray"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cbba6e5180a91a48e2e5da7e74107d82dae9cc94a772a73783eb1381dd71fa2"
 dependencies = [
  "burn-autodiff",
  "burn-common",
@@ -228,7 +234,8 @@ dependencies = [
 [[package]]
 name = "burn-tensor"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4ddf687c9e2ddf235bb1528530b5e6c04601d4240aca78de6484fd01cc81e9f"
 dependencies = [
  "burn-common",
  "burn-tensor-testgen",
@@ -245,7 +252,8 @@ dependencies = [
 [[package]]
 name = "burn-tensor-testgen"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f92da000e738bcf20ec873d63c3b46ed4e0afa10fb14ea3133874886c0fb591f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -255,7 +263,8 @@ dependencies = [
 [[package]]
 name = "burn-train"
 version = "0.10.0"
-source = "git+https://github.com/burn-rs/burn.git?rev=d2639682367f39d0d0ed049d0cf3a2077259e05d#d2639682367f39d0d0ed049d0cf3a2077259e05d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7b6ae54075e0f4ea7da7d1e6b94fb84854aed912885a2a957e9ce1e18aae12a"
 dependencies = [
  "burn-core",
  "crossterm",
@@ -407,28 +416,6 @@ name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
-
-[[package]]
-name = "const-random"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "368a7a772ead6ce7e1de82bfb04c485f3db8ec744f72925af5735e29a22cc18e"
-dependencies = [
- "const-random-macro",
- "proc-macro-hack",
-]
-
-[[package]]
-name = "const-random-macro"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d7d6ab3c3a2282db210df5f02c4dab6e0a7057af0fb7ebd4070f30fe05c0ddb"
-dependencies = [
- "getrandom",
- "once_cell",
- "proc-macro-hack",
- "tiny-keccak",
-]
 
 [[package]]
 name = "core-foundation-sys"
@@ -1480,12 +1467,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
-name = "proc-macro-hack"
-version = "0.5.20+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc375e1527247fe1a97d8b7156678dfe7c1af2fc075c9a4db3690ecd2a148068"
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2086,15 +2067,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ad70d68dba9e1f8aceda7aa6711965dfec1cac869f311a51bd08b3a2ccbce20"
 dependencies = [
  "time-core",
-]
-
-[[package]]
-name = "tiny-keccak"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
-dependencies = [
- "crunchy",
 ]
 
 [[package]]
