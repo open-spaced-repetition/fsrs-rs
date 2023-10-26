@@ -289,8 +289,8 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
             &(&true_review & !&forget)
         )
         .filter(|(.., &condition)| condition)
-        .for_each(|(new_diff, &old_diff, rating, ..)| {
-            *new_diff = (old_diff - w[6] * (rating - 3) as f64).max(1.0).min(10.0);
+        .for_each(|(new_diff, &old_diff, &rating, ..)| {
+            *new_diff = (old_diff - w[6] * (rating as f64 - 3.0)).max(1.0).min(10.0);
         });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
@@ -449,16 +449,17 @@ mod tests {
             0.9,
             None,
         );
-        assert_eq!(memorization, 4234.958949796157)
+        assert_eq!(memorization, 2633.365434092778)
     }
 
-    // #[test]
-    // fn optimal_retention() -> Result<()> {
-    //     let config = SimulatorConfig::default();
-    //     let fsrs = FSRS::new(None)?;
-    //     let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-    //     assert_eq!(optimal_retention, 0.9078113092516384);
-    //     assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
-    //     Ok(())
-    // }
+    #[test]
+    fn optimal_retention() -> Result<()> {
+        let config = SimulatorConfig::default();
+        let fsrs = FSRS::new(None)?;
+        let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
+        assert_eq!(optimal_retention, 0.8530025910684347
+        );
+        assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
+        Ok(())
+    }
 }
