@@ -221,12 +221,13 @@ fn smooth_and_fill(
                     rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
                 (Some(&r1), None, None, Some(&r4)) => {
-                    let r2 =
-                        r1.powf(w1 / (w1 + w2 - w1 * w2)) * r4.powf(1.0 - w1 / (w1 + w2 - w1 * w2));
+                    let r2 = r1.powf(w1 / (w1.mul_add(-w2, w1 + w2)))
+                        * r4.powf(1.0 - w1 / (w1.mul_add(-w2, w1 + w2)));
                     rating_stability.insert(2, r2);
                     rating_stability.insert(
                         3,
-                        r1.powf(1.0 - w2 / (w1 + w2 - w1 * w2)) * r4.powf(w2 / (w1 + w2 - w1 * w2)),
+                        r1.powf(1.0 - w2 / (w1.mul_add(-w2, w1 + w2)))
+                            * r4.powf(w2 / (w1.mul_add(-w2, w1 + w2))),
                     );
                 }
                 (Some(&r1), None, Some(&r3), None) => {

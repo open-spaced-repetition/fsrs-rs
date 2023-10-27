@@ -78,13 +78,10 @@ impl Default for SimulatorConfig {
 fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -> f64 {
     let hard_penalty = if response == 2 { w[15] } else { 1.0 };
     let easy_bonus = if response == 4 { w[16] } else { 1.0 };
-    s * (1.0
-        + f64::exp(w[8])
-            * (11.0 - d)
+    s *  (f64::exp(w[8])
+             * (11.0 - d)
             * s.powf(-w[9])
-            * (f64::exp((1.0 - r) * w[10]) - 1.0)
-            * hard_penalty
-            * easy_bonus)
+            * (f64::exp((1.0 - r) * w[10]) - 1.0) * hard_penalty).mul_add(easy_bonus, 1.0)
 }
 
 fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {

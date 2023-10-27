@@ -12,12 +12,12 @@ use serde::{Deserialize, Serialize};
 /// first one.
 /// When used during review, the last item should include the correct delta_t, but
 /// the provided rating is ignored as all four ratings are returned by .next_states()
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FSRSReview {
     /// 1-4
     pub rating: u32,
