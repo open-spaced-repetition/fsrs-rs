@@ -10,8 +10,8 @@ pub(crate) struct CosineAnnealingLR {
 }
 
 impl CosineAnnealingLR {
-    pub fn init(t_max: f64, init_lr: LearningRate) -> CosineAnnealingLR {
-        CosineAnnealingLR {
+    pub const fn init(t_max: f64, init_lr: LearningRate) -> Self {
+        Self {
             t_max,
             eta_min: 0.0,
             init_lr,

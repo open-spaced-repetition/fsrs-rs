@@ -40,7 +40,7 @@ impl ndarray::SliceNextDim for Column {
 
 impl From<Column> for SliceInfoElem {
     fn from(value: Column) -> Self {
-        SliceInfoElem::Index(value as isize)
+        Self::Index(value as isize)
     }
 }
 
@@ -59,8 +59,8 @@ pub struct SimulatorConfig {
 }
 
 impl Default for SimulatorConfig {
-    fn default() -> SimulatorConfig {
-        SimulatorConfig {
+    fn default() -> Self {
+        Self {
             deck_size: 10000,
             learn_span: 365,
             max_cost_perday: 1800.0,
@@ -146,7 +146,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         izip!(&mut retrievability, &delta_t, &old_stability, &has_learned)
             .filter(|(.., &has_learned_flag)| has_learned_flag)
             .for_each(|(retrievability, &delta_t, &stability, ..)| {
-                *retrievability = (1.0 + delta_t / (9.0 * stability)).powf(-1.0)
+                *retrievability = (1.0 + delta_t / (9.0 * stability)).powi(-1)
             });
 
         // Set 'cost' column to 0
@@ -278,7 +278,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         izip!(&mut new_difficulty, &old_difficulty, &true_review, &forget)
             .filter(|(.., &true_rev, &frgt)| true_rev && frgt)
             .for_each(|(new_diff, &old_diff, ..)| {
-                *new_diff = (old_diff + 2.0 * w[6]).clamp(1.0, 10.0);
+                *new_diff = (2.0f64.mul_add(w[6], old_diff)).clamp(1.0, 10.0);
             });
 
         // Update the difficulty values based on the condition 'true_review & !forget'

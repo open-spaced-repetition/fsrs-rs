@@ -26,7 +26,7 @@ fn infer<B: Backend>(
     batch: FSRSBatch<B>,
 ) -> (MemoryStateTensors<B>, Tensor<B, 1>) {
     let state = model.forward(batch.t_historys, batch.r_historys, None);
-    let retention = model.power_forgetting_curve(batch.delta_ts.clone(), state.stability.clone());
+    let retention = model.power_forgetting_curve(batch.delta_ts, state.stability.clone());
     (state, retention)
 }
 
@@ -38,7 +38,7 @@ pub struct MemoryState {
 
 impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
     fn from(m: MemoryStateTensors<B>) -> Self {
-        MemoryState {
+        Self {
             stability: m.stability.to_data().value[0].elem(),
             difficulty: m.difficulty.to_data().value[0].elem(),
         }
@@ -47,7 +47,7 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
 
 impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     fn from(m: MemoryState) -> Self {
-        MemoryStateTensors {
+        Self {
             stability: Tensor::from_data(Data::new(vec![m.stability.elem()], Shape { dims: [1] })),
             difficulty: Tensor::from_data(Data::new(
                 vec![m.difficulty.elem()],
@@ -102,7 +102,7 @@ impl<B: Backend> FSRS<B> {
         let w10: f32 = w.get(10).into_scalar().elem();
         let difficulty = 11.0
             - (ease_factor - 1.0)
-                / (w8.exp() * stability.powf(-w9) * (((1.0 - sm2_retention) * w10).exp() - 1.0));
+                / (w8.exp() * stability.powf(-w9) * ((1.0 - sm2_retention) * w10).exp_m1());
         MemoryState {
             stability,
             difficulty: difficulty.clamp(1.0, 10.0),
@@ -122,7 +122,7 @@ impl<B: Backend> FSRS<B> {
             // get initial stability for new card
             let rating = Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }));
             let model = self.model();
-            model.init_stability(rating.clone()).into_scalar().elem()
+            model.init_stability(rating).into_scalar().elem()
         });
         next_interval(stability, desired_retention)
     }
@@ -211,7 +211,7 @@ impl<B: Backend> FSRS<B> {
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
     /// review.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32) -> f32 {
-        (days_elapsed as f32 / (state.stability * 9.0) + 1.0).powf(-1.0)
+        (days_elapsed as f32 / (state.stability * 9.0) + 1.0).powi(-1)
     }
 }
 
@@ -480,7 +480,7 @@ mod tests {
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9),
             MemoryState {
                 stability: 9.999995,
-                difficulty: 6.265295
+                difficulty: 6.2652965
             }
         );
         assert_eq!(

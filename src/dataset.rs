@@ -41,7 +41,7 @@ pub(crate) struct FSRSBatcher<B: Backend> {
 }
 
 impl<B: Backend> FSRSBatcher<B> {
-    pub fn new(device: B::Device) -> Self {
+    pub const fn new(device: B::Device) -> Self {
         Self { device }
     }
 }
