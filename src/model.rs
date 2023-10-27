@@ -69,7 +69,7 @@ impl<B: Backend> Model<B> {
     fn stability_after_success(
         &self,
         last_s: Tensor<B, 1>,
-        new_d: Tensor<B, 1>,
+        last_d: Tensor<B, 1>,
         r: Tensor<B, 1>,
         rating: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
@@ -81,7 +81,7 @@ impl<B: Backend> Model<B> {
 
         last_s.clone()
             * (self.w.get(8).exp()
-                * (-new_d + 11)
+                * (-last_d + 11)
                 * (last_s.pow(-self.w.get(9)))
                 * (((-r + 1) * self.w.get(10)).exp() - 1)
                 * hard_penalty
@@ -92,11 +92,11 @@ impl<B: Backend> Model<B> {
     fn stability_after_failure(
         &self,
         last_s: Tensor<B, 1>,
-        new_d: Tensor<B, 1>,
+        last_d: Tensor<B, 1>,
         r: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
         self.w.get(11)
-            * new_d.pow(-self.w.get(12))
+            * last_d.pow(-self.w.get(12))
             * ((last_s + 1).pow(self.w.get(13)) - 1)
             * ((-r + 1) * self.w.get(14)).exp()
     }
@@ -125,21 +125,22 @@ impl<B: Backend> Model<B> {
     ) -> MemoryStateTensors<B> {
         let (new_s, new_d) = if let Some(state) = state {
             let retention = self.power_forgetting_curve(delta_t, state.stability.clone());
-            let mut new_difficulty = self.next_difficulty(state.difficulty.clone(), rating.clone());
-            new_difficulty = self.mean_reversion(new_difficulty).clamp(1.0, 10.0);
             let stability_after_success = self.stability_after_success(
                 state.stability.clone(),
-                new_difficulty.clone(),
+                state.difficulty.clone(),
                 retention.clone(),
                 rating.clone(),
             );
             let stability_after_failure = self.stability_after_failure(
                 state.stability.clone(),
-                new_difficulty.clone(),
+                state.difficulty.clone(),
                 retention.clone(),
             );
             let mut new_stability = stability_after_success
                 .mask_where(rating.clone().equal_elem(1), stability_after_failure);
+
+            let mut new_difficulty = self.next_difficulty(state.difficulty.clone(), rating.clone());
+            new_difficulty = self.mean_reversion(new_difficulty).clamp(1.0, 10.0);
             // mask padding zeros for rating
             new_stability = new_stability.mask_where(rating.clone().equal_elem(0), state.stability);
             new_difficulty = new_difficulty.mask_where(rating.equal_elem(0), state.difficulty);

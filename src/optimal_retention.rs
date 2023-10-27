@@ -76,8 +76,8 @@ impl Default for SimulatorConfig {
 }
 
 fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -> f64 {
-    let hard_penalty = if response == 1 { w[15] } else { 1.0 };
-    let easy_bonus = if response == 3 { w[16] } else { 1.0 };
+    let hard_penalty = if response == 2 { w[15] } else { 1.0 };
+    let easy_bonus = if response == 4 { w[16] } else { 1.0 };
     s * (1.0
         + f64::exp(w[8])
             * (11.0 - d)
@@ -88,8 +88,8 @@ fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -
 }
 
 fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
-    s.min(w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
-        .max(0.1)
+    (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
+        .clamp(0.1, s)
 }
 
 fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: Option<u64>) -> f64 {
@@ -116,10 +116,10 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
     // let mut learn_cnt_per_day = Array1::<f64>::zeros(learn_span);
     let mut memorized_cnt_per_day = Array1::zeros(learn_span);
 
-    let first_rating_choices = [0, 1, 2, 3];
+    let first_rating_choices = [1, 2, 3, 4];
     let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
 
-    let review_rating_choices = [1, 2, 3];
+    let review_rating_choices = [2, 3, 4];
     let review_rating_dist = WeightedIndex::new(review_rating_prob).unwrap();
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
@@ -180,8 +180,8 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
 
         // Sample 'rating' for 'need_review' entries
         let mut ratings = Array1::zeros(deck_size);
-        izip!(&mut ratings, &need_review)
-            .filter(|(_, &need_review_flag)| need_review_flag)
+        izip!(&mut ratings, &(&need_review & !&forget))
+            .filter(|(_, &condition)| condition)
             .for_each(|(rating, _)| {
                 *rating = review_rating_choices[review_rating_dist.sample(&mut rng)]
             });
@@ -193,12 +193,13 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
                 *cost = if forget_flag {
                     forget_cost * loss_aversion
                 } else {
-                    recall_costs[rating - 1]
+                    recall_costs[rating - 2]
                 }
             });
 
         // Calculate cumulative sum of 'cost'
         let mut cum_sum = Array1::<f64>::zeros(deck_size);
+        cum_sum[0] = cost[0];
         for i in 1..deck_size {
             cum_sum[i] = cum_sum[i - 1] + cost[i];
         }
@@ -219,6 +220,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
                 *cost = learn_cost;
             });
 
+        cum_sum[0] = cost[0];
         for i in 1..deck_size {
             cum_sum[i] = cum_sum[i - 1] + cost[i];
         }
@@ -276,8 +278,20 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         izip!(&mut new_difficulty, &old_difficulty, &true_review, &forget)
             .filter(|(.., &true_rev, &frgt)| true_rev && frgt)
             .for_each(|(new_diff, &old_diff, ..)| {
-                *new_diff = (old_diff + 2.0 * w[6]).max(1.0).min(10.0);
+                *new_diff = (old_diff + 2.0 * w[6]).clamp(1.0, 10.0);
             });
+
+        // Update the difficulty values based on the condition 'true_review & !forget'
+        izip!(
+            &mut new_difficulty,
+            &old_difficulty,
+            &ratings,
+            &(&true_review & !&forget)
+        )
+        .filter(|(.., &condition)| condition)
+        .for_each(|(new_diff, &old_diff, &rating, ..)| {
+            *new_diff = (old_diff - w[6] * (rating as f64 - 3.0)).clamp(1.0, 10.0);
+        });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
         let mut new_last_date = old_last_date.to_owned();
@@ -295,8 +309,8 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         )
         .filter(|(.., &true_learn_flag)| true_learn_flag)
         .for_each(|(new_stab, new_diff, &rating, _)| {
-            *new_stab = w[rating];
-            *new_diff = w[4] - w[5] * (rating as f64 - 3.0);
+            *new_stab = w[rating - 1];
+            *new_diff = (w[4] - w[5] * (rating as f64 - 3.0)).clamp(1.0, 10.0);
         });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
@@ -305,8 +319,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
             .for_each(|(new_ivl, &new_stab, ..)| {
                 *new_ivl = (9.0 * new_stab * (1.0 / request_retention - 1.0))
                     .round()
-                    .min(max_ivl)
-                    .max(1.0);
+                    .clamp(1.0, max_ivl);
             });
 
         let old_due = card_table.slice(s![Column::Due, ..]);
@@ -331,7 +344,6 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         card_table
             .slice_mut(s![Column::Interval, ..])
             .assign(&new_interval);
-
         // Update the review_cnt_per_day, learn_cnt_per_day and memorized_cnt_per_day
         // review_cnt_per_day[today] = true_review.iter().filter(|&&x| x).count() as f64;
         // learn_cnt_per_day[today] = true_learn.iter().filter(|&&x| x).count() as f64;
@@ -436,7 +448,7 @@ mod tests {
             0.9,
             None,
         );
-        assert_eq!(memorization, 2635.689850107157)
+        assert_eq!(memorization, 2633.365434092778)
     }
 
     #[test]
@@ -444,7 +456,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8633668648071942);
+        assert_eq!(optimal_retention, 0.8530025910684347);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
