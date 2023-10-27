@@ -88,8 +88,8 @@ fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -
 }
 
 fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
-    s.min(w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
-        .max(0.1)
+    (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
+        .clamp(0.1, s)
 }
 
 fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: Option<u64>) -> f64 {
@@ -278,7 +278,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         izip!(&mut new_difficulty, &old_difficulty, &true_review, &forget)
             .filter(|(.., &true_rev, &frgt)| true_rev && frgt)
             .for_each(|(new_diff, &old_diff, ..)| {
-                *new_diff = (old_diff + 2.0 * w[6]).max(1.0).min(10.0);
+                *new_diff = (old_diff + 2.0 * w[6]).clamp(1.0, 10.0);
             });
 
         // Update the difficulty values based on the condition 'true_review & !forget'
@@ -290,7 +290,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         )
         .filter(|(.., &condition)| condition)
         .for_each(|(new_diff, &old_diff, &rating, ..)| {
-            *new_diff = (old_diff - w[6] * (rating as f64 - 3.0)).max(1.0).min(10.0);
+            *new_diff = (old_diff - w[6] * (rating as f64 - 3.0)).clamp(1.0, 10.0);
         });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
@@ -310,7 +310,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         .filter(|(.., &true_learn_flag)| true_learn_flag)
         .for_each(|(new_stab, new_diff, &rating, _)| {
             *new_stab = w[rating - 1];
-            *new_diff = (w[4] - w[5] * (rating as f64 - 3.0)).max(1.0).min(10.0);
+            *new_diff = (w[4] - w[5] * (rating as f64 - 3.0)).clamp(1.0, 10.0);
         });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
@@ -319,8 +319,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
             .for_each(|(new_ivl, &new_stab, ..)| {
                 *new_ivl = (9.0 * new_stab * (1.0 / request_retention - 1.0))
                     .round()
-                    .min(max_ivl)
-                    .max(1.0);
+                    .clamp(1.0, max_ivl);
             });
 
         let old_due = card_table.slice(s![Column::Due, ..]);
