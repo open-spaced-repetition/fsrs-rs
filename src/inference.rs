@@ -244,7 +244,7 @@ pub struct ItemProgress {
 fn get_bin(x: f32, bins: i32) -> i32 {
     let log_base = (bins.add(1) as f32).ln();
     let binned_x = (x * log_base).exp().floor().sub(1.0);
-    (binned_x as i32).min(bins - 1).max(0)
+    (binned_x as i32).clamp(0, bins - 1)
 }
 
 fn calibration_rmse(pred: &[f32], true_val: &[f32]) -> f32 {
