@@ -38,7 +38,8 @@ impl LrScheduler for CosineAnnealingLR {
             if (step_count - 1.0 - t_max) % (2.0 * t_max) == 0.0 {
                 (init_lr - eta_min) * (1.0 - f64::cos(PI / t_max)) / 2.0
             } else {
-                ((1.0 + f64::cos(cosine_arg)) / (1.0 + f64::cos(PI * (step_count - 1.0) / t_max))).mul_add(lr - eta_min, eta_min)
+                ((1.0 + f64::cos(cosine_arg)) / (1.0 + f64::cos(PI * (step_count - 1.0) / t_max)))
+                    .mul_add(lr - eta_min, eta_min)
             }
         }
         self.current_lr = cosine_annealing_lr(
