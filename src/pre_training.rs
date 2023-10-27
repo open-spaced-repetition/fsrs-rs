@@ -9,8 +9,8 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[(1, 0.4), (2, 0.9), (3, 2.3), (4
 pub fn pretrain(fsrs_items: Vec<FSRSItem>, average_recall: f32) -> Result<[f32; 4]> {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(&pretrainset);
-    let rating_stability = search_parameters(pretrainset, average_recall);
-    smooth_and_fill(&mut rating_stability.clone(), &rating_count)
+    let mut rating_stability = search_parameters(pretrainset, average_recall);
+    smooth_and_fill(&mut rating_stability, &rating_count)
 }
 
 type FirstRating = u32;
@@ -130,7 +130,7 @@ fn search_parameters(
             // https://github.com/open-spaced-repetition/fsrs4anki/pull/358/files#diff-35b13c8e3466e8bd1231a51c71524fc31a945a8f332290726214d3a6fa7f442aR491
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
             let n = data.iter().map(|d| d.count).sum::<f32>();
-            (real_recall * n + average_recall * 1.0) / (n + 1.0)
+            (real_recall * n + average_recall) / (n + 1.0)
         };
 
         let count = Array1::from_iter(data.iter().map(|d| d.count));
@@ -221,12 +221,13 @@ fn smooth_and_fill(
                     rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
                 (Some(&r1), None, None, Some(&r4)) => {
-                    let r2 =
-                        r1.powf(w1 / (w1 + w2 - w1 * w2)) * r4.powf(1.0 - w1 / (w1 + w2 - w1 * w2));
+                    let r2 = r1.powf(w1 / (w1.mul_add(-w2, w1 + w2)))
+                        * r4.powf(1.0 - w1 / (w1.mul_add(-w2, w1 + w2)));
                     rating_stability.insert(2, r2);
                     rating_stability.insert(
                         3,
-                        r1.powf(1.0 - w2 / (w1 + w2 - w1 * w2)) * r4.powf(w2 / (w1 + w2 - w1 * w2)),
+                        r1.powf(1.0 - w2 / (w1.mul_add(-w2, w1 + w2)))
+                            * r4.powf(w2 / (w1.mul_add(-w2, w1 + w2))),
                     );
                 }
                 (Some(&r1), None, Some(&r3), None) => {

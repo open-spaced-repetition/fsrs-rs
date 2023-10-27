@@ -167,7 +167,7 @@ where
 
         for (dataset, rng) in datasets.into_iter().zip(rngs) {
             let strategy = strategy.new_like();
-            let dataloader = BatchShuffledDataLoader::new(
+            let dataloader = Self::new(
                 strategy,
                 Arc::new(dataset),
                 batcher.clone(),
@@ -225,7 +225,7 @@ impl<I, O> BatchShuffledDataloaderIterator<I, O> {
         dataset: Arc<dyn Dataset<I>>,
         batcher: Arc<dyn Batcher<I, O>>,
     ) -> Self {
-        BatchShuffledDataloaderIterator {
+        Self {
             current_index: 0,
             strategy,
             dataset,
@@ -324,7 +324,7 @@ where
     /// # Returns
     ///
     /// The data loader builder.
-    pub fn shuffle(mut self, seed: u64) -> Self {
+    pub const fn shuffle(mut self, seed: u64) -> Self {
         self.shuffle = Some(seed);
         self
     }
@@ -338,7 +338,7 @@ where
     /// # Returns
     ///
     /// The data loader builder.
-    pub fn num_workers(mut self, num_workers: usize) -> Self {
+    pub const fn num_workers(mut self, num_workers: usize) -> Self {
         self.num_threads = Some(num_workers);
         self
     }

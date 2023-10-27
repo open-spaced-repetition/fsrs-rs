@@ -36,7 +36,7 @@ pub struct BCELoss<B: Backend> {
 }
 
 impl<B: Backend> BCELoss<B> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             backend: PhantomData,
         }
@@ -60,7 +60,7 @@ impl<B: Backend> Model<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
-        let retention = self.power_forgetting_curve(delta_ts.clone(), state.stability);
+        let retention = self.power_forgetting_curve(delta_ts, state.stability);
         let logits =
             Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).unsqueeze::<2>();
         let loss = BCELoss::new().forward(retention, labels.clone().float());
@@ -167,11 +167,11 @@ impl ProgressCollector {
 }
 
 impl ProgressState {
-    pub fn current(&self) -> usize {
+    pub const fn current(&self) -> usize {
         self.epoch.saturating_sub(1) * self.items_total + self.items_processed
     }
 
-    pub fn total(&self) -> usize {
+    pub const fn total(&self) -> usize {
         self.epoch_total * self.items_total
     }
 }

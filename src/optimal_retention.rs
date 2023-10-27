@@ -40,7 +40,7 @@ impl ndarray::SliceNextDim for Column {
 
 impl From<Column> for SliceInfoElem {
     fn from(value: Column) -> Self {
-        SliceInfoElem::Index(value as isize)
+        Self::Index(value as isize)
     }
 }
 
@@ -59,8 +59,8 @@ pub struct SimulatorConfig {
 }
 
 impl Default for SimulatorConfig {
-    fn default() -> SimulatorConfig {
-        SimulatorConfig {
+    fn default() -> Self {
+        Self {
             deck_size: 10000,
             learn_span: 365,
             max_cost_perday: 1800.0,
@@ -78,13 +78,12 @@ impl Default for SimulatorConfig {
 fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -> f64 {
     let hard_penalty = if response == 2 { w[15] } else { 1.0 };
     let easy_bonus = if response == 4 { w[16] } else { 1.0 };
-    s * (1.0
-        + f64::exp(w[8])
-            * (11.0 - d)
-            * s.powf(-w[9])
-            * (f64::exp((1.0 - r) * w[10]) - 1.0)
-            * hard_penalty
-            * easy_bonus)
+    s * (f64::exp(w[8])
+        * (11.0 - d)
+        * s.powf(-w[9])
+        * (f64::exp((1.0 - r) * w[10]) - 1.0)
+        * hard_penalty)
+        .mul_add(easy_bonus, 1.0)
 }
 
 fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
@@ -146,7 +145,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         izip!(&mut retrievability, &delta_t, &old_stability, &has_learned)
             .filter(|(.., &has_learned_flag)| has_learned_flag)
             .for_each(|(retrievability, &delta_t, &stability, ..)| {
-                *retrievability = (1.0 + delta_t / (9.0 * stability)).powf(-1.0)
+                *retrievability = (1.0 + delta_t / (9.0 * stability)).powi(-1)
             });
 
         // Set 'cost' column to 0
@@ -278,7 +277,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         izip!(&mut new_difficulty, &old_difficulty, &true_review, &forget)
             .filter(|(.., &true_rev, &frgt)| true_rev && frgt)
             .for_each(|(new_diff, &old_diff, ..)| {
-                *new_diff = (old_diff + 2.0 * w[6]).clamp(1.0, 10.0);
+                *new_diff = (2.0f64.mul_add(w[6], old_diff)).clamp(1.0, 10.0);
             });
 
         // Update the difficulty values based on the condition 'true_review & !forget'
@@ -310,7 +309,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         .filter(|(.., &true_learn_flag)| true_learn_flag)
         .for_each(|(new_stab, new_diff, &rating, _)| {
             *new_stab = w[rating - 1];
-            *new_diff = (w[4] - w[5] * (rating as f64 - 3.0)).clamp(1.0, 10.0);
+            *new_diff = (w[5].mul_add(-(rating as f64 - 3.0), w[4])).clamp(1.0, 10.0);
         });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();

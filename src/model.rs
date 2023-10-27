@@ -21,7 +21,7 @@ pub(crate) trait Get<B: Backend, const N: usize> {
 }
 
 impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
-    fn get(&self, n: usize) -> Tensor<B, N> {
+    fn get(&self, n: usize) -> Self {
         self.clone().slice([n..(n + 1)])
     }
 }
@@ -32,7 +32,7 @@ trait Pow<B: Backend, const N: usize> {
 }
 
 impl<B: Backend, const N: usize> Pow<B, N> for Tensor<B, N> {
-    fn pow(&self, other: Tensor<B, N>) -> Tensor<B, N> {
+    fn pow(&self, other: Self) -> Self {
         // a ^ b => exp(ln(a^b)) => exp(b ln (a))
         (self.clone().log() * other).exp()
     }
@@ -43,7 +43,7 @@ impl<B: Backend> Model<B> {
     pub fn new(config: ModelConfig) -> Self {
         let initial_params = config
             .initial_stability
-            .unwrap_or(DEFAULT_WEIGHTS[0..4].try_into().unwrap())
+            .unwrap_or_else(|| DEFAULT_WEIGHTS[0..4].try_into().unwrap())
             .into_iter()
             .chain([
                 4.93, 0.94, 0.86, 0.01, // difficulty
@@ -106,7 +106,7 @@ impl<B: Backend> Model<B> {
     }
 
     pub(crate) fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w.val().select(0, rating.clone().int() - 1)
+        self.w.val().select(0, rating.int() - 1)
     }
 
     fn init_difficulty(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -134,7 +134,7 @@ impl<B: Backend> Model<B> {
             let stability_after_failure = self.stability_after_failure(
                 state.stability.clone(),
                 state.difficulty.clone(),
-                retention.clone(),
+                retention,
             );
             let mut new_stability = stability_after_success
                 .mask_where(rating.clone().equal_elem(1), stability_after_failure);
