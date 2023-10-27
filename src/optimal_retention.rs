@@ -307,7 +307,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         .filter(|(.., &true_learn_flag)| true_learn_flag)
         .for_each(|(new_stab, new_diff, &rating, _)| {
             *new_stab = w[rating - 1];
-            *new_diff = (w[4] - w[5] * (rating as f64 - 3.0)).clamp(1.0, 10.0);
+            *new_diff = (w[5].mul_add(-(rating as f64 - 3.0), w[4])).clamp(1.0, 10.0);
         });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
