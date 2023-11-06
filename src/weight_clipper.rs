@@ -25,7 +25,7 @@ pub(crate) fn clip_weights(weights: &Weights) -> Vec<f32> {
         (0.01, 0.9),
         (0.01, 2.0),
         (0.0, 1.0),
-        (1.0, 10.0),
+        (1.0, 4.0),
     ];
 
     let mut weights = weights.to_vec();
