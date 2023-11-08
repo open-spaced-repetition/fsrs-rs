@@ -69,11 +69,10 @@ where
     I: Clone + Send + Sync,
 {
     fn get(&self, index: usize) -> Option<I> {
-        if let Some(index) = self.indices.get(index) {
-            self.dataset.get(*index)
-        } else {
-            None
-        }
+        let Some(index) = self.indices.get(index) else {
+            return None;
+        };
+        self.dataset.get(*index)
     }
 
     fn len(&self) -> usize {
@@ -247,11 +246,11 @@ impl<I, O> Iterator for BatchShuffledDataloaderIterator<I, O> {
             }
         }
 
-        if let Some(items) = self.strategy.batch(true) {
-            return Some(self.batcher.batch(items));
-        }
+        let Some(items) = self.strategy.batch(true) else {
+            return None;
+        };
 
-        None
+        Some(self.batcher.batch(items))
     }
 }
 
