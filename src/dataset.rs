@@ -424,10 +424,10 @@ mod tests {
         let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = dataset
             .into_iter()
             .partition(|item| item.reviews.len() == 2);
-        dbg!(pretrainset.len());
-        dbg!(trainset.len());
+        assert_eq!(pretrainset.len(), 3315);
+        assert_eq!(trainset.len(), 10806);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
-        dbg!(pretrainset.len());
-        dbg!(trainset.len());
+        assert_eq!(pretrainset.len(), 3265);
+        assert_eq!(trainset.len(), 10731);
     }
 }
