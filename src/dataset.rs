@@ -141,7 +141,7 @@ pub fn filter_outlier(
 ) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
     let mut groups = HashMap::<u32, HashMap<u32, Vec<FSRSItem>>>::new();
 
-    // 首先按照第一个 review 的 rating 和第二个 review 的 delta 进行分组
+    // group by rating of first review and delta_t of second review
     for item in pretrainset.iter() {
         let (first_review, second_review) = (item.reviews.first().unwrap(), item.current());
         let rating_group = groups.entry(first_review.rating).or_default();
@@ -151,19 +151,18 @@ pub fn filter_outlier(
 
     let mut filtered_items = vec![];
 
-    // 对每个按 rating 分组的子组进一步处理
     for (rating, delta_t_groups) in groups.iter() {
         let mut sub_groups = delta_t_groups.iter().collect::<Vec<_>>();
 
-        // 按子组大小升序排序，大小相同的按 delta_t 降序排序
+        // order by size of sub group ascending and delta_t descending
         sub_groups.sort_by(|(delta_t_a, subv_a), (delta_t_b, subv_b)| {
             subv_b
                 .len()
                 .cmp(&subv_a.len())
-                .then(delta_t_a.cmp(delta_t_b))
+                .then(delta_t_b.cmp(delta_t_a))
         });
 
-        // 计算总大小
+        // remove 5% of items from each sub group
         let total = sub_groups.iter().map(|(_, vec)| vec.len()).sum::<usize>();
         let mut has_been_removed = 0;
 
@@ -172,11 +171,9 @@ pub fn filter_outlier(
                 filtered_items.extend_from_slice(sub_group);
             } else {
                 has_been_removed += sub_group.len();
-                // 删除 trainset 中第一个 review 的 rating 等于 rating，第二个 review 的 delta_t 等于 delta_t 的 item
+                // keep the items in trainset if they are not removed from filtered_items
                 trainset.retain(|item| {
-                    let (first_review, second_review) =
-                        (item.reviews.first().unwrap(), item.reviews.get(1).unwrap());
-                    first_review.rating != *rating || second_review.delta_t != **delta_t
+                    item.reviews[0].rating != *rating || item.reviews[1].delta_t != **delta_t
                 });
             }
         }
