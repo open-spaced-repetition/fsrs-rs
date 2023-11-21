@@ -150,7 +150,7 @@ pub fn filter_outlier(
     }
 
     let mut filtered_items = vec![];
-    let mut to_rm_index = HashSet::new();
+    let mut removed_pairs: [HashSet<_>; 5] = Default::default();
 
     for (rating, delta_t_groups) in groups.into_iter() {
         let mut sub_groups = delta_t_groups.into_iter().collect::<Vec<_>>();
@@ -172,13 +172,14 @@ pub fn filter_outlier(
                 filtered_items.extend_from_slice(sub_group);
             } else {
                 has_been_removed += sub_group.len();
-                to_rm_index.insert((rating, *delta_t));
+                removed_pairs[rating as usize].insert(*delta_t);
             }
         }
-        // keep the items in trainset if they are not removed from filtered_items
     }
-    trainset
-        .retain(|item| !to_rm_index.contains(&(item.reviews[0].rating, item.reviews[1].delta_t)));
+    // keep the items in trainset if they are not removed from filtered_items
+    trainset.retain(|item| {
+        !removed_pairs[item.reviews[0].rating as usize].contains(&item.reviews[1].delta_t)
+    });
     (filtered_items, trainset)
 }
 
