@@ -142,17 +142,17 @@ pub fn filter_outlier(
     let mut groups = HashMap::<u32, HashMap<u32, Vec<FSRSItem>>>::new();
 
     // group by rating of first review and delta_t of second review
-    for item in pretrainset.iter() {
+    for item in pretrainset.into_iter() {
         let (first_review, second_review) = (item.reviews.first().unwrap(), item.current());
         let rating_group = groups.entry(first_review.rating).or_default();
         let delta_t_group = rating_group.entry(second_review.delta_t).or_default();
-        delta_t_group.push(item.clone());
+        delta_t_group.push(item);
     }
 
     let mut filtered_items = vec![];
 
-    for (rating, delta_t_groups) in groups.iter() {
-        let mut sub_groups = delta_t_groups.iter().collect::<Vec<_>>();
+    for (rating, delta_t_groups) in groups.into_iter() {
+        let mut sub_groups = delta_t_groups.into_iter().collect::<Vec<_>>();
 
         // order by size of sub group ascending and delta_t descending
         sub_groups.sort_by(|(delta_t_a, subv_a), (delta_t_b, subv_b)| {
@@ -173,7 +173,7 @@ pub fn filter_outlier(
                 has_been_removed += sub_group.len();
                 // keep the items in trainset if they are not removed from filtered_items
                 trainset.retain(|item| {
-                    item.reviews[0].rating != *rating || item.reviews[1].delta_t != **delta_t
+                    item.reviews[0].rating != rating || item.reviews[1].delta_t != *delta_t
                 });
             }
         }
