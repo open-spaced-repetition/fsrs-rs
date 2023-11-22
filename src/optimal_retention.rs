@@ -551,7 +551,7 @@ impl<B: Backend> FSRS<B> {
             }
             // update by at least tol1
             u = x + if rat.abs() < tol1 {
-                rat.is_sign_positive() as i8 as f64 * tol1
+                tol1 * if rat >= 0.0 { 1.0 } else { -1.0 }
             } else {
                 rat
             };
