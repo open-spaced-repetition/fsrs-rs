@@ -477,6 +477,7 @@ impl<B: Backend> FSRS<B> {
         Self::brent(config, &weights, progress)
     }
     /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
+    /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
     fn brent<F>(
         config: &SimulatorConfig,
         weights: &[f64],
