@@ -352,6 +352,108 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
     memorized_cnt_per_day[memorized_cnt_per_day.len() - 1]
 }
 
+fn sample(
+    config: &SimulatorConfig,
+    weights: &[f64],
+    request_retention: f64,
+    n: usize,
+) -> Result<f64, FSRSError> {
+    let out = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let result = simulate(
+                config,
+                &weights,
+                request_retention,
+                Some((i + 42).try_into().unwrap()),
+            );
+            Ok(result)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(out.iter().sum::<f64>() / n as f64)
+}
+
+fn bracket(
+    mut xa: f64,
+    mut xb: f64,
+    config: &SimulatorConfig,
+    weights: &[f64],
+) -> (f64, f64, f64, f64, f64, f64) {
+    let u_lim = 0.95;
+    let l_lim = 0.75;
+    let grow_limit = 100.0;
+    let gold = 1.6180339;
+    let maxiter = 20;
+
+    let mut fa = -sample(config, weights, xa, 5).unwrap();
+    let mut fb = -sample(config, weights, xb, 5).unwrap();
+
+    if fa < fb {
+        std::mem::swap(&mut fa, &mut fb);
+        std::mem::swap(&mut xa, &mut xb);
+    }
+    let mut xc = (xb + gold * (xb - xa)).clamp(l_lim, u_lim);
+    let mut fc = -sample(config, weights, xc, 5).unwrap();
+
+    let mut iter = 0;
+    while fc < fb {
+        let tmp1 = (xb - xa) * (fb - fc);
+        let tmp2 = (xb - xc) * (fb - fa);
+        let val = tmp2 - tmp1;
+        let denom = 2.0 * val.clamp(1e-20, 1e20);
+        let mut w = (xb - ((xb - xc) * tmp2 - (xb - xa) * tmp1) / denom).clamp(l_lim, u_lim);
+        let wlim = (xb + grow_limit * (xc - xb)).clamp(l_lim, u_lim);
+
+        if iter >= maxiter {
+            break;
+        }
+
+        iter += 1;
+
+        let mut fw: f64;
+
+        if (w - xc) * (xb - w) > 0.0 {
+            fw = -sample(config, weights, w, 5).unwrap();
+            if fw < fc {
+                xa = xb.clamp(l_lim, u_lim);
+                xb = w.clamp(l_lim, u_lim);
+                fa = fb;
+                fb = fw;
+                break;
+            } else if fw > fb {
+                xc = w.clamp(l_lim, u_lim);
+                fc = -sample(config, weights, xc, 5).unwrap();
+                break;
+            }
+            w = (xc + gold * (xc - xb)).clamp(l_lim, u_lim);
+            fw = -sample(config, weights, w, 5).unwrap();
+        } else if (w - wlim) * (wlim - xc) >= 0.0 {
+            w = wlim;
+            fw = -sample(config, weights, w, 5).unwrap();
+        } else if (w - wlim) * (xc - w) > 0.0 {
+            fw = -sample(config, weights, w, 5).unwrap();
+            if fw < fc {
+                xb = xc.clamp(l_lim, u_lim);
+                xc = w.clamp(l_lim, u_lim);
+                w = (xc + gold * (xc - xb)).clamp(l_lim, u_lim);
+                fb = fc;
+                fc = fw;
+                fw = -sample(config, weights, w, 5).unwrap();
+            }
+        } else {
+            w = (xc + gold * (xc - xb)).clamp(l_lim, u_lim);
+            fw = -sample(config, weights, w, 5).unwrap();
+        }
+        xa = xb.clamp(l_lim, u_lim);
+        xb = xc.clamp(l_lim, u_lim);
+        xc = w.clamp(l_lim, u_lim);
+        fa = fb;
+        fb = fc;
+        fc = fw;
+    }
+    (xa, xb, xc, fa, fb, fc)
+}
+
 impl<B: Backend> FSRS<B> {
     /// For the given simulator parameters and weights, determine the suggested `desired_retention`
     /// value.
@@ -359,7 +461,7 @@ impl<B: Backend> FSRS<B> {
         &self,
         config: &SimulatorConfig,
         weights: &Weights,
-        mut progress: F,
+        progress: F,
     ) -> Result<f64>
     where
         F: FnMut(ItemProgress) -> bool + Send,
@@ -374,12 +476,17 @@ impl<B: Backend> FSRS<B> {
         .iter()
         .map(|v| *v as f64)
         .collect::<Vec<_>>();
-        let mut low = 0.75;
-        let mut high = 0.95;
-        let mut optimal_retention = 0.85;
-        let epsilon = 0.01;
-        let mut iter = 0;
+        Self::brent(config, &weights, progress)
+    }
 
+    fn brent<F>(
+        config: &SimulatorConfig,
+        weights: &[f64],
+        mut progress: F,
+    ) -> Result<f64, FSRSError>
+    where
+        F: FnMut(ItemProgress) -> bool + Send,
+    {
         let mut progress_info = ItemProgress {
             current: 0,
             total: 100,
@@ -388,46 +495,139 @@ impl<B: Backend> FSRS<B> {
             progress_info.current += 1;
             progress(progress_info)
         }));
+        let mintol = 1e-10;
+        let cg = 0.3819660;
+        let maxiter = 20;
+        let tol = 0.01;
 
-        while high - low > epsilon && iter < 10 {
-            iter += 1;
-            let mid1 = low + (high - low) / 3.0;
-            let mid2 = high - (high - low) / 3.0;
+        let (xa, xb, xc, _fa, fb, _fc) = bracket(0.75, 0.95, config, weights);
 
-            let sample_several = |n: usize, mid: f64| -> Result<f64, FSRSError> {
-                let out = (0..n)
-                    .into_par_iter()
-                    .map(|i| {
-                        let result =
-                            simulate(config, &weights, mid, Some((i + 42).try_into().unwrap()));
-                        if !(inc_progress.lock().unwrap()()) {
-                            return Err(FSRSError::Interrupted);
-                        }
-                        Ok(result)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(out.iter().sum::<f64>() / n as f64)
-            };
-
-            let mut memorization1 = None;
-            let mut memorization2 = None;
-            rayon::scope(|s| {
-                s.spawn(|_| {
-                    memorization1 = Some(sample_several(5, mid1));
-                });
-                s.spawn(|_| {
-                    memorization2 = Some(sample_several(5, mid2));
-                });
-            });
-            if memorization1.unwrap()? > memorization2.unwrap()? {
-                high = mid2;
-            } else {
-                low = mid1;
-            }
-
-            optimal_retention = (high + low) / 2.0;
+        let mut v = xb;
+        let mut w = xb;
+        let mut x = xb;
+        let mut fx = fb;
+        let mut fv = fb;
+        let mut fw = fb;
+        let mut a: f64;
+        let mut b: f64;
+        if xa < xc {
+            a = xa;
+            b = xc;
+        } else {
+            a = xc;
+            b = xa;
         }
-        Ok(optimal_retention)
+        let mut deltax: f64 = 0.0;
+        let mut iter = 0;
+        let mut rat = 0.0;
+        let mut u;
+
+        while iter < maxiter {
+            if !(inc_progress.lock().unwrap()()) {
+                return Err(FSRSError::Interrupted);
+            }
+            let tol1 = tol * x.abs() + mintol;
+            let tol2 = 2.0 * tol1;
+            let xmid = 0.5 * (a + b);
+            // check for convergence
+            if (x - xmid).abs() <= (tol2 - 0.5 * (b - a)).abs() {
+                break;
+            }
+            if deltax.abs() <= tol1 {
+                // do a golden section step
+                if x >= xmid {
+                    deltax = a - x;
+                } else {
+                    deltax = b - x;
+                }
+                rat = cg * deltax;
+            } else {
+                // do a parabolic step
+                let tmp1 = (x - w) * (fx - fv);
+                let mut tmp2 = (x - v) * (fx - fw);
+                let mut p = (x - v) * tmp2 - (x - w) * tmp1;
+                tmp2 = 2.0 * (tmp2 - tmp1);
+                if tmp2 > 0.0 {
+                    p = -p;
+                }
+                tmp2 = tmp2.abs();
+                let deltax_tmp = deltax;
+                deltax = rat;
+                // check parabolic fit
+                if (p > tmp2 * (a - x)) && (p < tmp2 * (b - x)) && (p.abs() < deltax_tmp.abs()) {
+                    // if parabolic step is useful
+                    rat = p / tmp2;
+                    u = x + rat;
+                    if (u - a) < tol2 || (b - u) < tol2 {
+                        if xmid - x >= 0.0 {
+                            rat = tol1;
+                        } else {
+                            rat = -tol1;
+                        }
+                    }
+                } else {
+                    // if it's not do a golden section step
+                    if x >= xmid {
+                        deltax = a - x;
+                    } else {
+                        deltax = b - x;
+                    }
+                    rat = cg * deltax;
+                }
+            }
+            // update by at least tol1
+            if rat.abs() < tol1 {
+                if rat >= 0.0 {
+                    u = x + tol1;
+                } else {
+                    u = x - tol1;
+                }
+            } else {
+                u = x + rat;
+            }
+            // calculate new output value
+            let fu = -sample(config, weights, u, 5).unwrap();
+
+            // if it's bigger than current
+            if fu > fx {
+                if u < x {
+                    a = u;
+                } else {
+                    b = u;
+                }
+                if fu <= fw || w == x {
+                    v = w;
+                    w = u;
+                    fv = fw;
+                    fw = fu;
+                } else if fu <= fv || v == x || v == w {
+                    v = u;
+                    fv = fu;
+                }
+            } else {
+                // if it's smaller than current
+                if u >= x {
+                    a = x;
+                } else {
+                    b = x;
+                }
+                v = w;
+                w = x;
+                x = u;
+                fv = fw;
+                fw = fx;
+                fx = fu;
+            }
+            iter += 1;
+        }
+        let xmin = x;
+        let success = iter < maxiter && xmin <= 0.95 && xmin >= 0.75;
+
+        if success {
+            Ok(xmin)
+        } else {
+            Err(FSRSError::OptimalNotFound)
+        }
     }
 }
 
@@ -455,7 +655,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8530025910684347);
+        assert_eq!(optimal_retention, 0.8263932);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
