@@ -389,8 +389,8 @@ fn bracket(
     let mut fb = -sample(config, weights, xb, 5).unwrap();
 
     if fa < fb {
-        std::mem::swap(&mut fa, &mut fb);
-        std::mem::swap(&mut xa, &mut xb);
+        (fa, fb) = (fb, fa);
+        (xa, xb) = (xb, xa);
     }
     let mut xc = (xb + gold * (xb - xa)).clamp(l_lim, u_lim);
     let mut fc = -sample(config, weights, xc, 5).unwrap();
@@ -415,10 +415,8 @@ fn bracket(
         if (w - xc) * (xb - w) > 0.0 {
             fw = -sample(config, weights, w, 5).unwrap();
             if fw < fc {
-                xa = xb.clamp(l_lim, u_lim);
-                xb = w.clamp(l_lim, u_lim);
-                fa = fb;
-                fb = fw;
+                (xa, xb) = (xb.clamp(l_lim, u_lim), w.clamp(l_lim, u_lim));
+                (fa, fb) = (fb, fw);
                 break;
             } else if fw > fb {
                 xc = w.clamp(l_lim, u_lim);
@@ -433,23 +431,23 @@ fn bracket(
         } else if (w - wlim) * (xc - w) > 0.0 {
             fw = -sample(config, weights, w, 5).unwrap();
             if fw < fc {
-                xb = xc.clamp(l_lim, u_lim);
-                xc = w.clamp(l_lim, u_lim);
-                w = (xc + gold * (xc - xb)).clamp(l_lim, u_lim);
-                fb = fc;
-                fc = fw;
-                fw = -sample(config, weights, w, 5).unwrap();
+                (xb, xc, w) = (
+                    xc.clamp(l_lim, u_lim),
+                    w.clamp(l_lim, u_lim),
+                    (xc + gold * (xc - xb)).clamp(l_lim, u_lim),
+                );
+                (fb, fc, fw) = (fc, fw, -sample(config, weights, w, 5).unwrap());
             }
         } else {
             w = (xc + gold * (xc - xb)).clamp(l_lim, u_lim);
             fw = -sample(config, weights, w, 5).unwrap();
         }
-        xa = xb.clamp(l_lim, u_lim);
-        xb = xc.clamp(l_lim, u_lim);
-        xc = w.clamp(l_lim, u_lim);
-        fa = fb;
-        fb = fc;
-        fc = fw;
+        (xa, xb, xc) = (
+            xb.clamp(l_lim, u_lim),
+            xc.clamp(l_lim, u_lim),
+            w.clamp(l_lim, u_lim),
+        );
+        (fa, fb, fc) = (fb, fc, fw);
     }
     (xa, xb, xc, fa, fb, fc)
 }
@@ -508,15 +506,7 @@ impl<B: Backend> FSRS<B> {
         let mut fx = fb;
         let mut fv = fb;
         let mut fw = fb;
-        let mut a: f64;
-        let mut b: f64;
-        if xa < xc {
-            a = xa;
-            b = xc;
-        } else {
-            a = xc;
-            b = xa;
-        }
+        let (mut a, mut b) = (xa.min(xc), xa.max(xc));
         let mut deltax: f64 = 0.0;
         let mut iter = 0;
         let mut rat = 0.0;
@@ -535,11 +525,7 @@ impl<B: Backend> FSRS<B> {
             }
             if deltax.abs() <= tol1 {
                 // do a golden section step
-                if x >= xmid {
-                    deltax = a - x;
-                } else {
-                    deltax = b - x;
-                }
+                deltax = if x >= xmid { a } else { b } - x;
                 rat = cg * deltax;
             } else {
                 // do a parabolic step
@@ -559,29 +545,17 @@ impl<B: Backend> FSRS<B> {
                     rat = p / tmp2;
                     u = x + rat;
                     if (u - a) < tol2 || (b - u) < tol2 {
-                        if xmid - x >= 0.0 {
-                            rat = tol1;
-                        } else {
-                            rat = -tol1;
-                        }
+                        rat = if xmid - x >= 0.0 { tol1 } else { -tol1 };
                     }
                 } else {
                     // if it's not do a golden section step
-                    if x >= xmid {
-                        deltax = a - x;
-                    } else {
-                        deltax = b - x;
-                    }
+                    deltax = if x >= xmid { a } else { b } - x;
                     rat = cg * deltax;
                 }
             }
             // update by at least tol1
             if rat.abs() < tol1 {
-                if rat >= 0.0 {
-                    u = x + tol1;
-                } else {
-                    u = x - tol1;
-                }
+                u = if rat >= 0.0 { tol1 } else { -tol1 } + x;
             } else {
                 u = x + rat;
             }
@@ -611,12 +585,8 @@ impl<B: Backend> FSRS<B> {
                 } else {
                     b = x;
                 }
-                v = w;
-                w = x;
-                x = u;
-                fv = fw;
-                fw = fx;
-                fx = fu;
+                (v, w, x) = (w, x, u);
+                (fv, fw, fx) = (fw, fx, fu);
             }
             iter += 1;
         }
