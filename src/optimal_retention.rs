@@ -289,7 +289,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         )
         .filter(|(.., &condition)| condition)
         .for_each(|(new_diff, &old_diff, &rating, ..)| {
-            *new_diff = (old_diff - w[6] * (rating as f64 - 3.0)).clamp(1.0, 10.0);
+            *new_diff = w[6].mul_add(3.0 - rating as f64, old_diff).clamp(1.0, 10.0);
         });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
@@ -379,11 +379,11 @@ fn bracket(
     config: &SimulatorConfig,
     weights: &[f64],
 ) -> (f64, f64, f64, f64, f64, f64) {
-    let u_lim = 0.95;
-    let l_lim = 0.75;
-    let grow_limit = 100f64;
-    let gold = 1.6180339f64;
-    let maxiter = 20;
+    const U_LIM: f64 = 0.95;
+    const L_LIM: f64 = 0.75;
+    const GROW_LIMIT: f64 = 100f64;
+    const GOLD: f64 = 1.618_033_988_749_895; // wait for https://doc.rust-lang.org/std/f64/consts/constant.PHI.html
+    const MAXITER: i32 = 20;
 
     let mut fa = -sample(config, weights, xa, 5).unwrap();
     let mut fb = -sample(config, weights, xb, 5).unwrap();
@@ -392,7 +392,7 @@ fn bracket(
         (fa, fb) = (fb, fa);
         (xa, xb) = (xb, xa);
     }
-    let mut xc = gold.mul_add(xb - xa, xb).clamp(l_lim, u_lim);
+    let mut xc = GOLD.mul_add(xb - xa, xb).clamp(L_LIM, U_LIM);
     let mut fc = -sample(config, weights, xc, 5).unwrap();
 
     let mut iter = 0;
@@ -401,10 +401,10 @@ fn bracket(
         let tmp2 = (xb - xc) * (fb - fa);
         let val = tmp2 - tmp1;
         let denom = 2.0 * val.clamp(1e-20, 1e20);
-        let mut w = (xb - ((xb - xc) * tmp2 - (xb - xa) * tmp1) / denom).clamp(l_lim, u_lim);
-        let wlim = grow_limit.mul_add(xc - xb, xb).clamp(l_lim, u_lim);
+        let mut w = (xb - (xb - xc).mul_add(tmp2, (xa - xb) * tmp1) / denom).clamp(L_LIM, U_LIM);
+        let wlim = GROW_LIMIT.mul_add(xc - xb, xb).clamp(L_LIM, U_LIM);
 
-        if iter >= maxiter {
+        if iter >= MAXITER {
             break;
         }
 
@@ -415,15 +415,15 @@ fn bracket(
         if (w - xc) * (xb - w) > 0.0 {
             fw = -sample(config, weights, w, 5).unwrap();
             if fw < fc {
-                (xa, xb) = (xb.clamp(l_lim, u_lim), w.clamp(l_lim, u_lim));
+                (xa, xb) = (xb.clamp(L_LIM, U_LIM), w.clamp(L_LIM, U_LIM));
                 (fa, fb) = (fb, fw);
                 break;
             } else if fw > fb {
-                xc = w.clamp(l_lim, u_lim);
+                xc = w.clamp(L_LIM, U_LIM);
                 fc = -sample(config, weights, xc, 5).unwrap();
                 break;
             }
-            w = gold.mul_add(xc - xb, xc).clamp(l_lim, u_lim);
+            w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
             fw = -sample(config, weights, w, 5).unwrap();
         } else if (w - wlim) * (wlim - xc) >= 0.0 {
             w = wlim;
@@ -432,20 +432,20 @@ fn bracket(
             fw = -sample(config, weights, w, 5).unwrap();
             if fw < fc {
                 (xb, xc, w) = (
-                    xc.clamp(l_lim, u_lim),
-                    w.clamp(l_lim, u_lim),
-                    gold.mul_add(xc - xb, xc).clamp(l_lim, u_lim),
+                    xc.clamp(L_LIM, U_LIM),
+                    w.clamp(L_LIM, U_LIM),
+                    GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM),
                 );
                 (fb, fc, fw) = (fc, fw, -sample(config, weights, w, 5).unwrap());
             }
         } else {
-            w = gold.mul_add(xc - xb, xc).clamp(l_lim, u_lim);
+            w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
             fw = -sample(config, weights, w, 5).unwrap();
         }
         (xa, xb, xc) = (
-            xb.clamp(l_lim, u_lim),
-            xc.clamp(l_lim, u_lim),
-            w.clamp(l_lim, u_lim),
+            xb.clamp(L_LIM, U_LIM),
+            xc.clamp(L_LIM, U_LIM),
+            w.clamp(L_LIM, U_LIM),
         );
         (fa, fb, fc) = (fb, fc, fw);
     }
