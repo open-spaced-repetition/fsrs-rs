@@ -381,8 +381,8 @@ fn bracket(
 ) -> (f64, f64, f64, f64, f64, f64) {
     let u_lim = 0.95;
     let l_lim = 0.75;
-    let grow_limit = 100.0;
-    let gold = 1.6180339;
+    let grow_limit = 100f64;
+    let gold = 1.6180339f64;
     let maxiter = 20;
 
     let mut fa = -sample(config, weights, xa, 5).unwrap();
@@ -392,7 +392,7 @@ fn bracket(
         (fa, fb) = (fb, fa);
         (xa, xb) = (xb, xa);
     }
-    let mut xc = (xb + gold * (xb - xa)).clamp(l_lim, u_lim);
+    let mut xc = gold.mul_add(xb - xa, xb).clamp(l_lim, u_lim);
     let mut fc = -sample(config, weights, xc, 5).unwrap();
 
     let mut iter = 0;
@@ -402,7 +402,7 @@ fn bracket(
         let val = tmp2 - tmp1;
         let denom = 2.0 * val.clamp(1e-20, 1e20);
         let mut w = (xb - ((xb - xc) * tmp2 - (xb - xa) * tmp1) / denom).clamp(l_lim, u_lim);
-        let wlim = (xb + grow_limit * (xc - xb)).clamp(l_lim, u_lim);
+        let wlim = grow_limit.mul_add(xc - xb, xb).clamp(l_lim, u_lim);
 
         if iter >= maxiter {
             break;
@@ -423,7 +423,7 @@ fn bracket(
                 fc = -sample(config, weights, xc, 5).unwrap();
                 break;
             }
-            w = (xc + gold * (xc - xb)).clamp(l_lim, u_lim);
+            w = gold.mul_add(xc - xb, xc).clamp(l_lim, u_lim);
             fw = -sample(config, weights, w, 5).unwrap();
         } else if (w - wlim) * (wlim - xc) >= 0.0 {
             w = wlim;
@@ -434,12 +434,12 @@ fn bracket(
                 (xb, xc, w) = (
                     xc.clamp(l_lim, u_lim),
                     w.clamp(l_lim, u_lim),
-                    (xc + gold * (xc - xb)).clamp(l_lim, u_lim),
+                    gold.mul_add(xc - xb, xc).clamp(l_lim, u_lim),
                 );
                 (fb, fc, fw) = (fc, fw, -sample(config, weights, w, 5).unwrap());
             }
         } else {
-            w = (xc + gold * (xc - xb)).clamp(l_lim, u_lim);
+            w = gold.mul_add(xc - xb, xc).clamp(l_lim, u_lim);
             fw = -sample(config, weights, w, 5).unwrap();
         }
         (xa, xb, xc) = (
@@ -496,7 +496,7 @@ impl<B: Backend> FSRS<B> {
         let mintol = 1e-10;
         let cg = 0.3819660;
         let maxiter = 20;
-        let tol = 0.01;
+        let tol = 0.01f64;
 
         let (xa, xb, xc, _fa, fb, _fc) = bracket(0.75, 0.95, config, weights);
 
@@ -512,7 +512,7 @@ impl<B: Backend> FSRS<B> {
             if !(inc_progress.lock().unwrap()()) {
                 return Err(FSRSError::Interrupted);
             }
-            let tol1 = tol * x.abs() + mintol;
+            let tol1 = tol.mul_add(x.abs(), mintol);
             let tol2 = 2.0 * tol1;
             let xmid = 0.5 * (a + b);
             // check for convergence
@@ -527,7 +527,7 @@ impl<B: Backend> FSRS<B> {
                 // do a parabolic step
                 let tmp1 = (x - w) * (fx - fv);
                 let mut tmp2 = (x - v) * (fx - fw);
-                let mut p = (x - v) * tmp2 - (x - w) * tmp1;
+                let mut p = (x - v).mul_add(tmp2, -(x - w) * tmp1);
                 tmp2 = 2.0 * (tmp2 - tmp1);
                 if tmp2 > 0.0 {
                     p = -p;
