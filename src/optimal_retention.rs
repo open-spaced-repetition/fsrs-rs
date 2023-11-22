@@ -372,7 +372,7 @@ fn sample(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(out.iter().sum::<f64>() / n as f64)
 }
-
+/// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2894
 fn bracket(
     mut xa: f64,
     mut xb: f64,
@@ -476,7 +476,7 @@ impl<B: Backend> FSRS<B> {
         .collect::<Vec<_>>();
         Self::brent(config, &weights, progress)
     }
-
+    /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
     fn brent<F>(
         config: &SimulatorConfig,
         weights: &[f64],
