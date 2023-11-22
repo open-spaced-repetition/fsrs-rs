@@ -363,7 +363,7 @@ fn sample(
         .map(|i| {
             let result = simulate(
                 config,
-                &weights,
+                weights,
                 request_retention,
                 Some((i + 42).try_into().unwrap()),
             );
@@ -621,7 +621,7 @@ impl<B: Backend> FSRS<B> {
             iter += 1;
         }
         let xmin = x;
-        let success = iter < maxiter && xmin <= 0.95 && xmin >= 0.75;
+        let success = iter < maxiter && (0.75..=0.95).contains(&xmin);
 
         if success {
             Ok(xmin)
