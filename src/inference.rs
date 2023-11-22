@@ -393,7 +393,7 @@ mod tests {
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20321770, 0.015_836_29]), 5);
+            .assert_approx_eq(&Data::from([0.203_217_7, 0.015_836_29]), 5);
         Ok(())
     }
 
