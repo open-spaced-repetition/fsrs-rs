@@ -500,12 +500,8 @@ impl<B: Backend> FSRS<B> {
 
         let (xa, xb, xc, _fa, fb, _fc) = bracket(0.75, 0.95, config, weights);
 
-        let mut v = xb;
-        let mut w = xb;
-        let mut x = xb;
-        let mut fx = fb;
-        let mut fv = fb;
-        let mut fw = fb;
+        let (mut v, mut w, mut x) = (xb, xb, xb);
+        let (mut fx, mut fv, mut fw) = (fb, fb, fb);
         let (mut a, mut b) = (xa.min(xc), xa.max(xc));
         let mut deltax: f64 = 0.0;
         let mut iter = 0;
@@ -554,11 +550,11 @@ impl<B: Backend> FSRS<B> {
                 }
             }
             // update by at least tol1
-            if rat.abs() < tol1 {
-                u = if rat >= 0.0 { tol1 } else { -tol1 } + x;
+            u = x + if rat.abs() < tol1 {
+                rat.is_sign_positive() as i8 as f64 * tol1
             } else {
-                u = x + rat;
-            }
+                rat
+            };
             // calculate new output value
             let fu = -sample(config, weights, u, 5).unwrap();
 
@@ -570,10 +566,8 @@ impl<B: Backend> FSRS<B> {
                     b = u;
                 }
                 if fu <= fw || w == x {
-                    v = w;
-                    w = u;
-                    fv = fw;
-                    fw = fu;
+                    (v, w) = (w, u);
+                    (fv, fw) = (fw, fu);
                 } else if fu <= fv || v == x || v == w {
                     v = u;
                     fv = fu;
