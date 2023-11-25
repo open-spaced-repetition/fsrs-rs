@@ -132,6 +132,7 @@ pub struct ProgressState {
 pub struct CombinedProgressState {
     pub want_abort: bool,
     pub splits: Vec<ProgressState>,
+    finished: bool,
 }
 
 impl CombinedProgressState {
@@ -145,6 +146,10 @@ impl CombinedProgressState {
 
     pub fn total(&self) -> usize {
         self.splits.iter().map(|s| s.total()).sum()
+    }
+
+    pub fn finished(&self) -> bool {
+        self.finished
     }
 }
 
@@ -232,15 +237,28 @@ impl<B: Backend> FSRS<B> {
     pub fn compute_weights(
         &self,
         items: Vec<FSRSItem>,
-        mut progress: Option<Arc<Mutex<CombinedProgressState>>>,
+        progress: Option<Arc<Mutex<CombinedProgressState>>>,
     ) -> Result<Vec<f32>> {
+        let finish_progress = || {
+            if let Some(progress) = &progress {
+                // The progress state at completion time may not indicate completion, because:
+                // - If there were fewer than 512 entries, render_train() will have never been called
+                // - One or more of the splits may have ignored later epochs, if accuracy went backwards
+                // Because of this, we need a separate finished flag.
+                progress.lock().unwrap().finished = true;
+            }
+        };
+
         let n_splits = 5;
-        if let Some(progress) = &mut progress {
+        if let Some(progress) = &progress {
             progress.lock().unwrap().splits = vec![ProgressState::default(); n_splits];
         }
         let average_recall = calculate_average_recall(&items);
         let (pre_trainset, trainsets, testset) = split_data(items, n_splits);
-        let initial_stability = pretrain(pre_trainset, average_recall)?;
+        let initial_stability = pretrain(pre_trainset, average_recall).map_err(|e| {
+            finish_progress();
+            e
+        })?;
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,
@@ -249,7 +267,7 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new(),
         );
 
-        let weights_sets: Vec<Vec<f32>> = (0..n_splits)
+        let weight_sets: Result<Vec<Vec<f32>>> = (0..n_splits)
             .into_par_iter()
             .map(|i| {
                 let trainset = trainsets
@@ -266,13 +284,24 @@ impl<B: Backend> FSRS<B> {
                     self.device(),
                     progress.clone().map(|p| ProgressCollector::new(p, i)),
                 );
-                Ok(model?.w.val().to_data().convert().value)
+                Ok(model
+                    .map_err(|e| {
+                        finish_progress();
+                        e
+                    })?
+                    .w
+                    .val()
+                    .to_data()
+                    .convert()
+                    .value)
             })
-            .collect::<Result<_>>()?;
+            .collect();
+        finish_progress();
 
-        let average_weights = weights_sets
+        let weight_sets = weight_sets?;
+        let average_weights = weight_sets
             .iter()
-            .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
+            .fold(vec![0.0; weight_sets[0].len()], |sum, weights| {
                 sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
             })
             .par_iter()
