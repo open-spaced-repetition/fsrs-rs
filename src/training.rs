@@ -299,7 +299,7 @@ impl<B: Backend> FSRS<B> {
         finish_progress();
 
         let weight_sets = weight_sets?;
-        let average_weights = weight_sets
+        let average_weights: Vec<f32> = weight_sets
             .iter()
             .fold(vec![0.0; weight_sets[0].len()], |sum, weights| {
                 sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
@@ -307,6 +307,12 @@ impl<B: Backend> FSRS<B> {
             .par_iter()
             .map(|&sum| sum / n_splits as f32)
             .collect();
+
+        for weight in &average_weights {
+            if !weight.is_normal() {
+                return Err(FSRSError::InvalidInput);
+            }
+        }
 
         Ok(average_weights)
     }
