@@ -19,7 +19,7 @@ pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize) -> MemoryState {
         delta_t: 21,
     };
     let reviews = repeat(review.clone()).take(past_reviews + 1).collect_vec();
-    inf.memory_state(FSRSItem { reviews }, None)
+    inf.memory_state(FSRSItem { reviews }, None).unwrap()
 }
 
 pub(crate) fn next_states(inf: &FSRS) -> NextStates {
@@ -31,6 +31,7 @@ pub(crate) fn next_states(inf: &FSRS) -> NextStates {
         0.9,
         21,
     )
+    .unwrap()
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {

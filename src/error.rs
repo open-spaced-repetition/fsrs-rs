@@ -6,6 +6,7 @@ pub enum FSRSError {
     Interrupted,
     InvalidWeights,
     OptimalNotFound,
+    InvalidInput,
 }
 
 pub type Result<T, E = FSRSError> = std::result::Result<T, E>;
