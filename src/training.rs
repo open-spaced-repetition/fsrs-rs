@@ -6,7 +6,7 @@ use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use crate::{FSRSError, FSRS};
-use burn::autodiff::ADBackendDecorator;
+use burn::backend::Autodiff;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::module::Module;
 use burn::optim::AdamConfig;
@@ -22,7 +22,9 @@ use burn::train::{
     ClassificationOutput, MetricEarlyStoppingStrategy, StoppingCondition, TrainOutput, TrainStep,
     TrainingInterrupter, ValidStep,
 };
-use burn::{config::Config, module::Param, tensor::backend::ADBackend, train::LearnerBuilder};
+use burn::{
+    config::Config, module::Param, tensor::backend::AutodiffBackend, train::LearnerBuilder,
+};
 use core::marker::PhantomData;
 use log::info;
 use rayon::prelude::{
@@ -68,7 +70,7 @@ impl<B: Backend> Model<B> {
     }
 }
 
-impl<B: ADBackend> Model<B> {
+impl<B: AutodiffBackend> Model<B> {
     fn freeze_initial_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
         let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
@@ -79,7 +81,7 @@ impl<B: ADBackend> Model<B> {
     }
 }
 
-impl<B: ADBackend> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
+impl<B: AutodiffBackend> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
     fn step(&self, batch: FSRSBatch<B>) -> TrainOutput<ClassificationOutput<B>> {
         let item = self.forward_classification(
             batch.t_historys,
@@ -98,10 +100,10 @@ impl<B: ADBackend> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B>
 
     fn optimize<B1, O>(self, optim: &mut O, lr: f64, grads: burn::optim::GradientsParams) -> Self
     where
-        B: ADBackend,
+        B: AutodiffBackend,
         O: burn::optim::Optimizer<Self, B1>,
-        B1: burn::tensor::backend::ADBackend,
-        Self: burn::module::ADModule<B1>,
+        B1: burn::tensor::backend::AutodiffBackend,
+        Self: burn::module::AutodiffModule<B1>,
     {
         let mut model = optim.step(lr, self, grads);
         model.w = Param::from(weight_clipper(model.w.val()));
@@ -277,7 +279,7 @@ impl<B: Backend> FSRS<B> {
                     .flat_map(|(_, trainset)| trainset.clone())
                     .collect();
 
-                let model = train::<ADBackendDecorator<B>>(
+                let model = train::<Autodiff<B>>(
                     trainset,
                     testset.clone(),
                     &config,
@@ -312,7 +314,7 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
-fn train<B: ADBackend>(
+fn train<B: AutodiffBackend>(
     trainset: Vec<FSRSItem>,
     testset: Vec<FSRSItem>,
     config: &TrainingConfig,
@@ -419,8 +421,8 @@ mod tests {
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::pre_training::pretrain;
+    use crate::test_helpers::NdArrayAutodiff;
     use burn::backend::ndarray::NdArrayDevice;
-    use burn::backend::NdArrayAutodiffBackend;
     use rayon::prelude::IntoParallelIterator;
 
     #[test]
@@ -452,13 +454,8 @@ mod tests {
                     .filter(|&(j, _)| j != i)
                     .flat_map(|(_, trainset)| trainset.clone())
                     .collect();
-                let model = train::<NdArrayAutodiffBackend>(
-                    trainset,
-                    testset.clone(),
-                    &config,
-                    device,
-                    None,
-                );
+                let model =
+                    train::<NdArrayAutodiff>(trainset, testset.clone(), &config, device, None);
                 model.unwrap().w.val().to_data().convert().value
             })
             .collect();

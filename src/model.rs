@@ -3,7 +3,7 @@ use crate::inference::Weights;
 use crate::weight_clipper::clip_weights;
 use crate::DEFAULT_WEIGHTS;
 use burn::backend::ndarray::NdArrayDevice;
-use burn::backend::NdArrayBackend;
+use burn::backend::NdArray;
 use burn::{
     config::Config,
     module::{Module, Param},
@@ -200,12 +200,12 @@ impl ModelConfig {
 /// This is the main structure provided by this crate. It can be used
 /// for both weight training, and for reviews.
 #[derive(Debug, Clone)]
-pub struct FSRS<B: Backend = NdArrayBackend> {
+pub struct FSRS<B: Backend = NdArray> {
     model: Option<Model<B>>,
     device: B::Device,
 }
 
-impl FSRS<NdArrayBackend> {
+impl FSRS<NdArray> {
     /// - Weights must be provided before running commands that need them.
     /// - Weights may be an empty slice to use the default values instead.
     pub fn new(weights: Option<&Weights>) -> Result<Self> {

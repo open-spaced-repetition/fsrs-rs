@@ -1,8 +1,8 @@
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::FSRSBatcher;
 use crate::dataset::{FSRSItem, FSRSReview};
+use crate::test_helpers::NdArrayAutodiff;
 use burn::backend::ndarray::NdArrayDevice;
-use burn::backend::NdArrayAutodiffBackend;
 use burn::data::dataloader::batcher::Batcher;
 use burn::tensor::Data;
 use chrono::prelude::*;
@@ -479,7 +479,7 @@ fn conversion_works() {
     );
 
     let device = NdArrayDevice::Cpu;
-    let batcher = FSRSBatcher::<NdArrayAutodiffBackend>::new(device);
+    let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
     let res = batcher.batch(vec![fsrs_items.pop().unwrap()]);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     assert_eq!(

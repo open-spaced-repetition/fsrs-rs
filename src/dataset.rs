@@ -236,8 +236,8 @@ mod tests {
 
         use burn::backend::ndarray::NdArrayDevice;
         let device = NdArrayDevice::Cpu;
-        use burn::backend::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
+        use burn::backend::NdArray;
+        type Backend = NdArray<f32>;
         let batcher = FSRSBatcher::<Backend>::new(device);
         use burn::data::dataloader::DataLoaderBuilder;
         let dataloader = DataLoaderBuilder::new(batcher)
@@ -257,8 +257,8 @@ mod tests {
     #[test]
     fn batcher() {
         use burn::backend::ndarray::NdArrayDevice;
-        use burn::backend::NdArrayBackend;
-        type Backend = NdArrayBackend<f32>;
+        use burn::backend::NdArray;
+        type Backend = NdArray<f32>;
         let device = NdArrayDevice::Cpu;
         let batcher = FSRSBatcher::<Backend>::new(device);
         let items = vec![
