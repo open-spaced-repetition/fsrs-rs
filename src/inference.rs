@@ -17,8 +17,8 @@ use burn::tensor::ElementConversion;
 pub type Weights = [f32];
 
 pub static DEFAULT_WEIGHTS: [f32; 17] = [
-    0.4, 0.9, 2.3, 10.9, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29,
-    2.61,
+    0.5888, 1.4616, 3.8226, 14.1364, 4.9214, 1.0325, 0.8731, 0.0613, 1.57, 0.1395, 0.988, 2.212,
+    0.0658, 0.3439, 1.3098, 0.2837, 2.7766,
 ];
 
 fn infer<B: Backend>(
@@ -408,7 +408,7 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20745006, 0.040_497_02]), 5);
+            .assert_approx_eq(&Data::from([0.20513662, 0.026_716_57]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
@@ -501,14 +501,14 @@ mod tests {
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
             MemoryState {
                 stability: 9.999995,
-                difficulty: 6.2652965
+                difficulty: 6.8565593
             }
         );
         assert_eq!(
             fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap(),
             MemoryState {
                 stability: 19.99999,
-                difficulty: 9.956561
+                difficulty: 10.0
             }
         );
         let interval = 15;
