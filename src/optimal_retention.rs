@@ -621,7 +621,7 @@ mod tests {
             0.9,
             None,
         );
-        assert_eq!(memorization, 2633.365434092778)
+        assert_eq!(memorization, 3211.3084298933477)
     }
 
     #[test]

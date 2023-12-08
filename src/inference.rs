@@ -408,7 +408,7 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20745006, 0.040_497_02]), 5);
+            .assert_approx_eq(&Data::from([0.20513662, 0.026_716_57]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
@@ -501,14 +501,14 @@ mod tests {
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
             MemoryState {
                 stability: 9.999995,
-                difficulty: 6.2652965
+                difficulty: 6.8565593
             }
         );
         assert_eq!(
             fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap(),
             MemoryState {
                 stability: 19.99999,
-                difficulty: 9.956561
+                difficulty: 10.0
             }
         );
         let interval = 15;
