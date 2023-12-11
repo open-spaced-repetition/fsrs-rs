@@ -395,15 +395,15 @@ where
     const GOLD: f64 = 1.618_033_988_749_895; // wait for https://doc.rust-lang.org/std/f64/consts/constant.PHI.html
     const MAXITER: i32 = 20;
 
-    let mut fa = -sample(config, weights, xa, 5, progress)?;
-    let mut fb = -sample(config, weights, xb, 5, progress)?;
+    let mut fa = -sample(config, weights, xa, 10, progress)?;
+    let mut fb = -sample(config, weights, xb, 10, progress)?;
 
     if fa < fb {
         (fa, fb) = (fb, fa);
         (xa, xb) = (xb, xa);
     }
     let mut xc = GOLD.mul_add(xb - xa, xb).clamp(L_LIM, U_LIM);
-    let mut fc = -sample(config, weights, xc, 5, progress)?;
+    let mut fc = -sample(config, weights, xc, 10, progress)?;
 
     let mut iter = 0;
     while fc < fb {
@@ -423,34 +423,34 @@ where
         let mut fw: f64;
 
         if (w - xc) * (xb - w) > 0.0 {
-            fw = -sample(config, weights, w, 5, progress)?;
+            fw = -sample(config, weights, w, 10, progress)?;
             if fw < fc {
                 (xa, xb) = (xb.clamp(L_LIM, U_LIM), w.clamp(L_LIM, U_LIM));
                 (fa, fb) = (fb, fw);
                 break;
             } else if fw > fb {
                 xc = w.clamp(L_LIM, U_LIM);
-                fc = -sample(config, weights, xc, 5, progress)?;
+                fc = -sample(config, weights, xc, 10, progress)?;
                 break;
             }
             w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = -sample(config, weights, w, 5, progress)?;
+            fw = -sample(config, weights, w, 10, progress)?;
         } else if (w - wlim) * (wlim - xc) >= 0.0 {
             w = wlim;
-            fw = -sample(config, weights, w, 5, progress)?;
+            fw = -sample(config, weights, w, 10, progress)?;
         } else if (w - wlim) * (xc - w) > 0.0 {
-            fw = -sample(config, weights, w, 5, progress)?;
+            fw = -sample(config, weights, w, 10, progress)?;
             if fw < fc {
                 (xb, xc, w) = (
                     xc.clamp(L_LIM, U_LIM),
                     w.clamp(L_LIM, U_LIM),
                     GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM),
                 );
-                (fb, fc, fw) = (fc, fw, -sample(config, weights, w, 5, progress)?);
+                (fb, fc, fw) = (fc, fw, -sample(config, weights, w, 10, progress)?);
             }
         } else {
             w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = -sample(config, weights, w, 5, progress)?;
+            fw = -sample(config, weights, w, 10, progress)?;
         }
         (xa, xb, xc) = (
             xb.clamp(L_LIM, U_LIM),
