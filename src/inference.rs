@@ -89,7 +89,7 @@ impl<B: Backend> FSRS<B> {
             .model()
             .forward(time_history, rating_history, starting_state.map(Into::into))
             .into();
-        if !state.stability.is_normal() || !state.difficulty.is_normal() {
+        if !state.stability.is_finite() || !state.difficulty.is_finite() {
             Err(FSRSError::InvalidInput)
         } else {
             Ok(state)
@@ -113,7 +113,7 @@ impl<B: Backend> FSRS<B> {
         let difficulty = 11.0
             - (ease_factor - 1.0)
                 / (w8.exp() * stability.powf(-w9) * ((1.0 - sm2_retention) * w10).exp_m1());
-        if !stability.is_normal() || !difficulty.is_normal() {
+        if !stability.is_finite() || !difficulty.is_finite() {
             Err(FSRSError::InvalidInput)
         } else {
             Ok(MemoryState {
@@ -163,7 +163,7 @@ impl<B: Backend> FSRS<B> {
                         Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] })),
                         current_memory_state_tensors.clone(),
                     ));
-                    if !state.stability.is_normal() || !state.difficulty.is_normal() {
+                    if !state.stability.is_finite() || !state.difficulty.is_finite() {
                         return Err(FSRSError::InvalidInput);
                     }
                     state

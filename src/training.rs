@@ -311,7 +311,7 @@ impl<B: Backend> FSRS<B> {
             .collect();
 
         for weight in &average_weights {
-            if !weight.is_normal() {
+            if !weight.is_finite() {
                 return Err(FSRSError::InvalidInput);
             }
         }
