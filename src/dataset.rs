@@ -169,7 +169,12 @@ pub fn filter_outlier(
 
         for (delta_t, sub_group) in sub_groups.iter().rev() {
             if has_been_removed + sub_group.len() > total / 20 {
-                filtered_items.extend_from_slice(sub_group);
+                // keep the group if it includes at least one item rated again (retention < 100%)
+                if sub_group.into_iter().any(|item| item.current().rating == 1) {
+                    filtered_items.extend_from_slice(sub_group);
+                } else {
+                    removed_pairs[rating as usize].insert(*delta_t);
+                }
             } else {
                 has_been_removed += sub_group.len();
                 removed_pairs[rating as usize].insert(*delta_t);
