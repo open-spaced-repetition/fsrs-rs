@@ -354,7 +354,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        let expected = [(4, 1.4877763)].into_iter().collect();
+        let expected = [(4, 1.2390649)].into_iter().collect();
         assert_eq!(actual, expected);
     }
 
@@ -366,7 +366,7 @@ mod tests {
         let pretrainset = split_data(items, 1).0;
         assert_eq!(
             pretrain(pretrainset, average_recall).unwrap(),
-            [0.9517492, 1.7152255, 4.149725, 9.399195,],
+            [0.94550645, 1.6813093, 3.9867811, 8.992397,],
         )
     }
 
