@@ -87,7 +87,9 @@ fn total_rating_count(
 }
 
 fn power_forgetting_curve(t: &Array1<f32>, s: f32) -> Array1<f32> {
-    1.0 / (1.0 + t / (9.0 * s))
+    let decay: f32 = -0.5;
+    let factor = 0.9_f32.powf(1.0 / decay) - 1.0;
+    (t / s * factor + 1.0).mapv(|v| v.powf(decay))
 }
 
 fn loss(
@@ -311,7 +313,7 @@ mod tests {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
         let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
+        let expected = Array1::from(vec![1.0, 0.9, 0.8250286, 0.7661308]);
         assert_eq!(y, expected);
     }
 
@@ -322,8 +324,8 @@ mod tests {
         let count = Array1::from(vec![100.0, 100.0, 100.0]);
         let init_s0 = 1.0;
         let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
-        assert_eq!(actual, 0.45385247);
-        assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.48355862);
+        assert_eq!(actual, 0.45414436);
+        assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.48402837);
     }
 
     #[test]
@@ -354,7 +356,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        let expected = [(4, 1.4877763)].into_iter().collect();
+        let expected = [(4, 1.2733965)].into_iter().collect();
         assert_eq!(actual, expected);
     }
 
@@ -366,7 +368,7 @@ mod tests {
         let pretrainset = split_data(items, 1).0;
         assert_eq!(
             pretrain(pretrainset, average_recall).unwrap(),
-            [0.9517492, 1.7152255, 4.149725, 9.399195,],
+            [0.89360625, 1.6562619, 4.1792974, 9.724018],
         )
     }
 
