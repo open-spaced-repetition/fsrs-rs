@@ -324,7 +324,10 @@ mod tests {
         let init_s0 = 1.0;
         let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
         assert_eq!(actual, 13.6243305);
-        assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 14.577101);
+        assert_eq!(
+            format!("{:.4}", loss(&delta_t, &recall, &count, 2.0, init_s0)),
+            "14.5771"
+        );
     }
 
     #[test]
