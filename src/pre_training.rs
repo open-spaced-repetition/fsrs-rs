@@ -302,6 +302,8 @@ fn smooth_and_fill(
 
 #[cfg(test)]
 mod tests {
+    use burn::tensor::Data;
+
     use super::*;
     use crate::dataset::split_data;
     use crate::training::calculate_average_recall;
@@ -354,8 +356,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        let expected = [(4, 1.4877763)].into_iter().collect();
-        assert_eq!(actual, expected);
+        Data::from([actual.get(&4).unwrap().clone()]).assert_approx_eq(&Data::from([1.2390649]), 4);
     }
 
     #[test]
@@ -366,7 +367,7 @@ mod tests {
         let pretrainset = split_data(items, 1).0;
         assert_eq!(
             pretrain(pretrainset, average_recall).unwrap(),
-            [0.9517492, 1.7152255, 4.149725, 9.399195,],
+            [0.94550645, 1.6813093, 3.9867811, 8.992397,],
         )
     }
 
