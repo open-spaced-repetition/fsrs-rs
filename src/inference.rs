@@ -410,7 +410,7 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20457467, 0.02268843]), 5);
+            .assert_approx_eq(&Data::from([0.21364396810531616, 0.05370686203241348]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();

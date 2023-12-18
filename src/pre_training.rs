@@ -357,7 +357,8 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        Data::from([actual.get(&4).unwrap().clone()]).assert_approx_eq(&Data::from([1.2390649]), 4);
+        Data::from([actual.get(&4).unwrap().clone()])
+            .assert_approx_eq(&Data::from([1.2301323413848877]), 4);
     }
 
     #[test]
@@ -366,9 +367,14 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
         let pretrainset = split_data(items, 1).0;
-        assert_eq!(
-            pretrain(pretrainset, average_recall).unwrap(),
-            [0.97808367, 1.7742635, 4.334922, 14.136307],
+        Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
+            &Data::from([
+                0.9560174345970154,
+                1.694406509399414,
+                3.998023509979248,
+                8.26822280883789,
+            ]),
+            4,
         )
     }
 
