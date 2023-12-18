@@ -1,4 +1,5 @@
 use crate::error::{FSRSError, Result};
+use crate::inference::{DECAY, FACTOR};
 use crate::FSRSItem;
 use crate::DEFAULT_WEIGHTS;
 use itertools::Itertools;
@@ -87,9 +88,7 @@ fn total_rating_count(
 }
 
 fn power_forgetting_curve(t: &Array1<f32>, s: f32) -> Array1<f32> {
-    let decay: f32 = -0.5;
-    let factor = 0.9_f32.powf(1.0 / decay) - 1.0;
-    (t / s * factor + 1.0).mapv(|v| v.powf(decay))
+    (t / s * FACTOR as f32 + 1.0).mapv(|v| v.powf(DECAY as f32))
 }
 
 fn loss(
@@ -314,7 +313,7 @@ mod tests {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
         let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8250286, 0.7661308]);
+        let expected = Array1::from(vec![1.0, 0.90000004, 0.82502866, 0.76613086]);
         assert_eq!(y, expected);
     }
 
@@ -325,7 +324,7 @@ mod tests {
         let count = Array1::from(vec![100.0, 100.0, 100.0]);
         let init_s0 = 1.0;
         let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
-        assert_eq!(actual, 13.6243305);
+        assert_eq!(actual, 13.624332);
         Data::from([loss(&delta_t, &recall, &count, 2.0, init_s0)])
             .assert_approx_eq(&Data::from([14.5771]), 5);
     }
@@ -358,7 +357,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        let expected = [(4, 1.452559)].into_iter().collect();
+        let expected = [(4, 1.4525769)].into_iter().collect();
         assert_eq!(actual, expected);
     }
 
@@ -370,7 +369,7 @@ mod tests {
         let pretrainset = split_data(items, 1).0;
         assert_eq!(
             pretrain(pretrainset, average_recall).unwrap(),
-            [0.9773208, 1.7733966, 4.3346996, 14.136393],
+            [0.97808367, 1.7742635, 4.334922, 14.136307],
         )
     }
 

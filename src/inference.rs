@@ -12,7 +12,9 @@ use crate::model::Model;
 use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem};
 use burn::tensor::ElementConversion;
-
+pub const DECAY: f64 = -0.5;
+/// (9/10) ^ (1 / DECAY) - 1
+pub const FACTOR: f64 = 19f64 / 81f64;
 /// This is a slice for efficiency, but should always be 17 in length.
 pub type Weights = [f32];
 
@@ -58,9 +60,7 @@ impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
 }
 
 pub fn next_interval(stability: f32, desired_retention: f32) -> u32 {
-    let decay: f32 = -0.5;
-    let factor = 0.9_f32.powf(1.0 / decay) - 1.0;
-    (stability / factor * (desired_retention.powf(1.0 / decay) - 1.0))
+    (stability / FACTOR as f32 * (desired_retention.powf(1.0 / DECAY as f32) - 1.0))
         .round()
         .max(1.0) as u32
 }
@@ -385,7 +385,7 @@ mod tests {
             .good
             .memory,
             MemoryState {
-                stability: 51.33972,
+                stability: 51.339684,
                 difficulty: 7.005062
             }
         );
@@ -449,7 +449,7 @@ mod tests {
             NextStates {
                 again: ItemState {
                     memory: MemoryState {
-                        stability: 4.5778565,
+                        stability: 4.577856,
                         difficulty: 8.881129,
                     },
                     interval: 5

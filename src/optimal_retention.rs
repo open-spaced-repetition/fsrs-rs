@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{next_interval, ItemProgress, Weights};
+use crate::inference::{next_interval, ItemProgress, Weights, DECAY, FACTOR};
 use crate::{DEFAULT_WEIGHTS, FSRS};
 use burn::tensor::backend::Backend;
 use itertools::izip;
@@ -141,9 +141,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], desired_retention: f64, seed: O
         let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
 
         fn power_forgetting_curve(t: f64, s: f64) -> f64 {
-            let decay: f64 = -0.5;
-            let factor = 0.9_f64.powf(1.0 / decay) - 1.0;
-            (t / s * factor + 1.0).powf(decay)
+            (t / s * FACTOR as f64 + 1.0).powf(DECAY as f64)
         }
 
         // Calculate retrievability for entries where has_learned is true
@@ -639,7 +637,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8263932);
+        assert_eq!(optimal_retention, 0.8440934982710357);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }

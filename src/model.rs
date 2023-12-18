@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::Weights;
+use crate::inference::{Weights, DECAY, FACTOR};
 use crate::weight_clipper::clip_weights;
 use crate::DEFAULT_WEIGHTS;
 use burn::backend::ndarray::NdArrayDevice;
@@ -58,9 +58,7 @@ impl<B: Backend> Model<B> {
     }
 
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
-        let decay: f32 = -0.5;
-        let factor = 0.9_f32.powf(1.0 / decay) - 1.0;
-        (t / s * factor + 1).powf(decay)
+        (t / s * FACTOR + 1).powf(DECAY as f32)
     }
 
     fn stability_after_success(
@@ -269,7 +267,7 @@ mod tests {
         let retention = model.power_forgetting_curve(delta_t, stability);
         assert_eq!(
             retention.to_data(),
-            Data::from([1.0, 0.9460589, 0.9299294, 0.9221679, 0.9, 0.7939459])
+            Data::from([1.0, 0.946059, 0.9299294, 0.9221679, 0.9, 0.79394597])
         )
     }
 
