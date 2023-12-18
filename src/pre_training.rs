@@ -357,8 +357,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        let expected = [(4, 1.4525769)].into_iter().collect();
-        assert_eq!(actual, expected);
+        Data::from([actual.get(&4).unwrap().clone()]).assert_approx_eq(&Data::from([1.2390649]), 4);
     }
 
     #[test]

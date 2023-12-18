@@ -19,8 +19,8 @@ pub const FACTOR: f64 = 19f64 / 81f64;
 pub type Weights = [f32];
 
 pub static DEFAULT_WEIGHTS: [f32; 17] = [
-    0.5888, 1.4616, 3.8226, 14.1364, 4.9214, 1.0325, 0.8731, 0.0613, 1.57, 0.1395, 0.988, 2.212,
-    0.0658, 0.3439, 1.3098, 0.2837, 2.7766,
+    0.27, 0.74, 1.3, 5.52, 5.1, 1.02, 0.78, 0.06, 1.57, 0.14, 0.94, 2.16, 0.06, 0.31, 1.34, 0.21,
+    2.69,
 ];
 
 fn infer<B: Backend>(
@@ -503,7 +503,7 @@ mod tests {
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
             MemoryState {
                 stability: 9.999995,
-                difficulty: 6.8565593
+                difficulty: 6.6293178
             }
         );
         assert_eq!(
