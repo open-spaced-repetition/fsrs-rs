@@ -141,7 +141,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], desired_retention: f64, seed: O
         let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
 
         fn power_forgetting_curve(t: f64, s: f64) -> f64 {
-            (t / s * FACTOR as f64 + 1.0).powf(DECAY as f64)
+            (t / s * FACTOR + 1.0).powf(DECAY)
         }
 
         // Calculate retrievability for entries where has_learned is true
