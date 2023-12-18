@@ -12,9 +12,9 @@ use crate::model::Model;
 use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem};
 use burn::tensor::ElementConversion;
-pub const DECAY: f64 = -0.5;
+pub(crate) const DECAY: f64 = -0.5;
 /// (9/10) ^ (1 / DECAY) - 1
-pub const FACTOR: f64 = 19f64 / 81f64;
+pub(crate) const FACTOR: f64 = 19f64 / 81f64;
 /// This is a slice for efficiency, but should always be 17 in length.
 pub type Weights = [f32];
 
