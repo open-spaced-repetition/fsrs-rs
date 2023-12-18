@@ -12,7 +12,9 @@ use crate::model::Model;
 use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem};
 use burn::tensor::ElementConversion;
-
+pub(crate) const DECAY: f64 = -0.5;
+/// (9/10) ^ (1 / DECAY) - 1
+pub(crate) const FACTOR: f64 = 19f64 / 81f64;
 /// This is a slice for efficiency, but should always be 17 in length.
 pub type Weights = [f32];
 
@@ -57,8 +59,8 @@ impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     }
 }
 
-fn next_interval(stability: f32, request_retention: f32) -> u32 {
-    (9.0 * stability * (1.0 / request_retention - 1.0))
+pub fn next_interval(stability: f32, desired_retention: f32) -> u32 {
+    (stability / FACTOR as f32 * (desired_retention.powf(1.0 / DECAY as f32) - 1.0))
         .round()
         .max(1.0) as u32
 }
@@ -365,7 +367,7 @@ mod tests {
         assert_eq!(
             fsrs.memory_state(item, None).unwrap(),
             MemoryState {
-                stability: 51.344814,
+                stability: 51.31289,
                 difficulty: 7.005062
             }
         );
@@ -383,7 +385,7 @@ mod tests {
             .good
             .memory,
             MemoryState {
-                stability: 51.344814,
+                stability: 51.339684,
                 difficulty: 7.005062
             }
         );
@@ -392,12 +394,12 @@ mod tests {
 
     #[test]
     fn test_next_interval() {
-        let request_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
-        let intervals = request_retentions
+        let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
+        let intervals = desired_retentions
             .iter()
             .map(|r| next_interval(1.0, *r))
             .collect::<Vec<_>>();
-        assert_eq!(intervals, [81, 36, 21, 14, 9, 6, 4, 2, 1, 1,]);
+        assert_eq!(intervals, [422, 102, 43, 22, 13, 8, 4, 2, 1, 1]);
     }
 
     #[test]
@@ -408,13 +410,13 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.21600282, 0.06387164]), 5);
+            .assert_approx_eq(&Data::from([0.21364396810531616, 0.05370686203241348]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.203_217_7, 0.015_836_29]), 5);
+            .assert_approx_eq(&Data::from([0.20306083, 0.01326745]), 5);
         Ok(())
     }
 
@@ -447,28 +449,28 @@ mod tests {
             NextStates {
                 again: ItemState {
                     memory: MemoryState {
-                        stability: 4.5802255,
+                        stability: 4.577856,
                         difficulty: 8.881129,
                     },
                     interval: 5
                 },
                 hard: ItemState {
                     memory: MemoryState {
-                        stability: 27.7025,
+                        stability: 27.6745,
                         difficulty: 7.9430957
                     },
                     interval: 28,
                 },
                 good: ItemState {
                     memory: MemoryState {
-                        stability: 51.344814,
+                        stability: 51.31289,
                         difficulty: 7.005062
                     },
                     interval: 51,
                 },
                 easy: ItemState {
                     memory: MemoryState {
-                        stability: 101.98282,
+                        stability: 101.94249,
                         difficulty: 6.0670285
                     },
                     interval: 102,

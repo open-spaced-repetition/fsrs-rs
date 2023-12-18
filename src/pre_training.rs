@@ -1,4 +1,5 @@
 use crate::error::{FSRSError, Result};
+use crate::inference::{DECAY, FACTOR};
 use crate::FSRSItem;
 use crate::DEFAULT_WEIGHTS;
 use itertools::Itertools;
@@ -87,7 +88,7 @@ fn total_rating_count(
 }
 
 fn power_forgetting_curve(t: &Array1<f32>, s: f32) -> Array1<f32> {
-    1.0 / (1.0 + t / (9.0 * s))
+    (t / s * FACTOR as f32 + 1.0).mapv(|v| v.powf(DECAY as f32))
 }
 
 fn loss(
@@ -100,10 +101,9 @@ fn loss(
     let y_pred = power_forgetting_curve(delta_t, init_s0);
     let logloss = (-(recall * y_pred.clone().mapv_into(|v| v.ln())
         + (1.0 - recall) * (1.0 - &y_pred).mapv_into(|v| v.ln()))
-        * count
-        / count.sum())
+        * count.mapv(|v| v.sqrt()))
     .sum();
-    let l1 = (init_s0 - default_s0).abs() / count.sum() / 16.0;
+    let l1 = (init_s0 - default_s0).abs() / 16.0;
     logloss + l1
 }
 
@@ -313,7 +313,7 @@ mod tests {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
         let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8181818, 0.75]);
+        let expected = Array1::from(vec![1.0, 0.90000004, 0.82502866, 0.76613086]);
         assert_eq!(y, expected);
     }
 
@@ -324,8 +324,9 @@ mod tests {
         let count = Array1::from(vec![100.0, 100.0, 100.0]);
         let init_s0 = 1.0;
         let actual = loss(&delta_t, &recall, &count, init_s0, init_s0);
-        assert_eq!(actual, 0.45385247);
-        assert_eq!(loss(&delta_t, &recall, &count, 2.0, init_s0), 0.48355862);
+        assert_eq!(actual, 13.624332);
+        Data::from([loss(&delta_t, &recall, &count, 2.0, init_s0)])
+            .assert_approx_eq(&Data::from([14.5771]), 5);
     }
 
     #[test]
@@ -356,7 +357,8 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        Data::from([actual.get(&4).unwrap().clone()]).assert_approx_eq(&Data::from([1.2390649]), 4);
+        Data::from([actual.get(&4).unwrap().clone()])
+            .assert_approx_eq(&Data::from([1.2301323413848877]), 4);
     }
 
     #[test]
@@ -365,9 +367,14 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
         let pretrainset = split_data(items, 1).0;
-        assert_eq!(
-            pretrain(pretrainset, average_recall).unwrap(),
-            [0.94550645, 1.6813093, 3.9867811, 8.992397,],
+        Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
+            &Data::from([
+                0.9560174345970154,
+                1.694406509399414,
+                3.998023509979248,
+                8.26822280883789,
+            ]),
+            4,
         )
     }
 

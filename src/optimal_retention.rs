@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{ItemProgress, Weights};
+use crate::inference::{next_interval, ItemProgress, Weights, DECAY, FACTOR};
 use crate::{DEFAULT_WEIGHTS, FSRS};
 use burn::tensor::backend::Backend;
 use itertools::izip;
@@ -90,7 +90,7 @@ fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
         .clamp(0.1, s)
 }
 
-fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: Option<u64>) -> f64 {
+fn simulate(config: &SimulatorConfig, w: &[f64], desired_retention: f64, seed: Option<u64>) -> f64 {
     let SimulatorConfig {
         deck_size,
         learn_span,
@@ -140,11 +140,15 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
 
         let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
 
+        fn power_forgetting_curve(t: f64, s: f64) -> f64 {
+            (t / s * FACTOR + 1.0).powf(DECAY)
+        }
+
         // Calculate retrievability for entries where has_learned is true
         izip!(&mut retrievability, &delta_t, &old_stability, &has_learned)
             .filter(|(.., &has_learned_flag)| has_learned_flag)
             .for_each(|(retrievability, &delta_t, &stability, ..)| {
-                *retrievability = (1.0 + delta_t / (9.0 * stability)).powi(-1)
+                *retrievability = power_forgetting_curve(delta_t, stability)
             });
 
         // Set 'cost' column to 0
@@ -315,8 +319,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
         izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
             .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
             .for_each(|(new_ivl, &new_stab, ..)| {
-                *new_ivl = (9.0 * new_stab * (1.0 / request_retention - 1.0))
-                    .round()
+                *new_ivl = (next_interval(new_stab as f32, desired_retention as f32) as f64)
                     .clamp(1.0, max_ivl);
             });
 
@@ -354,7 +357,7 @@ fn simulate(config: &SimulatorConfig, w: &[f64], request_retention: f64, seed: O
 fn sample<F>(
     config: &SimulatorConfig,
     weights: &[f64],
-    request_retention: f64,
+    desired_retention: f64,
     n: usize,
     progress: &mut F,
 ) -> Result<f64>
@@ -370,7 +373,7 @@ where
             simulate(
                 config,
                 weights,
-                request_retention,
+                desired_retention,
                 Some((i + 42).try_into().unwrap()),
             )
         })
@@ -626,7 +629,7 @@ mod tests {
             0.9,
             None,
         );
-        assert_eq!(memorization, 2405.020202735966)
+        assert_eq!(memorization, 2380.9836436993573)
     }
 
     #[test]
@@ -634,7 +637,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8608067460076987);
+        assert_eq!(optimal_retention, 0.8568971936549108);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
