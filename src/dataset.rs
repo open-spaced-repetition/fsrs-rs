@@ -205,7 +205,9 @@ pub fn split_data(
 ) -> (Vec<FSRSItem>, Vec<Vec<FSRSItem>>, Vec<FSRSItem>) {
     let (mut pretrainset, mut trainset) =
         items.into_iter().partition(|item| item.reviews.len() == 2);
-    (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+    if std::env::var("FSRS_NO_OUTLIER").is_err() {
+        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+    }
     (
         pretrainset,
         stratified_kfold(trainset.clone(), n_splits),
