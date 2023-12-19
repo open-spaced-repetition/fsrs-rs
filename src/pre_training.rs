@@ -207,6 +207,7 @@ fn smooth_and_fill(
             let rating = rating_stability.keys().next().unwrap();
             let factor = rating_stability[rating] / r_s0_default[rating];
             init_s0 = r_s0_default.values().map(|&x| x * factor).collect();
+            init_s0.sort_by(|a, b| a.partial_cmp(b).unwrap());
         }
         2 => {
             match (
@@ -384,5 +385,10 @@ mod tests {
         let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
         assert_eq!(actual, [0.4, 0.8052433, 2.3, 10.9,]);
+
+        let mut rating_stability = HashMap::from([(2, 0.35)]);
+        let rating_count = HashMap::from([(2, 1)]);
+        let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
+        assert_eq!(actual, [0.1277027, 0.35, 0.6148648, 2.6108108,]);
     }
 }
