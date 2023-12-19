@@ -200,7 +200,12 @@ fn smooth_and_fill(
         .iter()
         .cloned()
         .collect::<HashMap<_, _>>();
-
+    let rating_stability_arr = [
+        rating_stability.get(&1),
+        rating_stability.get(&2),
+        rating_stability.get(&3),
+        rating_stability.get(&4),
+    ];
     match rating_stability.len() {
         0 => return Err(FSRSError::NotEnoughData),
         1 => {
@@ -210,27 +215,22 @@ fn smooth_and_fill(
             init_s0.sort_by(|a, b| a.partial_cmp(b).unwrap());
         }
         2 => {
-            match (
-                rating_stability.get(&1),
-                rating_stability.get(&2),
-                rating_stability.get(&3),
-                rating_stability.get(&4),
-            ) {
-                (None, None, Some(&r3), Some(&r4)) => {
+            match (rating_stability_arr) {
+                ([None, None, Some(&r3), Some(&r4)]) => {
                     let r2 = r3.powf(1.0 / (1.0 - w2)) * r4.powf(1.0 - 1.0 / (1.0 - w2));
                     rating_stability.insert(2, r2);
                     rating_stability.insert(1, (r2.powf(1.0 / w1)) * (r3.powf(1.0 - 1.0 / w1)));
                 }
-                (None, Some(&r2), None, Some(&r4)) => {
+                ([None, Some(&r2), None, Some(&r4)]) => {
                     let r3 = r2.powf(1.0 - w2) * r4.powf(w2);
                     rating_stability.insert(3, r3);
                     rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
-                (None, Some(&r2), Some(&r3), None) => {
+                ([None, Some(&r2), Some(&r3), None]) => {
                     rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
                     rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
-                (Some(&r1), None, None, Some(&r4)) => {
+                ([Some(&r1), None, None, Some(&r4)]) => {
                     let r2 = r1.powf(w1 / (w1.mul_add(-w2, w1 + w2)))
                         * r4.powf(1.0 - w1 / (w1.mul_add(-w2, w1 + w2)));
                     rating_stability.insert(2, r2);
@@ -240,12 +240,12 @@ fn smooth_and_fill(
                             * r4.powf(w2 / (w1.mul_add(-w2, w1 + w2))),
                     );
                 }
-                (Some(&r1), None, Some(&r3), None) => {
+                ([Some(&r1), None, Some(&r3), None]) => {
                     let r2 = r1.powf(w1) * r3.powf(1.0 - w1);
                     rating_stability.insert(2, r2);
                     rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
                 }
-                (Some(&r1), Some(&r2), None, None) => {
+                ([Some(&r1), Some(&r2), None, None]) => {
                     let r3 = r1.powf(1.0 - 1.0 / (1.0 - w1)) * r2.powf(1.0 / (1.0 - w1));
                     rating_stability.insert(3, r3);
                     rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
@@ -259,22 +259,17 @@ fn smooth_and_fill(
                 .collect();
         }
         3 => {
-            match (
-                rating_stability.get(&1),
-                rating_stability.get(&2),
-                rating_stability.get(&3),
-                rating_stability.get(&4),
-            ) {
-                (None, Some(r2), Some(r3), _) => {
+            match (rating_stability_arr) {
+                ([None, Some(r2), Some(r3), _]) => {
                     rating_stability.insert(1, r2.powf(1.0 / w1) * r3.powf(1.0 - 1.0 / w1));
                 }
-                (Some(r1), None, Some(r3), _) => {
+                ([Some(r1), None, Some(r3), _]) => {
                     rating_stability.insert(2, r1.powf(w1) * r3.powf(1.0 - w1));
                 }
-                (_, Some(r2), None, Some(r4)) => {
+                ([_, Some(r2), None, Some(r4)]) => {
                     rating_stability.insert(3, r2.powf(1.0 - w2) * r4.powf(w2));
                 }
-                (_, Some(r2), Some(r3), None) => {
+                ([_, Some(r2), Some(r3), None]) => {
                     rating_stability.insert(4, r2.powf(1.0 - 1.0 / w2) * r3.powf(1.0 / w2));
                 }
                 _ => {}
