@@ -336,10 +336,8 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
         let pretrainset = split_data(items, 1).0;
-        Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
-            &Data::from([1.001_276, 1.811_072, 4.405_640, 8.532_001]),
-            4,
-        )
+        Data::from(pretrain(pretrainset, average_recall).unwrap())
+            .assert_approx_eq(&Data::from([1.001_276, 1.811_072, 4.405_640, 8.532_001]), 4)
     }
 
     #[test]
