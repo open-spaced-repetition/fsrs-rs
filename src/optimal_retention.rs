@@ -409,7 +409,7 @@ where
     Ok((0..n)
         .into_par_iter()
         .map(|i| {
-            let memoziration = simulate(
+            let memorization = simulate(
                 config,
                 weights,
                 desired_retention,
@@ -417,7 +417,7 @@ where
                 None,
             )
             .0;
-            memoziration[memoziration.len() - 1]
+            memorization[memorization.len() - 1]
         })
         .sum::<f64>()
         / n as f64)
