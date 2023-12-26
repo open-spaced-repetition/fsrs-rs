@@ -163,14 +163,14 @@ pub fn filter_outlier(
                 .then(delta_t_b.cmp(delta_t_a))
         });
 
-        // remove 5% of items from each sub group
         let total = sub_groups.iter().map(|(_, vec)| vec.len()).sum::<usize>();
         let mut has_been_removed = 0;
 
         for (delta_t, sub_group) in sub_groups.iter().rev() {
-            if has_been_removed + sub_group.len() > total / 20 {
-                // keep the group if it includes at least one item rated again (retention < 100%)
-                if sub_group.iter().any(|item| item.current().rating == 1) {
+            // remove 5% items (20 at least) of each group
+            if has_been_removed + sub_group.len() >= 20.max(total / 20) {
+                // keep the sub_group if it includes at least six items
+                if sub_group.len() >= 6 {
                     filtered_items.extend_from_slice(sub_group);
                 } else {
                     removed_pairs[rating as usize].insert(*delta_t);
