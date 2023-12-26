@@ -278,7 +278,7 @@ mod tests {
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
-            Data::from([0.27, 0.74, 1.3, 5.52, 0.27, 0.74])
+            Data::from([0.5614, 1.2546, 3.5878, 7.9731, 0.5614, 1.2546])
         )
     }
 
@@ -289,7 +289,7 @@ mod tests {
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
-            Data::from([7.14, 6.12, 5.1, 4.08, 7.14, 6.12])
+            Data::from([7.3649, 6.2346, 5.1043, 3.974, 7.3649, 6.2346])
         )
     }
 
@@ -317,13 +317,13 @@ mod tests {
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([6.56, 5.7799997, 5.0, 4.2200003])
+            Data::from([6.646, 5.823, 5.0, 4.177])
         );
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([6.4723997, 5.7391996, 5.006, 4.2728004])
+            Data::from([6.574311, 5.7895803, 5.00485, 4.2201195])
         )
     }
 
@@ -343,19 +343,19 @@ mod tests {
         s_recall.clone().backward();
         assert_eq!(
             s_recall.to_data(),
-            Data::from([23.908455, 12.499619, 54.99991, 169.89117])
+            Data::from([26.678038, 13.996968, 62.718544, 202.76956])
         );
         let s_forget = model.stability_after_failure(stability, difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
-            Data::from([1.8343093, 2.0118992, 2.245103, 2.5231054])
+            Data::from([1.8932177, 2.0453987, 2.2637987, 2.5304008])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
         assert_eq!(
             next_stability.to_data(),
-            Data::from([1.8343093, 12.499619, 54.99991, 169.89117])
+            Data::from([1.8932177, 13.996968, 62.718544, 202.76956])
         )
     }
 
