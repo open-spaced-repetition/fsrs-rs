@@ -338,6 +338,7 @@ mod tests {
         let pretrainset = split_data(items, 1).0;
         Data::from(pretrain(pretrainset, average_recall).unwrap())
             .assert_approx_eq(&Data::from([1.001_276, 1.811_072, 4.405_64, 8.532_001]), 4)
+
     }
 
     #[test]
@@ -350,6 +351,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.1277027, 0.35, 0.6148648, 2.6108108,]);
+        assert_eq!(actual, [0.15661564, 0.35, 1.0009006, 2.2242827,]);
     }
 }

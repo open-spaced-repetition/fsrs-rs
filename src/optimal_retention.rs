@@ -673,13 +673,18 @@ mod tests {
             None,
         )
         .0;
-        assert_eq!(memorization[memorization.len() - 1], 2380.9836436993573)
+        assert_eq!(memorization[memorization.len() - 1], 3022.055014122344)
     }
 
     #[test]
     fn simulate_with_existing_cards() {
-        let mut config = SimulatorConfig::default();
-        config.learn_span = 10;
+        let config = SimulatorConfig {
+            learn_span: 30,
+            learn_limit: 60,
+            review_limit: 200,
+            max_cost_perday: f64::INFINITY,
+            ..Default::default()
+        };
         let cards = vec![
             Card {
                 difficulty: 5.0,
@@ -708,7 +713,7 @@ mod tests {
     fn simulate_with_learn_review_limit() {
         let mut config = SimulatorConfig::default();
         config.learn_span = 30;
-        config.learn_limit = 50;
+        config.learn_limit = 60;
         config.review_limit = 200;
         config.max_cost_perday = f64::INFINITY;
         let results = simulate(
@@ -721,8 +726,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 48, 57, 77, 86, 102, 119, 105, 133, 137, 141, 163, 151, 164, 157, 186, 174, 171,
-                194, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200
+                0, 16, 27, 29, 86, 73, 96, 95, 96, 105, 112, 113, 124, 131, 139, 124, 130, 141,
+                162, 175, 168, 179, 186, 185, 198, 189, 200, 200, 200, 200
             ]
         );
         assert_eq!(
@@ -736,7 +741,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8568971936549108);
+        assert_eq!(optimal_retention, 0.864870726919112);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }

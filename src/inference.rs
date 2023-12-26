@@ -19,8 +19,8 @@ pub(crate) const FACTOR: f64 = 19f64 / 81f64;
 pub type Weights = [f32];
 
 pub static DEFAULT_WEIGHTS: [f32; 17] = [
-    0.27, 0.74, 1.3, 5.52, 5.1, 1.02, 0.78, 0.06, 1.57, 0.14, 0.94, 2.16, 0.06, 0.31, 1.34, 0.21,
-    2.69,
+    0.5614, 1.2546, 3.5878, 7.9731, 5.1043, 1.1303, 0.823, 0.0465, 1.629, 0.135, 1.0045, 2.132,
+    0.0839, 0.3204, 1.3547, 0.219, 2.7849,
 ];
 
 fn infer<B: Backend>(
@@ -410,7 +410,7 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.213_643_97, 0.053_706_862]), 5);
+            .assert_approx_eq(&Data::from([0.205_166, 0.024_658]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
@@ -503,7 +503,7 @@ mod tests {
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
             MemoryState {
                 stability: 9.999995,
-                difficulty: 6.6293178
+                difficulty: 7.200902
             }
         );
         assert_eq!(
