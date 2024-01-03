@@ -46,15 +46,15 @@ pub enum RevlogReviewKind {
 
 impl rusqlite::types::FromSql for RevlogReviewKind {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        match value {
-            rusqlite::types::ValueRef::Integer(i) => match i {
-                0 => Ok(RevlogReviewKind::Learning),
-                1 => Ok(RevlogReviewKind::Review),
-                2 => Ok(RevlogReviewKind::Relearning),
-                3 => Ok(RevlogReviewKind::Filtered),
-                4 => Ok(RevlogReviewKind::Manual),
-                _ => Err(rusqlite::types::FromSqlError::InvalidType),
-            },
+        let rusqlite::types::ValueRef::Integer(i) = value else {
+            return Err(rusqlite::types::FromSqlError::InvalidType);
+        };
+        match i {
+            0 => Ok(RevlogReviewKind::Learning),
+            1 => Ok(RevlogReviewKind::Review),
+            2 => Ok(RevlogReviewKind::Relearning),
+            3 => Ok(RevlogReviewKind::Filtered),
+            4 => Ok(RevlogReviewKind::Manual),
             _ => Err(rusqlite::types::FromSqlError::InvalidType),
         }
     }
