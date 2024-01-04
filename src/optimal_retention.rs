@@ -711,11 +711,13 @@ mod tests {
 
     #[test]
     fn simulate_with_learn_review_limit() {
-        let mut config = SimulatorConfig::default();
-        config.learn_span = 30;
-        config.learn_limit = 60;
-        config.review_limit = 200;
-        config.max_cost_perday = f64::INFINITY;
+        let config = SimulatorConfig {
+            learn_span: 30,
+            learn_limit: 60,
+            review_limit: 200,
+            max_cost_perday: f64::INFINITY,
+            ..Default::default()
+        };
         let results = simulate(
             &config,
             &DEFAULT_WEIGHTS.iter().map(|v| *v as f64).collect_vec(),
