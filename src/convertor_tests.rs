@@ -80,30 +80,15 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
 fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
     entries
         .into_iter()
-        .filter(|entry| entry.review_kind != Filtered)
+        .filter(|entry| entry.review_kind != Filtered || entry.ease_factor != 0)
         .collect()
 }
 
-fn filter_out_set_due_date(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+fn filter_out_manual(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
     entries
         .into_iter()
-        .filter(|entry| {
-            (entry.review_kind != Manual && entry.button_chosen != 0) || entry.ease_factor == 0
-        })
+        .filter(|entry| entry.review_kind != Manual && entry.button_chosen != 0)
         .collect()
-}
-
-fn remove_revlog_before_forget(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
-    let forget_index = entries
-        .iter()
-        .enumerate()
-        .filter(|(.., entry)| {
-            (entry.review_kind == Manual || entry.button_chosen == 0) && entry.ease_factor == 0
-        })
-        .last()
-        .map(|(index, ..)| index + 1)
-        .unwrap_or_default();
-    entries[forget_index..].to_vec()
 }
 
 fn remove_revlog_before_last_first_learn(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
@@ -115,7 +100,11 @@ fn remove_revlog_before_last_first_learn(entries: Vec<RevlogEntry>) -> Vec<Revlo
             break;
         }
     }
-    entries[last_first_learn_index..].to_vec()
+    if entries[last_first_learn_index].review_kind == Learning {
+        entries[last_first_learn_index..].to_vec()
+    } else {
+        vec![]
+    }
 }
 
 fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> NaiveDate {
@@ -149,8 +138,7 @@ fn convert_to_fsrs_items(
     timezone: Tz,
 ) -> Option<Vec<FSRSItem>> {
     entries = filter_out_cram(entries);
-    entries = filter_out_set_due_date(entries);
-    entries = remove_revlog_before_forget(entries);
+    entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
     entries = keep_first_revlog_same_date(entries, next_day_starts_at, timezone);
 
@@ -360,10 +348,10 @@ fn conversion_works() {
         .collect_vec()];
     assert_eq!(revlogs.len(), 24394);
     let fsrs_items = anki_to_fsrs(revlogs);
-    assert_eq!(fsrs_items.len(), 14121);
+    assert_eq!(fsrs_items.len(), 14290);
     assert_eq!(
         fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
-        48510 + 14121
+        49382 + 14290
     );
 
     // convert a subset and check it matches expectations
@@ -704,7 +692,7 @@ fn test_filter_out_cram() {
 }
 
 #[test]
-fn test_filter_out_set_due_date() {
+fn test_filter_out_manual() {
     let revlog_vec = vec![
         RevlogEntry {
             id: 1581544939407,
@@ -751,7 +739,7 @@ fn test_filter_out_set_due_date() {
             review_kind: Review,
         },
     ];
-    let revlog_vec = filter_out_set_due_date(revlog_vec);
+    let revlog_vec = filter_out_manual(revlog_vec);
     assert_eq!(
         revlog_vec,
         vec![
@@ -789,60 +777,6 @@ fn test_filter_out_set_due_date() {
                 review_kind: Review,
             },
         ]
-    );
-}
-
-#[test]
-fn test_remove_revlog_before_forget() {
-    let revlog_vec = vec![
-        RevlogEntry {
-            id: 1581372095493,
-            cid: 1559076329057,
-            usn: 5212,
-            button_chosen: 1,
-            interval: -60,
-            last_interval: -60,
-            ease_factor: 0,
-            taken_millis: 60000,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1694422513063,
-            cid: 1559076329057,
-            usn: -1,
-            button_chosen: 0,
-            interval: 0,
-            last_interval: 228,
-            ease_factor: 0,
-            taken_millis: 0,
-            review_kind: Manual,
-        },
-        RevlogEntry {
-            id: 1694422651447,
-            cid: 1559076329057,
-            usn: -1,
-            button_chosen: 3,
-            interval: -1200,
-            last_interval: -60,
-            ease_factor: 0,
-            taken_millis: 7454,
-            review_kind: Learning,
-        },
-    ];
-    let revlog_vec = remove_revlog_before_forget(revlog_vec);
-    assert_eq!(
-        revlog_vec,
-        vec![RevlogEntry {
-            id: 1694422651447,
-            cid: 1559076329057,
-            usn: -1,
-            button_chosen: 3,
-            interval: -1200,
-            last_interval: -60,
-            ease_factor: 0,
-            taken_millis: 7454,
-            review_kind: Learning,
-        },]
     );
 }
 

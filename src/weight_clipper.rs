@@ -1,4 +1,7 @@
-use crate::inference::Weights;
+use crate::{
+    inference::{Weights, S_MIN},
+    pre_training::INIT_S_MAX,
+};
 use burn::tensor::{backend::Backend, Data, Tensor};
 
 pub(crate) fn weight_clipper<B: Backend>(weights: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -9,10 +12,10 @@ pub(crate) fn weight_clipper<B: Backend>(weights: Tensor<B, 1>) -> Tensor<B, 1> 
 pub(crate) fn clip_weights(weights: &Weights) -> Vec<f32> {
     // https://regex101.com/r/21mXNI/1
     const CLAMPS: [(f32, f32); 17] = [
-        (0.1, 100.0),
-        (0.1, 100.0),
-        (0.1, 100.0),
-        (0.1, 100.0),
+        (S_MIN, INIT_S_MAX),
+        (S_MIN, INIT_S_MAX),
+        (S_MIN, INIT_S_MAX),
+        (S_MIN, INIT_S_MAX),
         (1.0, 10.0),
         (0.1, 5.0),
         (0.1, 5.0),
@@ -49,6 +52,9 @@ mod tests {
         let param: Tensor<1> = weight_clipper(tensor);
         let values = &param.to_data().value;
 
-        assert_eq!(values, &[0.1, 0.1, 100.0, 0.1, 10.0, 0.1, 1.0, 0.25, 0.0]);
+        assert_eq!(
+            values,
+            &[0.01, 0.01, 100.0, 0.01, 10.0, 0.1, 1.0, 0.25, 0.0]
+        );
     }
 }

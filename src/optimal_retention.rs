@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{next_interval, ItemProgress, Weights, DECAY, FACTOR};
+use crate::inference::{next_interval, ItemProgress, Weights, DECAY, FACTOR, S_MIN};
 use crate::{DEFAULT_WEIGHTS, FSRS};
 use burn::tensor::backend::Backend;
 use itertools::izip;
@@ -91,7 +91,7 @@ fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -
 
 fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
     (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
-        .clamp(0.1, s)
+        .clamp(S_MIN.into(), s)
 }
 
 struct Card {
@@ -711,11 +711,13 @@ mod tests {
 
     #[test]
     fn simulate_with_learn_review_limit() {
-        let mut config = SimulatorConfig::default();
-        config.learn_span = 30;
-        config.learn_limit = 60;
-        config.review_limit = 200;
-        config.max_cost_perday = f64::INFINITY;
+        let config = SimulatorConfig {
+            learn_span: 30,
+            learn_limit: 60,
+            review_limit: 200,
+            max_cost_perday: f64::INFINITY,
+            ..Default::default()
+        };
         let results = simulate(
             &config,
             &DEFAULT_WEIGHTS.iter().map(|v| *v as f64).collect_vec(),

@@ -15,6 +15,7 @@ use burn::tensor::ElementConversion;
 pub(crate) const DECAY: f64 = -0.5;
 /// (9/10) ^ (1 / DECAY) - 1
 pub(crate) const FACTOR: f64 = 19f64 / 81f64;
+pub(crate) const S_MIN: f32 = 0.01;
 /// This is a slice for efficiency, but should always be 17 in length.
 pub type Weights = [f32];
 
@@ -107,7 +108,7 @@ impl<B: Backend> FSRS<B> {
         interval: f32,
         sm2_retention: f32,
     ) -> Result<MemoryState> {
-        let stability = interval.max(0.1) / (9.0 * (1.0 / sm2_retention - 1.0));
+        let stability = interval.max(S_MIN) / (9.0 * (1.0 / sm2_retention - 1.0));
         let w = &self.model().w;
         let w8: f32 = w.get(8).into_scalar().elem();
         let w9: f32 = w.get(9).into_scalar().elem();
@@ -410,13 +411,13 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.205_166, 0.024_658]), 5);
+            .assert_approx_eq(&Data::from([0.204_001, 0.025_387]), 5);
 
         let fsrs = FSRS::new(Some(WEIGHTS))?;
         let metrics = fsrs.evaluate(items, |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.20306083, 0.01326745]), 5);
+            .assert_approx_eq(&Data::from([0.201_908, 0.013_894]), 5);
         Ok(())
     }
 

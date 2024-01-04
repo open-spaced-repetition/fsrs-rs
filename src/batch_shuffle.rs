@@ -413,14 +413,22 @@ mod tests {
                         FSRSReview {
                             rating: 3,
                             delta_t: 3,
+                        }
+                    ]
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
                         },
                         FSRSReview {
                             rating: 3,
-                            delta_t: 8,
+                            delta_t: 1,
                         },
                         FSRSReview {
                             rating: 3,
-                            delta_t: 21,
+                            delta_t: 3,
                         }
                     ],
                 },
@@ -437,14 +445,6 @@ mod tests {
                         FSRSReview {
                             rating: 3,
                             delta_t: 3,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 7,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 19,
                         }
                     ],
                 },
@@ -461,14 +461,22 @@ mod tests {
                         FSRSReview {
                             rating: 3,
                             delta_t: 3,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
                         },
                         FSRSReview {
                             rating: 3,
-                            delta_t: 8,
+                            delta_t: 1,
                         },
                         FSRSReview {
                             rating: 3,
-                            delta_t: 19,
+                            delta_t: 3,
                         }
                     ],
                 },
@@ -479,12 +487,52 @@ mod tests {
                             delta_t: 0,
                         },
                         FSRSReview {
+                            rating: 4,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
                             rating: 3,
+                            delta_t: 10,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
                             delta_t: 1,
                         },
                         FSRSReview {
                             rating: 3,
-                            delta_t: 3,
+                            delta_t: 4,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 4,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
                         },
                         FSRSReview {
                             rating: 3,
@@ -509,134 +557,6 @@ mod tests {
                         FSRSReview {
                             rating: 3,
                             delta_t: 3,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 6,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 17,
-                        }
-                    ],
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 3,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 8,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 20,
-                        }
-                    ],
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0,
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 3,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 8,
-                        }
-                    ],
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0,
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 3,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 5,
-                        }
-                    ],
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0,
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 3,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 5,
-                        }
-                    ],
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 3,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 9,
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 19,
                         }
                     ],
                 },

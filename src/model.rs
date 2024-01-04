@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{Weights, DECAY, FACTOR};
+use crate::inference::{Weights, DECAY, FACTOR, S_MIN};
 use crate::weight_clipper::clip_weights;
 use crate::DEFAULT_WEIGHTS;
 use burn::backend::ndarray::NdArrayDevice;
@@ -147,7 +147,7 @@ impl<B: Backend> Model<B> {
             )
         };
         MemoryStateTensors {
-            stability: new_s.clamp(0.1, 36500.0),
+            stability: new_s.clamp(S_MIN, 36500.0),
             difficulty: new_d,
         }
     }

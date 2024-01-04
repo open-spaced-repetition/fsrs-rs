@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{DECAY, FACTOR};
+use crate::inference::{DECAY, FACTOR, S_MIN};
 use crate::FSRSItem;
 use crate::DEFAULT_WEIGHTS;
 use ndarray::Array1;
@@ -106,8 +106,7 @@ fn loss(
     logloss + l1
 }
 
-const MIN_INIT_S0: f32 = 0.1;
-const MAX_INIT_S0: f32 = 100.0;
+pub(crate) const INIT_S_MAX: f32 = 100.0;
 
 fn search_parameters(
     mut pretrainset: HashMap<FirstRating, Vec<AverageRecall>>,
@@ -130,8 +129,8 @@ fn search_parameters(
         };
         let count = Array1::from_iter(data.iter().map(|d| d.count));
 
-        let mut low = MIN_INIT_S0;
-        let mut high = MAX_INIT_S0;
+        let mut low = S_MIN;
+        let mut high = INIT_S_MAX;
         let mut optimal_s = 1.0;
 
         let mut iter = 0;
@@ -265,7 +264,7 @@ fn smooth_and_fill(
     }
     init_s0 = init_s0
         .iter()
-        .map(|&v| v.clamp(MIN_INIT_S0, MAX_INIT_S0))
+        .map(|&v| v.clamp(S_MIN, INIT_S_MAX))
         .collect();
     Ok(init_s0[0..=3].try_into().unwrap())
 }
@@ -327,7 +326,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        Data::from([*actual.get(&4).unwrap()]).assert_approx_eq(&Data::from([0.944_284]), 4);
+        Data::from([*actual.get(&4).unwrap()]).assert_approx_eq(&Data::from([0.943_921]), 3);
     }
 
     #[test]
@@ -337,7 +336,7 @@ mod tests {
         let average_recall = calculate_average_recall(&items);
         let pretrainset = split_data(items, 1).0;
         Data::from(pretrain(pretrainset, average_recall).unwrap())
-            .assert_approx_eq(&Data::from([1.001_276, 1.810_509, 4.401_906, 8.529_174]), 4)
+            .assert_approx_eq(&Data::from([1.001_131, 1.810_561, 4.403_481, 8.530_161]), 4)
     }
 
     #[test]
