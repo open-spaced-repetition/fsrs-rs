@@ -170,7 +170,9 @@ pub fn filter_outlier(
             // remove 5% items (20 at least) of each group
             if has_been_removed + sub_group.len() >= 20.max(total / 20) {
                 // keep the sub_group if it includes at least six items
-                if sub_group.len() >= 6 {
+                // and the delta_t is less than 100 days if rating is not 4
+                // or less than 365 days if rating is 4
+                if sub_group.len() >= 6 && *delta_t <= if rating != 4 { 100 } else { 365 } {
                     filtered_items.extend_from_slice(sub_group);
                 } else {
                     removed_pairs[rating as usize].insert(*delta_t);
@@ -431,9 +433,9 @@ mod tests {
             .into_iter()
             .partition(|item| item.reviews.len() == 2);
         assert_eq!(pretrainset.len(), 3315);
-        assert_eq!(trainset.len(), 10806);
+        assert_eq!(trainset.len(), 10975);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         assert_eq!(pretrainset.len(), 3265);
-        assert_eq!(trainset.len(), 10731);
+        assert_eq!(trainset.len(), 10900);
     }
 }
