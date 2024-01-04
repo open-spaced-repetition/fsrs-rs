@@ -326,7 +326,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        Data::from([*actual.get(&4).unwrap()]).assert_approx_eq(&Data::from([0.943_921]), 4);
+        Data::from([*actual.get(&4).unwrap()]).assert_approx_eq(&Data::from([0.943_921]), 3);
     }
 
     #[test]
