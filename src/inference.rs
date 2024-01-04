@@ -15,8 +15,8 @@ use burn::tensor::ElementConversion;
 pub(crate) const DECAY: f64 = -0.5;
 /// (9/10) ^ (1 / DECAY) - 1
 pub(crate) const FACTOR: f64 = 19f64 / 81f64;
-/// This is a slice for efficiency, but should always be 17 in length.
 pub(crate) const S_MIN: f32 = 0.01;
+/// This is a slice for efficiency, but should always be 17 in length.
 pub type Weights = [f32];
 
 pub static DEFAULT_WEIGHTS: [f32; 17] = [
