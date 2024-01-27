@@ -39,7 +39,10 @@ snafu = "0.7.5"
 strum = { version = "0.25.0", features = ["derive"] }
 
 [dev-dependencies]
-chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }
+chrono = { version = "0.4.31", default-features = false, features = [
+    "std",
+    "clock",
+] }
 chrono-tz = "0.8.4"
 criterion = { version = "0.5.1" }
 rusqlite = { version = "0.30.0" }
