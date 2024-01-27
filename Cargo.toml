@@ -3,11 +3,11 @@ name = "fsrs"
 version = "0.1.0"
 authors = ["Open Spaced Repetition"]
 edition = "2021"
-license = "BSD-3-Clause"
-description = "FSRS for Rust, including Optimizer and Scheduler"
-repository = "https://github.com/open-spaced-repetition/fsrs-rs"
-readme = "README.md"
 keywords = ["spaced-repetition", "algorithm", "fsrs", "machine-learning"]
+license = "BSD-3-Clause"
+readme = "README.md"
+repository = "https://github.com/open-spaced-repetition/fsrs-rs"
+description = "FSRS for Rust, including Optimizer and Scheduler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
