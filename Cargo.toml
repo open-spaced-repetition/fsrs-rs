@@ -3,6 +3,7 @@ name = "fsrs"
 version = "0.1.0"
 authors = ["Open Spaced Repetition"]
 edition = "2021"
+homepage = "https://github.com/open-spaced-repetition"
 keywords = ["spaced-repetition", "algorithm", "fsrs", "machine-learning"]
 license = "BSD-3-Clause"
 readme = "README.md"
