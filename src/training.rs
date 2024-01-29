@@ -5,7 +5,7 @@ use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
-use crate::{FSRSError, FSRS};
+use crate::{FSRSError, DEFAULT_WEIGHTS, FSRS};
 use burn::backend::Autodiff;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::module::Module;
@@ -239,6 +239,7 @@ impl<B: Backend> FSRS<B> {
     pub fn compute_weights(
         &self,
         items: Vec<FSRSItem>,
+        pretrain_only: bool,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
@@ -261,6 +262,14 @@ impl<B: Backend> FSRS<B> {
             finish_progress();
             e
         })?;
+        if pretrain_only {
+            finish_progress();
+            let weights = initial_stability
+                .into_iter()
+                .chain(DEFAULT_WEIGHTS[4..].iter().copied())
+                .collect();
+            return Ok(weights);
+        }
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,
