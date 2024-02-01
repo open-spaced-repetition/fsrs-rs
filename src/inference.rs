@@ -274,7 +274,7 @@ impl<B: Backend> FSRS<B> {
             let (_state, retention) = infer::<B>(model_other, batch.clone());
             let pred = retention.clone().to_data().convert::<f32>().value;
             all_predictions_other.extend(pred);
-            
+
             let true_val = batch.labels.clone().to_data().convert::<f32>().value;
             all_true_val.extend(true_val);
             progress_info.current += chunk.len();
