@@ -475,7 +475,7 @@ mod tests {
             .compare_with_weights(items, &DEFAULT_WEIGHTS, |_| true)
             .unwrap();
 
-        assert_eq!(self_is_better, true);
+        assert!(self_is_better);
         Data::from([self_by_other, other_by_self])
             .assert_approx_eq(&Data::from([0.015_987_674, 0.019_702_684]), 5);
         Ok(())
