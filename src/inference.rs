@@ -240,10 +240,10 @@ impl<B: Backend> FSRS<B> {
 
     /// Returns the universal metrics for the existing and provided parameters. If the first value
     /// is smaller than the second value, the existing parameters are better than the provided ones.
-    pub fn compare_with_weights<F>(
+    pub fn universal_metrics<F>(
         &self,
         items: Vec<FSRSItem>,
-        weights: &Weights,
+        parameters: &Weights,
         mut progress: F,
     ) -> Result<(f32, f32)>
     where
@@ -261,7 +261,7 @@ impl<B: Backend> FSRS<B> {
             total: items.len(),
         };
         let model_self = self.model();
-        let fsrs_other = FSRS::<B>::new_with_backend(Some(weights), self.device())?;
+        let fsrs_other = FSRS::<B>::new_with_backend(Some(parameters), self.device())?;
         let model_other = fsrs_other.model();
         for chunk in items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
@@ -471,7 +471,7 @@ mod tests {
             .assert_approx_eq(&Data::from([0.201_908, 0.013_894]), 5);
 
         let (self_by_other, other_by_self) = fsrs
-            .compare_with_weights(items, &DEFAULT_WEIGHTS, |_| true)
+            .universal_metrics(items, &DEFAULT_WEIGHTS, |_| true)
             .unwrap();
 
         Data::from([self_by_other, other_by_self])
