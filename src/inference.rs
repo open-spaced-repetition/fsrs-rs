@@ -238,15 +238,14 @@ impl<B: Backend> FSRS<B> {
         (days_elapsed as f32 / (state.stability * 9.0) + 1.0).powi(-1)
     }
 
-    /// Compare the current model and weights with another set of weights.
-    /// Returns a tuple with a boolean indicating whether the current model is better than the other,
-    /// and the universal metrics for both models.
+    /// Returns the universal metrics for the existing and provided parameters. If the first value
+    /// is smaller than the second value, the existing parameters are better than the provided ones.
     pub fn compare_with_weights<F>(
         &self,
         items: Vec<FSRSItem>,
         weights: &Weights,
         mut progress: F,
-    ) -> Result<(bool, f32, f32)>
+    ) -> Result<(f32, f32)>
     where
         F: FnMut(ItemProgress) -> bool,
     {
@@ -286,7 +285,7 @@ impl<B: Backend> FSRS<B> {
             measure_a_by_b(&all_predictions_self, &all_predictions_other, &all_true_val);
         let other_by_self =
             measure_a_by_b(&all_predictions_other, &all_predictions_self, &all_true_val);
-        Ok((self_by_other < other_by_self, self_by_other, other_by_self))
+        Ok((self_by_other, other_by_self))
     }
 }
 
@@ -471,11 +470,10 @@ mod tests {
         Data::from([metrics.log_loss, metrics.rmse_bins])
             .assert_approx_eq(&Data::from([0.201_908, 0.013_894]), 5);
 
-        let (self_is_better, self_by_other, other_by_self) = fsrs
+        let (self_by_other, other_by_self) = fsrs
             .compare_with_weights(items, &DEFAULT_WEIGHTS, |_| true)
             .unwrap();
 
-        assert!(self_is_better);
         Data::from([self_by_other, other_by_self])
             .assert_approx_eq(&Data::from([0.015_987_674, 0.019_702_684]), 5);
         Ok(())
