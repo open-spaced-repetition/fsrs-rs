@@ -1,15 +1,15 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{DECAY, FACTOR, S_MIN};
 use crate::FSRSItem;
-use crate::DEFAULT_WEIGHTS;
+use crate::DEFAULT_PARAMETERS;
 use ndarray::Array1;
 use std::collections::HashMap;
 
 static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
-    (1, DEFAULT_WEIGHTS[0]),
-    (2, DEFAULT_WEIGHTS[1]),
-    (3, DEFAULT_WEIGHTS[2]),
-    (4, DEFAULT_WEIGHTS[3]),
+    (1, DEFAULT_PARAMETERS[0]),
+    (2, DEFAULT_PARAMETERS[1]),
+    (3, DEFAULT_PARAMETERS[2]),
+    (4, DEFAULT_PARAMETERS[3]),
 ];
 
 pub fn pretrain(fsrs_items: Vec<FSRSItem>, average_recall: f32) -> Result<[f32; 4]> {

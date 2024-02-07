@@ -17,10 +17,10 @@ pub(crate) const DECAY: f64 = -0.5;
 pub(crate) const FACTOR: f64 = 19f64 / 81f64;
 pub(crate) const S_MIN: f32 = 0.01;
 /// This is a slice for efficiency, but should always be 17 in length.
-pub type Weights = [f32];
+pub type Parameters = [f32];
 use itertools::izip;
 
-pub static DEFAULT_WEIGHTS: [f32; 17] = [
+pub static DEFAULT_PARAMETERS: [f32; 17] = [
     0.5614, 1.2546, 3.5878, 7.9731, 5.1043, 1.1303, 0.823, 0.0465, 1.629, 0.135, 1.0045, 2.132,
     0.0839, 0.3204, 1.3547, 0.219, 2.7849,
 ];
@@ -72,7 +72,7 @@ impl<B: Backend> FSRS<B> {
     /// In the case of truncated reviews, [starting_state] can be set to the value of
     /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
     /// in FSRSItem). If not provided, the card starts as new.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn memory_state(
         &self,
         item: FSRSItem,
@@ -102,7 +102,7 @@ impl<B: Backend> FSRS<B> {
 
     /// If a card has incomplete learning history, memory state can be approximated from
     /// current sm2 values.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn memory_state_from_sm2(
         &self,
         ease_factor: f32,
@@ -129,7 +129,7 @@ impl<B: Backend> FSRS<B> {
 
     /// Calculate the next interval for the current memory state, for rescheduling. Stability
     /// should be provided except when the card is new. Rating is ignored except when card is new.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn next_interval(
         &self,
         stability: Option<f32>,
@@ -146,7 +146,7 @@ impl<B: Backend> FSRS<B> {
     }
 
     /// The intervals and memory states for each answer button.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn next_states(
         &self,
         current_memory_state: Option<MemoryState>,
@@ -189,8 +189,8 @@ impl<B: Backend> FSRS<B> {
         })
     }
 
-    /// Determine how well the model and weights predict performance.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Determine how well the model and parameters predict performance.
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
     where
         F: FnMut(ItemProgress) -> bool,
@@ -243,7 +243,7 @@ impl<B: Backend> FSRS<B> {
     pub fn universal_metrics<F>(
         &self,
         items: Vec<FSRSItem>,
-        parameters: &Weights,
+        parameters: &Parameters,
         mut progress: F,
     ) -> Result<(f32, f32)>
     where
@@ -354,7 +354,7 @@ mod tests {
     use super::*;
     use crate::{convertor_tests::anki21_sample_file_converted_to_fsrs, FSRSReview};
 
-    static WEIGHTS: &[f32] = &[
+    static PARAMETERS: &[f32] = &[
         0.81497127,
         1.5411042,
         4.007436,
@@ -415,7 +415,7 @@ mod tests {
                 },
             ],
         };
-        let fsrs = FSRS::new(Some(WEIGHTS))?;
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
         assert_eq!(
             fsrs.memory_state(item, None).unwrap(),
             MemoryState {
@@ -464,14 +464,14 @@ mod tests {
         Data::from([metrics.log_loss, metrics.rmse_bins])
             .assert_approx_eq(&Data::from([0.204_001, 0.025_387]), 5);
 
-        let fsrs = FSRS::new(Some(WEIGHTS))?;
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
             .assert_approx_eq(&Data::from([0.201_908, 0.013_894]), 5);
 
         let (self_by_other, other_by_self) = fsrs
-            .universal_metrics(items, &DEFAULT_WEIGHTS, |_| true)
+            .universal_metrics(items, &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
         Data::from([self_by_other, other_by_self])
@@ -501,7 +501,7 @@ mod tests {
                 },
             ],
         };
-        let fsrs = FSRS::new(Some(WEIGHTS))?;
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
         let state = fsrs.memory_state(item, None).unwrap();
         assert_eq!(
             fsrs.next_states(Some(state), 0.9, 21).unwrap(),
