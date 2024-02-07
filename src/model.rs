@@ -1,7 +1,7 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{Weights, DECAY, FACTOR, S_MIN};
-use crate::weight_clipper::clip_weights;
-use crate::DEFAULT_WEIGHTS;
+use crate::inference::{Parameters, DECAY, FACTOR, S_MIN};
+use crate::weight_clipper::clip_parameters;
+use crate::DEFAULT_PARAMETERS;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArray;
 use burn::{
@@ -43,9 +43,9 @@ impl<B: Backend> Model<B> {
     pub fn new(config: ModelConfig) -> Self {
         let initial_params = config
             .initial_stability
-            .unwrap_or_else(|| DEFAULT_WEIGHTS[0..4].try_into().unwrap())
+            .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
             .into_iter()
-            .chain(DEFAULT_WEIGHTS[4..].iter().copied())
+            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
 
         Self {
@@ -201,27 +201,27 @@ pub struct FSRS<B: Backend = NdArray> {
 }
 
 impl FSRS<NdArray> {
-    /// - Weights must be provided before running commands that need them.
-    /// - Weights may be an empty slice to use the default values instead.
-    pub fn new(weights: Option<&Weights>) -> Result<Self> {
-        Self::new_with_backend(weights, NdArrayDevice::Cpu)
+    /// - Parameters must be provided before running commands that need them.
+    /// - Parameters may be an empty slice to use the default values instead.
+    pub fn new(parameters: Option<&Parameters>) -> Result<Self> {
+        Self::new_with_backend(parameters, NdArrayDevice::Cpu)
     }
 }
 
 impl<B: Backend> FSRS<B> {
     pub fn new_with_backend<B2: Backend>(
-        mut weights: Option<&Weights>,
+        mut parameters: Option<&Parameters>,
         device: B2::Device,
     ) -> Result<FSRS<B2>> {
-        if let Some(weights) = &mut weights {
-            if weights.is_empty() {
-                *weights = DEFAULT_WEIGHTS.as_slice()
-            } else if weights.len() != 17 {
-                return Err(FSRSError::InvalidWeights);
+        if let Some(parameters) = &mut parameters {
+            if parameters.is_empty() {
+                *parameters = DEFAULT_PARAMETERS.as_slice()
+            } else if parameters.len() != 17 {
+                return Err(FSRSError::InvalidParameters);
             }
         }
         Ok(FSRS {
-            model: weights.map(weights_to_model),
+            model: parameters.map(parameters_to_model),
             device,
         })
     }
@@ -229,7 +229,7 @@ impl<B: Backend> FSRS<B> {
     pub(crate) fn model(&self) -> &Model<B> {
         self.model
             .as_ref()
-            .expect("command requires weights to be set on creation")
+            .expect("command requires parameters to be set on creation")
     }
 
     pub(crate) fn device(&self) -> B::Device {
@@ -237,11 +237,11 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
-pub(crate) fn weights_to_model<B: Backend>(weights: &Weights) -> Model<B> {
+pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::new(config);
     model.w = Param::from(Tensor::from_floats(Data::new(
-        clip_weights(weights),
+        clip_parameters(parameters),
         Shape { dims: [17] },
     )));
     model
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn w() {
         let model = Model::new(ModelConfig::default());
-        assert_eq!(model.w.val().to_data(), Data::from(DEFAULT_WEIGHTS))
+        assert_eq!(model.w.val().to_data(), Data::from(DEFAULT_PARAMETERS))
     }
 
     #[test]
@@ -363,6 +363,6 @@ mod tests {
     fn fsrs() {
         assert!(FSRS::new(Some(&[])).is_ok());
         assert!(FSRS::new(Some(&[1.])).is_err());
-        assert!(FSRS::new(Some(DEFAULT_WEIGHTS.as_slice())).is_ok());
+        assert!(FSRS::new(Some(DEFAULT_PARAMETERS.as_slice())).is_ok());
     }
 }

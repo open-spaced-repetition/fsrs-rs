@@ -1,15 +1,15 @@
 use crate::{
-    inference::{Weights, S_MIN},
+    inference::{Parameters, S_MIN},
     pre_training::INIT_S_MAX,
 };
 use burn::tensor::{backend::Backend, Data, Tensor};
 
-pub(crate) fn weight_clipper<B: Backend>(weights: Tensor<B, 1>) -> Tensor<B, 1> {
-    let val = clip_weights(&weights.to_data().convert().value);
-    Tensor::from_data(Data::new(val, weights.shape()).convert())
+pub(crate) fn weight_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 1> {
+    let val = clip_parameters(&parameters.to_data().convert().value);
+    Tensor::from_data(Data::new(val, parameters.shape()).convert())
 }
 
-pub(crate) fn clip_weights(weights: &Weights) -> Vec<f32> {
+pub(crate) fn clip_parameters(parameters: &Parameters) -> Vec<f32> {
     // https://regex101.com/r/21mXNI/1
     const CLAMPS: [(f32, f32); 17] = [
         (S_MIN, INIT_S_MAX),
@@ -31,12 +31,12 @@ pub(crate) fn clip_weights(weights: &Weights) -> Vec<f32> {
         (1.0, 4.0),
     ];
 
-    let mut weights = weights.to_vec();
-    weights
+    let mut parameters = parameters.to_vec();
+    parameters
         .iter_mut()
         .zip(CLAMPS)
         .for_each(|(w, (low, high))| *w = w.clamp(low, high));
-    weights
+    parameters
 }
 
 #[cfg(test)]
