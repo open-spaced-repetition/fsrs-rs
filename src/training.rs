@@ -344,7 +344,7 @@ fn train<B: AutodiffBackend>(
     let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
-        .num_workers(config.num_workers)
+        // .num_workers(config.num_workers)
         .build(
             BatchShuffledDataset::with_seed(
                 FSRSDataset::from(trainset),
@@ -357,7 +357,7 @@ fn train<B: AutodiffBackend>(
     let batcher_valid = FSRSBatcher::new(device.clone());
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
-        .num_workers(config.num_workers)
+        // .num_workers(config.num_workers)
         .build(FSRSDataset::from(testset));
 
     let lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
@@ -389,11 +389,11 @@ fn train<B: AutodiffBackend>(
         builder = builder.renderer(NoProgress {});
     }
 
-    if artifact_dir.is_ok() {
-        builder = builder
-            .log_to_file(true)
-            .with_file_checkpointer(PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
-    }
+    // if artifact_dir.is_ok() {
+    //     builder = builder
+    //         .log_to_file(true)
+    //         .with_file_checkpointer(PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
+    // }
 
     let learner = builder.build(config.model.init(), config.optimizer.init(), lr_scheduler);
 
