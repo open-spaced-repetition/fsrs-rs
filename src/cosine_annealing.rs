@@ -1,4 +1,4 @@
-use burn::{lr_scheduler::LrScheduler, LearningRate};
+use burn::{lr_scheduler::LrScheduler, tensor::backend::Backend, LearningRate};
 use log::info;
 #[derive(Clone, Debug)]
 pub(crate) struct CosineAnnealingLR {
@@ -21,7 +21,7 @@ impl CosineAnnealingLR {
     }
 }
 
-impl LrScheduler for CosineAnnealingLR {
+impl<B: Backend> LrScheduler<B> for CosineAnnealingLR {
     type Record = usize;
 
     fn step(&mut self) -> LearningRate {
@@ -66,7 +66,8 @@ impl LrScheduler for CosineAnnealingLR {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::Data;
+    use burn::{backend::NdArray, tensor::Data};
+    type Backend = NdArray<f32>;
 
     #[test]
     fn lr_scheduler() {
@@ -74,7 +75,7 @@ mod tests {
 
         let lrs = (0..=200000)
             .map(|_| {
-                lr_scheduler.step();
+                LrScheduler::<Backend>::step(&mut lr_scheduler);
                 lr_scheduler.current_lr
             })
             .step_by(20000)

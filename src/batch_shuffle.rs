@@ -205,6 +205,10 @@ impl<I: Send + Sync + Clone + 'static, O: Send + Sync> DataLoader<O>
             self.batcher.clone(),
         ))
     }
+
+    fn num_items(&self) -> usize {
+        self.dataset.len()
+    }
 }
 
 impl<I, O> BatchShuffledDataloaderIterator<I, O> {
