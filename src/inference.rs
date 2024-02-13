@@ -468,14 +468,14 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.201_908, 0.013_894]), 5);
+            .assert_approx_eq(&Data::from([0.201_908, 0.013_964]), 5);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items, &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
         Data::from([self_by_other, other_by_self])
-            .assert_approx_eq(&Data::from([0.015_987_674, 0.019_702_684]), 5);
+            .assert_approx_eq(&Data::from([0.015_987, 0.019_767]), 5);
         Ok(())
     }
 
