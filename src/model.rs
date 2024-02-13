@@ -90,10 +90,13 @@ impl<B: Backend> Model<B> {
         last_d: Tensor<B, 1>,
         r: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
-        self.w.get(11)
+        let new_s = self.w.get(11)
             * last_d.pow(-self.w.get(12))
-            * ((last_s + 1).pow(self.w.get(13)) - 1)
-            * ((-r + 1) * self.w.get(14)).exp()
+            * ((last_s.clone() + 1).pow(self.w.get(13)) - 1)
+            * ((-r + 1) * self.w.get(14)).exp();
+        new_s
+            .clone()
+            .mask_where(last_s.clone().lower(new_s), last_s)
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
