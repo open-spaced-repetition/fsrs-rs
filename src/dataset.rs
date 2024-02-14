@@ -72,12 +72,12 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                 rating.resize(pad_size, 0);
                 let delta_t = Tensor::from_data(
                     Data::new(delta_t, Shape { dims: [pad_size] }).convert(),
-                    &B::Device::default(),
+                    &self.device,
                 )
                 .unsqueeze();
                 let rating = Tensor::from_data(
                     Data::new(rating, Shape { dims: [pad_size] }).convert(),
-                    &B::Device::default(),
+                    &self.device,
                 )
                 .unsqueeze();
                 (delta_t, rating)
@@ -89,12 +89,12 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .map(|item| {
                 let current = item.current();
                 let delta_t =
-                    Tensor::from_data(Data::from([current.delta_t.elem()]), &B::Device::default());
+                    Tensor::from_data(Data::from([current.delta_t.elem()]), &self.device);
                 let label = match current.rating {
                     1 => 0.0,
                     _ => 1.0,
                 };
-                let label = Tensor::from_data(Data::from([label.elem()]), &B::Device::default());
+                let label = Tensor::from_data(Data::from([label.elem()]), &self.device);
                 (delta_t, label)
             })
             .unzip();

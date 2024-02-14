@@ -86,13 +86,13 @@ impl<B: Backend> FSRS<B> {
         let size = item.reviews.len();
         let time_history = Tensor::from_data(
             Data::new(time_history, Shape { dims: [size] }).convert(),
-            &B::Device::default(),
+            &self.device(),
         )
         .unsqueeze()
         .transpose();
         let rating_history = Tensor::from_data(
             Data::new(rating_history, Shape { dims: [size] }).convert(),
-            &B::Device::default(),
+            &self.device(),
         )
         .unsqueeze()
         .transpose();
@@ -147,7 +147,7 @@ impl<B: Backend> FSRS<B> {
             // get initial stability for new card
             let rating = Tensor::from_data(
                 Data::new(vec![rating.elem()], Shape { dims: [1] }),
-                &B::Device::default(),
+                &self.device(),
             );
             let model = self.model();
             model.init_stability(rating).into_scalar().elem()
@@ -165,7 +165,7 @@ impl<B: Backend> FSRS<B> {
     ) -> Result<NextStates> {
         let delta_t = Tensor::from_data(
             Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }),
-            &B::Device::default(),
+            &self.device(),
         );
         let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
         let model = self.model();
@@ -179,7 +179,7 @@ impl<B: Backend> FSRS<B> {
                         delta_t.clone(),
                         Tensor::from_data(
                             Data::new(vec![rating.elem()], Shape { dims: [1] }),
-                            &B::Device::default(),
+                            &self.device(),
                         ),
                         current_memory_state_tensors.clone(),
                     ));
