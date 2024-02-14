@@ -88,8 +88,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .iter()
             .map(|item| {
                 let current = item.current();
-                let delta_t =
-                    Tensor::from_data(Data::from([current.delta_t.elem()]), &self.device);
+                let delta_t = Tensor::from_data(Data::from([current.delta_t.elem()]), &self.device);
                 let label = match current.rating {
                     1 => 0.0,
                     _ => 1.0,
