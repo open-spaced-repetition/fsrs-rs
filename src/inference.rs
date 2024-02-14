@@ -52,11 +52,14 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
 impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     fn from(m: MemoryState) -> Self {
         Self {
-            stability: Tensor::from_data(Data::new(vec![m.stability.elem()], Shape { dims: [1] })),
-            difficulty: Tensor::from_data(Data::new(
-                vec![m.difficulty.elem()],
-                Shape { dims: [1] },
-            )),
+            stability: Tensor::from_data(
+                Data::new(vec![m.stability.elem()], Shape { dims: [1] }),
+                &B::Device::default(),
+            ),
+            difficulty: Tensor::from_data(
+                Data::new(vec![m.difficulty.elem()], Shape { dims: [1] }),
+                &B::Device::default(),
+            ),
         }
     }
 }
@@ -81,14 +84,18 @@ impl<B: Backend> FSRS<B> {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
-        let time_history =
-            Tensor::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
-                .unsqueeze()
-                .transpose();
-        let rating_history =
-            Tensor::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
-                .unsqueeze()
-                .transpose();
+        let time_history = Tensor::from_data(
+            Data::new(time_history, Shape { dims: [size] }).convert(),
+            &self.device(),
+        )
+        .unsqueeze()
+        .transpose();
+        let rating_history = Tensor::from_data(
+            Data::new(rating_history, Shape { dims: [size] }).convert(),
+            &self.device(),
+        )
+        .unsqueeze()
+        .transpose();
         let state: MemoryState = self
             .model()
             .forward(time_history, rating_history, starting_state.map(Into::into))
@@ -138,7 +145,10 @@ impl<B: Backend> FSRS<B> {
     ) -> u32 {
         let stability = stability.unwrap_or_else(|| {
             // get initial stability for new card
-            let rating = Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }));
+            let rating = Tensor::from_data(
+                Data::new(vec![rating.elem()], Shape { dims: [1] }),
+                &self.device(),
+            );
             let model = self.model();
             model.init_stability(rating).into_scalar().elem()
         });
@@ -153,7 +163,10 @@ impl<B: Backend> FSRS<B> {
         desired_retention: f32,
         days_elapsed: u32,
     ) -> Result<NextStates> {
-        let delta_t = Tensor::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }));
+        let delta_t = Tensor::from_data(
+            Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }),
+            &self.device(),
+        );
         let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
@@ -164,7 +177,10 @@ impl<B: Backend> FSRS<B> {
                 } else {
                     let state = MemoryState::from(model.step(
                         delta_t.clone(),
-                        Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] })),
+                        Tensor::from_data(
+                            Data::new(vec![rating.elem()], Shape { dims: [1] }),
+                            &self.device(),
+                        ),
                         current_memory_state_tensors.clone(),
                     ));
                     if !state.stability.is_finite() || !state.difficulty.is_finite() {

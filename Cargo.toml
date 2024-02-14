@@ -15,7 +15,7 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies.burn]
-version = "0.11.1"
+version = "0.12.1"
 # git = "https://github.com/burn-rs/burn.git"
 # rev = "d2639682367f39d0d0ed049d0cf3a2077259e05d"
 # path = "../burn/burn"
@@ -23,7 +23,7 @@ default-features = false
 features = ["std", "train", "ndarray"]
 
 [dev-dependencies.burn]
-version = "0.11.1"
+version = "0.12.1"
 # git = "https://github.com/burn-rs/burn.git"
 # rev = "d2639682367f39d0d0ed049d0cf3a2077259e05d"
 # path = "../burn/burn"
@@ -38,8 +38,8 @@ ndarray-rand = "0.14.0"
 rand = "0.8.5"
 rayon = "1.8.0"
 serde = "1.0.193"
-snafu = "0.7.5"
-strum = { version = "0.25.0", features = ["derive"] }
+snafu = "0.8.0"
+strum = { version = "0.26.1", features = ["derive"] }
 
 [dev-dependencies]
 chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }

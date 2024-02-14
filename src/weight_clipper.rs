@@ -6,7 +6,10 @@ use burn::tensor::{backend::Backend, Data, Tensor};
 
 pub(crate) fn weight_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 1> {
     let val = clip_parameters(&parameters.to_data().convert().value);
-    Tensor::from_data(Data::new(val, parameters.shape()).convert())
+    Tensor::from_data(
+        Data::new(val, parameters.shape()).convert(),
+        &B::Device::default(),
+    )
 }
 
 pub(crate) fn clip_parameters(parameters: &Parameters) -> Vec<f32> {
@@ -43,11 +46,15 @@ pub(crate) fn clip_parameters(parameters: &Parameters) -> Vec<f32> {
 mod tests {
     use super::*;
     use crate::test_helpers::Tensor;
+    use burn::backend::ndarray::NdArrayDevice;
 
     #[test]
     fn weight_clipper_works() {
-        let tensor =
-            Tensor::from_floats([0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1]);
+        let device = NdArrayDevice::Cpu;
+        let tensor = Tensor::from_floats(
+            [0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1],
+            &device,
+        );
 
         let param: Tensor<1> = weight_clipper(tensor);
         let values = &param.to_data().value;
