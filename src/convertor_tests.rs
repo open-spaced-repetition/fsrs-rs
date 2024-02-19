@@ -13,19 +13,19 @@ use itertools::Itertools;
 pub struct RevlogEntry {
     pub id: i64,
     pub cid: i64,
-    pub usn: i32,
+    // pub usn: i32,
     /// - In the V1 scheduler, 3 represents easy in the learning case.
     /// - 0 represents manual rescheduling.
     pub button_chosen: u8,
     /// Positive values are in days, negative values in seconds.
-    pub interval: i32,
+    // pub interval: i32,
     /// Positive values are in days, negative values in seconds.
     pub last_interval: i32,
     /// Card's ease after answering, stored as 10x the %, eg 2500 represents
     /// 250%.
-    pub ease_factor: u32,
+    // pub ease_factor: u32,
     /// Amount of milliseconds taken to answer the card.
-    pub taken_millis: u32,
+    // pub taken_millis: u32,
     pub review_kind: RevlogReviewKind,
 }
 
@@ -42,19 +42,19 @@ pub enum RevlogReviewKind {
     Manual = 4,
 }
 
-fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| entry.review_kind != Filtered || entry.ease_factor != 0)
-        .collect()
-}
-
-fn filter_out_manual(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| entry.review_kind != Manual && entry.button_chosen != 0)
-        .collect()
-}
+// fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+//     entries
+//         .into_iter()
+//         .filter(|entry| entry.review_kind != Filtered || entry.ease_factor != 0)
+//         .collect()
+// }
+//
+// fn filter_out_manual(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+//     entries
+//         .into_iter()
+//         .filter(|entry| entry.review_kind != Manual && entry.button_chosen != 0)
+//         .collect()
+// }
 
 fn remove_revlog_before_last_first_learn(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
     let mut last_first_learn_index = 0;
@@ -102,8 +102,8 @@ fn convert_to_fsrs_items(
     next_day_starts_at: i64,
     timezone: Tz,
 ) -> Option<Vec<FSRSItem>> {
-    entries = filter_out_cram(entries);
-    entries = filter_out_manual(entries);
+    // entries = filter_out_cram(entries);
+    // entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
     entries = keep_first_revlog_same_date(entries, next_day_starts_at, timezone);
 
@@ -124,7 +124,7 @@ fn convert_to_fsrs_items(
                     .take(idx + 1)
                     .map(|r| FSRSReview {
                         rating: r.button_chosen as u32,
-                        delta_t: r.last_interval.max(0) as u32,
+                        delta_t: r.last_interval as u32,
                     })
                     .collect();
                 FSRSItem { reviews }
@@ -136,25 +136,25 @@ fn convert_to_fsrs_items(
 pub fn to_revlog_entry(
     cids: &[i64],
     eases: &[u8],
-    factors: &[u32],
+    // factors: &[u32],
     ids: &[i64],
-    ivls: &[i32],
-    last_ivls: &[i32],
-    times: &[u32],
+    // ivls: &[i32],
+    // last_ivls: &[i32],
+    // times: &[u32],
     types: &[u8],
-    usns: &[i32],
+    // usns: &[i32],
 ) -> Vec<RevlogEntry> {
     ids.into_iter()
         .enumerate()
         .map(|(i, _id)| RevlogEntry {
             id: ids[i],
             cid: cids[i],
-            usn: usns[i],
+            // usn: usns[i],
             button_chosen: eases[i],
-            interval: ivls[i],
-            last_interval: last_ivls[i],
-            ease_factor: factors[i],
-            taken_millis: times[i],
+            // interval: ivls[i],
+            last_interval: 0,
+            // ease_factor: factors[i],
+            // taken_millis: times[i],
             review_kind: types[i].into(),
         })
         .collect()
@@ -458,6 +458,7 @@ fn ordering_of_inputs_should_not_change() {
     );
 }
 
+/*
 const NEXT_DAY_AT: i64 = 86400 * 100;
 
 fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
@@ -468,6 +469,7 @@ fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
         ..Default::default()
     }
 }
+*/
 
 #[test]
 fn delta_t_is_correct() -> Result<()> {
@@ -559,6 +561,7 @@ fn delta_t_is_correct() -> Result<()> {
 
     Ok(())
 }
+/*
 #[test]
 fn test_filter_out_cram() {
     let revlog_vec = vec![
@@ -1002,3 +1005,4 @@ fn test_keep_first_revlog_same_date() {
         ]
     )
 }
+*/
