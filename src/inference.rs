@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
+use wasm_bindgen::prelude::*;
 
 use crate::model::{Get, MemoryStateTensors, FSRS};
 use burn::tensor::{Data, Shape, Tensor};
@@ -33,6 +34,7 @@ fn infer<B: Backend>(
     (state, retention)
 }
 
+#[wasm_bindgen]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemoryState {
     pub stability: f32,
@@ -244,6 +246,7 @@ pub struct ModelEvaluation {
     pub rmse_bins: f32,
 }
 
+#[wasm_bindgen]
 #[derive(Debug, Clone, PartialEq)]
 pub struct NextStates {
     pub again: ItemState,
@@ -252,7 +255,8 @@ pub struct NextStates {
     pub easy: ItemState,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[wasm_bindgen]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct ItemState {
     pub memory: MemoryState,
     pub interval: u32,
