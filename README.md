@@ -1,6 +1,6 @@
 # FSRS for Rust
 
-![](https://github.com/open-spaced-repetition/fsrs-rs/actions/workflows/check.yml/badge.svg)
+[![crates.io](https://img.shields.io/crates/v/fsrs.svg)](https://crates.io/crates/fsrs) ![](https://github.com/open-spaced-repetition/fsrs-rs/actions/workflows/check.yml/badge.svg)
 
 This crate contains a Rust API for training FSRS parameters, and for using them to schedule cards.
 
