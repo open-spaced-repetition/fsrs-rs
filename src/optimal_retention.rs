@@ -677,7 +677,7 @@ mod tests {
             None,
         )
         .0;
-        assert_eq!(memorization[memorization.len() - 1], 3022.055014122344)
+        assert_eq!(memorization[memorization.len() - 1], 3130.8465582271774)
     }
 
     #[test]
@@ -732,8 +732,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 16, 27, 29, 86, 73, 96, 95, 96, 105, 112, 113, 124, 131, 139, 124, 130, 141,
-                162, 175, 168, 179, 186, 185, 198, 189, 200, 200, 200, 200
+                0, 16, 27, 34, 84, 80, 91, 92, 103, 107, 111, 113, 138, 132, 133, 116, 134, 148,
+                152, 162, 172, 177, 188, 189, 200, 185, 185, 200, 198, 200
             ]
         );
         assert_eq!(
@@ -747,7 +747,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.864870726919112);
+        assert_eq!(optimal_retention, 0.8468471175527587);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
