@@ -21,8 +21,8 @@ pub type Parameters = [f32];
 use itertools::izip;
 
 pub static DEFAULT_PARAMETERS: [f32; 17] = [
-    0.5614, 1.2546, 3.5878, 7.9731, 5.1043, 1.1303, 0.823, 0.0465, 1.629, 0.135, 1.0045, 2.132,
-    0.0839, 0.3204, 1.3547, 0.219, 2.7849,
+    0.5701, 1.4436, 4.1386, 10.9355, 5.1443, 1.2006, 0.8627, 0.0362, 1.629, 0.1342, 1.0166, 2.1174,
+    0.0839, 0.3204, 1.4676, 0.219, 2.8237,
 ];
 
 fn infer<B: Backend>(
@@ -478,7 +478,7 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.204_001, 0.025_387]), 5);
+            .assert_approx_eq(&Data::from([0.203_023, 0.024_624]), 5);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
@@ -491,7 +491,7 @@ mod tests {
             .unwrap();
 
         Data::from([self_by_other, other_by_self])
-            .assert_approx_eq(&Data::from([0.015_987, 0.019_767]), 5);
+            .assert_approx_eq(&Data::from([0.016_727, 0.019_213]), 5);
         Ok(())
     }
 
@@ -578,7 +578,7 @@ mod tests {
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
             MemoryState {
                 stability: 9.999995,
-                difficulty: 7.200902
+                difficulty: 7.255334
             }
         );
         assert_eq!(

@@ -335,8 +335,10 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
         let pretrainset = split_data(items, 1).0;
-        Data::from(pretrain(pretrainset, average_recall).unwrap())
-            .assert_approx_eq(&Data::from([1.001_131, 1.810_561, 4.403_481, 8.530_161]), 4)
+        Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
+            &Data::from([1.001_131, 1.810_561, 4.403_226, 10.935_509]),
+            4,
+        )
     }
 
     #[test]
@@ -349,6 +351,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.15661564, 0.35, 1.0009006, 2.2242827,]);
+        assert_eq!(actual, [0.13822041, 0.35, 1.0034012, 2.6513057,]);
     }
 }
