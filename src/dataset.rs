@@ -34,6 +34,19 @@ impl FSRSItem {
     pub(crate) fn current(&self) -> &FSRSReview {
         self.reviews.last().unwrap()
     }
+
+    pub(crate) fn r_matrix_index(&self) -> (u32, u32, u32) {
+        let delta_t = self.current().delta_t as f64;
+        let delta_t_bin = (2.48 * 3.62f64.powf(delta_t.log(3.62).floor()) * 100.0).round() as u32;
+        let length = self.reviews.len() as f64;
+        let length_bin = (1.99 * 1.89f64.powf(length.log(1.89).floor())).round() as u32;
+        let lapse = self.history().filter(|review| review.rating == 1).count();
+        if lapse == 0 {
+            return (delta_t_bin, length_bin, 0);
+        }
+        let lapse_bin = (1.65 * 1.73f64.powf((lapse as f64).log(1.73).floor())).round() as u32;
+        (delta_t_bin, length_bin, lapse_bin)
+    }
 }
 
 pub(crate) struct FSRSBatcher<B: Backend> {
