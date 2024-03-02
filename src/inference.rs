@@ -232,7 +232,7 @@ impl<B: Backend> FSRS<B> {
             all_retention.push(retention);
             all_labels.push(batch.labels);
             izip!(chunk, pred, true_val).for_each(|(item, p, y)| {
-                let bin = item.r_matrix_bin();
+                let bin = item.r_matrix_index();
                 let (pred, real, count) = r_matrix.entry(bin).or_insert((0.0, 0.0, 0.0));
                 *pred += p;
                 *real += y;
