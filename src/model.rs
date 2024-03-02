@@ -1,7 +1,7 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{Weights, DECAY, FACTOR, S_MIN};
-use crate::weight_clipper::clip_weights;
-use crate::DEFAULT_WEIGHTS;
+use crate::inference::{Parameters, DECAY, FACTOR, S_MIN};
+use crate::weight_clipper::clip_parameters;
+use crate::DEFAULT_PARAMETERS;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArray;
 use burn::{
@@ -43,22 +43,22 @@ impl<B: Backend> Model<B> {
     pub fn new(config: ModelConfig) -> Self {
         let initial_params = config
             .initial_stability
-            .unwrap_or_else(|| DEFAULT_WEIGHTS[0..4].try_into().unwrap())
+            .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
             .into_iter()
-            .chain(DEFAULT_WEIGHTS[4..].iter().copied())
+            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
 
         Self {
-            w: Param::from(Tensor::from_floats(Data::new(
-                initial_params,
-                Shape { dims: [17] },
-            ))),
+            w: Param::from(Tensor::from_floats(
+                Data::new(initial_params, Shape { dims: [17] }),
+                &B::Device::default(),
+            )),
             config,
         }
     }
 
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
-        (t / s * FACTOR + 1).powf(DECAY as f32)
+        (t / s * FACTOR + 1).powf_scalar(DECAY as f32)
     }
 
     fn stability_after_success(
@@ -69,10 +69,10 @@ impl<B: Backend> Model<B> {
         rating: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
         let batch_size = rating.dims()[0];
-        let hard_penalty =
-            Tensor::ones([batch_size]).mask_where(rating.clone().equal_elem(2), self.w.get(15));
-        let easy_bonus =
-            Tensor::ones([batch_size]).mask_where(rating.equal_elem(4), self.w.get(16));
+        let hard_penalty = Tensor::ones([batch_size], &B::Device::default())
+            .mask_where(rating.clone().equal_elem(2), self.w.get(15));
+        let easy_bonus = Tensor::ones([batch_size], &B::Device::default())
+            .mask_where(rating.equal_elem(4), self.w.get(16));
 
         last_s.clone()
             * (self.w.get(8).exp()
@@ -90,10 +90,13 @@ impl<B: Backend> Model<B> {
         last_d: Tensor<B, 1>,
         r: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
-        self.w.get(11)
+        let new_s = self.w.get(11)
             * last_d.pow(-self.w.get(12))
-            * ((last_s + 1).pow(self.w.get(13)) - 1)
-            * ((-r + 1) * self.w.get(14)).exp()
+            * ((last_s.clone() + 1).pow(self.w.get(13)) - 1)
+            * ((-r + 1) * self.w.get(14)).exp();
+        new_s
+            .clone()
+            .mask_where(last_s.clone().lower(new_s), last_s)
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -201,27 +204,27 @@ pub struct FSRS<B: Backend = NdArray> {
 }
 
 impl FSRS<NdArray> {
-    /// - Weights must be provided before running commands that need them.
-    /// - Weights may be an empty slice to use the default values instead.
-    pub fn new(weights: Option<&Weights>) -> Result<Self> {
-        Self::new_with_backend(weights, NdArrayDevice::Cpu)
+    /// - Parameters must be provided before running commands that need them.
+    /// - Parameters may be an empty slice to use the default values instead.
+    pub fn new(parameters: Option<&Parameters>) -> Result<Self> {
+        Self::new_with_backend(parameters, NdArrayDevice::Cpu)
     }
 }
 
 impl<B: Backend> FSRS<B> {
     pub fn new_with_backend<B2: Backend>(
-        mut weights: Option<&Weights>,
+        mut parameters: Option<&Parameters>,
         device: B2::Device,
     ) -> Result<FSRS<B2>> {
-        if let Some(weights) = &mut weights {
-            if weights.is_empty() {
-                *weights = DEFAULT_WEIGHTS.as_slice()
-            } else if weights.len() != 17 {
-                return Err(FSRSError::InvalidWeights);
+        if let Some(parameters) = &mut parameters {
+            if parameters.is_empty() {
+                *parameters = DEFAULT_PARAMETERS.as_slice()
+            } else if parameters.len() != 17 {
+                return Err(FSRSError::InvalidParameters);
             }
         }
         Ok(FSRS {
-            model: weights.map(weights_to_model),
+            model: parameters.map(parameters_to_model),
             device,
         })
     }
@@ -229,7 +232,7 @@ impl<B: Backend> FSRS<B> {
     pub(crate) fn model(&self) -> &Model<B> {
         self.model
             .as_ref()
-            .expect("command requires weights to be set on creation")
+            .expect("command requires parameters to be set on creation")
     }
 
     pub(crate) fn device(&self) -> B::Device {
@@ -237,13 +240,13 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
-pub(crate) fn weights_to_model<B: Backend>(weights: &Weights) -> Model<B> {
+pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::new(config);
-    model.w = Param::from(Tensor::from_floats(Data::new(
-        clip_weights(weights),
-        Shape { dims: [17] },
-    )));
+    model.w = Param::from(Tensor::from_floats(
+        Data::new(clip_parameters(parameters), Shape { dims: [17] }),
+        &B::Device::default(),
+    ));
     model
 }
 
@@ -256,14 +259,15 @@ mod tests {
     #[test]
     fn w() {
         let model = Model::new(ModelConfig::default());
-        assert_eq!(model.w.val().to_data(), Data::from(DEFAULT_WEIGHTS))
+        assert_eq!(model.w.val().to_data(), Data::from(DEFAULT_PARAMETERS))
     }
 
     #[test]
     fn power_forgetting_curve() {
+        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
-        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0]);
+        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
+        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &device);
         let retention = model.power_forgetting_curve(delta_t, stability);
         assert_eq!(
             retention.to_data(),
@@ -273,67 +277,78 @@ mod tests {
 
     #[test]
     fn init_stability() {
+        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0]);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
-            Data::from([0.5614, 1.2546, 3.5878, 7.9731, 0.5614, 1.2546])
+            Data::from([0.5701, 1.4436, 4.1386, 10.9355, 0.5701, 1.4436])
         )
     }
 
     #[test]
     fn init_difficulty() {
+        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0]);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
-            Data::from([7.3649, 6.2346, 5.1043, 3.974, 7.3649, 6.2346])
+            Data::from([7.5455, 6.3449, 5.1443, 3.9436998, 7.5455, 6.3449])
         )
     }
 
     #[test]
     fn forward() {
+        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let delta_ts = Tensor::from_floats([
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
-        ]);
-        let ratings = Tensor::from_floats([
-            [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
-            [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
-        ]);
+        let delta_ts = Tensor::from_floats(
+            [
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
+            ],
+            &device,
+        );
+        let ratings = Tensor::from_floats(
+            [
+                [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
+                [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
+            ],
+            &device,
+        );
         let state = model.forward(delta_ts, ratings, None);
         dbg!(&state);
     }
 
     #[test]
     fn next_difficulty() {
+        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let difficulty = Tensor::from_floats([5.0; 4]);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0]);
+        let difficulty = Tensor::from_floats([5.0; 4], &device);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([6.646, 5.823, 5.0, 4.177])
+            Data::from([6.7254, 5.8627, 5.0, 4.1373])
         );
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([6.574311, 5.7895803, 5.00485, 4.2201195])
+            Data::from([6.6681643, 5.836694, 5.0052238, 4.1737533])
         )
     }
 
     #[test]
     fn next_stability() {
+        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let stability = Tensor::from_floats([5.0; 4]);
-        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0]);
-        let retention = Tensor::from_floats([0.9, 0.8, 0.7, 0.6]);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0]);
+        let stability = Tensor::from_floats([5.0; 4], &device);
+        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
+        let retention = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &device);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),
@@ -343,19 +358,19 @@ mod tests {
         s_recall.clone().backward();
         assert_eq!(
             s_recall.to_data(),
-            Data::from([26.678038, 13.996968, 62.718544, 202.76956])
+            Data::from([26.980936, 14.128489, 63.600677, 208.72739])
         );
         let s_forget = model.stability_after_failure(stability, difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
-            Data::from([1.8932177, 2.0453987, 2.2637987, 2.5304008])
+            Data::from([1.9016013, 2.0777826, 2.3257504, 2.6291647])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
         assert_eq!(
             next_stability.to_data(),
-            Data::from([1.8932177, 13.996968, 62.718544, 202.76956])
+            Data::from([1.9016013, 14.128489, 63.600677, 208.72739])
         )
     }
 
@@ -363,6 +378,6 @@ mod tests {
     fn fsrs() {
         assert!(FSRS::new(Some(&[])).is_ok());
         assert!(FSRS::new(Some(&[1.])).is_err());
-        assert!(FSRS::new(Some(DEFAULT_WEIGHTS.as_slice())).is_ok());
+        assert!(FSRS::new(Some(DEFAULT_PARAMETERS.as_slice())).is_ok());
     }
 }

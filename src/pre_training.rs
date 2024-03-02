@@ -1,15 +1,15 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{DECAY, FACTOR, S_MIN};
 use crate::FSRSItem;
-use crate::DEFAULT_WEIGHTS;
+use crate::DEFAULT_PARAMETERS;
 use ndarray::Array1;
 use std::collections::HashMap;
 
 static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
-    (1, DEFAULT_WEIGHTS[0]),
-    (2, DEFAULT_WEIGHTS[1]),
-    (3, DEFAULT_WEIGHTS[2]),
-    (4, DEFAULT_WEIGHTS[3]),
+    (1, DEFAULT_PARAMETERS[0]),
+    (2, DEFAULT_PARAMETERS[1]),
+    (3, DEFAULT_PARAMETERS[2]),
+    (4, DEFAULT_PARAMETERS[3]),
 ];
 
 pub fn pretrain(fsrs_items: Vec<FSRSItem>, average_recall: f32) -> Result<[f32; 4]> {
@@ -335,8 +335,10 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
         let pretrainset = split_data(items, 1).0;
-        Data::from(pretrain(pretrainset, average_recall).unwrap())
-            .assert_approx_eq(&Data::from([1.001_131, 1.810_561, 4.403_481, 8.530_161]), 4)
+        Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
+            &Data::from([1.001_131, 1.810_561, 4.403_226, 10.935_509]),
+            4,
+        )
     }
 
     #[test]
@@ -349,6 +351,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.15661564, 0.35, 1.0009006, 2.2242827,]);
+        assert_eq!(actual, [0.13822041, 0.35, 1.0034012, 2.6513057,]);
     }
 }

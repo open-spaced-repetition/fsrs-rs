@@ -18,11 +18,12 @@ pub(crate) const DECAY: f64 = -0.5;
 pub(crate) const FACTOR: f64 = 19f64 / 81f64;
 pub(crate) const S_MIN: f32 = 0.01;
 /// This is a slice for efficiency, but should always be 17 in length.
-pub type Weights = [f32];
+pub type Parameters = [f32];
+use itertools::izip;
 
-pub static DEFAULT_WEIGHTS: [f32; 17] = [
-    0.5614, 1.2546, 3.5878, 7.9731, 5.1043, 1.1303, 0.823, 0.0465, 1.629, 0.135, 1.0045, 2.132,
-    0.0839, 0.3204, 1.3547, 0.219, 2.7849,
+pub static DEFAULT_PARAMETERS: [f32; 17] = [
+    0.5701, 1.4436, 4.1386, 10.9355, 5.1443, 1.2006, 0.8627, 0.0362, 1.629, 0.1342, 1.0166, 2.1174,
+    0.0839, 0.3204, 1.4676, 0.219, 2.8237,
 ];
 
 fn infer<B: Backend>(
@@ -53,11 +54,14 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
 impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     fn from(m: MemoryState) -> Self {
         Self {
-            stability: Tensor::from_data(Data::new(vec![m.stability.elem()], Shape { dims: [1] })),
-            difficulty: Tensor::from_data(Data::new(
-                vec![m.difficulty.elem()],
-                Shape { dims: [1] },
-            )),
+            stability: Tensor::from_data(
+                Data::new(vec![m.stability.elem()], Shape { dims: [1] }),
+                &B::Device::default(),
+            ),
+            difficulty: Tensor::from_data(
+                Data::new(vec![m.difficulty.elem()], Shape { dims: [1] }),
+                &B::Device::default(),
+            ),
         }
     }
 }
@@ -73,7 +77,7 @@ impl<B: Backend> FSRS<B> {
     /// In the case of truncated reviews, [starting_state] can be set to the value of
     /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
     /// in FSRSItem). If not provided, the card starts as new.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn memory_state(
         &self,
         item: FSRSItem,
@@ -82,14 +86,18 @@ impl<B: Backend> FSRS<B> {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
-        let time_history =
-            Tensor::from_data(Data::new(time_history, Shape { dims: [size] }).convert())
-                .unsqueeze()
-                .transpose();
-        let rating_history =
-            Tensor::from_data(Data::new(rating_history, Shape { dims: [size] }).convert())
-                .unsqueeze()
-                .transpose();
+        let time_history = Tensor::from_data(
+            Data::new(time_history, Shape { dims: [size] }).convert(),
+            &self.device(),
+        )
+        .unsqueeze()
+        .transpose();
+        let rating_history = Tensor::from_data(
+            Data::new(rating_history, Shape { dims: [size] }).convert(),
+            &self.device(),
+        )
+        .unsqueeze()
+        .transpose();
         let state: MemoryState = self
             .model()
             .forward(time_history, rating_history, starting_state.map(Into::into))
@@ -103,7 +111,7 @@ impl<B: Backend> FSRS<B> {
 
     /// If a card has incomplete learning history, memory state can be approximated from
     /// current sm2 values.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn memory_state_from_sm2(
         &self,
         ease_factor: f32,
@@ -130,7 +138,7 @@ impl<B: Backend> FSRS<B> {
 
     /// Calculate the next interval for the current memory state, for rescheduling. Stability
     /// should be provided except when the card is new. Rating is ignored except when card is new.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn next_interval(
         &self,
         stability: Option<f32>,
@@ -139,7 +147,10 @@ impl<B: Backend> FSRS<B> {
     ) -> u32 {
         let stability = stability.unwrap_or_else(|| {
             // get initial stability for new card
-            let rating = Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] }));
+            let rating = Tensor::from_data(
+                Data::new(vec![rating.elem()], Shape { dims: [1] }),
+                &self.device(),
+            );
             let model = self.model();
             model.init_stability(rating).into_scalar().elem()
         });
@@ -147,14 +158,17 @@ impl<B: Backend> FSRS<B> {
     }
 
     /// The intervals and memory states for each answer button.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn next_states(
         &self,
         current_memory_state: Option<MemoryState>,
         desired_retention: f32,
         days_elapsed: u32,
     ) -> Result<NextStates> {
-        let delta_t = Tensor::from_data(Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }));
+        let delta_t = Tensor::from_data(
+            Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }),
+            &self.device(),
+        );
         let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
@@ -165,7 +179,10 @@ impl<B: Backend> FSRS<B> {
                 } else {
                     let state = MemoryState::from(model.step(
                         delta_t.clone(),
-                        Tensor::from_data(Data::new(vec![rating.elem()], Shape { dims: [1] })),
+                        Tensor::from_data(
+                            Data::new(vec![rating.elem()], Shape { dims: [1] }),
+                            &self.device(),
+                        ),
                         current_memory_state_tensors.clone(),
                     ));
                     if !state.stability.is_finite() || !state.difficulty.is_finite() {
@@ -190,8 +207,8 @@ impl<B: Backend> FSRS<B> {
         })
     }
 
-    /// Determine how well the model and weights predict performance.
-    /// Weights must have been provided when calling FSRS::new().
+    /// Determine how well the model and parameters predict performance.
+    /// Parameters must have been provided when calling FSRS::new().
     pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
     where
         F: FnMut(ItemProgress) -> bool,
@@ -238,6 +255,56 @@ impl<B: Backend> FSRS<B> {
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32) -> f32 {
         (days_elapsed as f32 / (state.stability * 9.0) + 1.0).powi(-1)
     }
+
+    /// Returns the universal metrics for the existing and provided parameters. If the first value
+    /// is smaller than the second value, the existing parameters are better than the provided ones.
+    pub fn universal_metrics<F>(
+        &self,
+        items: Vec<FSRSItem>,
+        parameters: &Parameters,
+        mut progress: F,
+    ) -> Result<(f32, f32)>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if items.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
+        let batcher = FSRSBatcher::new(self.device());
+        let mut all_predictions_self = vec![];
+        let mut all_predictions_other = vec![];
+        let mut all_true_val = vec![];
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: items.len(),
+        };
+        let model_self = self.model();
+        let fsrs_other = FSRS::<B>::new_with_backend(Some(parameters), self.device())?;
+        let model_other = fsrs_other.model();
+        for chunk in items.chunks(512) {
+            let batch = batcher.batch(chunk.to_vec());
+
+            let (_state, retention) = infer::<B>(model_self, batch.clone());
+            let pred = retention.clone().to_data().convert::<f32>().value;
+            all_predictions_self.extend(pred);
+
+            let (_state, retention) = infer::<B>(model_other, batch.clone());
+            let pred = retention.clone().to_data().convert::<f32>().value;
+            all_predictions_other.extend(pred);
+
+            let true_val = batch.labels.clone().to_data().convert::<f32>().value;
+            all_true_val.extend(true_val);
+            progress_info.current += chunk.len();
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+        let self_by_other =
+            measure_a_by_b(&all_predictions_self, &all_predictions_other, &all_true_val);
+        let other_by_self =
+            measure_a_by_b(&all_predictions_other, &all_predictions_self, &all_true_val);
+        Ok((self_by_other, other_by_self))
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -278,17 +345,17 @@ fn calibration_rmse(pred: &[f32], true_val: &[f32]) -> f32 {
     if pred.len() != true_val.len() {
         panic!("Vectors pred and true_val must have the same length");
     }
+    measure_a_by_b(pred, pred, true_val)
+}
 
+fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
     let mut groups = HashMap::new();
-
-    for (p, t) in pred.iter().zip(true_val) {
-        let bin = get_bin(*p, 20);
-        groups.entry(bin).or_insert_with(Vec::new).push((p, t));
-    }
-
+    izip!(pred_a, pred_b, true_val).for_each(|(a, b, t)| {
+        let bin = get_bin(*b, 20);
+        groups.entry(bin).or_insert_with(Vec::new).push((a, t));
+    });
     let mut total_sum = 0.0;
     let mut total_count = 0.0;
-
     for group in groups.values() {
         let count = group.len() as f32;
         let pred_mean = group.iter().map(|(p, _)| *p).sum::<f32>() / count;
@@ -307,7 +374,7 @@ mod tests {
     use super::*;
     use crate::{convertor_tests::anki21_sample_file_converted_to_fsrs, FSRSReview};
 
-    static WEIGHTS: &[f32] = &[
+    static PARAMETERS: &[f32] = &[
         0.81497127,
         1.5411042,
         4.007436,
@@ -368,7 +435,7 @@ mod tests {
                 },
             ],
         };
-        let fsrs = FSRS::new(Some(WEIGHTS))?;
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
         assert_eq!(
             fsrs.memory_state(item, None).unwrap(),
             MemoryState {
@@ -415,13 +482,20 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.204_001, 0.025_387]), 5);
+            .assert_approx_eq(&Data::from([0.203_023, 0.024_624]), 5);
 
-        let fsrs = FSRS::new(Some(WEIGHTS))?;
-        let metrics = fsrs.evaluate(items, |_| true).unwrap();
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.201_908, 0.013_894]), 5);
+            .assert_approx_eq(&Data::from([0.201_908, 0.013_964]), 5);
+
+        let (self_by_other, other_by_self) = fsrs
+            .universal_metrics(items, &DEFAULT_PARAMETERS, |_| true)
+            .unwrap();
+
+        Data::from([self_by_other, other_by_self])
+            .assert_approx_eq(&Data::from([0.016_727, 0.019_213]), 5);
         Ok(())
     }
 
@@ -447,7 +521,7 @@ mod tests {
                 },
             ],
         };
-        let fsrs = FSRS::new(Some(WEIGHTS))?;
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
         let state = fsrs.memory_state(item, None).unwrap();
         assert_eq!(
             fsrs.next_states(Some(state), 0.9, 21).unwrap(),
@@ -508,7 +582,7 @@ mod tests {
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
             MemoryState {
                 stability: 9.999995,
-                difficulty: 7.200902
+                difficulty: 7.255334
             }
         );
         assert_eq!(

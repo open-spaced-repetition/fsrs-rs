@@ -5,7 +5,7 @@ use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
-use crate::{FSRSError, DEFAULT_WEIGHTS, FSRS};
+use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::module::Module;
@@ -73,7 +73,8 @@ impl<B: Backend> Model<B> {
 impl<B: AutodiffBackend> Model<B> {
     fn freeze_initial_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
-        let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4]));
+        let updated_grad_tensor =
+            grad_tensor.slice_assign([0..4], Tensor::zeros([4], &B::Device::default()));
 
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
@@ -235,8 +236,8 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
 }
 
 impl<B: Backend> FSRS<B> {
-    /// Calculate appropriate weights for the provided review history.
-    pub fn compute_weights(
+    /// Calculate appropriate parameters for the provided review history.
+    pub fn compute_parameters(
         &self,
         items: Vec<FSRSItem>,
         pretrain_only: bool,
@@ -264,11 +265,11 @@ impl<B: Backend> FSRS<B> {
         })?;
         if pretrain_only {
             finish_progress();
-            let weights = initial_stability
+            let parameters = initial_stability
                 .into_iter()
-                .chain(DEFAULT_WEIGHTS[4..].iter().copied())
+                .chain(DEFAULT_PARAMETERS[4..].iter().copied())
                 .collect();
-            return Ok(weights);
+            return Ok(parameters);
         }
         let config = TrainingConfig::new(
             ModelConfig {
@@ -310,22 +311,22 @@ impl<B: Backend> FSRS<B> {
         finish_progress();
 
         let weight_sets = weight_sets?;
-        let average_weights: Vec<f32> = weight_sets
+        let average_parameters: Vec<f32> = weight_sets
             .iter()
-            .fold(vec![0.0; weight_sets[0].len()], |sum, weights| {
-                sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
+            .fold(vec![0.0; weight_sets[0].len()], |sum, parameters| {
+                sum.par_iter().zip(parameters).map(|(a, b)| a + b).collect()
             })
             .par_iter()
             .map(|&sum| sum / n_splits as f32)
             .collect();
 
-        for weight in &average_weights {
+        for weight in &average_parameters {
             if !weight.is_finite() {
                 return Err(FSRSError::InvalidInput);
             }
         }
 
-        Ok(average_weights)
+        Ok(average_parameters)
     }
 }
 
@@ -403,9 +404,9 @@ fn train<B: AutodiffBackend>(
         return Err(FSRSError::Interrupted);
     }
 
-    info!("trained weights: {}", &model_trained.w.val());
+    info!("trained parameters: {}", &model_trained.w.val());
     model_trained.w = Param::from(weight_clipper(model_trained.w.val()));
-    info!("clipped weights: {}", &model_trained.w.val());
+    info!("clipped parameters: {}", &model_trained.w.val());
 
     if let Ok(path) = artifact_dir {
         PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
@@ -460,7 +461,7 @@ mod tests {
             AdamConfig::new(),
         );
 
-        let weights_sets: Vec<Vec<f32>> = (0..n_splits)
+        let parameters_sets: Vec<Vec<f32>> = (0..n_splits)
             .into_par_iter()
             .map(|i| {
                 let trainset = trainsets
@@ -475,16 +476,16 @@ mod tests {
             })
             .collect();
 
-        dbg!(&weights_sets);
+        dbg!(&parameters_sets);
 
-        let average_weights: Vec<f32> = weights_sets
+        let average_parameters: Vec<f32> = parameters_sets
             .iter()
-            .fold(vec![0.0; weights_sets[0].len()], |sum, weights| {
-                sum.par_iter().zip(weights).map(|(a, b)| a + b).collect()
+            .fold(vec![0.0; parameters_sets[0].len()], |sum, parameters| {
+                sum.par_iter().zip(parameters).map(|(a, b)| a + b).collect()
             })
             .par_iter()
             .map(|&sum| sum / n_splits as f32)
             .collect();
-        dbg!(average_weights);
+        dbg!(average_parameters);
     }
 }

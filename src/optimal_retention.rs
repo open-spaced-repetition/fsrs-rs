@@ -1,6 +1,6 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{next_interval, ItemProgress, Weights, DECAY, FACTOR, S_MIN};
-use crate::{DEFAULT_WEIGHTS, FSRS};
+use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MIN};
+use crate::{DEFAULT_PARAMETERS, FSRS};
 use burn::tensor::backend::Backend;
 use itertools::izip;
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
@@ -395,7 +395,7 @@ fn simulate(
 
 fn sample<F>(
     config: &SimulatorConfig,
-    weights: &[f64],
+    parameters: &[f64],
     desired_retention: f64,
     n: usize,
     progress: &mut F,
@@ -411,7 +411,7 @@ where
         .map(|i| {
             let memorization = simulate(
                 config,
-                weights,
+                parameters,
                 desired_retention,
                 Some((i + 42).try_into().unwrap()),
                 None,
@@ -430,7 +430,7 @@ fn bracket<F>(
     mut xa: f64,
     mut xb: f64,
     config: &SimulatorConfig,
-    weights: &[f64],
+    parameters: &[f64],
     progress: &mut F,
 ) -> Result<(f64, f64, f64, f64, f64, f64)>
 where
@@ -442,15 +442,15 @@ where
     const GOLD: f64 = 1.618_033_988_749_895; // wait for https://doc.rust-lang.org/std/f64/consts/constant.PHI.html
     const MAXITER: i32 = 20;
 
-    let mut fa = -sample(config, weights, xa, SAMPLE_SIZE, progress)?;
-    let mut fb = -sample(config, weights, xb, SAMPLE_SIZE, progress)?;
+    let mut fa = -sample(config, parameters, xa, SAMPLE_SIZE, progress)?;
+    let mut fb = -sample(config, parameters, xb, SAMPLE_SIZE, progress)?;
 
     if fa < fb {
         (fa, fb) = (fb, fa);
         (xa, xb) = (xb, xa);
     }
     let mut xc = GOLD.mul_add(xb - xa, xb).clamp(L_LIM, U_LIM);
-    let mut fc = -sample(config, weights, xc, SAMPLE_SIZE, progress)?;
+    let mut fc = -sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
 
     let mut iter = 0;
     while fc < fb {
@@ -470,34 +470,38 @@ where
         let mut fw: f64;
 
         if (w - xc) * (xb - w) > 0.0 {
-            fw = -sample(config, weights, w, SAMPLE_SIZE, progress)?;
+            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
             if fw < fc {
                 (xa, xb) = (xb.clamp(L_LIM, U_LIM), w.clamp(L_LIM, U_LIM));
                 (fa, fb) = (fb, fw);
                 break;
             } else if fw > fb {
                 xc = w.clamp(L_LIM, U_LIM);
-                fc = -sample(config, weights, xc, SAMPLE_SIZE, progress)?;
+                fc = -sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
                 break;
             }
             w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = -sample(config, weights, w, SAMPLE_SIZE, progress)?;
+            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
         } else if (w - wlim) * (wlim - xc) >= 0.0 {
             w = wlim;
-            fw = -sample(config, weights, w, SAMPLE_SIZE, progress)?;
+            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
         } else if (w - wlim) * (xc - w) > 0.0 {
-            fw = -sample(config, weights, w, SAMPLE_SIZE, progress)?;
+            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
             if fw < fc {
                 (xb, xc, w) = (
                     xc.clamp(L_LIM, U_LIM),
                     w.clamp(L_LIM, U_LIM),
                     GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM),
                 );
-                (fb, fc, fw) = (fc, fw, -sample(config, weights, w, SAMPLE_SIZE, progress)?);
+                (fb, fc, fw) = (
+                    fc,
+                    fw,
+                    -sample(config, parameters, w, SAMPLE_SIZE, progress)?,
+                );
             }
         } else {
             w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = -sample(config, weights, w, SAMPLE_SIZE, progress)?;
+            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
         }
         (xa, xb, xc) = (
             xb.clamp(L_LIM, U_LIM),
@@ -510,23 +514,23 @@ where
 }
 
 impl<B: Backend> FSRS<B> {
-    /// For the given simulator parameters and weights, determine the suggested `desired_retention`
+    /// For the given simulator parameters and parameters, determine the suggested `desired_retention`
     /// value.
     pub fn optimal_retention<F>(
         &self,
         config: &SimulatorConfig,
-        weights: &Weights,
+        parameters: &Parameters,
         mut progress: F,
     ) -> Result<f64>
     where
         F: FnMut(ItemProgress) -> bool + Send,
     {
-        let weights = if weights.is_empty() {
-            &DEFAULT_WEIGHTS
-        } else if weights.len() != 17 {
-            return Err(FSRSError::InvalidWeights);
+        let parameters = if parameters.is_empty() {
+            &DEFAULT_PARAMETERS
+        } else if parameters.len() != 17 {
+            return Err(FSRSError::InvalidParameters);
         } else {
-            weights
+            parameters
         }
         .iter()
         .map(|v| *v as f64)
@@ -541,13 +545,13 @@ impl<B: Backend> FSRS<B> {
             progress(progress_info)
         };
 
-        Self::brent(config, &weights, inc_progress)
+        Self::brent(config, &parameters, inc_progress)
     }
     /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
     /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
     fn brent<F>(
         config: &SimulatorConfig,
-        weights: &[f64],
+        parameters: &[f64],
         mut progress: F,
     ) -> Result<f64, FSRSError>
     where
@@ -558,7 +562,7 @@ impl<B: Backend> FSRS<B> {
         let maxiter = 64;
         let tol = 0.01f64;
 
-        let (xa, xb, xc, _fa, fb, _fc) = bracket(0.75, 0.95, config, weights, &mut progress)?;
+        let (xa, xb, xc, _fa, fb, _fc) = bracket(0.75, 0.95, config, parameters, &mut progress)?;
 
         let (mut v, mut w, mut x) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
@@ -616,7 +620,7 @@ impl<B: Backend> FSRS<B> {
                 rat
             };
             // calculate new output value
-            let fu = -sample(config, weights, u, SAMPLE_SIZE, &mut progress)?;
+            let fu = -sample(config, parameters, u, SAMPLE_SIZE, &mut progress)?;
 
             // if it's bigger than current
             if fu > fx {
@@ -660,20 +664,20 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::DEFAULT_WEIGHTS;
+    use crate::DEFAULT_PARAMETERS;
 
     #[test]
     fn simulator() {
         let config = SimulatorConfig::default();
         let memorization = simulate(
             &config,
-            &DEFAULT_WEIGHTS.iter().map(|v| *v as f64).collect_vec(),
+            &DEFAULT_PARAMETERS.iter().map(|v| *v as f64).collect_vec(),
             0.9,
             None,
             None,
         )
         .0;
-        assert_eq!(memorization[memorization.len() - 1], 3022.055014122344)
+        assert_eq!(memorization[memorization.len() - 1], 3130.8465582271774)
     }
 
     #[test]
@@ -701,7 +705,7 @@ mod tests {
         ];
         let memorization = simulate(
             &config,
-            &DEFAULT_WEIGHTS.iter().map(|v| *v as f64).collect_vec(),
+            &DEFAULT_PARAMETERS.iter().map(|v| *v as f64).collect_vec(),
             0.9,
             None,
             Some(cards),
@@ -720,7 +724,7 @@ mod tests {
         };
         let results = simulate(
             &config,
-            &DEFAULT_WEIGHTS.iter().map(|v| *v as f64).collect_vec(),
+            &DEFAULT_PARAMETERS.iter().map(|v| *v as f64).collect_vec(),
             0.9,
             None,
             None,
@@ -728,8 +732,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 16, 27, 29, 86, 73, 96, 95, 96, 105, 112, 113, 124, 131, 139, 124, 130, 141,
-                162, 175, 168, 179, 186, 185, 198, 189, 200, 200, 200, 200
+                0, 16, 27, 34, 84, 80, 91, 92, 103, 107, 111, 113, 138, 132, 133, 116, 134, 148,
+                152, 162, 172, 177, 188, 189, 200, 185, 185, 200, 198, 200
             ]
         );
         assert_eq!(
@@ -743,7 +747,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.864870726919112);
+        assert_eq!(optimal_retention, 0.8468471175527587);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
