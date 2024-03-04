@@ -87,7 +87,7 @@ fn total_rating_count(
 }
 
 fn power_forgetting_curve(t: &Array1<f64>, s: f64) -> Array1<f64> {
-    (t / s * FACTOR as f64 + 1.0).mapv(|v| v.powf(DECAY as f64))
+    (t / s * FACTOR + 1.0).mapv(|v| v.powf(DECAY))
 }
 
 fn loss(
@@ -129,7 +129,7 @@ fn search_parameters(
         };
         let mut low = S_MIN as f64;
         let mut high = INIT_S_MAX as f64;
-        let mut optimal_s = default_s0 as f64;
+        let mut optimal_s = default_s0;
 
         let mut iter = 0;
         while high - low > epsilon && iter < 1000 {
