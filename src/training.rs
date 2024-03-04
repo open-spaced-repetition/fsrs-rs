@@ -223,7 +223,7 @@ pub(crate) struct TrainingConfig {
 pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     let (total_recall, total_reviews) = items
         .iter()
-        .flat_map(|item| item.reviews.iter())
+        .map(|item| item.current())
         .fold((0u32, 0u32), |(sum, count), review| {
             (sum + (review.rating > 1) as u32, count + 1)
         });
@@ -231,7 +231,6 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     if total_reviews == 0 {
         return 0.0;
     }
-
     total_recall as f32 / total_reviews as f32
 }
 
@@ -440,6 +439,13 @@ mod tests {
     use crate::test_helpers::NdArrayAutodiff;
     use burn::backend::ndarray::NdArrayDevice;
     use rayon::prelude::IntoParallelIterator;
+
+    #[test]
+    fn test_calculate_average_recall() {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let average_recall = calculate_average_recall(&items);
+        assert_eq!(average_recall, 0.9435269);
+    }
 
     #[test]
     fn training() {

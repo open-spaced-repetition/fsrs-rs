@@ -336,7 +336,7 @@ mod tests {
         let average_recall = calculate_average_recall(&items);
         let pretrainset = split_data(items, 1).0;
         Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
-            &Data::from([1.001_131, 1.810_561, 4.403_226, 10.935_509]),
+            &Data::from([1.001_725, 1.813_219, 4.415_737, 10.935_509]),
             4,
         )
     }
