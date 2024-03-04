@@ -119,15 +119,14 @@ fn search_parameters(
         let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
         let default_s0 = r_s0_default[first_rating];
         let delta_t = Array1::from_iter(data.iter().map(|d| d.delta_t));
+        let count = Array1::from_iter(data.iter().map(|d| d.count));
         let recall = {
             // Laplace smoothing
             // (real_recall * n + average_recall * 1) / (n + 1)
             // https://github.com/open-spaced-repetition/fsrs4anki/pull/358/files#diff-35b13c8e3466e8bd1231a51c71524fc31a945a8f332290726214d3a6fa7f442aR491
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
-            let n = data.iter().map(|d| d.count).sum::<f32>();
-            (real_recall * n + average_recall) / (n + 1.0)
+            (real_recall * count.clone() + average_recall) / (count.clone() + 1.0)
         };
-        let count = Array1::from_iter(data.iter().map(|d| d.count));
 
         let mut low = S_MIN;
         let mut high = INIT_S_MAX;
@@ -274,7 +273,7 @@ mod tests {
     use burn::tensor::Data;
 
     use super::*;
-    use crate::dataset::split_data;
+    use crate::dataset::filter_outlier;
     use crate::training::calculate_average_recall;
 
     #[test]
@@ -326,17 +325,20 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.9);
-        Data::from([*actual.get(&4).unwrap()]).assert_approx_eq(&Data::from([0.943_921]), 3);
+        Data::from([*actual.get(&4).unwrap()]).assert_approx_eq(&Data::from([0.961_832]), 3);
     }
 
     #[test]
     fn test_pretrain() {
         use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
         let items = anki21_sample_file_converted_to_fsrs();
+        let (mut pretrainset, mut trainset) =
+            items.into_iter().partition(|item| item.reviews.len() == 2);
+        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+        let items = [pretrainset.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
-        let pretrainset = split_data(items, 1).0;
         Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
-            &Data::from([1.001_725, 1.813_219, 4.415_737, 10.935_509]),
+            &Data::from([1.017_011, 1.829_525, 4.414_258, 10.935_509]),
             4,
         )
     }
