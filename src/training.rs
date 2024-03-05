@@ -374,7 +374,9 @@ fn train<B: AutodiffBackend>(
             Aggregate::Mean,
             Direction::Lowest,
             Split::Valid,
-            StoppingCondition::NoImprovementSince { n_epochs: 1 },
+            StoppingCondition::NoImprovementSince {
+                n_epochs: config.num_epochs,
+            },
         ))
         .devices(vec![device])
         .num_epochs(config.num_epochs)
@@ -457,8 +459,11 @@ mod tests {
         let device = NdArrayDevice::Cpu;
         let items = anki21_sample_file_converted_to_fsrs();
         let (pre_trainset, trainsets, testset) = split_data(items.clone(), n_splits);
-        let average_recall = calculate_average_recall(&pre_trainset);
+        let items = [pre_trainset.clone(), testset.clone()].concat();
+        let average_recall = calculate_average_recall(&items);
+        dbg!(average_recall);
         let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
+        dbg!(initial_stability);
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,
@@ -492,6 +497,10 @@ mod tests {
             .par_iter()
             .map(|&sum| sum / n_splits as f32)
             .collect();
-        dbg!(average_parameters);
+        dbg!(&average_parameters);
+
+        let fsrs = FSRS::new(Some(&average_parameters)).unwrap();
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+        dbg!(&metrics);
     }
 }
