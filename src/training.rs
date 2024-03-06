@@ -408,6 +408,11 @@ fn train<B: AutodiffBackend>(
                 break;
             }
         }
+
+        if interrupter.should_stop() {
+            break;
+        }
+
         let model_valid = model.valid();
         for (iteration, batch) in dataloader_valid.iter().enumerate() {
             let item = model_valid.forward_classification(
