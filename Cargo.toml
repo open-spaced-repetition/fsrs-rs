@@ -45,8 +45,8 @@ strum = { version = "0.26.1", features = ["derive"] }
 chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.8.4"
 criterion = { version = "0.5.1" }
-rusqlite = { version = "0.30.0" }
 fern = "0.6.0"
+rusqlite = { version = "0.30.0" }
 
 [[bench]]
 name = "benchmark"
