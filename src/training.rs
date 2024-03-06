@@ -383,6 +383,7 @@ fn train<B: AutodiffBackend>(
         while let Some(item) = iterator.next() {
             iteration += 1;
             let lr = LrScheduler::<B>::step(&mut lr_scheduler);
+            let progress = iterator.progress();
             let item = model.forward_classification(
                 item.t_historys,
                 item.r_historys,
@@ -398,9 +399,9 @@ fn train<B: AutodiffBackend>(
             model.w = Param::from(weight_clipper(model.w.val()));
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
+                progress,
                 epoch,
                 epoch_total: config.num_epochs,
-                progress: iterator.progress(),
                 iteration,
             });
 
