@@ -439,19 +439,6 @@ fn train<B: AutodiffBackend>(
         return Err(FSRSError::Interrupted);
     }
 
-    // if interrupter.should_stop() {
-    //     return Err(FSRSError::Interrupted);
-    // }
-
-    // if let Ok(path) = artifact_dir {
-    //     PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
-    //         .record(
-    //             model_trained.clone().into_record(),
-    //             Path::new(&path).join("model"),
-    //         )
-    //         .expect("Failed to save trained model");
-    // }
-
     Ok(best_model)
 }
 
