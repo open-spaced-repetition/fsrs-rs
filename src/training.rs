@@ -1,4 +1,4 @@
-use crate::batch_shuffle::{BatchShuffledDataLoaderBuilder, BatchShuffledDataset};
+use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{split_data, FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
@@ -7,30 +7,24 @@ use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
+
 use burn::data::dataloader::DataLoaderBuilder;
-use burn::module::Module;
-use burn::optim::AdamConfig;
-use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
+use burn::lr_scheduler::LrScheduler;
+use burn::module::AutodiffModule;
+use burn::optim::Optimizer;
+use burn::optim::{AdamConfig, GradientsParams};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
-use burn::train::logger::InMemoryMetricLogger;
-use burn::train::metric::store::{Aggregate, Direction, Split};
-use burn::train::metric::LossMetric;
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
-
-use burn::train::{
-    ClassificationOutput, MetricEarlyStoppingStrategy, StoppingCondition, TrainOutput, TrainStep,
-    TrainingInterrupter, ValidStep,
-};
-use burn::{
-    config::Config, module::Param, tensor::backend::AutodiffBackend, train::LearnerBuilder,
-};
+use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
+use burn::{config::Config, module::Param, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
+
 use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
-use std::path::Path;
+
 use std::sync::{Arc, Mutex};
 
 pub struct BCELoss<B: Backend> {
@@ -334,7 +328,7 @@ fn train<B: AutodiffBackend>(
     testset: Vec<FSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
-    progress: Option<ProgressCollector>,
+    _progress: Option<ProgressCollector>,
 ) -> Result<Model<B>> {
     B::seed(config.seed);
 
@@ -343,82 +337,85 @@ fn train<B: AutodiffBackend>(
     let batcher_train = FSRSBatcher::<B>::new(device.clone());
     let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(
-            BatchShuffledDataset::with_seed(
-                FSRSDataset::from(trainset),
-                config.batch_size,
-                config.seed,
-            ),
-            config.batch_size,
-        );
+        .build(FSRSDataset::from(trainset), config.batch_size, config.seed);
 
     let batcher_valid = FSRSBatcher::new(device.clone());
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
-        .batch_size(config.batch_size)
-        .num_workers(config.num_workers)
+        .batch_size(testset.len())
         .build(FSRSDataset::from(testset));
 
-    let lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
+    let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
 
-    let artifact_dir = std::env::var("BURN_LOG");
+    // let interrupter = builder.interrupter();
 
-    let mut builder = LearnerBuilder::new(&artifact_dir.clone().unwrap_or_default())
-        .metric_loggers(
-            InMemoryMetricLogger::default(),
-            InMemoryMetricLogger::default(),
-        )
-        .metric_valid_numeric(LossMetric::new())
-        .early_stopping(MetricEarlyStoppingStrategy::new::<LossMetric<B>>(
-            Aggregate::Mean,
-            Direction::Lowest,
-            Split::Valid,
-            StoppingCondition::NoImprovementSince {
-                n_epochs: config.num_epochs,
-            },
-        ))
-        .devices(vec![device])
-        .num_epochs(config.num_epochs)
-        .log_to_file(false);
-    let interrupter = builder.interrupter();
+    // if let Some(mut progress) = progress {
+    //     progress.interrupter = interrupter.clone();
+    //     builder = builder.renderer(progress);
+    // } else {
+    //     // comment out if you want to see text interface
+    //     builder = builder.renderer(NoProgress {});
+    // }
 
-    if let Some(mut progress) = progress {
-        progress.interrupter = interrupter.clone();
-        builder = builder.renderer(progress);
-    } else {
-        // comment out if you want to see text interface
-        builder = builder.renderer(NoProgress {});
+    let mut model: Model<B> = config.model.init();
+    let mut optim = config.optimizer.init::<B, Model<B>>();
+
+    let mut lr = config.learning_rate;
+    let mut best_loss = std::f64::INFINITY;
+    let mut best_model = model.clone();
+    for epoch in 1..config.num_epochs + 1 {
+        for batch in dataloader_train.iter() {
+            let item = model.forward_classification(
+                batch.t_historys,
+                batch.r_historys,
+                batch.delta_ts,
+                batch.labels,
+            );
+            let mut gradients = item.loss.backward();
+            if model.config.freeze_stability {
+                gradients = model.freeze_initial_stability(gradients);
+            }
+            let grads = GradientsParams::from_grads(gradients, &model);
+            model = optim.step(lr, model, grads);
+            model.w = Param::from(weight_clipper(model.w.val()));
+            // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
+            lr = LrScheduler::<B>::step(&mut lr_scheduler);
+        }
+        let model_valid = model.valid();
+        for (iteration, batch) in dataloader_valid.iter().enumerate() {
+            let item = model_valid.forward_classification(
+                batch.t_historys,
+                batch.r_historys,
+                batch.delta_ts,
+                batch.labels,
+            );
+            let loss = item.loss.into_data().convert::<f64>().value[0];
+            info!(
+                "epoch: {:?} iteration: {:?} loss: {:?}",
+                epoch, iteration, loss
+            );
+            if loss < best_loss {
+                best_loss = loss;
+                best_model = model.clone();
+            }
+        }
     }
 
-    if artifact_dir.is_ok() {
-        builder = builder
-            .log_to_file(true)
-            .with_file_checkpointer(PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
-    }
+    info!("best_loss: {:?}", best_loss);
 
-    let learner = builder.build(config.model.init(), config.optimizer.init(), lr_scheduler);
+    // if interrupter.should_stop() {
+    //     return Err(FSRSError::Interrupted);
+    // }
 
-    let mut model_trained = learner.fit(dataloader_train, dataloader_valid);
+    // if let Ok(path) = artifact_dir {
+    //     PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
+    //         .record(
+    //             model_trained.clone().into_record(),
+    //             Path::new(&path).join("model"),
+    //         )
+    //         .expect("Failed to save trained model");
+    // }
 
-    if interrupter.should_stop() {
-        return Err(FSRSError::Interrupted);
-    }
-
-    info!("trained parameters: {}", &model_trained.w.val());
-    model_trained.w = Param::from(weight_clipper(model_trained.w.val()));
-    info!("clipped parameters: {}", &model_trained.w.val());
-
-    if let Ok(path) = artifact_dir {
-        PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
-            .record(
-                model_trained.clone().into_record(),
-                Path::new(&path).join("model"),
-            )
-            .expect("Failed to save trained model");
-    }
-
-    Ok(model_trained)
+    Ok(best_model)
 }
 
 struct NoProgress {}
@@ -435,12 +432,14 @@ impl MetricsRenderer for NoProgress {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::create_dir_all;
+
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::pre_training::pretrain;
     use crate::test_helpers::NdArrayAutodiff;
     use burn::backend::ndarray::NdArrayDevice;
-    use rayon::prelude::IntoParallelIterator;
+    use log::LevelFilter;
 
     #[test]
     fn test_calculate_average_recall() {
@@ -454,6 +453,26 @@ mod tests {
         if std::env::var("SKIP_TRAINING").is_ok() {
             println!("Skipping test in CI");
             return;
+        }
+
+        let artifact_dir = std::env::var("BURN_LOG");
+
+        if let Ok(artifact_dir) = artifact_dir {
+            let _ = create_dir_all(&artifact_dir);
+            let log_file = format!("{}/training.log", artifact_dir);
+            fern::Dispatch::new()
+                .format(|out, message, record| {
+                    out.finish(format_args!(
+                        "[{}][{}] {}",
+                        record.target(),
+                        record.level(),
+                        message
+                    ))
+                })
+                .level(LevelFilter::Info)
+                .chain(fern::log_file(log_file).unwrap())
+                .apply()
+                .unwrap();
         }
         let n_splits = 5;
         let device = NdArrayDevice::Cpu;
@@ -473,7 +492,7 @@ mod tests {
         );
 
         let parameters_sets: Vec<Vec<f32>> = (0..n_splits)
-            .into_par_iter()
+            .into_iter()
             .map(|i| {
                 let trainset = trainsets
                     .par_iter()
@@ -482,7 +501,7 @@ mod tests {
                     .flat_map(|(_, trainset)| trainset.clone())
                     .collect();
                 let model =
-                    train::<NdArrayAutodiff>(trainset, testset.clone(), &config, device, None);
+                    train::<NdArrayAutodiff>(trainset, items.clone(), &config, device, None);
                 model.unwrap().w.val().to_data().convert().value
             })
             .collect();
