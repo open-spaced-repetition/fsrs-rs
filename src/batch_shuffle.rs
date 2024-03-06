@@ -5,7 +5,6 @@ use burn::data::{
     dataset::Dataset,
 };
 
-
 use rand::{distributions::Standard, prelude::SliceRandom, rngs::StdRng, Rng, SeedableRng};
 use std::{
     marker::PhantomData,
