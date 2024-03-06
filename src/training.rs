@@ -377,13 +377,8 @@ fn train<B: AutodiffBackend>(
 
     let mut best_loss = std::f64::INFINITY;
     let mut best_model = model.clone();
-    for epoch in 1..config.num_epochs + 1 {
-        let mut iterator = dataloader_train.iter();
-        let mut iteration = 0;
-        while let Some(item) = iterator.next() {
-            iteration += 1;
-            let lr = LrScheduler::<B>::step(&mut lr_scheduler);
-            let progress = iterator.progress();
+    for epoch in 1..=config.num_epochs {
+        for batch in dataloader_train.iter() {
             let item = model.forward_classification(
                 item.t_historys,
                 item.r_historys,
@@ -458,6 +453,7 @@ impl MetricsRenderer for NoProgress {
 #[cfg(test)]
 mod tests {
     use std::fs::create_dir_all;
+    use std::path::Path;
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
@@ -484,7 +480,7 @@ mod tests {
 
         if let Ok(artifact_dir) = artifact_dir {
             let _ = create_dir_all(&artifact_dir);
-            let log_file = format!("{}/training.log", artifact_dir);
+            let log_file = Path::new(&artifact_dir).join("training.log");
             fern::Dispatch::new()
                 .format(|out, message, record| {
                     out.finish(format_args!(
