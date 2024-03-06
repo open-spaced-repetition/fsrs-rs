@@ -378,7 +378,12 @@ fn train<B: AutodiffBackend>(
     let mut best_loss = std::f64::INFINITY;
     let mut best_model = model.clone();
     for epoch in 1..=config.num_epochs {
-        for batch in dataloader_train.iter() {
+        let mut iterator = dataloader_train.iter();
+        let mut iteration = 0;
+        while let Some(item) = iterator.next() {
+            iteration += 1;
+            let lr = LrScheduler::<B>::step(&mut lr_scheduler);
+            let progress = iterator.progress();
             let item = model.forward_classification(
                 item.t_historys,
                 item.r_historys,
