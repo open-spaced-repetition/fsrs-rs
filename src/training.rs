@@ -346,7 +346,7 @@ fn train<B: AutodiffBackend>(
     testset: Vec<FSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
-    _progress: Option<ProgressCollector>,
+    progress: Option<ProgressCollector>,
 ) -> Result<Model<B>> {
     B::seed(config.seed);
 
@@ -363,30 +363,31 @@ fn train<B: AutodiffBackend>(
         .build(FSRSDataset::from(testset));
 
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
-
-    // let interrupter = builder.interrupter();
-
-    // if let Some(mut progress) = progress {
-    //     progress.interrupter = interrupter.clone();
-    //     builder = builder.renderer(progress);
-    // } else {
-    //     // comment out if you want to see text interface
-    //     builder = builder.renderer(NoProgress {});
-    // }
+    let interrupter = TrainingInterrupter::new();
+    let mut renderer: Box<dyn MetricsRenderer> = match progress {
+        Some(mut progress) => {
+            progress.interrupter = interrupter.clone();
+            Box::new(progress)
+        }
+        None => Box::new(NoProgress {}),
+    };
 
     let mut model: Model<B> = config.model.init();
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
-    let mut lr = config.learning_rate;
     let mut best_loss = std::f64::INFINITY;
     let mut best_model = model.clone();
     for epoch in 1..config.num_epochs + 1 {
-        for batch in dataloader_train.iter() {
+        let mut iterator = dataloader_train.iter();
+        let mut iteration = 0;
+        while let Some(item) = iterator.next() {
+            iteration += 1;
+            let lr = LrScheduler::<B>::step(&mut lr_scheduler);
             let item = model.forward_classification(
-                batch.t_historys,
-                batch.r_historys,
-                batch.delta_ts,
-                batch.labels,
+                item.t_historys,
+                item.r_historys,
+                item.delta_ts,
+                item.labels,
             );
             let mut gradients = item.loss.backward();
             if model.config.freeze_stability {
@@ -396,7 +397,16 @@ fn train<B: AutodiffBackend>(
             model = optim.step(lr, model, grads);
             model.w = Param::from(weight_clipper(model.w.val()));
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
-            lr = LrScheduler::<B>::step(&mut lr_scheduler);
+            renderer.render_train(TrainingProgress {
+                epoch,
+                epoch_total: config.num_epochs,
+                progress: iterator.progress(),
+                iteration,
+            });
+
+            if interrupter.should_stop() {
+                break;
+            }
         }
         let model_valid = model.valid();
         for (iteration, batch) in dataloader_valid.iter().enumerate() {
@@ -419,6 +429,10 @@ fn train<B: AutodiffBackend>(
     }
 
     info!("best_loss: {:?}", best_loss);
+
+    if interrupter.should_stop() {
+        return Err(FSRSError::Interrupted);
+    }
 
     // if interrupter.should_stop() {
     //     return Err(FSRSError::Interrupted);
