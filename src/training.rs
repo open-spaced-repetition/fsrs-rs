@@ -459,6 +459,8 @@ impl MetricsRenderer for NoProgress {
 mod tests {
     use std::fs::create_dir_all;
     use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
@@ -516,9 +518,24 @@ mod tests {
             },
             AdamConfig::new(),
         );
+        let progress = CombinedProgressState::new_shared();
+        let progress2 = Some(progress.clone());
+        thread::spawn(move || {
+            let mut finished = false;
+            while !finished {
+                thread::sleep(Duration::from_millis(10));
+                let guard = progress.lock().unwrap();
+                finished = guard.finished();
+                info!("progress: {}/{}", guard.current(), guard.total());
+            }
+        });
+
+        if let Some(progress2) = &progress2 {
+            progress2.lock().unwrap().splits = vec![ProgressState::default(); n_splits];
+        }
 
         let parameters_sets: Vec<Vec<f32>> = (0..n_splits)
-            .into_iter()
+            .into_par_iter()
             .map(|i| {
                 let trainset = trainsets
                     .par_iter()
@@ -526,8 +543,13 @@ mod tests {
                     .filter(|&(j, _)| j != i)
                     .flat_map(|(_, trainset)| trainset.clone())
                     .collect();
-                let model =
-                    train::<NdArrayAutodiff>(trainset, items.clone(), &config, device, None);
+                let model = train::<NdArrayAutodiff>(
+                    trainset,
+                    items.clone(),
+                    &config,
+                    device,
+                    progress2.clone().map(|p| ProgressCollector::new(p, i)),
+                );
                 model.unwrap().w.val().to_data().convert().value
             })
             .collect();
