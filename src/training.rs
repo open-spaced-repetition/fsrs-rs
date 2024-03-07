@@ -1,6 +1,6 @@
 use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{split_data, FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{split_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
@@ -11,12 +11,13 @@ use burn::backend::Autodiff;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::lr_scheduler::LrScheduler;
 use burn::module::AutodiffModule;
+use burn::nn::loss::Reduction;
 use burn::optim::Optimizer;
 use burn::optim::{AdamConfig, GradientsParams};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
-use burn::train::{ClassificationOutput, TrainOutput, TrainStep, TrainingInterrupter, ValidStep};
+use burn::train::TrainingInterrupter;
 use burn::{config::Config, module::Param, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
@@ -37,11 +38,20 @@ impl<B: Backend> BCELoss<B> {
             backend: PhantomData,
         }
     }
-    pub fn forward(&self, retentions: Tensor<B, 1>, labels: Tensor<B, 1>) -> Tensor<B, 1> {
+    pub fn forward(
+        &self,
+        retentions: Tensor<B, 1>,
+        labels: Tensor<B, 1>,
+        mean: Reduction,
+    ) -> Tensor<B, 1> {
         let loss =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
         // info!("loss: {}", &loss);
-        loss.mean().neg()
+        match mean {
+            Reduction::Mean => loss.mean().neg(),
+            Reduction::Sum => loss.sum().neg(),
+            Reduction::Auto => loss.neg(),
+        }
     }
 }
 
@@ -52,15 +62,13 @@ impl<B: Backend> Model<B> {
         r_historys: Tensor<B, 2>,
         delta_ts: Tensor<B, 1>,
         labels: Tensor<B, 1, Int>,
-    ) -> ClassificationOutput<B> {
+        reduce: Reduction,
+    ) -> Tensor<B, 1> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
         let retention = self.power_forgetting_curve(delta_ts, state.stability);
-        let logits =
-            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).unsqueeze::<2>();
-        let loss = BCELoss::new().forward(retention, labels.clone().float());
-        ClassificationOutput::new(loss, logits, labels)
+        BCELoss::new().forward(retention, labels.float(), reduce)
     }
 }
 
@@ -73,47 +81,6 @@ impl<B: AutodiffBackend> Model<B> {
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
         grad
-    }
-}
-
-impl<B: AutodiffBackend> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
-    fn step(&self, batch: FSRSBatch<B>) -> TrainOutput<ClassificationOutput<B>> {
-        let item = self.forward_classification(
-            batch.t_historys,
-            batch.r_historys,
-            batch.delta_ts,
-            batch.labels,
-        );
-        let mut gradients = item.loss.backward();
-
-        if self.config.freeze_stability {
-            gradients = self.freeze_initial_stability(gradients);
-        }
-
-        TrainOutput::new(self, gradients, item)
-    }
-
-    fn optimize<B1, O>(self, optim: &mut O, lr: f64, grads: burn::optim::GradientsParams) -> Self
-    where
-        B: AutodiffBackend,
-        O: burn::optim::Optimizer<Self, B1>,
-        B1: burn::tensor::backend::AutodiffBackend,
-        Self: burn::module::AutodiffModule<B1>,
-    {
-        let mut model = optim.step(lr, self, grads);
-        model.w = Param::from(weight_clipper(model.w.val()));
-        model
-    }
-}
-
-impl<B: Backend> ValidStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
-    fn step(&self, batch: FSRSBatch<B>) -> ClassificationOutput<B> {
-        self.forward_classification(
-            batch.t_historys,
-            batch.r_historys,
-            batch.delta_ts,
-            batch.labels,
-        )
     }
 }
 
@@ -359,8 +326,8 @@ fn train<B: AutodiffBackend>(
 
     let batcher_valid = FSRSBatcher::new(device.clone());
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
-        .batch_size(testset.len())
-        .build(FSRSDataset::from(testset));
+        .batch_size(config.batch_size)
+        .build(FSRSDataset::from(testset.clone()));
 
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let interrupter = TrainingInterrupter::new();
@@ -384,13 +351,14 @@ fn train<B: AutodiffBackend>(
             iteration += 1;
             let lr = LrScheduler::<B>::step(&mut lr_scheduler);
             let progress = iterator.progress();
-            let item = model.forward_classification(
+            let loss = model.forward_classification(
                 item.t_historys,
                 item.r_historys,
                 item.delta_ts,
                 item.labels,
+                Reduction::Mean,
             );
-            let mut gradients = item.loss.backward();
+            let mut gradients = loss.backward();
             if model.config.freeze_stability {
                 gradients = model.freeze_initial_stability(gradients);
             }
@@ -415,22 +383,23 @@ fn train<B: AutodiffBackend>(
         }
 
         let model_valid = model.valid();
-        for (iteration, batch) in dataloader_valid.iter().enumerate() {
-            let item = model_valid.forward_classification(
+        let mut loss_valid = 0.0;
+        for batch in dataloader_valid.iter() {
+            let loss = model_valid.forward_classification(
                 batch.t_historys,
                 batch.r_historys,
                 batch.delta_ts,
                 batch.labels,
+                Reduction::Sum,
             );
-            let loss = item.loss.into_data().convert::<f64>().value[0];
-            info!(
-                "epoch: {:?} iteration: {:?} loss: {:?}",
-                epoch, iteration, loss
-            );
-            if loss < best_loss {
-                best_loss = loss;
-                best_model = model.clone();
-            }
+            let loss = loss.into_data().convert::<f64>().value[0];
+            loss_valid += loss;
+        }
+        loss_valid /= testset.len() as f64;
+        info!("epoch: {:?} loss: {:?}", epoch, loss_valid);
+        if loss_valid < best_loss {
+            best_loss = loss_valid;
+            best_model = model.clone();
         }
     }
 
