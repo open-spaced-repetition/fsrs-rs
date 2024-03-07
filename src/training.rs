@@ -395,7 +395,6 @@ fn train<B: AutodiffBackend>(
             let loss = loss.into_data().convert::<f64>().value[0];
             loss_valid += loss;
 
-
             if interrupter.should_stop() {
                 break;
             }
