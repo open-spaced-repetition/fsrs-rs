@@ -1,6 +1,6 @@
 [package]
 name = "fsrs"
-version = "0.4.6"
+version = "0.5.0"
 authors = ["Open Spaced Repetition"]
 categories = ["algorithms", "science"]
 edition = "2021"
@@ -45,6 +45,7 @@ strum = { version = "0.26.1", features = ["derive"] }
 chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.8.4"
 criterion = { version = "0.5.1" }
+fern = "0.6.0"
 rusqlite = { version = "0.30.0" }
 
 [[bench]]

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
 use crate::model::{Get, MemoryStateTensors, FSRS};
+use burn::nn::loss::Reduction;
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
@@ -255,7 +256,7 @@ impl<B: Backend> FSRS<B> {
         .sqrt();
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
-        let loss = BCELoss::new().forward(all_retention, all_labels);
+        let loss = BCELoss::new().forward(all_retention, all_labels, Reduction::Mean);
         Ok(ModelEvaluation {
             log_loss: loss.to_data().value[0].elem(),
             rmse_bins: rmse,

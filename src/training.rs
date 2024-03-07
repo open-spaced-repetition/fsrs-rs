@@ -1,36 +1,31 @@
-use crate::batch_shuffle::{BatchShuffledDataLoaderBuilder, BatchShuffledDataset};
+use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{split_data, FSRSBatch, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{split_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
+
 use burn::data::dataloader::DataLoaderBuilder;
-use burn::module::Module;
-use burn::optim::AdamConfig;
-use burn::record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder};
+use burn::lr_scheduler::LrScheduler;
+use burn::module::AutodiffModule;
+use burn::nn::loss::Reduction;
+use burn::optim::Optimizer;
+use burn::optim::{AdamConfig, GradientsParams};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
-use burn::train::logger::InMemoryMetricLogger;
-use burn::train::metric::store::{Aggregate, Direction, Split};
-use burn::train::metric::LossMetric;
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
-
-use burn::train::{
-    ClassificationOutput, MetricEarlyStoppingStrategy, StoppingCondition, TrainOutput, TrainStep,
-    TrainingInterrupter, ValidStep,
-};
-use burn::{
-    config::Config, module::Param, tensor::backend::AutodiffBackend, train::LearnerBuilder,
-};
+use burn::train::TrainingInterrupter;
+use burn::{config::Config, module::Param, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
+
 use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
-use std::path::Path;
+
 use std::sync::{Arc, Mutex};
 
 pub struct BCELoss<B: Backend> {
@@ -43,11 +38,20 @@ impl<B: Backend> BCELoss<B> {
             backend: PhantomData,
         }
     }
-    pub fn forward(&self, retentions: Tensor<B, 1>, labels: Tensor<B, 1>) -> Tensor<B, 1> {
+    pub fn forward(
+        &self,
+        retentions: Tensor<B, 1>,
+        labels: Tensor<B, 1>,
+        mean: Reduction,
+    ) -> Tensor<B, 1> {
         let loss =
             labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
         // info!("loss: {}", &loss);
-        loss.mean().neg()
+        match mean {
+            Reduction::Mean => loss.mean().neg(),
+            Reduction::Sum => loss.sum().neg(),
+            Reduction::Auto => loss.neg(),
+        }
     }
 }
 
@@ -58,15 +62,13 @@ impl<B: Backend> Model<B> {
         r_historys: Tensor<B, 2>,
         delta_ts: Tensor<B, 1>,
         labels: Tensor<B, 1, Int>,
-    ) -> ClassificationOutput<B> {
+        reduce: Reduction,
+    ) -> Tensor<B, 1> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
         let retention = self.power_forgetting_curve(delta_ts, state.stability);
-        let logits =
-            Tensor::cat(vec![-retention.clone() + 1, retention.clone()], 0).unsqueeze::<2>();
-        let loss = BCELoss::new().forward(retention, labels.clone().float());
-        ClassificationOutput::new(loss, logits, labels)
+        BCELoss::new().forward(retention, labels.float(), reduce)
     }
 }
 
@@ -79,47 +81,6 @@ impl<B: AutodiffBackend> Model<B> {
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
         grad
-    }
-}
-
-impl<B: AutodiffBackend> TrainStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
-    fn step(&self, batch: FSRSBatch<B>) -> TrainOutput<ClassificationOutput<B>> {
-        let item = self.forward_classification(
-            batch.t_historys,
-            batch.r_historys,
-            batch.delta_ts,
-            batch.labels,
-        );
-        let mut gradients = item.loss.backward();
-
-        if self.config.freeze_stability {
-            gradients = self.freeze_initial_stability(gradients);
-        }
-
-        TrainOutput::new(self, gradients, item)
-    }
-
-    fn optimize<B1, O>(self, optim: &mut O, lr: f64, grads: burn::optim::GradientsParams) -> Self
-    where
-        B: AutodiffBackend,
-        O: burn::optim::Optimizer<Self, B1>,
-        B1: burn::tensor::backend::AutodiffBackend,
-        Self: burn::module::AutodiffModule<B1>,
-    {
-        let mut model = optim.step(lr, self, grads);
-        model.w = Param::from(weight_clipper(model.w.val()));
-        model
-    }
-}
-
-impl<B: Backend> ValidStep<FSRSBatch<B>, ClassificationOutput<B>> for Model<B> {
-    fn step(&self, batch: FSRSBatch<B>) -> ClassificationOutput<B> {
-        self.forward_classification(
-            batch.t_historys,
-            batch.r_historys,
-            batch.delta_ts,
-            batch.labels,
-        )
     }
 }
 
@@ -327,6 +288,24 @@ impl<B: Backend> FSRS<B> {
 
         Ok(average_parameters)
     }
+
+    pub fn benchmark(&self, train_set: Vec<FSRSItem>, test_set: Vec<FSRSItem>) -> Vec<f32> {
+        let average_recall = calculate_average_recall(&train_set.clone());
+        let (pre_train_set, next_train_set) = train_set
+            .into_iter()
+            .partition(|item| item.reviews.len() == 2);
+        let initial_stability = pretrain(pre_train_set, average_recall).unwrap();
+        let config = TrainingConfig::new(
+            ModelConfig {
+                freeze_stability: true,
+                initial_stability: Some(initial_stability),
+            },
+            AdamConfig::new(),
+        );
+        let model = train::<Autodiff<B>>(next_train_set, test_set, &config, self.device(), None);
+        let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
+        parameters
+    }
 }
 
 fn train<B: AutodiffBackend>(
@@ -343,82 +322,98 @@ fn train<B: AutodiffBackend>(
     let batcher_train = FSRSBatcher::<B>::new(device.clone());
     let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train)
         .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(
-            BatchShuffledDataset::with_seed(
-                FSRSDataset::from(trainset),
-                config.batch_size,
-                config.seed,
-            ),
-            config.batch_size,
-        );
+        .build(FSRSDataset::from(trainset), config.batch_size, config.seed);
 
     let batcher_valid = FSRSBatcher::new(device.clone());
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
-        .num_workers(config.num_workers)
-        .build(FSRSDataset::from(testset));
+        .build(FSRSDataset::from(testset.clone()));
 
-    let lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
+    let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
+    let interrupter = TrainingInterrupter::new();
+    let mut renderer: Box<dyn MetricsRenderer> = match progress {
+        Some(mut progress) => {
+            progress.interrupter = interrupter.clone();
+            Box::new(progress)
+        }
+        None => Box::new(NoProgress {}),
+    };
 
-    let artifact_dir = std::env::var("BURN_LOG");
+    let mut model: Model<B> = config.model.init();
+    let mut optim = config.optimizer.init::<B, Model<B>>();
 
-    let mut builder = LearnerBuilder::new(&artifact_dir.clone().unwrap_or_default())
-        .metric_loggers(
-            InMemoryMetricLogger::default(),
-            InMemoryMetricLogger::default(),
-        )
-        .metric_valid_numeric(LossMetric::new())
-        .early_stopping(MetricEarlyStoppingStrategy::new::<LossMetric<B>>(
-            Aggregate::Mean,
-            Direction::Lowest,
-            Split::Valid,
-            StoppingCondition::NoImprovementSince {
-                n_epochs: config.num_epochs,
-            },
-        ))
-        .devices(vec![device])
-        .num_epochs(config.num_epochs)
-        .log_to_file(false);
-    let interrupter = builder.interrupter();
+    let mut best_loss = std::f64::INFINITY;
+    let mut best_model = model.clone();
+    for epoch in 1..=config.num_epochs {
+        let mut iterator = dataloader_train.iter();
+        let mut iteration = 0;
+        while let Some(item) = iterator.next() {
+            iteration += 1;
+            let lr = LrScheduler::<B>::step(&mut lr_scheduler);
+            let progress = iterator.progress();
+            let loss = model.forward_classification(
+                item.t_historys,
+                item.r_historys,
+                item.delta_ts,
+                item.labels,
+                Reduction::Mean,
+            );
+            let mut gradients = loss.backward();
+            if model.config.freeze_stability {
+                gradients = model.freeze_initial_stability(gradients);
+            }
+            let grads = GradientsParams::from_grads(gradients, &model);
+            model = optim.step(lr, model, grads);
+            model.w = Param::from(weight_clipper(model.w.val()));
+            // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
+            renderer.render_train(TrainingProgress {
+                progress,
+                epoch,
+                epoch_total: config.num_epochs,
+                iteration,
+            });
 
-    if let Some(mut progress) = progress {
-        progress.interrupter = interrupter.clone();
-        builder = builder.renderer(progress);
-    } else {
-        // comment out if you want to see text interface
-        builder = builder.renderer(NoProgress {});
+            if interrupter.should_stop() {
+                break;
+            }
+        }
+
+        if interrupter.should_stop() {
+            break;
+        }
+
+        let model_valid = model.valid();
+        let mut loss_valid = 0.0;
+        for batch in dataloader_valid.iter() {
+            let loss = model_valid.forward_classification(
+                batch.t_historys,
+                batch.r_historys,
+                batch.delta_ts,
+                batch.labels,
+                Reduction::Sum,
+            );
+            let loss = loss.into_data().convert::<f64>().value[0];
+            loss_valid += loss;
+
+            if interrupter.should_stop() {
+                break;
+            }
+        }
+        loss_valid /= testset.len() as f64;
+        info!("epoch: {:?} loss: {:?}", epoch, loss_valid);
+        if loss_valid < best_loss {
+            best_loss = loss_valid;
+            best_model = model.clone();
+        }
     }
 
-    if artifact_dir.is_ok() {
-        builder = builder
-            .log_to_file(true)
-            .with_file_checkpointer(PrettyJsonFileRecorder::<FullPrecisionSettings>::new());
-    }
-
-    let learner = builder.build(config.model.init(), config.optimizer.init(), lr_scheduler);
-
-    let mut model_trained = learner.fit(dataloader_train, dataloader_valid);
+    info!("best_loss: {:?}", best_loss);
 
     if interrupter.should_stop() {
         return Err(FSRSError::Interrupted);
     }
 
-    info!("trained parameters: {}", &model_trained.w.val());
-    model_trained.w = Param::from(weight_clipper(model_trained.w.val()));
-    info!("clipped parameters: {}", &model_trained.w.val());
-
-    if let Ok(path) = artifact_dir {
-        PrettyJsonFileRecorder::<FullPrecisionSettings>::new()
-            .record(
-                model_trained.clone().into_record(),
-                Path::new(&path).join("model"),
-            )
-            .expect("Failed to save trained model");
-    }
-
-    Ok(model_trained)
+    Ok(best_model)
 }
 
 struct NoProgress {}
@@ -435,12 +430,17 @@ impl MetricsRenderer for NoProgress {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::create_dir_all;
+    use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
+
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::pre_training::pretrain;
     use crate::test_helpers::NdArrayAutodiff;
     use burn::backend::ndarray::NdArrayDevice;
-    use rayon::prelude::IntoParallelIterator;
+    use log::LevelFilter;
 
     #[test]
     fn test_calculate_average_recall() {
@@ -454,6 +454,26 @@ mod tests {
         if std::env::var("SKIP_TRAINING").is_ok() {
             println!("Skipping test in CI");
             return;
+        }
+
+        let artifact_dir = std::env::var("BURN_LOG");
+
+        if let Ok(artifact_dir) = artifact_dir {
+            let _ = create_dir_all(&artifact_dir);
+            let log_file = Path::new(&artifact_dir).join("training.log");
+            fern::Dispatch::new()
+                .format(|out, message, record| {
+                    out.finish(format_args!(
+                        "[{}][{}] {}",
+                        record.target(),
+                        record.level(),
+                        message
+                    ))
+                })
+                .level(LevelFilter::Info)
+                .chain(fern::log_file(log_file).unwrap())
+                .apply()
+                .unwrap();
         }
         let n_splits = 5;
         let device = NdArrayDevice::Cpu;
@@ -471,6 +491,21 @@ mod tests {
             },
             AdamConfig::new(),
         );
+        let progress = CombinedProgressState::new_shared();
+        let progress2 = Some(progress.clone());
+        thread::spawn(move || {
+            let mut finished = false;
+            while !finished {
+                thread::sleep(Duration::from_millis(10));
+                let guard = progress.lock().unwrap();
+                finished = guard.finished();
+                info!("progress: {}/{}", guard.current(), guard.total());
+            }
+        });
+
+        if let Some(progress2) = &progress2 {
+            progress2.lock().unwrap().splits = vec![ProgressState::default(); n_splits];
+        }
 
         let parameters_sets: Vec<Vec<f32>> = (0..n_splits)
             .into_par_iter()
@@ -481,8 +516,13 @@ mod tests {
                     .filter(|&(j, _)| j != i)
                     .flat_map(|(_, trainset)| trainset.clone())
                     .collect();
-                let model =
-                    train::<NdArrayAutodiff>(trainset, testset.clone(), &config, device, None);
+                let model = train::<NdArrayAutodiff>(
+                    trainset,
+                    items.clone(),
+                    &config,
+                    device,
+                    progress2.clone().map(|p| ProgressCollector::new(p, i)),
+                );
                 model.unwrap().w.val().to_data().convert().value
             })
             .collect();

@@ -5,6 +5,7 @@ use burn::{
     data::dataset::Dataset,
     tensor::{backend::Backend, Data, ElementConversion, Float, Int, Shape, Tensor},
 };
+
 use serde::{Deserialize, Serialize};
 
 /// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
@@ -142,6 +143,7 @@ impl Dataset<FSRSItem> for FSRSDataset {
     }
 
     fn get(&self, index: usize) -> Option<FSRSItem> {
+        // info!("get {}", index);
         self.items.get(index).cloned()
     }
 }

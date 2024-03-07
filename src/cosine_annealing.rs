@@ -1,5 +1,4 @@
 use burn::{lr_scheduler::LrScheduler, tensor::backend::Backend, LearningRate};
-use log::info;
 #[derive(Clone, Debug)]
 pub(crate) struct CosineAnnealingLR {
     t_max: f64,
@@ -49,7 +48,7 @@ impl<B: Backend> LrScheduler<B> for CosineAnnealingLR {
             self.t_max,
             self.eta_min,
         );
-        info!("lr: {}", self.current_lr);
+        // info!("lr: {}", self.current_lr);
         self.current_lr
     }
 
