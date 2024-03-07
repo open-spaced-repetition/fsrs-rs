@@ -394,6 +394,11 @@ fn train<B: AutodiffBackend>(
             );
             let loss = loss.into_data().convert::<f64>().value[0];
             loss_valid += loss;
+
+
+            if interrupter.should_stop() {
+                break;
+            }
         }
         loss_valid /= testset.len() as f64;
         info!("epoch: {:?} loss: {:?}", epoch, loss_valid);
