@@ -107,7 +107,7 @@ fn simulate(
     desired_retention: f64,
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
-) -> (Array1<f64>, Array1<usize>, Array1<usize>) {
+) -> (Array1<f64>, Array1<usize>, Array1<usize>, Array1<f64>) {
     let SimulatorConfig {
         deck_size,
         learn_span,
@@ -142,6 +142,7 @@ fn simulate(
     let mut review_cnt_per_day = Array1::<usize>::zeros(learn_span);
     let mut learn_cnt_per_day = Array1::<usize>::zeros(learn_span);
     let mut memorized_cnt_per_day = Array1::zeros(learn_span);
+    let mut cost_per_day = Array1::zeros(learn_span);
 
     let first_rating_choices = [1, 2, 3, 4];
     let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
@@ -388,9 +389,18 @@ fn simulate(
         review_cnt_per_day[today] = true_review.iter().filter(|&&x| x).count();
         learn_cnt_per_day[today] = true_learn.iter().filter(|&&x| x).count();
         memorized_cnt_per_day[today] = retrievability.sum();
+        cost_per_day[today] = izip!(cost, &true_review, &true_learn)
+            .filter(|(_, &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
+            .map(|(cost, ..)| cost)
+            .sum();
     }
 
-    (memorized_cnt_per_day, review_cnt_per_day, learn_cnt_per_day)
+    (
+        memorized_cnt_per_day,
+        review_cnt_per_day,
+        learn_cnt_per_day,
+        cost_per_day,
+    )
 }
 
 fn sample<F>(
@@ -409,21 +419,22 @@ where
     Ok((0..n)
         .into_par_iter()
         .map(|i| {
-            let memorization = simulate(
+            let (memorized_cnt_per_day, _, _, cost_per_day) = simulate(
                 config,
                 parameters,
                 desired_retention,
                 Some((i + 42).try_into().unwrap()),
                 None,
-            )
-            .0;
-            memorization[memorization.len() - 1]
+            );
+            let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
+            let total_cost = cost_per_day.sum();
+            total_cost / total_memorized
         })
         .sum::<f64>()
         / n as f64)
 }
 
-const SAMPLE_SIZE: usize = 10;
+const SAMPLE_SIZE: usize = 16;
 
 /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2894
 fn bracket<F>(
@@ -442,15 +453,15 @@ where
     const GOLD: f64 = 1.618_033_988_749_895; // wait for https://doc.rust-lang.org/std/f64/consts/constant.PHI.html
     const MAXITER: i32 = 20;
 
-    let mut fa = -sample(config, parameters, xa, SAMPLE_SIZE, progress)?;
-    let mut fb = -sample(config, parameters, xb, SAMPLE_SIZE, progress)?;
+    let mut fa = sample(config, parameters, xa, SAMPLE_SIZE, progress)?;
+    let mut fb = sample(config, parameters, xb, SAMPLE_SIZE, progress)?;
 
     if fa < fb {
         (fa, fb) = (fb, fa);
         (xa, xb) = (xb, xa);
     }
     let mut xc = GOLD.mul_add(xb - xa, xb).clamp(L_LIM, U_LIM);
-    let mut fc = -sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
+    let mut fc = sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
 
     let mut iter = 0;
     while fc < fb {
@@ -470,23 +481,23 @@ where
         let mut fw: f64;
 
         if (w - xc) * (xb - w) > 0.0 {
-            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
+            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
             if fw < fc {
                 (xa, xb) = (xb.clamp(L_LIM, U_LIM), w.clamp(L_LIM, U_LIM));
                 (fa, fb) = (fb, fw);
                 break;
             } else if fw > fb {
                 xc = w.clamp(L_LIM, U_LIM);
-                fc = -sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
+                fc = sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
                 break;
             }
             w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
+            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
         } else if (w - wlim) * (wlim - xc) >= 0.0 {
             w = wlim;
-            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
+            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
         } else if (w - wlim) * (xc - w) > 0.0 {
-            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
+            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
             if fw < fc {
                 (xb, xc, w) = (
                     xc.clamp(L_LIM, U_LIM),
@@ -496,12 +507,12 @@ where
                 (fb, fc, fw) = (
                     fc,
                     fw,
-                    -sample(config, parameters, w, SAMPLE_SIZE, progress)?,
+                    sample(config, parameters, w, SAMPLE_SIZE, progress)?,
                 );
             }
         } else {
             w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = -sample(config, parameters, w, SAMPLE_SIZE, progress)?;
+            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
         }
         (xa, xb, xc) = (
             xb.clamp(L_LIM, U_LIM),
@@ -620,7 +631,7 @@ impl<B: Backend> FSRS<B> {
                 rat
             };
             // calculate new output value
-            let fu = -sample(config, parameters, u, SAMPLE_SIZE, &mut progress)?;
+            let fu = sample(config, parameters, u, SAMPLE_SIZE, &mut progress)?;
 
             // if it's bigger than current
             if fu > fx {
@@ -669,15 +680,17 @@ mod tests {
     #[test]
     fn simulator() {
         let config = SimulatorConfig::default();
-        let memorization = simulate(
+        let (memorized_cnt_per_day, _, _, _) = simulate(
             &config,
             &DEFAULT_PARAMETERS.iter().map(|v| *v as f64).collect_vec(),
             0.9,
             None,
             None,
+        );
+        assert_eq!(
+            memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
+            3130.8465582271774
         )
-        .0;
-        assert_eq!(memorization[memorization.len() - 1], 3130.8465582271774)
     }
 
     #[test]
@@ -744,10 +757,16 @@ mod tests {
 
     #[test]
     fn optimal_retention() -> Result<()> {
-        let config = SimulatorConfig::default();
         let fsrs = FSRS::new(None)?;
+        let config = SimulatorConfig {
+            deck_size: 3650,
+            learn_span: 365,
+            max_cost_perday: f64::INFINITY,
+            learn_limit: 10,
+            ..Default::default()
+        };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8468471175527587);
+        assert_eq!(optimal_retention, 0.835220218178979);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
