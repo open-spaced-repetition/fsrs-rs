@@ -43,6 +43,9 @@ impl From<Column> for SliceInfoElem {
     }
 }
 
+const R_MIN: f64 = 0.75;
+const R_MAX: f64 = 0.95;
+
 #[derive(Debug, Clone)]
 pub struct SimulatorConfig {
     pub deck_size: usize,
@@ -447,8 +450,8 @@ fn bracket<F>(
 where
     F: FnMut() -> bool,
 {
-    const U_LIM: f64 = 0.95;
-    const L_LIM: f64 = 0.75;
+    const U_LIM: f64 = R_MAX;
+    const L_LIM: f64 = R_MIN;
     const GROW_LIMIT: f64 = 100f64;
     const GOLD: f64 = 1.618_033_988_749_895; // wait for https://doc.rust-lang.org/std/f64/consts/constant.PHI.html
     const MAXITER: i32 = 20;
@@ -573,7 +576,7 @@ impl<B: Backend> FSRS<B> {
         let maxiter = 64;
         let tol = 0.01f64;
 
-        let (xa, xb, xc, _fa, fb, _fc) = bracket(0.75, 0.95, config, parameters, &mut progress)?;
+        let (xa, xb, xc, _fa, fb, _fc) = bracket(R_MIN, R_MAX, config, parameters, &mut progress)?;
 
         let (mut v, mut w, mut x) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
@@ -660,7 +663,7 @@ impl<B: Backend> FSRS<B> {
             iter += 1;
         }
         let xmin = x;
-        let success = iter < maxiter && (0.75..=0.95).contains(&xmin);
+        let success = iter < maxiter && (R_MIN..=R_MAX).contains(&xmin);
 
         if success {
             Ok(xmin)
@@ -759,14 +762,15 @@ mod tests {
     fn optimal_retention() -> Result<()> {
         let fsrs = FSRS::new(None)?;
         let config = SimulatorConfig {
-            deck_size: 3650,
-            learn_span: 365,
+            deck_size: 10000,
+            learn_span: 1000,
             max_cost_perday: f64::INFINITY,
             learn_limit: 10,
+            loss_aversion: 1.0,
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.835220218178979);
+        assert_eq!(optimal_retention, 0.786971401181512);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
