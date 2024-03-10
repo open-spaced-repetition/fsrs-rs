@@ -437,7 +437,7 @@ where
         / n as f64)
 }
 
-const SAMPLE_SIZE: usize = 16;
+const SAMPLE_SIZE: usize = 4;
 
 /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2894
 fn bracket<F>(
@@ -770,7 +770,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.786971401181512);
+        assert_eq!(optimal_retention, 0.7984864824748231);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
