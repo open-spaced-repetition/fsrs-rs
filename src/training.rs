@@ -526,9 +526,9 @@ mod tests {
 
         if let Some(progress2) = &progress2 {
             let mut progress_states = vec![ProgressState::default(); n_splits];
-            for i in 0..n_splits {
-                progress_states[i].epoch_total = config.num_epochs;
-                progress_states[i].items_total = trainsets[i].len();
+            for (i, progress_state) in progress_states.iter_mut().enumerate() {
+                progress_state.epoch_total = config.num_epochs;
+                progress_state.items_total = trainsets[i].len();
             }
             progress2.lock().unwrap().splits = progress_states
         }
