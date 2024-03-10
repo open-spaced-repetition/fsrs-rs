@@ -214,9 +214,6 @@ impl<B: Backend> FSRS<B> {
         };
 
         let n_splits = 5;
-        if let Some(progress) = &progress {
-            progress.lock().unwrap().splits = vec![ProgressState::default(); n_splits];
-        }
         let average_recall = calculate_average_recall(&items);
         let (pre_trainset, trainsets, testset) = split_data(items, n_splits);
         let initial_stability = pretrain(pre_trainset, average_recall).map_err(|e| {
@@ -239,18 +236,32 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new(),
         );
 
-        let weight_sets: Result<Vec<Vec<f32>>> = (0..n_splits)
+        let trainsets: Vec<Vec<FSRSItem>> = (0..n_splits)
             .into_par_iter()
             .map(|i| {
-                let trainset = trainsets
+                trainsets
                     .par_iter()
                     .enumerate()
                     .filter(|&(j, _)| j != i)
                     .flat_map(|(_, trainset)| trainset.clone())
-                    .collect();
+                    .collect()
+            })
+            .collect();
 
+        if let Some(progress) = &progress {
+            let mut progress_states = vec![ProgressState::default(); n_splits];
+            for i in 0..n_splits {
+                progress_states[i].epoch_total = config.num_epochs;
+                progress_states[i].items_total = trainsets[i].len();
+            }
+            progress.lock().unwrap().splits = progress_states
+        }
+
+        let weight_sets: Result<Vec<Vec<f32>>> = (0..n_splits)
+            .into_par_iter()
+            .map(|i| {
                 let model = train::<Autodiff<B>>(
-                    trainset,
+                    trainsets[i].clone(),
                     testset.clone(),
                     &config,
                     self.device(),
