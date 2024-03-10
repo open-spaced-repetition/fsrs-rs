@@ -510,25 +510,36 @@ mod tests {
                 thread::sleep(Duration::from_millis(10));
                 let guard = progress.lock().unwrap();
                 finished = guard.finished();
-                info!("progress: {}/{}", guard.current(), guard.total());
+                println!("progress: {}/{}", guard.current(), guard.total());
             }
         });
 
+        let trainsets: Vec<Vec<FSRSItem>> = (0..n_splits)
+            .into_par_iter()
+            .map(|i| {
+                trainsets
+                    .par_iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .flat_map(|(_, trainset)| trainset.clone())
+                    .collect()
+            })
+            .collect();
+
         if let Some(progress2) = &progress2 {
-            progress2.lock().unwrap().splits = vec![ProgressState::default(); n_splits];
+            let mut progress_states = vec![ProgressState::default(); n_splits];
+            for i in 0..n_splits {
+                progress_states[i].epoch_total = config.num_epochs;
+                progress_states[i].items_total = trainsets[i].len();
+            }
+            progress2.lock().unwrap().splits = progress_states
         }
 
         let parameters_sets: Vec<Vec<f32>> = (0..n_splits)
             .into_par_iter()
             .map(|i| {
-                let trainset = trainsets
-                    .par_iter()
-                    .enumerate()
-                    .filter(|&(j, _)| j != i)
-                    .flat_map(|(_, trainset)| trainset.clone())
-                    .collect();
                 let model = train::<NdArrayAutodiff>(
-                    trainset,
+                    trainsets[i].clone(),
                     items.clone(),
                     &config,
                     device,
