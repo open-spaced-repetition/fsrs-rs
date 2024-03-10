@@ -250,9 +250,9 @@ impl<B: Backend> FSRS<B> {
 
         if let Some(progress) = &progress {
             let mut progress_states = vec![ProgressState::default(); n_splits];
-            for i in 0..n_splits {
-                progress_states[i].epoch_total = config.num_epochs;
-                progress_states[i].items_total = trainsets[i].len();
+            for (i, progress_state) in progress_states.iter_mut().enumerate() {
+                progress_state.epoch_total = config.num_epochs;
+                progress_state.items_total = trainsets[i].len();
             }
             progress.lock().unwrap().splits = progress_states
         }
@@ -291,10 +291,8 @@ impl<B: Backend> FSRS<B> {
             .map(|&sum| sum / n_splits as f32)
             .collect();
 
-        for weight in &average_parameters {
-            if !weight.is_finite() {
-                return Err(FSRSError::InvalidInput);
-            }
+        if average_parameters.iter().any(|weight| weight.is_infinite()) {
+            return Err(FSRSError::InvalidInput);
         }
 
         Ok(average_parameters)
