@@ -488,7 +488,10 @@ impl<B: Backend> FSRS<B> {
         let maxiter = 64;
         let tol = 0.01f64;
 
-        let (xb, fb) = (R_MIN, sample(config, parameters, R_MIN, SAMPLE_SIZE, &mut progress)?);
+        let (xb, fb) = (
+            R_MIN,
+            sample(config, parameters, R_MIN, SAMPLE_SIZE, &mut progress)?,
+        );
         let (mut x, mut w, mut v) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
         let (mut a, mut b) = (R_MIN, R_MAX);
@@ -672,12 +675,14 @@ mod tests {
 
     #[test]
     fn optimal_retention() -> Result<()> {
+        let learn_span = 1000;
+        let learn_limit = 10;
         let fsrs = FSRS::new(None)?;
         let config = SimulatorConfig {
-            deck_size: 10000,
-            learn_span: 1000,
+            deck_size: learn_span * learn_limit,
+            learn_span,
             max_cost_perday: f64::INFINITY,
-            learn_limit: 10,
+            learn_limit,
             loss_aversion: 1.0,
             ..Default::default()
         };
