@@ -20,6 +20,7 @@ add
 #!/bin/sh
 cargo fmt
 cargo clippy -- -D warnings
+git add .
 ```
 
 to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
