@@ -439,94 +439,6 @@ where
 
 const SAMPLE_SIZE: usize = 4;
 
-/// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2894
-fn bracket<F>(
-    mut xa: f64,
-    mut xb: f64,
-    config: &SimulatorConfig,
-    parameters: &[f64],
-    progress: &mut F,
-) -> Result<(f64, f64, f64, f64, f64, f64)>
-where
-    F: FnMut() -> bool,
-{
-    const U_LIM: f64 = R_MAX;
-    const L_LIM: f64 = R_MIN;
-    const GROW_LIMIT: f64 = 100f64;
-    const GOLD: f64 = 1.618_033_988_749_895; // wait for https://doc.rust-lang.org/std/f64/consts/constant.PHI.html
-    const MAXITER: i32 = 20;
-
-    let mut fa = sample(config, parameters, xa, SAMPLE_SIZE, progress)?;
-    let mut fb = sample(config, parameters, xb, SAMPLE_SIZE, progress)?;
-
-    if fa < fb {
-        (fa, fb) = (fb, fa);
-        (xa, xb) = (xb, xa);
-    }
-    let mut xc = GOLD.mul_add(xb - xa, xb).clamp(L_LIM, U_LIM);
-    let mut fc = sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
-
-    let mut iter = 0;
-    while fc < fb {
-        let tmp1 = (xb - xa) * (fb - fc);
-        let tmp2 = (xb - xc) * (fb - fa);
-        let val = tmp2 - tmp1;
-        let denom = 2.0 * val.clamp(1e-20, 1e20);
-        let mut w = (xb - (xb - xc).mul_add(tmp2, (xa - xb) * tmp1) / denom).clamp(L_LIM, U_LIM);
-        let wlim = GROW_LIMIT.mul_add(xc - xb, xb).clamp(L_LIM, U_LIM);
-
-        if iter >= MAXITER {
-            break;
-        }
-
-        iter += 1;
-
-        let mut fw: f64;
-
-        if (w - xc) * (xb - w) > 0.0 {
-            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
-            if fw < fc {
-                (xa, xb) = (xb.clamp(L_LIM, U_LIM), w.clamp(L_LIM, U_LIM));
-                (fa, fb) = (fb, fw);
-                break;
-            } else if fw > fb {
-                xc = w.clamp(L_LIM, U_LIM);
-                fc = sample(config, parameters, xc, SAMPLE_SIZE, progress)?;
-                break;
-            }
-            w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
-        } else if (w - wlim) * (wlim - xc) >= 0.0 {
-            w = wlim;
-            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
-        } else if (w - wlim) * (xc - w) > 0.0 {
-            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
-            if fw < fc {
-                (xb, xc, w) = (
-                    xc.clamp(L_LIM, U_LIM),
-                    w.clamp(L_LIM, U_LIM),
-                    GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM),
-                );
-                (fb, fc, fw) = (
-                    fc,
-                    fw,
-                    sample(config, parameters, w, SAMPLE_SIZE, progress)?,
-                );
-            }
-        } else {
-            w = GOLD.mul_add(xc - xb, xc).clamp(L_LIM, U_LIM);
-            fw = sample(config, parameters, w, SAMPLE_SIZE, progress)?;
-        }
-        (xa, xb, xc) = (
-            xb.clamp(L_LIM, U_LIM),
-            xc.clamp(L_LIM, U_LIM),
-            w.clamp(L_LIM, U_LIM),
-        );
-        (fa, fb, fc) = (fb, fc, fw);
-    }
-    Ok((xa, xb, xc, fa, fb, fc))
-}
-
 impl<B: Backend> FSRS<B> {
     /// For the given simulator parameters and parameters, determine the suggested `desired_retention`
     /// value.
@@ -576,11 +488,10 @@ impl<B: Backend> FSRS<B> {
         let maxiter = 64;
         let tol = 0.01f64;
 
-        let (xa, xb, xc, _fa, fb, _fc) = bracket(R_MIN, R_MAX, config, parameters, &mut progress)?;
-
-        let (mut v, mut w, mut x) = (xb, xb, xb);
+        let (xb, fb) = (R_MIN, sample(config, parameters, R_MIN, SAMPLE_SIZE, &mut progress)?);
+        let (mut x, mut w, mut v) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
-        let (mut a, mut b) = (xa.min(xc), xa.max(xc));
+        let (mut a, mut b) = (R_MIN, R_MAX);
         let mut deltax: f64 = 0.0;
         let mut iter = 0;
         let mut rat = 0.0;
@@ -664,6 +575,7 @@ impl<B: Backend> FSRS<B> {
         }
         let xmin = x;
         let success = iter < maxiter && (R_MIN..=R_MAX).contains(&xmin);
+        dbg!(iter);
 
         if success {
             Ok(xmin)
