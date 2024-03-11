@@ -492,7 +492,7 @@ impl<B: Backend> FSRS<B> {
             R_MIN,
             sample(config, parameters, R_MIN, SAMPLE_SIZE, &mut progress)?,
         );
-        let (mut x, mut w, mut v) = (xb, xb, xb);
+        let (mut x, mut v, mut w) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
         let (mut a, mut b) = (R_MIN, R_MAX);
         let mut deltax: f64 = 0.0;
