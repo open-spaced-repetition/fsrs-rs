@@ -240,7 +240,7 @@ impl<B: Backend> FSRS<B> {
             .into_par_iter()
             .map(|i| {
                 trainsets
-                    .par_iter()
+                    .iter()
                     .enumerate()
                     .filter(|&(j, _)| j != i)
                     .flat_map(|(_, trainset)| trainset.clone())
@@ -257,15 +257,16 @@ impl<B: Backend> FSRS<B> {
             progress.lock().unwrap().splits = progress_states
         }
 
-        let weight_sets: Result<Vec<Vec<f32>>> = (0..n_splits)
+        let weight_sets: Result<Vec<Vec<f32>>> = trainsets
             .into_par_iter()
-            .map(|i| {
+            .enumerate()
+            .map(|(idx, trainset)| {
                 let model = train::<Autodiff<B>>(
-                    trainsets[i].clone(),
+                    trainset,
                     testset.clone(),
                     &config,
                     self.device(),
-                    progress.clone().map(|p| ProgressCollector::new(p, i)),
+                    progress.clone().map(|p| ProgressCollector::new(p, idx)),
                 );
                 Ok(model
                     .map_err(|e| {
