@@ -683,11 +683,11 @@ mod tests {
             learn_span,
             max_cost_perday: f64::INFINITY,
             learn_limit,
-            loss_aversion: 1.0,
+            loss_aversion: 2.5,
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.7984864824748231);
+        assert_eq!(optimal_retention, 0.8263932);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
