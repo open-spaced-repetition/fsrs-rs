@@ -21,5 +21,5 @@ pub use inference::{
     ItemProgress, ItemState, MemoryState, ModelEvaluation, NextStates, DEFAULT_PARAMETERS,
 };
 pub use model::FSRS;
-pub use optimal_retention::SimulatorConfig;
+pub use optimal_retention::{simulate, Card, SimulatorConfig};
 pub use training::CombinedProgressState;

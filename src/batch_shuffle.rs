@@ -13,7 +13,7 @@ use std::{
 
 use crate::{dataset::FSRSDataset, FSRSItem};
 
-pub(crate) struct BatchShuffledDataset<I> {
+pub struct BatchShuffledDataset<I> {
     dataset: Arc<FSRSDataset>,
     indices: Vec<usize>,
     input: PhantomData<I>,
@@ -130,11 +130,10 @@ where
         // When starting a new iteration, we first check if the dataloader was created with an rng,
         // implying that we should shuffle the dataset beforehand, while advancing the current
         // rng to ensure that each new iteration shuffles the dataset differently.
-        let mut rng = self.rng.lock().unwrap();
         let dataset = Arc::new(BatchShuffledDataset::with_seed(
             self.dataset.clone(),
             self.batch_size,
-            rng.sample(Standard),
+            self.rng.lock().unwrap().sample(Standard),
         ));
         Box::new(BatchShuffledDataloaderIterator::new(
             self.strategy.new_like(),
@@ -209,7 +208,6 @@ impl<I, O> DataLoaderIterator<O> for BatchShuffledDataloaderIterator<I, O> {
 
 /// A builder for data loaders.
 pub struct BatchShuffledDataLoaderBuilder<I, O> {
-    strategy: Option<Box<dyn BatchStrategy<I>>>,
     batcher: Arc<dyn Batcher<I, O>>,
 }
 
@@ -234,23 +232,7 @@ where
     {
         Self {
             batcher: Arc::new(batcher),
-            strategy: None,
         }
-    }
-
-    /// Sets the batch size to a fix number.The [fix batch strategy](FixBatchStrategy)
-    /// will be used.
-    ///
-    /// # Arguments
-    ///
-    /// * `batch_size` - The batch size.
-    ///
-    /// # Returns
-    ///
-    /// The data loader builder.
-    pub fn batch_size(mut self, batch_size: usize) -> Self {
-        self.strategy = Some(Box::new(FixBatchStrategy::new(batch_size)));
-        self
     }
 
     /// Builds the data loader.
@@ -271,10 +253,7 @@ where
         let dataset = Arc::new(dataset);
 
         let rng = StdRng::seed_from_u64(seed);
-        let strategy = match self.strategy {
-            Some(strategy) => strategy,
-            None => Box::new(FixBatchStrategy::new(1)),
-        };
+        let strategy = Box::new(FixBatchStrategy::new(batch_size));
 
         Arc::new(BatchShuffledDataLoader::new(
             strategy,

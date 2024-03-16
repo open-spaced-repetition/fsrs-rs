@@ -97,14 +97,14 @@ fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
         .clamp(S_MIN.into(), s)
 }
 
-struct Card {
+pub struct Card {
     pub difficulty: f64,
     pub stability: f64,
     pub last_date: f64,
     pub due: f64,
 }
 
-fn simulate(
+pub fn simulate(
     config: &SimulatorConfig,
     w: &[f64],
     desired_retention: f64,
@@ -174,7 +174,7 @@ fn simulate(
         let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
 
         fn power_forgetting_curve(t: f64, s: f64) -> f64 {
-            (t / s * FACTOR + 1.0).powf(DECAY)
+            (t / s).mul_add(FACTOR, 1.0).powf(DECAY)
         }
 
         // Calculate retrievability for entries where has_learned is true
@@ -505,7 +505,7 @@ impl<B: Backend> FSRS<B> {
             let tol2 = 2.0 * tol1;
             let xmid = 0.5 * (a + b);
             // check for convergence
-            if (x - xmid).abs() < (tol2 - 0.5 * (b - a)) {
+            if (x - xmid).abs() < 0.5f64.mul_add(-(b - a), tol2) {
                 break;
             }
             if deltax.abs() <= tol1 {

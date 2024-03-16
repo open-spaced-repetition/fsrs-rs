@@ -112,7 +112,7 @@ impl CombinedProgressState {
         self.splits.iter().map(|s| s.total()).sum()
     }
 
-    pub fn finished(&self) -> bool {
+    pub const fn finished(&self) -> bool {
         self.finished
     }
 }
@@ -166,7 +166,7 @@ impl MetricsRenderer for ProgressCollector {
 }
 
 #[derive(Config)]
-pub(crate) struct TrainingConfig {
+pub struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
     #[config(default = 5)]
@@ -300,7 +300,7 @@ impl<B: Backend> FSRS<B> {
     }
 
     pub fn benchmark(&self, train_set: Vec<FSRSItem>, test_set: Vec<FSRSItem>) -> Vec<f32> {
-        let average_recall = calculate_average_recall(&train_set.clone());
+        let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, next_train_set) = train_set
             .into_iter()
             .partition(|item| item.reviews.len() == 2);
@@ -330,11 +330,13 @@ fn train<B: AutodiffBackend>(
     // Training data
     let iterations = (trainset.len() / config.batch_size + 1) * config.num_epochs;
     let batcher_train = FSRSBatcher::<B>::new(device.clone());
-    let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train)
-        .batch_size(config.batch_size)
-        .build(FSRSDataset::from(trainset), config.batch_size, config.seed);
+    let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train).build(
+        FSRSDataset::from(trainset),
+        config.batch_size,
+        config.seed,
+    );
 
-    let batcher_valid = FSRSBatcher::new(device.clone());
+    let batcher_valid = FSRSBatcher::new(device);
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
         .build(FSRSDataset::from(testset.clone()));
