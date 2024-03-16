@@ -97,14 +97,14 @@ fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
         .clamp(S_MIN.into(), s)
 }
 
-struct Card {
+pub struct Card {
     pub difficulty: f64,
     pub stability: f64,
     pub last_date: f64,
     pub due: f64,
 }
 
-fn simulate(
+pub fn simulate(
     config: &SimulatorConfig,
     w: &[f64],
     desired_retention: f64,
