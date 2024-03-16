@@ -106,7 +106,7 @@ fn loss(
     logloss + l1
 }
 
-pub const INIT_S_MAX: f32 = 100.0;
+pub(crate) const INIT_S_MAX: f32 = 100.0;
 
 fn search_parameters(
     mut pretrainset: HashMap<FirstRating, Vec<AverageRecall>>,

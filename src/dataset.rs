@@ -50,7 +50,7 @@ impl FSRSItem {
     }
 }
 
-pub struct FSRSBatcher<B: Backend> {
+pub(crate) struct FSRSBatcher<B: Backend> {
     device: B::Device,
 }
 
@@ -61,7 +61,7 @@ impl<B: Backend> FSRSBatcher<B> {
 }
 
 #[derive(Debug, Clone)]
-pub struct FSRSBatch<B: Backend> {
+pub(crate) struct FSRSBatch<B: Backend> {
     pub t_historys: Tensor<B, 2, Float>,
     pub r_historys: Tensor<B, 2, Float>,
     pub delta_ts: Tensor<B, 1, Float>,
@@ -133,7 +133,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     }
 }
 
-pub struct FSRSDataset {
+pub(crate) struct FSRSDataset {
     items: Vec<FSRSItem>,
 }
 

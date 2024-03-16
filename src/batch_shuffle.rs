@@ -13,7 +13,7 @@ use std::{
 
 use crate::{dataset::FSRSDataset, FSRSItem};
 
-pub struct BatchShuffledDataset<I> {
+pub(crate) struct BatchShuffledDataset<I> {
     dataset: Arc<FSRSDataset>,
     indices: Vec<usize>,
     input: PhantomData<I>,

@@ -16,7 +16,7 @@ pub struct Model<B: Backend> {
     pub config: ModelConfig,
 }
 
-pub trait Get<B: Backend, const N: usize> {
+pub(crate) trait Get<B: Backend, const N: usize> {
     fn get(&self, n: usize) -> Tensor<B, N>;
 }
 
@@ -177,7 +177,7 @@ impl<B: Backend> Model<B> {
 }
 
 #[derive(Debug, Clone)]
-pub struct MemoryStateTensors<B: Backend> {
+pub(crate) struct MemoryStateTensors<B: Backend> {
     pub stability: Tensor<B, 1>,
     pub difficulty: Tensor<B, 1>,
 }
@@ -240,7 +240,7 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
-pub fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
+pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::new(config);
     model.w = Param::from(Tensor::from_floats(

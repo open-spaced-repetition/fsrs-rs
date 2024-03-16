@@ -166,7 +166,7 @@ impl MetricsRenderer for ProgressCollector {
 }
 
 #[derive(Config)]
-pub struct TrainingConfig {
+pub(crate) struct TrainingConfig {
     pub model: ModelConfig,
     pub optimizer: AdamConfig,
     #[config(default = 5)]
