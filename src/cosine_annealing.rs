@@ -1,6 +1,6 @@
 use burn::{lr_scheduler::LrScheduler, tensor::backend::Backend, LearningRate};
 #[derive(Clone, Debug)]
-pub(crate) struct CosineAnnealingLR {
+pub struct CosineAnnealingLR {
     t_max: f64,
     eta_min: f64,
     init_lr: LearningRate,

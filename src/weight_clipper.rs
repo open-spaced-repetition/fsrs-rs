@@ -4,7 +4,7 @@ use crate::{
 };
 use burn::tensor::{backend::Backend, Data, Tensor};
 
-pub(crate) fn weight_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 1> {
+pub fn weight_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 1> {
     let val = clip_parameters(&parameters.to_data().convert().value);
     Tensor::from_data(
         Data::new(val, parameters.shape()).convert(),
@@ -12,7 +12,7 @@ pub(crate) fn weight_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 
     )
 }
 
-pub(crate) fn clip_parameters(parameters: &Parameters) -> Vec<f32> {
+pub fn clip_parameters(parameters: &Parameters) -> Vec<f32> {
     // https://regex101.com/r/21mXNI/1
     const CLAMPS: [(f32, f32); 17] = [
         (S_MIN, INIT_S_MAX),
