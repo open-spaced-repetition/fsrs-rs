@@ -74,7 +74,7 @@ impl Dataset<FSRSItem> for BatchShuffledDataset<FSRSItem> {
 }
 
 /// A data loader that can be used to iterate over a dataset in batches.
-pub struct BatchShuffledDataLoader<I, O> {
+pub(crate) struct BatchShuffledDataLoader<I, O> {
     strategy: Box<dyn BatchStrategy<I>>,
     dataset: Arc<FSRSDataset>,
     batcher: Arc<dyn Batcher<I, O>>,
@@ -207,7 +207,7 @@ impl<I, O> DataLoaderIterator<O> for BatchShuffledDataloaderIterator<I, O> {
 }
 
 /// A builder for data loaders.
-pub struct BatchShuffledDataLoaderBuilder<I, O> {
+pub(crate) struct BatchShuffledDataLoaderBuilder<I, O> {
     batcher: Arc<dyn Batcher<I, O>>,
 }
 
