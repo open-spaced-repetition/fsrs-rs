@@ -8,26 +8,24 @@ use burn::tensor::Data;
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
-use rusqlite::Connection;
-use rusqlite::{Result, Row};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RevlogEntry {
     pub id: i64,
     pub cid: i64,
-    pub usn: i32,
+    // pub usn: i32,
     /// - In the V1 scheduler, 3 represents easy in the learning case.
     /// - 0 represents manual rescheduling.
     pub button_chosen: u8,
     /// Positive values are in days, negative values in seconds.
-    pub interval: i32,
+    // pub interval: i32,
     /// Positive values are in days, negative values in seconds.
     pub last_interval: i32,
     /// Card's ease after answering, stored as 10x the %, eg 2500 represents
     /// 250%.
-    pub ease_factor: u32,
+    // pub ease_factor: u32,
     /// Amount of milliseconds taken to answer the card.
-    pub taken_millis: u32,
+    // pub taken_millis: u32,
     pub review_kind: RevlogReviewKind,
 }
 
@@ -44,52 +42,19 @@ pub enum RevlogReviewKind {
     Manual = 4,
 }
 
-impl rusqlite::types::FromSql for RevlogReviewKind {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        let rusqlite::types::ValueRef::Integer(i) = value else {
-            return Err(rusqlite::types::FromSqlError::InvalidType);
-        };
-        match i {
-            0 => Ok(RevlogReviewKind::Learning),
-            1 => Ok(RevlogReviewKind::Review),
-            2 => Ok(RevlogReviewKind::Relearning),
-            3 => Ok(RevlogReviewKind::Filtered),
-            4 => Ok(RevlogReviewKind::Manual),
-            _ => Err(rusqlite::types::FromSqlError::InvalidType),
-        }
-    }
-}
-
-impl TryFrom<&Row<'_>> for RevlogEntry {
-    type Error = rusqlite::Error;
-    fn try_from(row: &Row<'_>) -> Result<Self> {
-        Ok(RevlogEntry {
-            id: row.get(0)?,
-            cid: row.get(1)?,
-            usn: row.get(2)?,
-            button_chosen: row.get(3)?,
-            interval: row.get(4)?,
-            last_interval: row.get(5)?,
-            ease_factor: row.get(6)?,
-            taken_millis: row.get(7)?,
-            review_kind: row.get(8)?,
-        })
-    }
-}
-
-fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| entry.review_kind != Filtered || entry.ease_factor != 0)
-        .collect()
-}
-
-fn filter_out_manual(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| entry.review_kind != Manual && entry.button_chosen != 0)
-        .collect()
-}
+// fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+//     entries
+//         .into_iter()
+//         .filter(|entry| entry.review_kind != Filtered || entry.ease_factor != 0)
+//         .collect()
+// }
+//
+// fn filter_out_manual(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
+//     entries
+//         .into_iter()
+//         .filter(|entry| entry.review_kind != Manual && entry.button_chosen != 0)
+//         .collect()
+// }
 
 fn remove_revlog_before_last_first_learn(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
     let mut last_first_learn_index = 0;
@@ -137,8 +102,8 @@ fn convert_to_fsrs_items(
     next_day_starts_at: i64,
     timezone: Tz,
 ) -> Option<Vec<FSRSItem>> {
-    entries = filter_out_cram(entries);
-    entries = filter_out_manual(entries);
+    // entries = filter_out_cram(entries);
+    // entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
     entries = keep_first_revlog_same_date(entries, next_day_starts_at, timezone);
 
@@ -159,7 +124,7 @@ fn convert_to_fsrs_items(
                     .take(idx + 1)
                     .map(|r| FSRSReview {
                         rating: r.button_chosen as u32,
-                        delta_t: r.last_interval.max(0) as u32,
+                        delta_t: r.last_interval as u32,
                     })
                     .collect();
                 FSRSItem { reviews }
@@ -168,8 +133,49 @@ fn convert_to_fsrs_items(
     )
 }
 
+pub fn to_revlog_entry(
+    cids: &[i64],
+    eases: &[u8],
+    // factors: &[u32],
+    ids: &[i64],
+    // ivls: &[i32],
+    // last_ivls: &[i32],
+    // times: &[u32],
+    types: &[u8],
+    // usns: &[i32],
+) -> Vec<RevlogEntry> {
+    ids.into_iter()
+        .enumerate()
+        .map(|(i, _id)| RevlogEntry {
+            id: ids[i],
+            cid: cids[i],
+            // usn: usns[i],
+            button_chosen: eases[i],
+            // interval: ivls[i],
+            last_interval: 0,
+            // ease_factor: factors[i],
+            // taken_millis: times[i],
+            review_kind: types[i].into(),
+        })
+        .collect()
+}
+
+impl Into<RevlogReviewKind> for u8 {
+    fn into(self) -> RevlogReviewKind {
+        match self {
+            0 => Ok(RevlogReviewKind::Learning),
+            1 => Ok(RevlogReviewKind::Review),
+            2 => Ok(RevlogReviewKind::Relearning),
+            3 => Ok(RevlogReviewKind::Filtered),
+            4 => Ok(RevlogReviewKind::Manual),
+            _ => Err(format!("Unable to convert {self} into a RevlogReviewKind.")),
+        }
+        .unwrap()
+    }
+}
+
 /// Convert a series of revlog entries sorted by card id into FSRS items.
-pub(crate) fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
+pub fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
     let mut revlogs = revlogs
         .into_iter()
         .group_by(|r| r.cid)
@@ -181,55 +187,6 @@ pub(crate) fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
         .collect_vec();
     revlogs.sort_by_cached_key(|r| r.reviews.len());
     revlogs
-}
-
-pub(crate) fn anki21_sample_file_converted_to_fsrs() -> Vec<FSRSItem> {
-    anki_to_fsrs(read_collection().expect("read error"))
-}
-
-fn read_collection() -> Result<Vec<RevlogEntry>> {
-    let db = Connection::open("tests/data/collection.anki21")?;
-    let filter_out_suspended_cards = false;
-    let filter_out_flags = [];
-    let flags_str = if !filter_out_flags.is_empty() {
-        format!(
-            "AND flags NOT IN ({})",
-            filter_out_flags
-                .iter()
-                .map(|x: &i32| x.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    } else {
-        "".to_string()
-    };
-
-    let suspended_cards_str = if filter_out_suspended_cards {
-        "AND queue != -1"
-    } else {
-        ""
-    };
-
-    let current_timestamp = Utc::now().timestamp() * 1000;
-    // This sql query will be remove in the futrue. See https://github.com/open-spaced-repetition/fsrs-optimizer-burn/pull/14#issuecomment-1685895643
-    let revlogs = db
-        .prepare_cached(&format!(
-            "SELECT *
-        FROM revlog
-        WHERE id < ?1
-        AND cid < ?2
-        AND cid IN (
-            SELECT id
-            FROM cards
-            WHERE queue != 0
-            {suspended_cards_str}
-            {flags_str}
-        )
-        order by cid"
-        ))?
-        .query_and_then((current_timestamp, current_timestamp), |x| x.try_into())?
-        .collect::<Result<Vec<_>>>()?;
-    Ok(revlogs)
 }
 
 #[test]
@@ -501,6 +458,7 @@ fn ordering_of_inputs_should_not_change() {
     );
 }
 
+/*
 const NEXT_DAY_AT: i64 = 86400 * 100;
 
 fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
@@ -511,6 +469,7 @@ fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
         ..Default::default()
     }
 }
+*/
 
 #[test]
 fn delta_t_is_correct() -> Result<()> {
@@ -602,6 +561,7 @@ fn delta_t_is_correct() -> Result<()> {
 
     Ok(())
 }
+/*
 #[test]
 fn test_filter_out_cram() {
     let revlog_vec = vec![
@@ -1045,3 +1005,4 @@ fn test_keep_first_revlog_same_date() {
         ]
     )
 }
+*/

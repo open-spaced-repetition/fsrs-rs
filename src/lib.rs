@@ -1,7 +1,6 @@
 #![allow(clippy::single_range_in_vec_init)]
 
 mod batch_shuffle;
-#[cfg(test)]
 mod convertor_tests;
 mod cosine_annealing;
 mod dataset;
@@ -10,11 +9,11 @@ mod inference;
 mod model;
 mod optimal_retention;
 mod pre_training;
-#[cfg(test)]
 mod test_helpers;
 mod training;
 mod weight_clipper;
 
+pub use convertor_tests::{anki_to_fsrs, to_revlog_entry};
 pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
 pub use inference::{
