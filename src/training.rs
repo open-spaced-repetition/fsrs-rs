@@ -173,8 +173,6 @@ pub(crate) struct TrainingConfig {
     pub num_epochs: usize,
     #[config(default = 512)]
     pub batch_size: usize,
-    #[config(default = 1)]
-    pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
     #[config(default = 4e-2)]
