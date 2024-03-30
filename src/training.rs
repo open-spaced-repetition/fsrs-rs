@@ -515,10 +515,10 @@ mod tests {
         dbg!(average_recall);
         let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
         dbg!(initial_stability);
-        let pretrained_parameters = initial_stability
+        let pretrained_parameters: Vec<f32> = initial_stability
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-            .collect_vec();
+            .collect();
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,
