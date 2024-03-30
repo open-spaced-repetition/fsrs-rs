@@ -226,7 +226,7 @@ impl<B: Backend> FSRS<B> {
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
-        if pre_trainset.len() + testset.len() < 32 || testset.len() == 0 {
+        if pre_trainset.len() + testset.len() < 32 || testset.is_empty() {
             finish_progress();
             return Ok(pretrained_parameters);
         }
