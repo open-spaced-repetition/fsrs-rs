@@ -222,13 +222,33 @@ impl<B: Backend> FSRS<B> {
             finish_progress();
             e
         })?;
-        let pretrained_parameters = initial_stability
+        let pretrained_parameters: Vec<f32> = initial_stability
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
-        if pre_trainset.len() + testset.len() < 32 || testset.is_empty() {
+        if testset.is_empty() {
             finish_progress();
             return Ok(pretrained_parameters);
+        }
+
+        let pretrained_fsrs = FSRS::new(Some(&pretrained_parameters)).unwrap();
+        let pretrained_rmse = pretrained_fsrs
+            .evaluate(testset.clone(), |_| true)
+            .unwrap()
+            .rmse_bins;
+        let default_fsrs = FSRS::new(None).unwrap();
+        let default_rmse = default_fsrs
+            .evaluate(testset.clone(), |_| true)
+            .unwrap()
+            .rmse_bins;
+        let (best_parameters, best_rmse) = if pretrained_rmse < default_rmse {
+            (pretrained_parameters.clone(), pretrained_rmse)
+        } else {
+            (DEFAULT_PARAMETERS.to_vec(), default_rmse)
+        };
+        if pre_trainset.len() + testset.len() < 32 {
+            finish_progress();
+            return Ok(best_parameters);
         }
 
         let config = TrainingConfig::new(
@@ -299,20 +319,15 @@ impl<B: Backend> FSRS<B> {
             return Err(FSRSError::InvalidInput);
         }
 
-        let pretrained_fsrs = FSRS::new(Some(&pretrained_parameters)).unwrap();
-        let pretrained_rmse = pretrained_fsrs
-            .evaluate(testset.clone(), |_| true)
-            .unwrap()
-            .rmse_bins;
         let optimized_fsrs = FSRS::new(Some(&average_parameters)).unwrap();
         let optimized_rmse = optimized_fsrs
             .evaluate(testset, |_| true)
             .unwrap()
             .rmse_bins;
-        if optimized_rmse < pretrained_rmse {
+        if optimized_rmse < best_rmse {
             Ok(average_parameters)
         } else {
-            Ok(pretrained_parameters)
+            Ok(best_parameters)
         }
     }
 
