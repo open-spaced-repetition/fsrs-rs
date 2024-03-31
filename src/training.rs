@@ -501,26 +501,6 @@ mod tests {
         dbg!(average_recall);
         let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
         dbg!(initial_stability);
-        let pretrained_parameters: Vec<f32> = initial_stability
-            .into_iter()
-            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-            .collect();
-        let pretrained_fsrs = FSRS::new(Some(&pretrained_parameters)).unwrap();
-        let pretrained_rmse = pretrained_fsrs
-            .evaluate(testset.clone(), |_| true)
-            .unwrap()
-            .rmse_bins;
-        let default_fsrs = FSRS::new(Some(&[])).unwrap();
-        let default_rmse = default_fsrs
-            .evaluate(testset.clone(), |_| true)
-            .unwrap()
-            .rmse_bins;
-        let (best_parameters, best_rmse) = if pretrained_rmse < default_rmse {
-            (pretrained_parameters.clone(), pretrained_rmse)
-        } else {
-            (DEFAULT_PARAMETERS.to_vec(), default_rmse)
-        };
-        dbg!(best_parameters);
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,
@@ -591,7 +571,6 @@ mod tests {
             .evaluate(testset, |_| true)
             .unwrap()
             .rmse_bins;
-        dbg!(best_rmse);
         dbg!(optimized_rmse);
     }
 }
