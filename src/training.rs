@@ -226,29 +226,9 @@ impl<B: Backend> FSRS<B> {
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
-        if testset.is_empty() {
+        if testset.is_empty() || pre_trainset.len() + testset.len() < 64 {
             finish_progress();
             return Ok(pretrained_parameters);
-        }
-
-        let pretrained_fsrs = FSRS::new(Some(&pretrained_parameters)).unwrap();
-        let pretrained_rmse = pretrained_fsrs
-            .evaluate(testset.clone(), |_| true)
-            .unwrap()
-            .rmse_bins;
-        let default_fsrs = FSRS::new(Some(&[])).unwrap();
-        let default_rmse = default_fsrs
-            .evaluate(testset.clone(), |_| true)
-            .unwrap()
-            .rmse_bins;
-        let (best_parameters, best_rmse) = if pretrained_rmse < default_rmse {
-            (pretrained_parameters.clone(), pretrained_rmse)
-        } else {
-            (DEFAULT_PARAMETERS.to_vec(), default_rmse)
-        };
-        if pre_trainset.len() + testset.len() < 32 {
-            finish_progress();
-            return Ok(best_parameters);
         }
 
         let config = TrainingConfig::new(
@@ -319,16 +299,7 @@ impl<B: Backend> FSRS<B> {
             return Err(FSRSError::InvalidInput);
         }
 
-        let optimized_fsrs = FSRS::new(Some(&average_parameters)).unwrap();
-        let optimized_rmse = optimized_fsrs
-            .evaluate(testset, |_| true)
-            .unwrap()
-            .rmse_bins;
-        if optimized_rmse < best_rmse {
-            Ok(average_parameters)
-        } else {
-            Ok(best_parameters)
-        }
+        Ok(average_parameters)
     }
 
     pub fn benchmark(&self, train_set: Vec<FSRSItem>, test_set: Vec<FSRSItem>) -> Vec<f32> {
