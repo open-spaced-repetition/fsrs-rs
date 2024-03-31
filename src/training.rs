@@ -198,7 +198,6 @@ impl<B: Backend> FSRS<B> {
     pub fn compute_parameters(
         &self,
         items: Vec<FSRSItem>,
-        pretrain_only: bool,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
@@ -214,18 +213,24 @@ impl<B: Backend> FSRS<B> {
         let n_splits = 5;
         let average_recall = calculate_average_recall(&items);
         let (pre_trainset, trainsets, testset) = split_data(items, n_splits);
-        let initial_stability = pretrain(pre_trainset, average_recall).map_err(|e| {
+        if pre_trainset.len() + testset.len() < 8 {
+            finish_progress();
+            return Ok(DEFAULT_PARAMETERS.to_vec());
+        }
+
+        let initial_stability = pretrain(pre_trainset.clone(), average_recall).map_err(|e| {
             finish_progress();
             e
         })?;
-        if pretrain_only {
+        let pretrained_parameters: Vec<f32> = initial_stability
+            .into_iter()
+            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
+            .collect();
+        if testset.is_empty() || pre_trainset.len() + testset.len() < 64 {
             finish_progress();
-            let parameters = initial_stability
-                .into_iter()
-                .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-                .collect();
-            return Ok(parameters);
+            return Ok(pretrained_parameters);
         }
+
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: true,
@@ -490,6 +495,8 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
         let (pre_trainset, trainsets, testset) = split_data(items.clone(), n_splits);
         let items = [pre_trainset.clone(), testset.clone()].concat();
+        dbg!(pre_trainset.len());
+        dbg!(testset.len());
         let average_recall = calculate_average_recall(&items);
         dbg!(average_recall);
         let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
@@ -506,7 +513,7 @@ mod tests {
         thread::spawn(move || {
             let mut finished = false;
             while !finished {
-                thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(1000));
                 let guard = progress.lock().unwrap();
                 finished = guard.finished();
                 println!("progress: {}/{}", guard.current(), guard.total());
@@ -559,9 +566,11 @@ mod tests {
             .map(|&sum| sum / n_splits as f32)
             .collect();
         dbg!(&average_parameters);
-
-        let fsrs = FSRS::new(Some(&average_parameters)).unwrap();
-        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
-        dbg!(&metrics);
+        let optimized_fsrs = FSRS::new(Some(&average_parameters)).unwrap();
+        let optimized_rmse = optimized_fsrs
+            .evaluate(testset, |_| true)
+            .unwrap()
+            .rmse_bins;
+        dbg!(optimized_rmse);
     }
 }
