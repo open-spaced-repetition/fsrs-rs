@@ -7,6 +7,7 @@ use crate::pre_training::pretrain;
 use crate::weight_clipper::weight_clipper;
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
+use wasm_bindgen::prelude::*;
 
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::lr_scheduler::LrScheduler;
@@ -88,16 +89,38 @@ pub struct ProgressState {
     pub items_total: usize,
 }
 
+#[wasm_bindgen]
+#[derive(Default, Debug)]
+pub struct Progress {
+    vec: Vec<u32>,
+}
+
+#[wasm_bindgen]
+impl Progress {
+    // The progress vec is length 2. Grep 2291AF52-BEE4-4D54-BAD0-6492DFE368D8
+    pub fn new() -> Progress {
+        Progress { vec: vec![0; 2] }
+    }
+
+    /// Memory will hold [items_processed, items_total]
+    pub fn pointer(&self) -> *const u32 {
+        self.vec.as_ptr()
+    }
+}
+
 #[derive(Default)]
 pub struct CombinedProgressState {
     pub want_abort: bool,
     pub splits: Vec<ProgressState>,
     finished: bool,
+    pub progress: Progress,
 }
 
 impl CombinedProgressState {
-    pub fn new_shared() -> Arc<Mutex<Self>> {
-        Default::default()
+    pub fn new_shared(progress: Option<Progress>) -> Arc<Mutex<Self>> {
+        let r: Arc<Mutex<CombinedProgressState>> = Default::default();
+        r.lock().unwrap().progress = progress.expect("Should only be used from WASM.");
+        r
     }
 
     pub fn current(&self) -> usize {
@@ -153,6 +176,11 @@ impl MetricsRenderer for ProgressCollector {
         split.epoch_total = item.epoch_total;
         split.items_processed = item.progress.items_processed;
         split.items_total = item.progress.items_total;
+        // The progress vec is length 2. Grep 2291AF52-BEE4-4D54-BAD0-6492DFE368D8
+        info.progress.vec[0] = info.current() as u32;
+        if info.progress.vec[1] == 0 {
+            info.progress.vec[1] = info.total() as u32;
+        }
         if info.want_abort {
             self.interrupter.stop();
         }
@@ -467,7 +495,7 @@ mod tests {
                 .unwrap();
         }
         let items = anki21_sample_file_converted_to_fsrs();
-        let progress = CombinedProgressState::new_shared();
+        let progress = CombinedProgressState::new_shared(None);
         let progress2 = Some(progress.clone());
         thread::spawn(move || {
             let mut finished = false;
