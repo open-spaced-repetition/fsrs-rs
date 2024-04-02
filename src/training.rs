@@ -1,6 +1,6 @@
 use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{split_data, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{split_filter_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
@@ -21,10 +21,6 @@ use burn::train::TrainingInterrupter;
 use burn::{config::Config, module::Param, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
-
-use rayon::prelude::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
-};
 
 use std::sync::{Arc, Mutex};
 
@@ -197,7 +193,7 @@ impl<B: Backend> FSRS<B> {
     /// Calculate appropriate parameters for the provided review history.
     pub fn compute_parameters(
         &self,
-        items: Vec<FSRSItem>,
+        train_set: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
@@ -210,15 +206,14 @@ impl<B: Backend> FSRS<B> {
             }
         };
 
-        let n_splits = 5;
-        let average_recall = calculate_average_recall(&items);
-        let (pre_trainset, trainsets, testset) = split_data(items, n_splits);
-        if pre_trainset.len() + testset.len() < 8 {
+        let average_recall = calculate_average_recall(&train_set);
+        let (pre_train_set, next_train_set) = split_filter_data(train_set);
+        if pre_train_set.len() + next_train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
         }
 
-        let initial_stability = pretrain(pre_trainset.clone(), average_recall).map_err(|e| {
+        let initial_stability = pretrain(pre_train_set.clone(), average_recall).map_err(|e| {
             finish_progress();
             e
         })?;
@@ -226,7 +221,7 @@ impl<B: Backend> FSRS<B> {
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
-        if testset.is_empty() || pre_trainset.len() + testset.len() < 64 {
+        if next_train_set.is_empty() || pre_train_set.len() + next_train_set.len() < 64 {
             finish_progress();
             return Ok(pretrained_parameters);
         }
@@ -239,70 +234,48 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new(),
         );
 
-        let trainsets: Vec<Vec<FSRSItem>> = (0..n_splits)
-            .into_par_iter()
-            .map(|i| {
-                trainsets
-                    .iter()
-                    .enumerate()
-                    .filter(|&(j, _)| j != i)
-                    .flat_map(|(_, trainset)| trainset.clone())
-                    .collect()
-            })
-            .collect();
-
         if let Some(progress) = &progress {
-            let mut progress_states = vec![ProgressState::default(); n_splits];
-            for (i, progress_state) in progress_states.iter_mut().enumerate() {
-                progress_state.epoch_total = config.num_epochs;
-                progress_state.items_total = trainsets[i].len();
-            }
-            progress.lock().unwrap().splits = progress_states
+            let progress_state = ProgressState {
+                epoch_total: config.num_epochs,
+                items_total: next_train_set.len(),
+                epoch: 0,
+                items_processed: 0,
+            };
+            progress.lock().unwrap().splits = vec![progress_state];
         }
 
-        let weight_sets: Result<Vec<Vec<f32>>> = trainsets
-            .into_par_iter()
-            .enumerate()
-            .map(|(idx, trainset)| {
-                let model = train::<Autodiff<B>>(
-                    trainset,
-                    testset.clone(),
-                    &config,
-                    self.device(),
-                    progress.clone().map(|p| ProgressCollector::new(p, idx)),
-                );
-                Ok(model
-                    .map_err(|e| {
-                        finish_progress();
-                        e
-                    })?
-                    .w
-                    .val()
-                    .to_data()
-                    .convert()
-                    .value)
-            })
-            .collect();
+        let model = train::<Autodiff<B>>(
+            next_train_set.clone(),
+            next_train_set,
+            &config,
+            self.device(),
+            progress.clone().map(|p| ProgressCollector::new(p, 0)),
+        );
+
+        let optimized_parameters = model
+            .map_err(|e| {
+                finish_progress();
+                e
+            })?
+            .w
+            .val()
+            .to_data()
+            .convert()
+            .value;
+
         finish_progress();
 
-        let weight_sets = weight_sets?;
-        let average_parameters: Vec<f32> = weight_sets
+        if optimized_parameters
             .iter()
-            .fold(vec![0.0; weight_sets[0].len()], |sum, parameters| {
-                sum.par_iter().zip(parameters).map(|(a, b)| a + b).collect()
-            })
-            .par_iter()
-            .map(|&sum| sum / n_splits as f32)
-            .collect();
-
-        if average_parameters.iter().any(|weight| weight.is_infinite()) {
+            .any(|weight: &f32| weight.is_infinite())
+        {
             return Err(FSRSError::InvalidInput);
         }
 
-        Ok(average_parameters)
+        Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, train_set: Vec<FSRSItem>, test_set: Vec<FSRSItem>) -> Vec<f32> {
+    pub fn benchmark(&self, train_set: Vec<FSRSItem>) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, next_train_set) = train_set
             .into_iter()
@@ -315,15 +288,21 @@ impl<B: Backend> FSRS<B> {
             },
             AdamConfig::new(),
         );
-        let model = train::<Autodiff<B>>(next_train_set, test_set, &config, self.device(), None);
+        let model = train::<Autodiff<B>>(
+            next_train_set.clone(),
+            next_train_set,
+            &config,
+            self.device(),
+            None,
+        );
         let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
         parameters
     }
 }
 
 fn train<B: AutodiffBackend>(
-    trainset: Vec<FSRSItem>,
-    testset: Vec<FSRSItem>,
+    train_set: Vec<FSRSItem>,
+    test_set: Vec<FSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
     progress: Option<ProgressCollector>,
@@ -331,10 +310,10 @@ fn train<B: AutodiffBackend>(
     B::seed(config.seed);
 
     // Training data
-    let iterations = (trainset.len() / config.batch_size + 1) * config.num_epochs;
+    let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
     let batcher_train = FSRSBatcher::<B>::new(device.clone());
     let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train).build(
-        FSRSDataset::from(trainset),
+        FSRSDataset::from(train_set),
         config.batch_size,
         config.seed,
     );
@@ -342,7 +321,7 @@ fn train<B: AutodiffBackend>(
     let batcher_valid = FSRSBatcher::new(device);
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
         .batch_size(config.batch_size)
-        .build(FSRSDataset::from(testset.clone()));
+        .build(FSRSDataset::from(test_set.clone()));
 
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let interrupter = TrainingInterrupter::new();
@@ -414,7 +393,7 @@ fn train<B: AutodiffBackend>(
                 break;
             }
         }
-        loss_valid /= testset.len() as f64;
+        loss_valid /= test_set.len() as f64;
         info!("epoch: {:?} loss: {:?}", epoch, loss_valid);
         if loss_valid < best_loss {
             best_loss = loss_valid;
@@ -452,9 +431,6 @@ mod tests {
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
-    use crate::pre_training::pretrain;
-    use crate::test_helpers::NdArrayAutodiff;
-    use burn::backend::ndarray::NdArrayDevice;
     use log::LevelFilter;
 
     #[test]
@@ -490,24 +466,7 @@ mod tests {
                 .apply()
                 .unwrap();
         }
-        let n_splits = 5;
-        let device = NdArrayDevice::Cpu;
         let items = anki21_sample_file_converted_to_fsrs();
-        let (pre_trainset, trainsets, testset) = split_data(items.clone(), n_splits);
-        let items = [pre_trainset.clone(), testset.clone()].concat();
-        dbg!(pre_trainset.len());
-        dbg!(testset.len());
-        let average_recall = calculate_average_recall(&items);
-        dbg!(average_recall);
-        let initial_stability = pretrain(pre_trainset, average_recall).unwrap();
-        dbg!(initial_stability);
-        let config = TrainingConfig::new(
-            ModelConfig {
-                freeze_stability: true,
-                initial_stability: Some(initial_stability),
-            },
-            AdamConfig::new(),
-        );
         let progress = CombinedProgressState::new_shared();
         let progress2 = Some(progress.clone());
         thread::spawn(move || {
@@ -520,57 +479,8 @@ mod tests {
             }
         });
 
-        let trainsets: Vec<Vec<FSRSItem>> = (0..n_splits)
-            .into_par_iter()
-            .map(|i| {
-                trainsets
-                    .par_iter()
-                    .enumerate()
-                    .filter(|&(j, _)| j != i)
-                    .flat_map(|(_, trainset)| trainset.clone())
-                    .collect()
-            })
-            .collect();
-
-        if let Some(progress2) = &progress2 {
-            let mut progress_states = vec![ProgressState::default(); n_splits];
-            for (i, progress_state) in progress_states.iter_mut().enumerate() {
-                progress_state.epoch_total = config.num_epochs;
-                progress_state.items_total = trainsets[i].len();
-            }
-            progress2.lock().unwrap().splits = progress_states
-        }
-
-        let parameters_sets: Vec<Vec<f32>> = (0..n_splits)
-            .into_par_iter()
-            .map(|i| {
-                let model = train::<NdArrayAutodiff>(
-                    trainsets[i].clone(),
-                    items.clone(),
-                    &config,
-                    device,
-                    progress2.clone().map(|p| ProgressCollector::new(p, i)),
-                );
-                model.unwrap().w.val().to_data().convert().value
-            })
-            .collect();
-
-        dbg!(&parameters_sets);
-
-        let average_parameters: Vec<f32> = parameters_sets
-            .iter()
-            .fold(vec![0.0; parameters_sets[0].len()], |sum, parameters| {
-                sum.par_iter().zip(parameters).map(|(a, b)| a + b).collect()
-            })
-            .par_iter()
-            .map(|&sum| sum / n_splits as f32)
-            .collect();
-        dbg!(&average_parameters);
-        let optimized_fsrs = FSRS::new(Some(&average_parameters)).unwrap();
-        let optimized_rmse = optimized_fsrs
-            .evaluate(testset, |_| true)
-            .unwrap()
-            .rmse_bins;
-        dbg!(optimized_rmse);
+        let fsrs = FSRS::new(Some(&[])).unwrap();
+        let parameters = fsrs.compute_parameters(items, progress2).unwrap();
+        dbg!(&parameters);
     }
 }
