@@ -1,6 +1,7 @@
 name: Check code
 on:
   pull_request:
+    branches: [ "main" ]
 
 jobs:
   build-linux:
