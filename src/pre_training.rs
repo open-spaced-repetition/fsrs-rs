@@ -272,6 +272,8 @@ mod tests {
     use burn::tensor::Data;
 
     use super::*;
+    use crate::dataset::filter_outlier;
+    use crate::training::calculate_average_recall;
 
     #[test]
     fn test_power_forgetting_curve() {
@@ -334,6 +336,21 @@ mod tests {
         let actual = search_parameters(pretrainset, 0.9430285915990116);
         Data::from([*actual.get(&first_rating).unwrap()])
             .assert_approx_eq(&Data::from([1.017_056]), 6);
+    }
+
+    #[test]
+    fn test_pretrain() {
+        use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
+        let items = anki21_sample_file_converted_to_fsrs();
+        let (mut pretrainset, mut trainset) =
+            items.into_iter().partition(|item| item.reviews.len() == 2);
+        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+        let items = [pretrainset.clone(), trainset].concat();
+        let average_recall = calculate_average_recall(&items);
+        Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
+            &Data::from([1.017_056, 1.829_625, 4.414_563, 10.935_500]),
+            6,
+        )
     }
 
     #[test]

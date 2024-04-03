@@ -264,3 +264,197 @@ where
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{convertor_tests::anki21_sample_file_converted_to_fsrs, FSRSItem, FSRSReview};
+
+    #[test]
+    fn batch_shuffle() {
+        use crate::dataset::FSRSDataset;
+        let dataset = Arc::new(FSRSDataset::from(anki21_sample_file_converted_to_fsrs()));
+        let batch_size = 10;
+        let seed = 42;
+        let batch_shuffled_dataset = BatchShuffledDataset::with_seed(dataset, batch_size, seed);
+        assert_eq!(
+            (0..batch_shuffled_dataset.len().min(batch_size))
+                .map(|i| batch_shuffled_dataset.get(i).unwrap())
+                .collect::<Vec<_>>(),
+            [
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        }
+                    ]
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 1,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 3,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 10,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 4,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 4,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 5,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 11,
+                        }
+                    ],
+                },
+                FSRSItem {
+                    reviews: vec![
+                        FSRSReview {
+                            rating: 4,
+                            delta_t: 0,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 1,
+                        },
+                        FSRSReview {
+                            rating: 3,
+                            delta_t: 3,
+                        }
+                    ],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn item_shuffle() {
+        use crate::dataset::FSRSDataset;
+        use burn::data::dataset::transform::ShuffledDataset;
+        let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
+        let seed = 42;
+        let shuffled_dataset = ShuffledDataset::with_seed(dataset, seed);
+        for i in 0..shuffled_dataset.len().min(10) {
+            dbg!(shuffled_dataset.get(i).unwrap());
+        }
+    }
+}
