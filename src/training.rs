@@ -113,13 +113,13 @@ pub struct CombinedProgressState {
     pub want_abort: bool,
     pub splits: Vec<ProgressState>,
     finished: bool,
-    pub progress: Progress,
+    pub progress: Option<Progress>,
 }
 
 impl CombinedProgressState {
     pub fn new_shared(progress: Option<Progress>) -> Arc<Mutex<Self>> {
         let r: Arc<Mutex<CombinedProgressState>> = Default::default();
-        r.lock().unwrap().progress = progress.expect("Should only be used from WASM.");
+        r.lock().unwrap().progress = progress;
         r
     }
 
@@ -177,9 +177,11 @@ impl MetricsRenderer for ProgressCollector {
         split.items_processed = item.progress.items_processed;
         split.items_total = item.progress.items_total;
         // The progress vec is length 2. Grep 2291AF52-BEE4-4D54-BAD0-6492DFE368D8
-        info.progress.vec[0] = info.current() as u32;
-        if info.progress.vec[1] == 0 {
-            info.progress.vec[1] = info.total() as u32;
+        if info.progress.is_some() {
+            info.progress.as_mut().unwrap().vec[0] = info.current() as u32;
+            if info.progress.as_mut().unwrap().vec[1] == 0 {
+                info.progress.as_mut().unwrap().vec[1] = info.total() as u32;
+            }
         }
         if info.want_abort {
             self.interrupter.stop();
