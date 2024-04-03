@@ -25,6 +25,8 @@ default-features = false
 features = ["std", "train", "ndarray", "autodiff", "wasm-sync", "browser"]
 
 [dependencies]
+chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.8.4"
 itertools = "0.12.0"
 log = "0.4"
 ndarray = "0.15.6"
@@ -34,6 +36,4 @@ rayon = "1.8.0"
 serde = "1.0.193"
 snafu = "0.8.0"
 strum = { version = "0.26.1", features = ["derive"] }
-chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }
-chrono-tz = "0.8.4"
 wasm-bindgen = "0.2.91"
