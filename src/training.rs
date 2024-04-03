@@ -176,8 +176,8 @@ impl MetricsRenderer for ProgressCollector {
         split.epoch_total = item.epoch_total;
         split.items_processed = item.progress.items_processed;
         split.items_total = item.progress.items_total;
-        // The progress vec is length 2. Grep 2291AF52-BEE4-4D54-BAD0-6492DFE368D8
         if info.progress.is_some() {
+            // The progress vec is length 2. Grep 2291AF52-BEE4-4D54-BAD0-6492DFE368D8
             info.progress.as_mut().unwrap().vec[0] = info.current() as u32;
             if info.progress.as_mut().unwrap().vec[1] == 0 {
                 info.progress.as_mut().unwrap().vec[1] = info.total() as u32;
