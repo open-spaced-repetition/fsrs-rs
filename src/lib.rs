@@ -9,6 +9,7 @@ mod inference;
 mod model;
 mod optimal_retention;
 mod pre_training;
+#[cfg(test)]
 mod test_helpers;
 mod training;
 mod weight_clipper;
@@ -22,3 +23,4 @@ pub use inference::{
 pub use model::FSRS;
 pub use optimal_retention::{simulate, Card, SimulatorConfig};
 pub use training::CombinedProgressState;
+pub use training::Progress;

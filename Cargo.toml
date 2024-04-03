@@ -13,23 +13,20 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies.burn]
 # version = "0.11.1"
-# git = "https://github.com/burn-rs/burn.git"
-# rev = "d2639682367f39d0d0ed049d0cf3a2077259e05d"
-path = "../burn/burn"
+git = "https://github.com/open-spaced-repetition/burn.git"
+rev = "404858e4db95c8f6ecd1d50d274aaf223c7bc1a7"
+# path = "../burn/burn"
 default-features = false
 features = ["std", "train", "ndarray", "autodiff", "wasm-sync", "browser"]
 
-[dev-dependencies.burn]
-# version = "0.11.1"
-# git = "https://github.com/burn-rs/burn.git"
-# rev = "d2639682367f39d0d0ed049d0cf3a2077259e05d"
-path = "../burn/burn"
-default-features = false
-features = ["std", "train", "ndarray", "sqlite-bundled"]
-
 [dependencies]
+chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.8.4"
 itertools = "0.12.0"
 log = "0.4"
 ndarray = "0.15.6"
@@ -39,15 +36,4 @@ rayon = "1.8.0"
 serde = "1.0.193"
 snafu = "0.8.0"
 strum = { version = "0.26.1", features = ["derive"] }
-chrono = { version = "0.4.31", default-features = false, features = ["std", "clock"] }
-chrono-tz = "0.8.4"
 wasm-bindgen = "0.2.91"
-
-[dev-dependencies]
-criterion = { version = "0.5.1" }
-fern = "0.6.0"
-rusqlite = { version = "0.30.0" }
-
-[[bench]]
-name = "benchmark"
-harness = false

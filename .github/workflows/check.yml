@@ -8,6 +8,16 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2023-12-21
+          components: rustfmt,clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Add rust-src
+        run: rustup component add rust-src --toolchain nightly-2023-12-21-x86_64-unknown-linux-gnu
+
       - name: Rust Cache
         uses: actions/cache@v3
         with:
@@ -29,6 +39,16 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2023-12-21
+          components: rustfmt,clippy
+          targets: wasm32-unknown-unknown
+        
+      - name: Add rust-src
+        run: rustup component add rust-src --toolchain nightly-2023-12-21-x86_64-apple-darwin
+
       - name: Rust Cache
         uses: actions/cache@v3
         with:
@@ -48,6 +68,16 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2023-12-21
+          components: rustfmt,clippy
+          targets: wasm32-unknown-unknown
+        
+      - name: Add rust-src
+        run: rustup component add rust-src --toolchain nightly-2023-12-21-x86_64-pc-windows-msvc
 
       - name: Rust Cache
         uses: actions/cache@v3
