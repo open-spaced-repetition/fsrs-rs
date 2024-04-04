@@ -1,0 +1,40 @@
+name: Auto merge main into fsrs-browser
+# Run on push to fsrs-browser to make CI pass when there's a merge conflict and manual merging is required.
+on:
+  push:
+    branches:
+      - 'fsrs-browser'
+  release:
+    types: [published]
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Compute tag
+      id: compute-tag
+      run: |
+        set -e
+        TAG=$(cat Cargo.toml \
+          | grep --extended-regexp "^version =" \
+          | grep --extended-regexp --only-matching "[0-9]+\.[0-9]+.[0-9]+[-\.\+a-zA-Z0-9]*" \
+          | head --lines=1)
+        echo "tag=v$TAG" >> "$GITHUB_OUTPUT"
+
+    - name: Set Git config
+      run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "Github Actions"
+
+    - name: Merge main into fsrs-browser
+      env:
+        TAG: ${{ steps.compute-tag.outputs.tag }}
+      run: |
+          git fetch --unshallow
+          git checkout fsrs-browser
+          git pull
+          git merge main -m "Auto-merge for $TAG"
+          git push
