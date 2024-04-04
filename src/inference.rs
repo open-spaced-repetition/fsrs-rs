@@ -380,7 +380,9 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FSRSReview;
+    use crate::{
+        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier, FSRSReview,
+    };
 
     static PARAMETERS: &[f32] = &[
         1.0171, 1.8296, 4.4145, 10.9355, 5.0965, 1.3322, 1.017, 0.0, 1.6243, 0.1369, 1.0321,
@@ -465,6 +467,35 @@ mod tests {
             .map(|r| next_interval(1.0, *r))
             .collect::<Vec<_>>();
         assert_eq!(intervals, [422, 102, 43, 22, 13, 8, 4, 2, 1, 1]);
+    }
+
+    #[test]
+    fn test_evaluate() -> Result<()> {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) =
+            items.into_iter().partition(|item| item.reviews.len() == 2);
+        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+        let items = [pretrainset, trainset].concat();
+        let fsrs = FSRS::new(Some(&[]))?;
+
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+
+        Data::from([metrics.log_loss, metrics.rmse_bins])
+            .assert_approx_eq(&Data::from([0.203_888, 0.029_732]), 5);
+
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+
+        Data::from([metrics.log_loss, metrics.rmse_bins])
+            .assert_approx_eq(&Data::from([0.202_188, 0.021_781]), 5);
+
+        let (self_by_other, other_by_self) = fsrs
+            .universal_metrics(items, &DEFAULT_PARAMETERS, |_| true)
+            .unwrap();
+
+        Data::from([self_by_other, other_by_self])
+            .assert_approx_eq(&Data::from([0.014_089, 0.016_483]), 5);
+        Ok(())
     }
 
     #[test]

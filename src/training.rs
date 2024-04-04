@@ -451,3 +451,66 @@ impl MetricsRenderer for NoProgress {
 
     fn render_valid(&mut self, _item: TrainingProgress) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs::create_dir_all;
+    use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
+    use log::LevelFilter;
+
+    #[test]
+    fn test_calculate_average_recall() {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let average_recall = calculate_average_recall(&items);
+        assert_eq!(average_recall, 0.9435269);
+    }
+
+    #[test]
+    fn training() {
+        if std::env::var("SKIP_TRAINING").is_ok() {
+            println!("Skipping test in CI");
+            return;
+        }
+
+        let artifact_dir = std::env::var("BURN_LOG");
+
+        if let Ok(artifact_dir) = artifact_dir {
+            let _ = create_dir_all(&artifact_dir);
+            let log_file = Path::new(&artifact_dir).join("training.log");
+            fern::Dispatch::new()
+                .format(|out, message, record| {
+                    out.finish(format_args!(
+                        "[{}][{}] {}",
+                        record.target(),
+                        record.level(),
+                        message
+                    ))
+                })
+                .level(LevelFilter::Info)
+                .chain(fern::log_file(log_file).unwrap())
+                .apply()
+                .unwrap();
+        }
+        let items = anki21_sample_file_converted_to_fsrs();
+        let progress = CombinedProgressState::new_shared(None);
+        let progress2 = Some(progress.clone());
+        thread::spawn(move || {
+            let mut finished = false;
+            while !finished {
+                thread::sleep(Duration::from_millis(1000));
+                let guard = progress.lock().unwrap();
+                finished = guard.finished();
+                println!("progress: {}/{}", guard.current(), guard.total());
+            }
+        });
+
+        let fsrs = FSRS::new(Some(&[])).unwrap();
+        let parameters = fsrs.compute_parameters(items, progress2).unwrap();
+        dbg!(&parameters);
+    }
+}

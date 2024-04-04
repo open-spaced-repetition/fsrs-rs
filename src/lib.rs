@@ -9,7 +9,6 @@ mod inference;
 mod model;
 mod optimal_retention;
 mod pre_training;
-#[cfg(test)]
 mod test_helpers;
 mod training;
 mod weight_clipper;
