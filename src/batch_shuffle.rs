@@ -1,6 +1,7 @@
 use burn::data::{
     dataloader::{
-        batcher::Batcher, BatchStrategy, DataLoader, DataLoaderIterator, FixBatchStrategy, Progress,
+        batcher::DynBatcher, BatchStrategy, DataLoader, DataLoaderIterator, FixBatchStrategy,
+        Progress,
     },
     dataset::Dataset,
 };
@@ -77,7 +78,7 @@ impl Dataset<FSRSItem> for BatchShuffledDataset<FSRSItem> {
 pub struct BatchShuffledDataLoader<I, O> {
     strategy: Box<dyn BatchStrategy<I>>,
     dataset: Arc<FSRSDataset>,
-    batcher: Arc<dyn Batcher<I, O>>,
+    batcher: Box<dyn DynBatcher<I, O>>,
     rng: Mutex<rand::rngs::StdRng>,
     batch_size: usize,
 }
@@ -99,7 +100,7 @@ impl<I, O> BatchShuffledDataLoader<I, O> {
     pub fn new(
         strategy: Box<dyn BatchStrategy<I>>,
         dataset: Arc<FSRSDataset>,
-        batcher: Arc<dyn Batcher<I, O>>,
+        batcher: Box<dyn DynBatcher<I, O>>,
         rng: rand::rngs::StdRng,
         batch_size: usize,
     ) -> Self {
@@ -118,11 +119,10 @@ struct BatchShuffledDataloaderIterator<I, O> {
     current_index: usize,
     strategy: Box<dyn BatchStrategy<I>>,
     dataset: Arc<dyn Dataset<I>>,
-    batcher: Arc<dyn Batcher<I, O>>,
+    batcher: Box<dyn DynBatcher<I, O>>,
 }
 
-impl<I: Send + Sync + Clone + 'static, O: Send + Sync> DataLoader<O>
-    for BatchShuffledDataLoader<I, O>
+impl<I: Send + Sync + Clone + 'static, O: Send> DataLoader<O> for BatchShuffledDataLoader<I, O>
 where
     BatchShuffledDataset<I>: Dataset<I>,
 {
@@ -136,9 +136,9 @@ where
             self.rng.lock().unwrap().sample(Standard),
         ));
         Box::new(BatchShuffledDataloaderIterator::new(
-            self.strategy.new_like(),
+            self.strategy.clone_dyn(),
             dataset,
-            self.batcher.clone(),
+            self.batcher.clone_dyn(),
         ))
     }
 
@@ -165,7 +165,7 @@ where
     pub fn new(
         strategy: Box<dyn BatchStrategy<I>>,
         dataset: Arc<BatchShuffledDataset<I>>,
-        batcher: Arc<dyn Batcher<I, O>>,
+        batcher: Box<dyn DynBatcher<I, O>>,
     ) -> Self {
         Self {
             current_index: 0,
@@ -208,13 +208,13 @@ impl<I, O> DataLoaderIterator<O> for BatchShuffledDataloaderIterator<I, O> {
 
 /// A builder for data loaders.
 pub struct BatchShuffledDataLoaderBuilder<I, O> {
-    batcher: Arc<dyn Batcher<I, O>>,
+    batcher: Box<dyn DynBatcher<I, O>>,
 }
 
 impl<I, O> BatchShuffledDataLoaderBuilder<I, O>
 where
     I: Send + Sync + Clone + std::fmt::Debug + 'static,
-    O: Send + Sync + Clone + std::fmt::Debug + 'static,
+    O: Send + Clone + std::fmt::Debug + 'static,
     BatchShuffledDataset<I>: Dataset<I>,
 {
     /// Creates a new data loader builder.
@@ -228,10 +228,10 @@ where
     /// The data loader builder.
     pub fn new<B>(batcher: B) -> Self
     where
-        B: Batcher<I, O> + 'static,
+        B: DynBatcher<I, O> + 'static,
     {
         Self {
-            batcher: Arc::new(batcher),
+            batcher: Box::new(batcher),
         }
     }
 
