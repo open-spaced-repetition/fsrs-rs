@@ -49,7 +49,7 @@ impl<B: Backend> Model<B> {
             .collect();
 
         Self {
-            w: Param::from(Tensor::from_floats(
+            w: Param::from_tensor(Tensor::from_floats(
                 Data::new(initial_params, Shape { dims: [17] }),
                 &B::Device::default(),
             )),
@@ -243,7 +243,7 @@ impl<B: Backend> FSRS<B> {
 pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::new(config);
-    model.w = Param::from(Tensor::from_floats(
+    model.w = Param::from_tensor(Tensor::from_floats(
         Data::new(clip_parameters(parameters), Shape { dims: [17] }),
         &B::Device::default(),
     ));
@@ -271,7 +271,7 @@ mod tests {
         let retention = model.power_forgetting_curve(delta_t, stability);
         assert_eq!(
             retention.to_data(),
-            Data::from([1.0, 0.946059, 0.9299294, 0.9221679, 0.9, 0.79394597])
+            Data::from([1.0, 0.946059, 0.9299294, 0.9221679, 0.90000004, 0.79394597])
         )
     }
 
@@ -358,13 +358,13 @@ mod tests {
         s_recall.clone().backward();
         assert_eq!(
             s_recall.to_data(),
-            Data::from([26.980936, 14.128489, 63.600677, 208.72739])
+            Data::from([26.980938, 14.128489, 63.600677, 208.72739])
         );
         let s_forget = model.stability_after_failure(stability, difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
-            Data::from([1.9016013, 2.0777826, 2.3257504, 2.6291647])
+            Data::from([1.9016013, 2.0777824, 2.3257504, 2.6291647])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
