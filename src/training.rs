@@ -388,7 +388,7 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            model.w = Param::from(weight_clipper(model.w.val()));
+            model.w = Param::from_tensor(weight_clipper(model.w.val()));
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
