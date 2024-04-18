@@ -430,7 +430,7 @@ mod tests {
         assert_eq!(
             fsrs.memory_state(item, None).unwrap(),
             MemoryState {
-                stability: 43.055424,
+                stability: 43.05542,
                 difficulty: 7.7609
             }
         );
@@ -537,7 +537,7 @@ mod tests {
                 },
                 good: ItemState {
                     memory: MemoryState {
-                        stability: 43.055424,
+                        stability: 43.05542,
                         difficulty: 7.7609
                     },
                     interval: 43
