@@ -431,6 +431,7 @@ mod tests {
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
+    use crate::convertor_tests::data_from_csv;
     use log::LevelFilter;
 
     #[test]
@@ -466,7 +467,7 @@ mod tests {
                 .apply()
                 .unwrap();
         }
-        let items = anki21_sample_file_converted_to_fsrs();
+        let items = data_from_csv();
         let progress = CombinedProgressState::new_shared();
         let progress2 = Some(progress.clone());
         thread::spawn(move || {
