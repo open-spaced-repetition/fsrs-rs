@@ -467,21 +467,22 @@ mod tests {
                 .apply()
                 .unwrap();
         }
-        let items = data_from_csv();
-        let progress = CombinedProgressState::new_shared();
-        let progress2 = Some(progress.clone());
-        thread::spawn(move || {
-            let mut finished = false;
-            while !finished {
-                thread::sleep(Duration::from_millis(1000));
-                let guard = progress.lock().unwrap();
-                finished = guard.finished();
-                println!("progress: {}/{}", guard.current(), guard.total());
-            }
-        });
+        for items in [anki21_sample_file_converted_to_fsrs(), data_from_csv()] {
+            let progress = CombinedProgressState::new_shared();
+            let progress2 = Some(progress.clone());
+            thread::spawn(move || {
+                let mut finished = false;
+                while !finished {
+                    thread::sleep(Duration::from_millis(500));
+                    let guard = progress.lock().unwrap();
+                    finished = guard.finished();
+                    println!("progress: {}/{}", guard.current(), guard.total());
+                }
+            });
 
-        let fsrs = FSRS::new(Some(&[])).unwrap();
-        let parameters = fsrs.compute_parameters(items, progress2).unwrap();
-        dbg!(&parameters);
+            let fsrs = FSRS::new(Some(&[])).unwrap();
+            let parameters = fsrs.compute_parameters(items, progress2).unwrap();
+            dbg!(&parameters);
+        }
     }
 }

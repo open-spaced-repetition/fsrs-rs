@@ -197,7 +197,7 @@ pub struct RevlogCsv {
 }
 
 pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
-    const CSV_FILE: &str = "tests/data/revlog_martin.csv";
+    const CSV_FILE: &str = "tests/data/revlog.csv";
     let rdr = csv::ReaderBuilder::new();
     let dataset = InMemDataset::<RevlogCsv>::from_csv(CSV_FILE, &rdr).unwrap();
     let revlogs: Vec<RevlogEntry> = dataset
