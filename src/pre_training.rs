@@ -100,8 +100,8 @@ fn loss(
     let y_pred = power_forgetting_curve(delta_t, init_s0);
     let logloss = (-(recall * y_pred.clone().mapv_into(|v| v.ln())
         + (1.0 - recall) * (1.0 - &y_pred).mapv_into(|v| v.ln()))
-        * count.mapv(|v| v.sqrt()))
-    .sum();
+        * count)
+        .sum();
     let l1 = (init_s0 - default_s0).abs() / 16.0;
     logloss + l1
 }
@@ -293,11 +293,9 @@ mod tests {
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 1.017056, default_s0);
-        dbg!(actual);
-        assert_eq!(actual, 22.922578338789826);
+        assert_eq!(actual, 280.7447802452844);
         let actual = loss(&delta_t, &recall, &count, 1.017011, default_s0);
-        dbg!(actual);
-        assert_eq!(actual, 22.922578344493953);
+        assert_eq!(actual, 280.7444462249327);
     }
 
     #[test]
@@ -335,7 +333,7 @@ mod tests {
         )]);
         let actual = search_parameters(pretrainset, 0.9430285915990116);
         Data::from([*actual.get(&first_rating).unwrap()])
-            .assert_approx_eq(&Data::from([1.017_056]), 6);
+            .assert_approx_eq(&Data::from([0.908_688]), 6);
     }
 
     #[test]
@@ -347,10 +345,8 @@ mod tests {
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         let items = [pretrainset.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
-        Data::from(pretrain(pretrainset, average_recall).unwrap()).assert_approx_eq(
-            &Data::from([1.017_056, 1.829_625, 4.414_563, 10.935_500]),
-            6,
-        )
+        Data::from(pretrain(pretrainset, average_recall).unwrap())
+            .assert_approx_eq(&Data::from([0.908_688, 1.678_973, 4.216_837, 9.615_904]), 6)
     }
 
     #[test]
@@ -363,6 +359,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.13822041, 0.35, 1.0034012, 2.6513057,]);
+        assert_eq!(actual, [0.1217739, 0.35, 0.928426, 3.4544096]);
     }
 }
