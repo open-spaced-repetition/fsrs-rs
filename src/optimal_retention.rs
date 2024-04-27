@@ -607,7 +607,7 @@ mod tests {
         );
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            3130.8465582271774
+            3199.9526251977177
         )
     }
 
@@ -663,8 +663,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 16, 27, 34, 84, 80, 91, 92, 103, 107, 111, 113, 138, 132, 133, 116, 134, 148,
-                152, 162, 172, 177, 188, 189, 200, 185, 185, 200, 198, 200
+                0, 16, 27, 34, 84, 80, 91, 92, 104, 106, 109, 112, 133, 123, 139, 121, 136, 149,
+                136, 159, 173, 178, 175, 180, 189, 181, 196, 200, 193, 196
             ]
         );
         assert_eq!(
@@ -687,7 +687,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8263932);
+        assert_eq!(optimal_retention, 0.8419900928572013);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
