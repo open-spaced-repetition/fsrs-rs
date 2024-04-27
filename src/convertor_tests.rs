@@ -4,10 +4,15 @@ use crate::dataset::{FSRSItem, FSRSReview};
 use crate::test_helpers::NdArrayAutodiff;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::data::dataloader::batcher::Batcher;
+use burn::data::dataloader::Dataset;
+use burn::data::dataset::InMemDataset;
 use burn::tensor::Data;
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
+use rusqlite::Connection;
+use rusqlite::{Result, Row};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RevlogEntry {
@@ -187,6 +192,99 @@ pub fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
         .collect_vec();
     revlogs.sort_by_cached_key(|r| r.reviews.len());
     revlogs
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RevlogCsv {
+    // card_id,review_time,review_rating,review_state,review_duration
+    pub card_id: i64,
+    pub review_time: i64,
+    pub review_rating: u32,
+    pub review_state: u32,
+    pub review_duration: u32,
+}
+
+pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
+    const CSV_FILE: &str = "tests/data/revlog.csv";
+    let rdr = csv::ReaderBuilder::new();
+    let dataset = InMemDataset::<RevlogCsv>::from_csv(CSV_FILE, &rdr).unwrap();
+    let revlogs: Vec<RevlogEntry> = dataset
+        .iter()
+        .map(|r| RevlogEntry {
+            id: r.review_time,
+            cid: r.card_id,
+            button_chosen: r.review_rating as u8,
+            taken_millis: r.review_duration,
+            review_kind: match r.review_state {
+                0 => RevlogReviewKind::Learning,
+                1 => RevlogReviewKind::Learning,
+                2 => RevlogReviewKind::Review,
+                3 => RevlogReviewKind::Relearning,
+                4 => RevlogReviewKind::Filtered,
+                5 => RevlogReviewKind::Manual,
+                _ => panic!("Invalid review state"),
+            },
+            ..Default::default()
+        })
+        .collect();
+    dbg!(revlogs.len());
+    let fsrs_items = anki_to_fsrs(revlogs);
+    dbg!(fsrs_items.len());
+    fsrs_items
+}
+
+pub(crate) fn anki21_sample_file_converted_to_fsrs() -> Vec<FSRSItem> {
+    anki_to_fsrs(read_collection().expect("read error"))
+}
+
+fn read_collection() -> Result<Vec<RevlogEntry>> {
+    let db = Connection::open("tests/data/collection.anki21")?;
+    let filter_out_suspended_cards = false;
+    let filter_out_flags = [];
+    let flags_str = if !filter_out_flags.is_empty() {
+        format!(
+            "AND flags NOT IN ({})",
+            filter_out_flags
+                .iter()
+                .map(|x: &i32| x.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        "".to_string()
+    };
+
+    let suspended_cards_str = if filter_out_suspended_cards {
+        "AND queue != -1"
+    } else {
+        ""
+    };
+
+    let current_timestamp = Utc::now().timestamp() * 1000;
+    // This sql query will be remove in the futrue. See https://github.com/open-spaced-repetition/fsrs-optimizer-burn/pull/14#issuecomment-1685895643
+    let revlogs = db
+        .prepare_cached(&format!(
+            "SELECT *
+        FROM revlog
+        WHERE id < ?1
+        AND cid < ?2
+        AND cid IN (
+            SELECT id
+            FROM cards
+            WHERE queue != 0
+            {suspended_cards_str}
+            {flags_str}
+        )
+        AND ease BETWEEN 1 AND 4
+        AND (
+            type != 3
+            OR factor != 0
+        )
+        order by cid"
+        ))?
+        .query_and_then((current_timestamp, current_timestamp), |x| x.try_into())?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(revlogs)
 }
 
 #[test]
