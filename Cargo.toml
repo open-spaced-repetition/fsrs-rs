@@ -15,17 +15,17 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies.burn]
-# version = "0.13.0"
-git = "https://github.com/tracel-ai/burn.git"
-rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
+version = "0.13.1"
+# git = "https://github.com/tracel-ai/burn.git"
+# rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
 # path = "../burn/burn"
 default-features = false
 features = ["std", "train", "ndarray"]
 
 [dev-dependencies.burn]
-# version = "0.13.0"
-git = "https://github.com/tracel-ai/burn.git"
-rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
+version = "0.13.1"
+# git = "https://github.com/tracel-ai/burn.git"
+# rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
 # path = "../burn/burn"
 default-features = false
 features = ["std", "train", "ndarray", "sqlite-bundled"]
