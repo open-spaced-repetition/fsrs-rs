@@ -10,8 +10,6 @@ use burn::tensor::Data;
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
-use rusqlite::Connection;
-use rusqlite::{Result, Row};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -204,6 +202,7 @@ pub struct RevlogCsv {
     pub review_duration: u32,
 }
 
+/*
 pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     const CSV_FILE: &str = "tests/data/revlog.csv";
     let rdr = csv::ReaderBuilder::new();
@@ -286,6 +285,7 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
         .collect::<Result<Vec<_>>>()?;
     Ok(revlogs)
 }
+*/
 
 #[test]
 fn extract_simulator_config_from_revlog() {
