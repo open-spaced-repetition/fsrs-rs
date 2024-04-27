@@ -185,6 +185,7 @@ pub fn anki_to_fsrs(revlogs: Vec<RevlogEntry>, minute_offset: i32) -> Vec<FSRSIt
     revlogs
 }
 
+/*
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RevlogCsv {
     // card_id,review_time,review_rating,review_state,review_duration
@@ -195,7 +196,6 @@ pub struct RevlogCsv {
     pub review_duration: u32,
 }
 
-/*
 pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     const CSV_FILE: &str = "tests/data/revlog.csv";
     let rdr = csv::ReaderBuilder::new();
