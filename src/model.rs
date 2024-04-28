@@ -283,7 +283,14 @@ mod tests {
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
-            Data::from([0.5701, 1.4436, 4.1386, 10.9355, 0.5701, 1.4436])
+            Data::from([
+                DEFAULT_PARAMETERS[0],
+                DEFAULT_PARAMETERS[1],
+                DEFAULT_PARAMETERS[2],
+                DEFAULT_PARAMETERS[3],
+                DEFAULT_PARAMETERS[0],
+                DEFAULT_PARAMETERS[1]
+            ])
         )
     }
 
@@ -295,7 +302,14 @@ mod tests {
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
-            Data::from([7.5455, 6.3449, 5.1443, 3.9436998, 7.5455, 6.3449])
+            Data::from([
+                DEFAULT_PARAMETERS[4] + 2.0 * DEFAULT_PARAMETERS[5],
+                DEFAULT_PARAMETERS[4] + DEFAULT_PARAMETERS[5],
+                DEFAULT_PARAMETERS[4],
+                DEFAULT_PARAMETERS[4] - DEFAULT_PARAMETERS[5],
+                DEFAULT_PARAMETERS[4] + 2.0 * DEFAULT_PARAMETERS[5],
+                DEFAULT_PARAMETERS[4] + DEFAULT_PARAMETERS[5]
+            ])
         )
     }
 
@@ -331,13 +345,18 @@ mod tests {
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([6.7254, 5.8627, 5.0, 4.1373])
+            Data::from([
+                5.0 + 2.0 * DEFAULT_PARAMETERS[6],
+                5.0 + DEFAULT_PARAMETERS[6],
+                5.0,
+                5.0 - DEFAULT_PARAMETERS[6]
+            ])
         );
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([6.6681643, 5.836694, 5.0052238, 4.1737533])
+            Data::from([6.744371, 5.8746934, 5.005016, 4.1353383])
         )
     }
 
@@ -358,19 +377,19 @@ mod tests {
         s_recall.clone().backward();
         assert_eq!(
             s_recall.to_data(),
-            Data::from([26.980938, 14.128489, 63.600677, 208.72739])
+            Data::from([27.980768, 14.916422, 66.45966, 222.94603])
         );
         let s_forget = model.stability_after_failure(stability, difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
-            Data::from([1.9016013, 2.0777824, 2.3257504, 2.6291647])
+            Data::from([1.9482934, 2.161251, 2.4528089, 2.8098207])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
         assert_eq!(
             next_stability.to_data(),
-            Data::from([1.9016013, 14.128489, 63.600677, 208.72739])
+            Data::from([1.9482934, 14.916422, 66.45966, 222.94603])
         )
     }
 

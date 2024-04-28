@@ -36,5 +36,5 @@ jobs:
           git fetch --unshallow
           git checkout fsrs-browser
           git pull
-          git merge main -m "Auto-merge for $TAG"
+          git merge origin/main -m "Auto-merge for $TAG"
           git push

@@ -75,23 +75,19 @@ fn remove_revlog_before_last_first_learn(entries: Vec<RevlogEntry>) -> Vec<Revlo
     }
 }
 
-fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> NaiveDate {
-    let timestamp_seconds = timestamp - next_day_starts_at * 3600 * 1000;
-    let datetime = Utc
-        .timestamp_millis_opt(timestamp_seconds)
-        .unwrap()
-        .with_timezone(&timezone);
+fn convert_to_date(timestamp: i64, minute_offset: i32) -> NaiveDate {
+    let timestamp_seconds = timestamp + i64::from(minute_offset) * 60 * 1000;
+    let datetime = Utc.timestamp_millis_opt(timestamp_seconds).unwrap();
     datetime.date_naive()
 }
 
 fn keep_first_revlog_same_date(
     mut entries: Vec<RevlogEntry>,
-    next_day_starts_at: i64,
-    timezone: Tz,
+    minute_offset: i32,
 ) -> Vec<RevlogEntry> {
     let mut unique_dates = std::collections::HashSet::new();
     entries.retain(|entry| {
-        let date = convert_to_date(entry.id, next_day_starts_at, timezone);
+        let date = convert_to_date(entry.id, minute_offset);
         unique_dates.insert(date)
     });
     entries
@@ -102,17 +98,16 @@ fn keep_first_revlog_same_date(
 
 fn convert_to_fsrs_items(
     mut entries: Vec<RevlogEntry>,
-    next_day_starts_at: i64,
-    timezone: Tz,
+    minute_offset: i32,
 ) -> Option<Vec<FSRSItem>> {
     // entries = filter_out_cram(entries);
     // entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
-    entries = keep_first_revlog_same_date(entries, next_day_starts_at, timezone);
+    entries = keep_first_revlog_same_date(entries, minute_offset);
 
     for i in 1..entries.len() {
-        let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
-        let date_previous = convert_to_date(entries[i - 1].id, next_day_starts_at, timezone);
+        let date_current = convert_to_date(entries[i].id, minute_offset);
+        let date_previous = convert_to_date(entries[i - 1].id, minute_offset);
         entries[i].last_interval = (date_current - date_previous).num_days() as i32;
     }
 
@@ -178,20 +173,19 @@ impl Into<RevlogReviewKind> for u8 {
 }
 
 /// Convert a series of revlog entries sorted by card id into FSRS items.
-pub fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
+pub fn anki_to_fsrs(revlogs: Vec<RevlogEntry>, minute_offset: i32) -> Vec<FSRSItem> {
     let mut revlogs = revlogs
         .into_iter()
         .group_by(|r| r.cid)
         .into_iter()
-        .filter_map(|(_cid, entries)| {
-            convert_to_fsrs_items(entries.collect(), 4, Tz::Asia__Shanghai)
-        })
+        .filter_map(|(_cid, entries)| convert_to_fsrs_items(entries.collect(), minute_offset))
         .flatten()
         .collect_vec();
     revlogs.sort_by_cached_key(|r| r.reviews.len());
     revlogs
 }
 
+/*
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RevlogCsv {
     // card_id,review_time,review_rating,review_state,review_duration
@@ -202,7 +196,6 @@ pub struct RevlogCsv {
     pub review_duration: u32,
 }
 
-/*
 pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     const CSV_FILE: &str = "tests/data/revlog.csv";
     let rdr = csv::ReaderBuilder::new();
@@ -393,6 +386,7 @@ fn extract_simulator_config_from_revlog() {
 
 // This test currently expects the following .anki21 file to be placed in tests/data/:
 // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
+/*
 #[test]
 fn conversion_works() {
     let revlogs = read_collection().unwrap();
@@ -556,7 +550,6 @@ fn ordering_of_inputs_should_not_change() {
     );
 }
 
-/*
 const NEXT_DAY_AT: i64 = 86400 * 100;
 
 fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
@@ -567,7 +560,6 @@ fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
         ..Default::default()
     }
 }
-*/
 
 #[test]
 fn delta_t_is_correct() -> Result<()> {
@@ -659,7 +651,7 @@ fn delta_t_is_correct() -> Result<()> {
 
     Ok(())
 }
-/*
+
 #[test]
 fn test_filter_out_cram() {
     let revlog_vec = vec![
