@@ -249,8 +249,8 @@ checksum = "79296716171880943b8470b5f8d03aa55eb2e645a4874bdbb28adb49162e012c"
 
 [[package]]
 name = "burn"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-core",
  "burn-train",
@@ -258,8 +258,8 @@ dependencies = [
 
 [[package]]
 name = "burn-autodiff"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-common",
  "burn-tensor",
@@ -270,8 +270,8 @@ dependencies = [
 
 [[package]]
 name = "burn-candle"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-tensor",
  "candle-core",
@@ -281,8 +281,8 @@ dependencies = [
 
 [[package]]
 name = "burn-common"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "async-trait",
  "derive-new",
@@ -296,8 +296,8 @@ dependencies = [
 
 [[package]]
 name = "burn-compute"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-common",
  "derive-new",
@@ -313,8 +313,8 @@ dependencies = [
 
 [[package]]
 name = "burn-core"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "bincode",
  "burn-autodiff",
@@ -341,8 +341,8 @@ dependencies = [
 
 [[package]]
 name = "burn-dataset"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "csv",
  "derive-new",
@@ -366,8 +366,8 @@ dependencies = [
 
 [[package]]
 name = "burn-derive"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "derive-new",
  "proc-macro2",
@@ -377,8 +377,8 @@ dependencies = [
 
 [[package]]
 name = "burn-fusion"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-common",
  "burn-tensor",
@@ -391,8 +391,8 @@ dependencies = [
 
 [[package]]
 name = "burn-jit"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-common",
  "burn-compute",
@@ -412,8 +412,8 @@ dependencies = [
 
 [[package]]
 name = "burn-ndarray"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-autodiff",
  "burn-common",
@@ -430,8 +430,8 @@ dependencies = [
 
 [[package]]
 name = "burn-tch"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-tensor",
  "half",
@@ -442,8 +442,8 @@ dependencies = [
 
 [[package]]
 name = "burn-tensor"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-common",
  "derive-new",
@@ -457,8 +457,8 @@ dependencies = [
 
 [[package]]
 name = "burn-train"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-core",
  "derive-new",
@@ -471,8 +471,8 @@ dependencies = [
 
 [[package]]
 name = "burn-wgpu"
-version = "0.15.0"
-source = "git+https://github.com/ahmedyarub/burn.git?rev=a795b678c82204916317823daf725ed7042f7e19#a795b678c82204916317823daf725ed7042f7e19"
+version = "0.14.0"
+source = "git+https://github.com/ahmedyarub/burn.git?rev=cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce#cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 dependencies = [
  "burn-common",
  "burn-compute",
@@ -1167,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "fsrs"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "burn",
  "chrono",

@@ -15,16 +15,16 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies.burn]
-version = "0.15.0"
+version = "0.14.0"
 git = "https://github.com/ahmedyarub/burn.git"
-rev = "a795b678c82204916317823daf725ed7042f7e19"
+rev = "cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 default-features = false
 features = ["std", "train", "ndarray"]
 
 [dev-dependencies.burn]
-version = "0.15.0"
+version = "0.14.0"
 git = "https://github.com/ahmedyarub/burn.git"
-rev = "a795b678c82204916317823daf725ed7042f7e19"
+rev = "cc84ddbb75f68afa502dbd6ee72e944d0c8d11ce"
 default-features = false
 features = ["std", "train", "ndarray", "sqlite-bundled"]
 
