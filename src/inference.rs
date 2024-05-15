@@ -574,34 +574,18 @@ mod tests {
     #[test]
     fn memory_from_sm2() -> Result<()> {
         let fsrs = FSRS::new(Some(&[]))?;
-        assert_eq!(
-            fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
-            MemoryState {
-                stability: 9.999996,
-                difficulty: 7.4120417
-            }
-        );
-        assert_eq!(
-            fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap(),
-            MemoryState {
-                stability: 4.170096,
-                difficulty: 9.491373
-            }
-        );
-        assert_eq!(
-            fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap(),
-            MemoryState {
-                stability: 21.712555,
-                difficulty: 2.80758
-            }
-        );
-        assert_eq!(
-            fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap(),
-            MemoryState {
-                stability: 19.999992,
-                difficulty: 10.0
-            }
-        );
+        let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([9.999996, 7.4120417]), 5);
+        let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([4.170096, 9.491373]), 5);
+        let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([21.712555, 2.80758]), 5);
+        let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([19.999992, 10.0]), 5);
         let interval = 15;
         let ease_factor = 2.0;
         let fsrs_factor = fsrs
