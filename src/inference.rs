@@ -117,7 +117,8 @@ impl<B: Backend> FSRS<B> {
         interval: f32,
         sm2_retention: f32,
     ) -> Result<MemoryState> {
-        let stability = interval.max(S_MIN) / (9.0 * (1.0 / sm2_retention - 1.0));
+        let stability =
+            interval.max(S_MIN) * FACTOR as f32 / (sm2_retention.powf(1.0 / DECAY as f32) - 1.0);
         let w = &self.model().w;
         let w8: f32 = w.get(8).into_scalar().elem();
         let w9: f32 = w.get(9).into_scalar().elem();
@@ -576,14 +577,28 @@ mod tests {
         assert_eq!(
             fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
             MemoryState {
-                stability: 9.999995,
+                stability: 9.999996,
                 difficulty: 7.4120417
+            }
+        );
+        assert_eq!(
+            fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap(),
+            MemoryState {
+                stability: 4.170096,
+                difficulty: 9.491373
+            }
+        );
+        assert_eq!(
+            fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap(),
+            MemoryState {
+                stability: 21.712555,
+                difficulty: 2.80758
             }
         );
         assert_eq!(
             fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap(),
             MemoryState {
-                stability: 19.99999,
+                stability: 19.999992,
                 difficulty: 10.0
             }
         );
