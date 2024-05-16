@@ -572,6 +572,19 @@ mod tests {
     }
 
     #[test]
+    fn current_retrievability() {
+        let fsrs = FSRS::new(None).unwrap();
+        let state = MemoryState {
+            stability: 1.0,
+            difficulty: 5.0,
+        };
+        assert_eq!(fsrs.current_retrievability(state, 0), 1.0);
+        assert_eq!(fsrs.current_retrievability(state, 1), 0.9);
+        assert_eq!(fsrs.current_retrievability(state, 2), 0.82502866);
+        assert_eq!(fsrs.current_retrievability(state, 3), 0.76613088);
+    }
+
+    #[test]
     fn memory_from_sm2() -> Result<()> {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
