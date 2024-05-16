@@ -267,7 +267,7 @@ impl<B: Backend> FSRS<B> {
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
     /// review.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32) -> f32 {
-        (days_elapsed as f32 / (state.stability * 9.0) + 1.0).powi(-1)
+        (days_elapsed as f64 / state.stability as f64 * FACTOR + 1.0).powf(DECAY) as f32
     }
 
     /// Returns the universal metrics for the existing and provided parameters. If the first value
