@@ -4,7 +4,7 @@ use crate::dataset::{split_filter_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::pre_training::pretrain;
-use crate::weight_clipper::weight_clipper;
+use crate::parameter_clipper::parameter_clipper;
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
 
@@ -267,7 +267,7 @@ impl<B: Backend> FSRS<B> {
 
         if optimized_parameters
             .iter()
-            .any(|weight: &f32| weight.is_infinite())
+            .any(|parameter: &f32| parameter.is_infinite())
         {
             return Err(FSRSError::InvalidInput);
         }
@@ -358,7 +358,7 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            model.w = Param::from_tensor(weight_clipper(model.w.val()));
+            model.w = Param::from_tensor(parameter_clipper(model.w.val()));
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
