@@ -7,7 +7,7 @@ use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
 use rand::{
-    distributions::{Uniform, WeightedIndex},
+    distributions::{Uniform, parameteredIndex},
     rngs::StdRng,
     SeedableRng,
 };
@@ -148,10 +148,10 @@ pub fn simulate(
     let mut cost_per_day = Array1::zeros(learn_span);
 
     let first_rating_choices = [1, 2, 3, 4];
-    let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
+    let first_rating_dist = parameteredIndex::new(first_rating_prob).unwrap();
 
     let review_rating_choices = [2, 3, 4];
-    let review_rating_dist = WeightedIndex::new(review_rating_prob).unwrap();
+    let review_rating_dist = parameteredIndex::new(review_rating_prob).unwrap();
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
