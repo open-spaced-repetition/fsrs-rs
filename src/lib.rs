@@ -13,7 +13,7 @@ mod pre_training;
 #[cfg(test)]
 mod test_helpers;
 mod training;
-mod weight_clipper;
+mod parameter_clipper;
 
 pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
