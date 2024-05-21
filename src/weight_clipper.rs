@@ -4,7 +4,7 @@ use crate::{
 };
 use burn::tensor::{backend::Backend, Data, Tensor};
 
-pub(crate) fn weight_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 1> {
+pub(crate) fn parameter_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 1> {
     let val = clip_parameters(&parameters.to_data().convert().value);
     Tensor::from_data(
         Data::new(val, parameters.shape()).convert(),
@@ -49,14 +49,14 @@ mod tests {
     use burn::backend::ndarray::NdArrayDevice;
 
     #[test]
-    fn weight_clipper_works() {
+    fn parameter_clipper_works() {
         let device = NdArrayDevice::Cpu;
         let tensor = Tensor::from_floats(
             [0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1],
             &device,
         );
 
-        let param: Tensor<1> = weight_clipper(tensor);
+        let param: Tensor<1> = parameter_clipper(tensor);
         let values = &param.to_data().value;
 
         assert_eq!(
