@@ -9,11 +9,11 @@ mod error;
 mod inference;
 mod model;
 mod optimal_retention;
+mod parameter_clipper;
 mod pre_training;
 #[cfg(test)]
 mod test_helpers;
 mod training;
-mod parameter_clipper;
 
 pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};

@@ -3,8 +3,8 @@ use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{split_filter_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
-use crate::pre_training::pretrain;
 use crate::parameter_clipper::parameter_clipper;
+use crate::pre_training::pretrain;
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
 
