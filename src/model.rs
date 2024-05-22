@@ -1,6 +1,6 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{Parameters, DECAY, FACTOR, S_MIN};
-use crate::weight_clipper::clip_parameters;
+use crate::parameter_clipper::clip_parameters;
 use crate::DEFAULT_PARAMETERS;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::NdArray;
@@ -196,7 +196,7 @@ impl ModelConfig {
 }
 
 /// This is the main structure provided by this crate. It can be used
-/// for both weight training, and for reviews.
+/// for both parameter training, and for reviews.
 #[derive(Debug, Clone)]
 pub struct FSRS<B: Backend = NdArray> {
     model: Option<Model<B>>,
