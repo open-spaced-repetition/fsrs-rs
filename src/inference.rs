@@ -117,7 +117,8 @@ impl<B: Backend> FSRS<B> {
         interval: f32,
         sm2_retention: f32,
     ) -> Result<MemoryState> {
-        let stability = interval.max(S_MIN) / (9.0 * (1.0 / sm2_retention - 1.0));
+        let stability =
+            interval.max(S_MIN) * FACTOR as f32 / (sm2_retention.powf(1.0 / DECAY as f32) - 1.0);
         let w = &self.model().w;
         let w8: f32 = w.get(8).into_scalar().elem();
         let w9: f32 = w.get(9).into_scalar().elem();
@@ -266,7 +267,7 @@ impl<B: Backend> FSRS<B> {
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
     /// review.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32) -> f32 {
-        (days_elapsed as f32 / (state.stability * 9.0) + 1.0).powi(-1)
+        (days_elapsed as f64 / state.stability as f64 * FACTOR + 1.0).powf(DECAY) as f32
     }
 
     /// Returns the universal metrics for the existing and provided parameters. If the first value
@@ -571,22 +572,33 @@ mod tests {
     }
 
     #[test]
+    fn current_retrievability() {
+        let fsrs = FSRS::new(None).unwrap();
+        let state = MemoryState {
+            stability: 1.0,
+            difficulty: 5.0,
+        };
+        assert_eq!(fsrs.current_retrievability(state, 0), 1.0);
+        assert_eq!(fsrs.current_retrievability(state, 1), 0.9);
+        assert_eq!(fsrs.current_retrievability(state, 2), 0.82502866);
+        assert_eq!(fsrs.current_retrievability(state, 3), 0.76613088);
+    }
+
+    #[test]
     fn memory_from_sm2() -> Result<()> {
         let fsrs = FSRS::new(Some(&[]))?;
-        assert_eq!(
-            fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap(),
-            MemoryState {
-                stability: 9.999995,
-                difficulty: 7.4120417
-            }
-        );
-        assert_eq!(
-            fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap(),
-            MemoryState {
-                stability: 19.99999,
-                difficulty: 10.0
-            }
-        );
+        let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([9.999996, 7.4120417]), 5);
+        let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([4.170096, 9.491373]), 5);
+        let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([21.712555, 2.80758]), 5);
+        let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
+        Data::from([memory_state.stability, memory_state.difficulty])
+            .assert_approx_eq(&Data::from([19.999992, 10.0]), 5);
         let interval = 15;
         let ease_factor = 2.0;
         let fsrs_factor = fsrs
