@@ -59,9 +59,7 @@ impl<FSRSItem> BatchShuffledDataset<FSRSItem> {
 
 impl Dataset<FSRSItem> for BatchShuffledDataset<FSRSItem> {
     fn get(&self, index: usize) -> Option<FSRSItem> {
-        let Some(shuffled_index) = self.indices.get(index) else {
-            return None;
-        };
+        let shuffled_index = self.indices.get(index)?;
         // info!(
         //     "original index: {}, shuffled index: {}",
         //     index, shuffled_index
@@ -189,9 +187,7 @@ impl<I, O> Iterator for BatchShuffledDataloaderIterator<I, O> {
             }
         }
 
-        let Some(items) = self.strategy.batch(true) else {
-            return None;
-        };
+        let items = self.strategy.batch(true)?;
 
         Some(self.batcher.batch(items))
     }
