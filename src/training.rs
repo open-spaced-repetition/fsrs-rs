@@ -336,7 +336,7 @@ fn train<B: AutodiffBackend>(
     let mut model: Model<B> = config.model.init();
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
-    let mut best_loss = std::f64::INFINITY;
+    let mut best_loss = f64::INFINITY;
     let mut best_model = model.clone();
     for epoch in 1..=config.num_epochs {
         let mut iterator = dataloader_train.iter();
