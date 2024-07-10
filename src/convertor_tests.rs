@@ -119,19 +119,6 @@ fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> Nai
     datetime.date_naive()
 }
 
-fn keep_first_revlog_same_date(
-    mut entries: Vec<RevlogEntry>,
-    next_day_starts_at: i64,
-    timezone: Tz,
-) -> Vec<RevlogEntry> {
-    let mut unique_dates = std::collections::HashSet::new();
-    entries.retain(|entry| {
-        let date = convert_to_date(entry.id, next_day_starts_at, timezone);
-        unique_dates.insert(date)
-    });
-    entries
-}
-
 /// Given a list of revlog entries for a single card with length n, we create
 /// n-1 FSRS items, where each item contains the history of the preceding reviews.
 
@@ -143,7 +130,6 @@ fn convert_to_fsrs_items(
     // entries = filter_out_cram(entries);
     // entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
-    entries = keep_first_revlog_same_date(entries, next_day_starts_at, timezone);
 
     for i in 1..entries.len() {
         let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
@@ -167,6 +153,7 @@ fn convert_to_fsrs_items(
                     .collect();
                 FSRSItem { reviews }
             })
+            .filter(|item| item.current().delta_t > 0)
             .collect(),
     )
 }
@@ -397,7 +384,10 @@ fn conversion_works() {
     let fsrs_items = anki_to_fsrs(revlogs);
     assert_eq!(fsrs_items.len(), 14290);
     assert_eq!(
-        fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
+        fsrs_items
+            .iter()
+            .map(|x| x.long_term_review_cnt() + 1)
+            .sum::<usize>(),
         49382 + 14290
     );
 
@@ -417,15 +407,23 @@ fn conversion_works() {
                         delta_t: 0
                     },
                     FSRSReview {
+                        rating: 4,
+                        delta_t: 0
+                    },
+                    FSRSReview {
                         rating: 3,
                         delta_t: 5
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -436,12 +434,16 @@ fn conversion_works() {
                         rating: 3,
                         delta_t: 10
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -456,12 +458,16 @@ fn conversion_works() {
                         rating: 3,
                         delta_t: 22
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -480,12 +486,16 @@ fn conversion_works() {
                         rating: 2,
                         delta_t: 56
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -508,7 +518,7 @@ fn conversion_works() {
                         rating: 3,
                         delta_t: 64
                     }
-                ],
+                ]
             }
         ]
     );
@@ -519,11 +529,11 @@ fn conversion_works() {
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     assert_eq!(
         res.r_historys.squeeze(1).to_data(),
-        Data::from([3.0, 3.0, 3.0, 3.0, 2.0])
+        Data::from([3.0, 4.0, 3.0, 3.0, 3.0, 2.0])
     );
     assert_eq!(
         res.t_historys.squeeze(1).to_data(),
-        Data::from([0.0, 5.0, 10.0, 22.0, 56.0])
+        Data::from([0.0, 0.0, 5.0, 10.0, 22.0, 56.0])
     );
     assert_eq!(res.labels.to_data(), Data::from([1]));
 }
@@ -1002,93 +1012,4 @@ fn test_remove_revlog_before_last_first_learn() {
             },
         ]
     );
-}
-
-#[test]
-fn test_keep_first_revlog_same_date() {
-    let revlog_vec = vec![
-        RevlogEntry {
-            id: 1581372095493,
-            cid: 1559076329057,
-            usn: 5212,
-            button_chosen: 1,
-            interval: -60,
-            last_interval: -60,
-            ease_factor: 0,
-            taken_millis: 60000,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581372260598,
-            cid: 1559076329057,
-            usn: 5212,
-            button_chosen: 3,
-            interval: -600,
-            last_interval: -60,
-            ease_factor: 0,
-            taken_millis: 46425,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581406251414,
-            cid: 1559076329057,
-            usn: 5213,
-            button_chosen: 2,
-            interval: -600,
-            last_interval: -600,
-            ease_factor: 0,
-            taken_millis: 17110,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581407568344,
-            cid: 1559076329057,
-            usn: 5213,
-            button_chosen: 3,
-            interval: 1,
-            last_interval: -600,
-            ease_factor: 2500,
-            taken_millis: 8861,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581454426227,
-            cid: 1559076329057,
-            usn: 5215,
-            button_chosen: 3,
-            interval: 3,
-            last_interval: 1,
-            ease_factor: 2500,
-            taken_millis: 13128,
-            review_kind: Review,
-        },
-    ];
-    let revlog_vec = keep_first_revlog_same_date(revlog_vec, 4, Tz::Asia__Shanghai);
-    assert_eq!(
-        revlog_vec,
-        vec![
-            RevlogEntry {
-                id: 1581372095493,
-                cid: 1559076329057,
-                usn: 5212,
-                button_chosen: 1,
-                interval: -60,
-                last_interval: -60,
-                ease_factor: 0,
-                taken_millis: 60000,
-                review_kind: Learning,
-            },
-            RevlogEntry {
-                id: 1581454426227,
-                cid: 1559076329057,
-                usn: 5215,
-                button_chosen: 3,
-                interval: 3,
-                last_interval: 1,
-                ease_factor: 2500,
-                taken_millis: 13128,
-                review_kind: Review,
-            },
-        ]
-    )
 }

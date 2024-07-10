@@ -38,7 +38,7 @@ impl<B: Backend> Model<B> {
 
         Self {
             w: Param::from_tensor(Tensor::from_floats(
-                Data::new(initial_params, Shape { dims: [17] }),
+                Data::new(initial_params, Shape { dims: [19] }),
                 &B::Device::default(),
             )),
             config,
@@ -87,6 +87,10 @@ impl<B: Backend> Model<B> {
             .mask_where(last_s.clone().lower(new_s), last_s)
     }
 
+    fn stability_short_term(&self, last_s: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
+        last_s * (self.w.get(17) * (rating - 3 + self.w.get(18))).exp()
+    }
+
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
         self.w.get(7) * (self.w.get(4) - new_d.clone()) + new_d
     }
@@ -110,7 +114,7 @@ impl<B: Backend> Model<B> {
         state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let (new_s, new_d) = if let Some(state) = state {
-            let retention = self.power_forgetting_curve(delta_t, state.stability.clone());
+            let retention = self.power_forgetting_curve(delta_t.clone(), state.stability.clone());
             let stability_after_success = self.stability_after_success(
                 state.stability.clone(),
                 state.difficulty.clone(),
@@ -122,8 +126,11 @@ impl<B: Backend> Model<B> {
                 state.difficulty.clone(),
                 retention,
             );
+            let stability_short_term =
+                self.stability_short_term(state.stability.clone(), rating.clone());
             let mut new_stability = stability_after_success
                 .mask_where(rating.clone().equal_elem(1), stability_after_failure);
+            new_stability = new_stability.mask_where(delta_t.equal_elem(0), stability_short_term);
 
             let mut new_difficulty = self.next_difficulty(state.difficulty.clone(), rating.clone());
             new_difficulty = self.mean_reversion(new_difficulty).clamp(1.0, 10.0);
@@ -207,7 +214,7 @@ impl<B: Backend> FSRS<B> {
         if let Some(parameters) = &mut parameters {
             if parameters.is_empty() {
                 *parameters = DEFAULT_PARAMETERS.as_slice()
-            } else if parameters.len() != 17 {
+            } else if parameters.len() != 19 {
                 return Err(FSRSError::InvalidParameters);
             }
         }
@@ -232,7 +239,7 @@ pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<
     let config = ModelConfig::default();
     let mut model = Model::new(config);
     model.w = Param::from_tensor(Tensor::from_floats(
-        Data::new(clip_parameters(parameters), Shape { dims: [17] }),
+        Data::new(clip_parameters(parameters), Shape { dims: [19] }),
         &B::Device::default(),
     ));
     model
@@ -367,7 +374,7 @@ mod tests {
             s_recall.to_data(),
             Data::from([27.980768, 14.916422, 66.45966, 222.94603])
         );
-        let s_forget = model.stability_after_failure(stability, difficulty, retention);
+        let s_forget = model.stability_after_failure(stability.clone(), difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
@@ -378,6 +385,11 @@ mod tests {
         assert_eq!(
             next_stability.to_data(),
             Data::from([1.9482934, 14.916422, 66.45966, 222.94603])
+        );
+        let next_stability = model.stability_short_term(stability, rating);
+        assert_eq!(
+            next_stability.to_data(),
+            Data::from([2.5794802, 4.206739, 6.8605514, 11.188516])
         )
     }
 

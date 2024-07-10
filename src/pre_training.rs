@@ -26,7 +26,7 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<FirstRating, Vec<A
     // filter FSRSItem instances with exactly 2 reviews.
     let items: Vec<_> = fsrs_items
         .into_iter()
-        .filter(|item| item.reviews.len() == 2)
+        .filter(|item| item.long_term_review_cnt() == 1)
         .collect();
 
     // use a nested HashMap (groups) to group items first by the rating in the first FSRSReview
@@ -340,8 +340,9 @@ mod tests {
     fn test_pretrain() {
         use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
         let items = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset) =
-            items.into_iter().partition(|item| item.reviews.len() == 2);
+        let (mut pretrainset, mut trainset) = items
+            .into_iter()
+            .partition(|item| item.long_term_review_cnt() == 1);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         let items = [pretrainset.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);

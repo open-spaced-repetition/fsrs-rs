@@ -279,7 +279,7 @@ impl<B: Backend> FSRS<B> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, next_train_set) = train_set
             .into_iter()
-            .partition(|item| item.reviews.len() == 2);
+            .partition(|item| item.long_term_review_cnt() == 1);
         let initial_stability = pretrain(pre_train_set, average_recall).unwrap();
         let config = TrainingConfig::new(
             ModelConfig {

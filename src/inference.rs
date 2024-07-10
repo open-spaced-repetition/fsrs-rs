@@ -21,9 +21,9 @@ pub(crate) const S_MIN: f32 = 0.01;
 pub type Parameters = [f32];
 use itertools::izip;
 
-pub static DEFAULT_PARAMETERS: [f32; 17] = [
+pub static DEFAULT_PARAMETERS: [f32; 19] = [
     0.4872, 1.4003, 3.7145, 13.8206, 5.1618, 1.2298, 0.8975, 0.031, 1.6474, 0.1367, 1.0461, 2.1072,
-    0.0793, 0.3246, 1.587, 0.2272, 2.8755,
+    0.0793, 0.3246, 1.587, 0.2272, 2.8755, 0.4891, 0.6468,
 ];
 
 fn infer<B: Backend>(
@@ -383,7 +383,7 @@ mod tests {
 
     static PARAMETERS: &[f32] = &[
         1.0171, 1.8296, 4.4145, 10.9355, 5.0965, 1.3322, 1.017, 0.0, 1.6243, 0.1369, 1.0321,
-        2.1866, 0.0661, 0.336, 1.7766, 0.1693, 2.9244,
+        2.1866, 0.0661, 0.336, 1.7766, 0.1693, 2.9244, 0.4891, 0.6468,
     ];
 
     #[test]
@@ -469,8 +469,9 @@ mod tests {
     #[test]
     fn test_evaluate() -> Result<()> {
         let items = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) =
-            items.into_iter().partition(|item| item.reviews.len() == 2);
+        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+            .into_iter()
+            .partition(|item| item.long_term_review_cnt() == 1);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         let items = [pretrainset, trainset].concat();
         let fsrs = FSRS::new(Some(&[]))?;
