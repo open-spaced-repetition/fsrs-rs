@@ -52,11 +52,14 @@ pub struct SimulatorConfig {
     pub learn_span: usize,
     pub max_cost_perday: f64,
     pub max_ivl: f64,
-    pub recall_costs: [f64; 3],
-    pub forget_cost: f64,
-    pub learn_cost: f64,
+    pub learn_costs: [f64; 4],
+    pub review_costs: [f64; 4],
     pub first_rating_prob: [f64; 4],
     pub review_rating_prob: [f64; 3],
+    pub first_rating_offsets: [f64; 4],
+    pub first_session_lens: [f64; 4],
+    pub forget_rating_offset: f64,
+    pub forget_session_len: f64,
     pub loss_aversion: f64,
     pub learn_limit: usize,
     pub review_limit: usize,
@@ -69,11 +72,14 @@ impl Default for SimulatorConfig {
             learn_span: 365,
             max_cost_perday: 1800.0,
             max_ivl: 36500.0,
-            recall_costs: [14.0, 10.0, 6.0],
-            forget_cost: 50.0,
-            learn_cost: 20.0,
-            first_rating_prob: [0.15, 0.2, 0.6, 0.05],
-            review_rating_prob: [0.3, 0.6, 0.1],
+            learn_costs: [33.79, 24.3, 13.68, 6.5],
+            review_costs: [23.0, 11.68, 7.33, 5.6],
+            first_rating_prob: [0.24, 0.094, 0.495, 0.171],
+            review_rating_prob: [0.224, 0.631, 0.145],
+            first_rating_offsets: [-0.72, -0.15, -0.01, 0.0],
+            first_session_lens: [2.02, 1.28, 0.81, 0.0],
+            forget_rating_offset: -0.28,
+            forget_session_len: 1.05,
             loss_aversion: 2.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
@@ -81,9 +87,9 @@ impl Default for SimulatorConfig {
     }
 }
 
-fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -> f64 {
-    let hard_penalty = if response == 2 { w[15] } else { 1.0 };
-    let easy_bonus = if response == 4 { w[16] } else { 1.0 };
+fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, rating: usize) -> f64 {
+    let hard_penalty = if rating == 2 { w[15] } else { 1.0 };
+    let easy_bonus = if rating == 4 { w[16] } else { 1.0 };
     s * (f64::exp(w[8])
         * (11.0 - d)
         * s.powf(-w[9])
@@ -95,6 +101,24 @@ fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, response: usize) -
 fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
     (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
         .clamp(S_MIN.into(), s)
+}
+
+fn stability_short_term(w: &[f64], s: f64, rating_offset: f64, session_len: f64) -> f64 {
+    s * (w[17] * (rating_offset + session_len * w[18])).exp()
+}
+
+fn init_d(w: &[f64], rating: usize, rating_offset: f64) -> f64 {
+    let new_d = w[4] - (w[5] * (rating - 1) as f64).exp() + 1.0 - w[6] * rating_offset;
+    new_d.clamp(1.0, 10.0)
+}
+
+fn next_d(w: &[f64], d: f64, rating: usize) -> f64 {
+    let new_d = d - w[6] * (rating - 3) as f64;
+    mean_reversion(w, w[4], new_d).clamp(1.0, 10.0)
+}
+
+fn mean_reversion(w: &[f64], init: f64, current: f64) -> f64 {
+    w[7] * init + (1.0 - w[7]) * current
 }
 
 pub struct Card {
@@ -116,11 +140,14 @@ pub fn simulate(
         learn_span,
         max_cost_perday,
         max_ivl,
-        recall_costs,
-        forget_cost,
-        learn_cost,
+        learn_costs,
+        review_costs,
         first_rating_prob,
         review_rating_prob,
+        first_rating_offsets,
+        first_session_lens,
+        forget_rating_offset,
+        forget_session_len,
         loss_aversion,
         learn_limit,
         review_limit,
@@ -154,6 +181,11 @@ pub fn simulate(
     let review_rating_dist = WeightedIndex::new(review_rating_prob).unwrap();
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
+
+    let mut init_ratings = Array1::zeros(deck_size);
+    init_ratings.iter_mut().for_each(|rating| {
+        *rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
+    });
 
     // Main simulation loop
     for today in 0..learn_span {
@@ -226,9 +258,9 @@ pub fn simulate(
             .filter(|(_, &need_review_flag, _, _)| need_review_flag)
             .for_each(|(cost, _, &forget_flag, &rating)| {
                 *cost = if forget_flag {
-                    forget_cost * loss_aversion
+                    review_costs[0] * loss_aversion
                 } else {
-                    recall_costs[rating - 2]
+                    review_costs[rating - 1]
                 }
             });
 
@@ -255,10 +287,10 @@ pub fn simulate(
 
         let need_learn = old_due.mapv(|x| x == learn_span as f64);
         // Update 'cost' column based on 'need_learn'
-        izip!(&mut cost, &need_learn)
-            .filter(|(_, &need_learn_flag)| need_learn_flag)
-            .for_each(|(cost, _)| {
-                *cost = learn_cost;
+        izip!(&mut cost, &need_learn, &init_ratings)
+            .filter(|(_, &need_learn_flag, _)| need_learn_flag)
+            .for_each(|(cost, _, &rating)| {
+                *cost = learn_costs[rating - 1];
             });
 
         cum_sum[0] = cost[0];
@@ -280,13 +312,6 @@ pub fn simulate(
                     need_learn_flag && (cum_cost <= max_cost_perday) && (learn_count <= learn_limit)
                 });
 
-        // Sample 'rating' for 'true_learn' entries
-        izip!(&mut ratings, &true_learn)
-            .filter(|(_, &true_learn_flag)| true_learn_flag)
-            .for_each(|(rating, _)| {
-                *rating = first_rating_choices[first_rating_dist.sample(&mut rng)]
-            });
-
         let mut new_stability = old_stability.to_owned();
         let old_difficulty = card_table.slice(s![Column::Difficulty, ..]);
         // Iterate over slices and apply stability_after_failure function
@@ -299,7 +324,9 @@ pub fn simulate(
         )
         .filter(|(.., &condition)| condition)
         .for_each(|(new_stab, &stab, &retr, &diff, ..)| {
-            *new_stab = stability_after_failure(w, stab, retr, diff);
+            let post_lapse_stab = stability_after_failure(w, stab, retr, diff);
+            *new_stab =
+                stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len);
         });
 
         // Iterate over slices and apply stability_after_success function
@@ -319,24 +346,12 @@ pub fn simulate(
         // Initialize a new Array1 to store updated difficulty values
         let mut new_difficulty = old_difficulty.to_owned();
 
-        // Update the difficulty values based on the condition 'true_review & forget'
-        izip!(&mut new_difficulty, &old_difficulty, &true_review, &forget)
-            .filter(|(.., &true_rev, &frgt)| true_rev && frgt)
-            .for_each(|(new_diff, &old_diff, ..)| {
-                *new_diff = (2.0f64.mul_add(w[6], old_diff)).clamp(1.0, 10.0);
+        // Update difficulty for review cards
+        izip!(&mut new_difficulty, &old_difficulty, &ratings, &true_review,)
+            .filter(|(.., &condition)| condition)
+            .for_each(|(new_diff, &old_diff, &rating, ..)| {
+                *new_diff = next_d(w, old_diff, rating);
             });
-
-        // Update the difficulty values based on the condition 'true_review & !forget'
-        izip!(
-            &mut new_difficulty,
-            &old_difficulty,
-            &ratings,
-            &(&true_review & !&forget)
-        )
-        .filter(|(.., &condition)| condition)
-        .for_each(|(new_diff, &old_diff, &rating, ..)| {
-            *new_diff = w[6].mul_add(3.0 - rating as f64, old_diff).clamp(1.0, 10.0);
-        });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
         let mut new_last_date = old_last_date.to_owned();
@@ -346,16 +361,22 @@ pub fn simulate(
                 *new_last_date = today as f64;
             });
 
+        // Initialize stability and difficulty for new cards
         izip!(
             &mut new_stability,
             &mut new_difficulty,
-            &ratings,
+            &init_ratings,
             &true_learn
         )
         .filter(|(.., &true_learn_flag)| true_learn_flag)
         .for_each(|(new_stab, new_diff, &rating, _)| {
-            *new_stab = w[rating - 1];
-            *new_diff = (w[5].mul_add(-(rating as f64 - 3.0), w[4])).clamp(1.0, 10.0);
+            *new_stab = stability_short_term(
+                w,
+                w[rating - 1],
+                first_rating_offsets[rating - 1],
+                first_session_lens[rating - 1],
+            );
+            *new_diff = init_d(w, rating, first_rating_offsets[rating - 1]);
         });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
@@ -607,7 +628,7 @@ mod tests {
         );
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            3199.9526251977177
+            8929.571907260968
         )
     }
 
@@ -663,8 +684,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 16, 27, 34, 84, 80, 91, 92, 104, 106, 109, 112, 133, 123, 139, 121, 136, 149,
-                136, 159, 173, 178, 175, 180, 189, 181, 196, 200, 193, 196
+                0, 15, 17, 31, 72, 69, 64, 80, 77, 76, 77, 89, 102, 79, 114, 113, 105, 94, 106,
+                104, 87, 139, 134, 128, 133, 143, 154, 129, 126, 146
             ]
         );
         assert_eq!(
@@ -687,7 +708,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8419900928572013);
+        assert_eq!(optimal_retention, 0.8626661361043435);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
