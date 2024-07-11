@@ -100,7 +100,7 @@ impl<B: Backend> Model<B> {
     }
 
     fn init_difficulty(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w.get(4) - self.w.get(5) * (rating - 3)
+        self.w.get(4) - (self.w.get(5) * (rating - 1)).exp() + 1
     }
 
     fn next_difficulty(&self, difficulty: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -298,12 +298,12 @@ mod tests {
         assert_eq!(
             difficulty.to_data(),
             Data::from([
-                DEFAULT_PARAMETERS[4] + 2.0 * DEFAULT_PARAMETERS[5],
-                DEFAULT_PARAMETERS[4] + DEFAULT_PARAMETERS[5],
                 DEFAULT_PARAMETERS[4],
-                DEFAULT_PARAMETERS[4] - DEFAULT_PARAMETERS[5],
-                DEFAULT_PARAMETERS[4] + 2.0 * DEFAULT_PARAMETERS[5],
-                DEFAULT_PARAMETERS[4] + DEFAULT_PARAMETERS[5]
+                DEFAULT_PARAMETERS[4] - DEFAULT_PARAMETERS[5].exp() + 1.0,
+                DEFAULT_PARAMETERS[4] - (2.0 * DEFAULT_PARAMETERS[5]).exp() + 1.0,
+                DEFAULT_PARAMETERS[4] - (3.0 * DEFAULT_PARAMETERS[5]).exp() + 1.0,
+                DEFAULT_PARAMETERS[4],
+                DEFAULT_PARAMETERS[4] - DEFAULT_PARAMETERS[5].exp() + 1.0,
             ])
         )
     }
@@ -351,7 +351,7 @@ mod tests {
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([6.744371, 5.8746934, 5.005016, 4.1353383])
+            Data::from([7.0109706, 6.077718, 5.144465, 4.211212])
         )
     }
 
@@ -372,19 +372,19 @@ mod tests {
         s_recall.clone().backward();
         assert_eq!(
             s_recall.to_data(),
-            Data::from([27.980768, 14.916422, 66.45966, 222.94603])
+            Data::from([28.603035, 16.240442, 68.610886, 237.08693])
         );
         let s_forget = model.stability_after_failure(stability.clone(), difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
-            Data::from([1.9482934, 2.161251, 2.4528089, 2.8098207])
+            Data::from([1.7989675, 2.089014, 2.4897401, 2.9990985])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
         assert_eq!(
             next_stability.to_data(),
-            Data::from([1.9482934, 14.916422, 66.45966, 222.94603])
+            Data::from([1.7989675, 16.240442, 68.610886, 237.08693])
         );
         let next_stability = model.stability_short_term(stability, rating);
         assert_eq!(

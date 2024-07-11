@@ -296,9 +296,9 @@ mod tests {
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 1.017056, default_s0);
-        assert_eq!(actual, 280.7447802452844);
+        assert_eq!(actual, 280.7489989949864);
         let actual = loss(&delta_t, &recall, &count, 1.017011, default_s0);
-        assert_eq!(actual, 280.7444462249327);
+        assert_eq!(actual, 280.74866497463466);
     }
 
     #[test]
@@ -363,6 +363,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.1217739, 0.35, 0.928426, 3.4544096]);
+        assert_eq!(actual, [0.123763576, 0.34999996, 0.8968067, 4.495269]);
     }
 }

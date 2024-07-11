@@ -226,14 +226,14 @@ pub fn filter_outlier(
     (filtered_items, trainset)
 }
 
-pub fn split_filter_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
+pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
     let (mut pretrainset, mut trainset) = items
         .into_iter()
         .partition(|item| item.long_term_review_cnt() == 1);
     if std::env::var("FSRS_NO_OUTLIER").is_err() {
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
     }
-    (pretrainset, trainset)
+    (pretrainset.clone(), [pretrainset, trainset].concat())
 }
 
 #[cfg(test)]

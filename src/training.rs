@@ -1,6 +1,6 @@
 use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{split_filter_data, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{prepare_training_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
@@ -207,7 +207,7 @@ impl<B: Backend> FSRS<B> {
         };
 
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, next_train_set) = split_filter_data(train_set);
+        let (pre_train_set, next_train_set) = prepare_training_data(train_set);
         if pre_train_set.len() + next_train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
@@ -228,7 +228,7 @@ impl<B: Backend> FSRS<B> {
 
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: true,
+                freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
             AdamConfig::new(),
@@ -283,7 +283,7 @@ impl<B: Backend> FSRS<B> {
         let initial_stability = pretrain(pre_train_set, average_recall).unwrap();
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: true,
+                freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
             AdamConfig::new(),
