@@ -594,7 +594,7 @@ mod tests {
             .assert_approx_eq(&Data::from([9.999996, 7.422087]), 5);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
         Data::from([memory_state.stability, memory_state.difficulty])
-            .assert_approx_eq(&Data::from([4.170096, 9.545820]), 5);
+            .assert_approx_eq(&Data::from([4.170096, 9.545_82]), 5);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
         Data::from([memory_state.stability, memory_state.difficulty])
             .assert_approx_eq(&Data::from([21.712555, 2.593589]), 5);
