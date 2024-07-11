@@ -80,7 +80,7 @@ impl Default for SimulatorConfig {
             first_session_lens: [2.02, 1.28, 0.81, 0.0],
             forget_rating_offset: -0.28,
             forget_session_len: 1.05,
-            loss_aversion: 2.5,
+            loss_aversion: 1.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
         }
@@ -113,7 +113,7 @@ fn init_d(w: &[f64], rating: usize, rating_offset: f64) -> f64 {
 }
 
 fn next_d(w: &[f64], d: f64, rating: usize) -> f64 {
-    let new_d = d - w[6] * (rating - 3) as f64;
+    let new_d = d - w[6] * (rating as f64 - 3.0);
     mean_reversion(w, w[4], new_d).clamp(1.0, 10.0)
 }
 
@@ -247,10 +247,14 @@ pub fn simulate(
 
         // Sample 'rating' for 'need_review' entries
         let mut ratings = Array1::zeros(deck_size);
-        izip!(&mut ratings, &(&need_review & !&forget))
-            .filter(|(_, &condition)| condition)
-            .for_each(|(rating, _)| {
-                *rating = review_rating_choices[review_rating_dist.sample(&mut rng)]
+        izip!(&mut ratings, &need_review, &forget)
+            .filter(|(_, &condition, _)| condition)
+            .for_each(|(rating, _, forget)| {
+                if *forget {
+                    *rating = 1;
+                } else {
+                    *rating = review_rating_choices[review_rating_dist.sample(&mut rng)]
+                }
             });
 
         // Update 'cost' column based on 'need_review', 'forget' and 'ratings'
@@ -351,6 +355,9 @@ pub fn simulate(
             .filter(|(.., &condition)| condition)
             .for_each(|(new_diff, &old_diff, &rating, ..)| {
                 *new_diff = next_d(w, old_diff, rating);
+                if rating == 1 {
+                    *new_diff -= (w[6] * forget_rating_offset).clamp(1.0, 10.0);
+                }
             });
 
         // Update 'last_date' column where 'true_review' or 'true_learn' is true
@@ -628,7 +635,7 @@ mod tests {
         );
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            8929.571907260968
+            8213.201407696866
         )
     }
 
@@ -684,8 +691,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 15, 17, 31, 72, 69, 64, 80, 77, 76, 77, 89, 102, 79, 114, 113, 105, 94, 106,
-                104, 87, 139, 134, 128, 133, 143, 154, 129, 126, 146
+                0, 15, 17, 31, 76, 76, 64, 81, 92, 85, 74, 111, 102, 87, 125, 117, 121, 132, 117,
+                125, 111, 148, 149, 139, 163, 149, 166, 147, 153, 160
             ]
         );
         assert_eq!(
@@ -704,11 +711,11 @@ mod tests {
             learn_span,
             max_cost_perday: f64::INFINITY,
             learn_limit,
-            loss_aversion: 2.5,
+            loss_aversion: 1.5,
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8626661361043435);
+        assert_eq!(optimal_retention, 0.786971401181512);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
