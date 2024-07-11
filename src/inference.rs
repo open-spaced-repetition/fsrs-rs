@@ -172,25 +172,20 @@ impl<B: Backend> FSRS<B> {
         let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
-            Ok(
-                if let (Some(current_memory_state), 0) = (current_memory_state, days_elapsed) {
-                    // When there's an existing memory state and no days have elapsed, we leave it unchanged.
-                    current_memory_state
-                } else {
-                    let state = MemoryState::from(model.step(
-                        delta_t.clone(),
-                        Tensor::from_data(
-                            Data::new(vec![rating.elem()], Shape { dims: [1] }),
-                            &self.device(),
-                        ),
-                        current_memory_state_tensors.clone(),
-                    ));
-                    if !state.stability.is_finite() || !state.difficulty.is_finite() {
-                        return Err(FSRSError::InvalidInput);
-                    }
-                    state
-                },
-            )
+            Ok({
+                let state = MemoryState::from(model.step(
+                    delta_t.clone(),
+                    Tensor::from_data(
+                        Data::new(vec![rating.elem()], Shape { dims: [1] }),
+                        &self.device(),
+                    ),
+                    current_memory_state_tensors.clone(),
+                ));
+                if !state.stability.is_finite() || !state.difficulty.is_finite() {
+                    return Err(FSRSError::InvalidInput);
+                }
+                state
+            })
         });
 
         let mut get_next_state = || {
@@ -555,21 +550,6 @@ mod tests {
             }
         );
         assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121);
-        Ok(())
-    }
-
-    #[test]
-    fn states_are_unchaged_when_no_days_elapsed() -> Result<()> {
-        let fsrs = FSRS::new(Some(&[]))?;
-        // the first time a card is seen, a memory state must be set
-        let mut state_a = fsrs.next_states(None, 1.0, 0)?.again.memory;
-        // but if no days have elapsed and it's reviewed again, the state should be unchanged
-        let state_b = fsrs.next_states(Some(state_a), 1.0, 0)?.again.memory;
-        assert_eq!(state_a, state_b);
-        // if a day elapses, it's counted
-        state_a = fsrs.next_states(Some(state_a), 1.0, 1)?.again.memory;
-        assert_ne!(state_a, state_b);
-
         Ok(())
     }
 
