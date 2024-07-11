@@ -23,7 +23,7 @@ type FirstRating = u32;
 type Count = u32;
 
 fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<FirstRating, Vec<AverageRecall>> {
-    // filter FSRSItem instances with exactly 2 reviews.
+    // filter FSRSItem instances with exactly 1 long term review.
     let items: Vec<_> = fsrs_items
         .into_iter()
         .filter(|item| item.long_term_review_cnt() == 1)
@@ -31,17 +31,20 @@ fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<FirstRating, Vec<A
 
     // use a nested HashMap (groups) to group items first by the rating in the first FSRSReview
     // and then by the delta_t in the second FSRSReview.
-    // (first_rating -> second_delta_t -> vec![0/1 for fail/pass])
+    // (first_rating -> first_long_term_delta_t -> vec![0/1 for fail/pass])
     let mut groups = HashMap::new();
 
     for item in items {
         let first_rating = item.reviews[0].rating;
-        let second_delta_t = item.reviews[1].delta_t;
-        let second_label = (item.reviews[1].rating > 1) as i32;
+        let first_long_term_review = item.first_long_term_review();
+        let first_long_term_delta_t = first_long_term_review.delta_t;
+        let first_long_term_label = (first_long_term_review.rating > 1) as i32;
 
         let inner_map = groups.entry(first_rating).or_insert_with(HashMap::new);
-        let ratings = inner_map.entry(second_delta_t).or_insert_with(Vec::new);
-        ratings.push(second_label);
+        let ratings = inner_map
+            .entry(first_long_term_delta_t)
+            .or_insert_with(Vec::new);
+        ratings.push(first_long_term_label);
     }
 
     let mut results = HashMap::new();

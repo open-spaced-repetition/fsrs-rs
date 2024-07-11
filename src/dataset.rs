@@ -43,6 +43,14 @@ impl FSRSItem {
             .count()
     }
 
+    pub(crate) fn first_long_term_review(&self) -> FSRSReview {
+        self.reviews
+            .iter()
+            .find(|review| review.delta_t > 0)
+            .unwrap()
+            .clone()
+    }
+
     pub(crate) fn r_matrix_index(&self) -> (u32, u32, u32) {
         let delta_t = self.current().delta_t as f64;
         let delta_t_bin = (2.48 * 3.62f64.powf(delta_t.log(3.62).floor()) * 100.0).round() as u32;
@@ -212,7 +220,8 @@ pub fn filter_outlier(
     }
     // keep the items in trainset if they are not removed from filtered_items
     trainset.retain(|item| {
-        !removed_pairs[item.reviews[0].rating as usize].contains(&item.reviews[1].delta_t)
+        !removed_pairs[item.reviews[0].rating as usize]
+            .contains(&item.first_long_term_review().delta_t)
     });
     (filtered_items, trainset)
 }
