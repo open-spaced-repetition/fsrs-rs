@@ -250,11 +250,11 @@ pub fn simulate(
         izip!(&mut ratings, &need_review, &forget)
             .filter(|(_, &condition, _)| condition)
             .for_each(|(rating, _, forget)| {
-                if *forget {
-                    *rating = 1;
+                *rating = if *forget {
+                    1
                 } else {
-                    *rating = review_rating_choices[review_rating_dist.sample(&mut rng)]
-                }
+                    review_rating_choices[review_rating_dist.sample(&mut rng)]
+                };
             });
 
         // Update 'cost' column based on 'need_review', 'forget' and 'ratings'
