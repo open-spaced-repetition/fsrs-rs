@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::FSRSBatcher;
 use crate::dataset::{FSRSItem, FSRSReview};
@@ -78,6 +80,171 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
             review_kind: row.get(8)?,
         })
     }
+}
+/*
+    def extract_simulation_config(self, df):
+        def rating_counts(x):
+            tmp = x.value_counts().to_dict()
+            first = x.iloc[0]
+            tmp[first] -= 1
+            for i in range(1, 5):
+                if i not in tmp:
+                    tmp[i] = 0
+            return tmp
+
+        df1 = (
+            df[(df["review_duration"] > 0) & (df["review_duration"] < 1200000)]
+            .groupby(by=["card_id", "real_days"])
+            .agg(
+                {
+                    "review_state": "first",
+                    "review_rating": ["first", rating_counts],
+                    "review_duration": "sum",
+                    "i": "size",
+                }
+            )
+            .reset_index()
+        )
+        df1.columns = [
+            "card_id",
+            "real_days",
+            "first_review_state",
+            "first_review_rating",
+            "review_rating_counts",
+            "sum_review_duration",
+            "review_count",
+        ]
+        rating_counts_df = (
+            df1["review_rating_counts"].apply(pd.Series).fillna(0).astype(int)
+        )
+        df1 = pd.concat(
+            [df1.drop("review_rating_counts", axis=1), rating_counts_df], axis=1
+        )
+
+        cost_dict = (
+            df1.groupby(by=["first_review_state", "first_review_rating"])[
+                "sum_review_duration"
+            ]
+            .median()
+            .to_dict()
+        )
+        self.learn_costs = np.array(
+            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
+        )
+        self.review_costs = np.array(
+            [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
+        )
+        button_usage_dict = (
+            df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
+            .count()
+            .to_dict()
+        )
+        self.learn_buttons = np.array(
+            [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
+        )
+        self.review_buttons = np.array(
+            [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
+        )
+        self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
+        self.review_rating_prob = (
+            self.review_buttons[1:] / self.review_buttons[1:].sum()
+        )
+
+        df2 = (
+            df1.groupby(by=["first_review_state", "first_review_rating"])[[1, 2, 3, 4]]
+            .mean()
+            .round(2)
+        )
+        rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
+        session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
+        self.first_rating_offset = np.array(
+            [rating_offset_dict.get((1, i), 0) for i in range(1, 5)]
+        )
+        self.first_session_len = np.array(
+            [session_len_dict.get((1, i), 0) for i in range(1, 5)]
+        )
+        self.forget_rating_offset = rating_offset_dict.get((2, 1), 0)
+        self.forget_session_len = session_len_dict.get((2, 1), 0)
+*/
+fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
+    let mut grouped_data = HashMap::new();
+
+    /*
+           df1 = (
+           df[(df["review_duration"] > 0) & (df["review_duration"] < 1200000)]
+           .groupby(by=["card_id", "real_days"])
+           TODO missing agg
+    */
+    for row in df {
+        if row.taken_millis > 0 && row.taken_millis < 1200000 {
+            let real_days = (row.id / 1000 - day_cutoff) / 86400;
+            let key = (row.cid.clone(), real_days);
+            grouped_data.entry(key).or_insert_with(Vec::new).push(row);
+        }
+    }
+    // df1.columns rename
+    #[derive(Debug, Clone, Copy)]
+    struct Foo {
+        card_id: i64,
+        real_days: i64,
+        first_review_state: i64,
+        first_review_rating: i64,
+        review_rating_counts: i64,
+        sum_review_duration: i64,
+        review_count: i64,
+    }
+    let mut df1: Vec<Foo> = Default::default();
+    /*
+           cost_dict = (
+           df1.groupby(by=["first_review_state", "first_review_rating"])[
+               "sum_review_duration"
+           ]
+           .median()
+           .to_dict()
+       )
+    */
+    let cost_dict = {
+        let mut cost_dict1 = HashMap::new();
+        for row in df1 {
+            cost_dict1
+                .entry((row.first_review_state, row.first_review_rating))
+                .or_insert_with(Vec::new)
+                .push(row.sum_review_duration); // is this true?
+        }
+        let foo = cost_dict1
+            .into_iter()
+            .map(|(x, y)| (x, y.iter().sum::<i64>() / y.len() as i64))
+            .collect::<HashMap<_, _>>();
+        foo
+    };
+
+    /*
+        self.learn_costs = np.array(
+            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
+        )
+        self.review_costs = np.array(
+            [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
+        )
+        button_usage_dict = (
+            df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
+            .count()
+            .to_dict()
+        )
+        self.learn_buttons = np.array(
+            [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
+        )
+        self.review_buttons = np.array(
+            [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
+        )
+        self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
+        self.review_rating_prob = (
+            self.review_buttons[1:] / self.review_buttons[1:].sum()
+        )
+
+     */
+    let learn_costs = (1..5)
+        .map(|i| cost_dict.get(&(1, i)).ok_or(0).unwrap() / 1000)
+        .collect_vec();
 }
 
 fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
