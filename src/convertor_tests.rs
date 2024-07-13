@@ -93,7 +93,21 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
             .round(2)
         )
 */
-fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
+#[derive(Debug, PartialEq)]
+struct SimulatorConfig {
+    learn_costs: Vec<f64>,
+    review_costs: Vec<f64>,
+    learn_buttons: Vec<i64>,
+    review_buttons: Vec<i64>,
+    first_rating_prob: Vec<f64>,
+    review_rating_prob: Vec<f64>,
+    first_rating_offset: Vec<f64>,
+    first_session_len: Vec<f64>,
+    forget_rating_offset: f64,
+    forget_session_len: f64,
+}
+
+fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> SimulatorConfig {
     /*
                def rating_counts(x):
                tmp = x.value_counts().to_dict()
@@ -233,14 +247,14 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
        ) */
     let learn_costs = (1..5)
-        .map(|i| cost_dict.get(&(1, i)).map(|x| *x).unwrap_or_default() / 1000)
+        .map(|i| cost_dict.get(&(1, i)).map(|x| *x).unwrap_or_default() as f64 / 1000.0)
         .collect_vec();
     /*
     self.review_costs = np.array(
            [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
        ) */
     let review_costs = (1..5)
-        .map(|i| cost_dict.get(&(2, i)).map(|x| *x).unwrap_or_default() / 1000)
+        .map(|i| cost_dict.get(&(2, i)).map(|x| *x).unwrap_or_default() as f64 / 1000.0)
         .collect_vec();
     /*
         button_usage_dict = (
@@ -289,7 +303,7 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum() */
     let first_rating_prob = learn_buttons
         .iter()
-        .map(|x| *x / learn_buttons.iter().sum::<i64>())
+        .map(|x| *x as f64 / learn_buttons.iter().sum::<i64>() as f64)
         .collect_vec();
     /*
     self.review_rating_prob = (
@@ -298,15 +312,15 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     let review_rating_prob = review_buttons
         .iter()
         .skip(1)
-        .map(|x| x / review_buttons.iter().skip(1).sum::<i64>())
+        .map(|x| *x as f64 / review_buttons.iter().skip(1).sum::<i64>() as f64)
         .collect_vec();
 
     /*
     rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
     */
-    let rating_offset_dict: HashMap<(i32, i32), i32> = todo!();
+    let rating_offset_dict: HashMap<(i32, i32), f64> = todo!();
     // session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
-    let session_len_dict: HashMap<(i32, i32), i32> = todo!();
+    let session_len_dict: HashMap<(i32, i32), f64> = todo!();
     /*
     self.first_rating_offset = np.array(
            [rating_offset_dict.get((1, i), 0) for i in range(1, 5)]
@@ -338,7 +352,20 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
         .map(|x| *x)
         .unwrap_or_default();
     //  self.forget_session_len = session_len_dict.get((2, 1), 0)
-    let forget_session_len = session_len_dict.get(&(2, 1)).ok_or(0).unwrap();
+    let forget_session_len = *session_len_dict.get(&(2, 1)).ok_or(0).unwrap();
+
+    SimulatorConfig {
+        learn_costs,
+        review_costs,
+        learn_buttons,
+        review_buttons,
+        first_rating_prob,
+        review_rating_prob,
+        first_rating_offset,
+        first_session_len,
+        forget_rating_offset,
+        forget_session_len,
+    }
 }
 
 fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
@@ -542,106 +569,25 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
 
 #[test]
 fn extract_simulator_config_from_revlog() {
-    let revlogs = read_collection().unwrap();
-    let first_rating_count = revlogs
-        .iter()
-        .filter(|r| {
-            r.review_kind == RevlogReviewKind::Learning
-                && r.ease_factor == 0
-                && r.button_chosen >= 1
-        })
-        .counts_by(|r| r.button_chosen);
-    let total_ratings = first_rating_count.values().sum::<usize>() as f32;
-    let first_rating_prob = {
-        let mut arr = [0.0; 4];
-        first_rating_count
-            .iter()
-            .for_each(|(button_chosen, count)| {
-                arr[*button_chosen as usize - 1] = *count as f32 / total_ratings
-            });
-        arr
-    };
-    assert_eq!(first_rating_prob, [0.15339181, 0.0, 0.15339181, 0.6932164,]);
-    let review_rating_count = revlogs
-        .iter()
-        .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen != 1)
-        .counts_by(|r| r.button_chosen);
-    let review_rating_prob = {
-        let mut arr = [0.0; 3];
-        review_rating_count
-            .iter()
-            .filter(|(&button_chosen, ..)| button_chosen >= 2)
-            .for_each(|(button_chosen, count)| {
-                arr[*button_chosen as usize - 2] =
-                    *count as f32 / review_rating_count.values().sum::<usize>() as f32;
-            });
-        arr
-    };
-    assert_eq!(review_rating_prob, [0.07380187, 0.90085745, 0.025340684,]);
-
-    let recall_costs = {
-        let mut arr = [0.0; 5];
-        revlogs
-            .iter()
-            .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen > 0)
-            .sorted_by(|a, b| a.button_chosen.cmp(&b.button_chosen))
-            .group_by(|r| r.button_chosen)
-            .into_iter()
-            .for_each(|(button_chosen, group)| {
-                let group_vec = group.into_iter().map(|r| r.taken_millis).collect_vec();
-                let average_secs =
-                    group_vec.iter().sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
-                arr[button_chosen as usize - 1] = average_secs
-            });
-        arr
-    };
-    let learn_cost = {
-        let revlogs_filter = revlogs
-            .iter()
-            .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
-            .map(|r| r.taken_millis);
-        revlogs_filter.clone().sum::<u32>() as f32 / revlogs_filter.count() as f32 / 1000.0
-    };
-    assert_eq!(learn_cost, 8.980446);
-
-    let forget_cost = {
-        let review_kind_to_total_millis = revlogs
-            .iter()
-            .sorted_by(|a, b| a.cid.cmp(&b.cid).then(a.id.cmp(&b.id)))
-            .group_by(|r| r.review_kind)
-            /*
-                for example:
-                o  x x  o o x x x o o x x o x
-                  |<->|    |<--->|   |<->| |<>|
-                x means forgotten, there are 4 consecutive sets of internal relearning in this card.
-                So each group is counted separately, and each group is summed up internally.(following code)
-                Finally averaging all groups, so sort by cid and id.
-            */
-            .into_iter()
-            .map(|(review_kind, group)| {
-                let total_millis: u32 = group.into_iter().map(|r| r.taken_millis).sum();
-                (review_kind, total_millis)
-            })
-            .collect_vec();
-        let mut group_sec_by_review_kind: [Vec<_>; 5] = Default::default();
-        for (review_kind, sec) in review_kind_to_total_millis.into_iter() {
-            group_sec_by_review_kind[review_kind as usize].push(sec)
+    let mut revlogs = read_collection().unwrap();
+    revlogs.sort_by_cached_key(|r| (r.cid, r.id));
+    let day_cutoff = 1720900800;
+    let simulator_config = extract_simulation_config(revlogs, day_cutoff);
+    assert_eq!(
+        simulator_config,
+        SimulatorConfig {
+            learn_costs: vec![30.061, 0. ,17.298,12.352],
+            review_costs: vec![19.139,6.887,5.83,4.002],
+            learn_buttons: vec![690,0,512,2364],
+            review_buttons: vec![ 788,960,11767,331],
+            first_rating_prob: vec![0.19349411,0.,0.14357824,0.66292765],
+            review_rating_prob: vec![0.07351815,0.9011334,0.02534845],
+            first_rating_offset: vec![1.64,0.,0.69,1.11],
+            first_session_len: vec![2.74,0.,1.32,1.19],
+            forget_rating_offset: 1.2799999999999998,
+            forget_session_len: 1.77
         }
-        let mut arr = [0.0; 5];
-        group_sec_by_review_kind
-            .iter()
-            .enumerate()
-            .for_each(|(review_kind, group)| {
-                let average_secs = group.iter().sum::<u32>() as f32 / group.len() as f32 / 1000.0;
-                arr[review_kind] = average_secs
-            });
-        arr
-    };
-
-    let forget_cost = forget_cost[RevlogReviewKind::Relearning as usize] + recall_costs[0];
-    assert_eq!(forget_cost, 23.481838);
-
-    assert_eq!(recall_costs[1..=3], [9.047336, 7.774851, 5.149275,]);
+    )
 }
 
 // This test currently expects the following .anki21 file to be placed in tests/data/:
