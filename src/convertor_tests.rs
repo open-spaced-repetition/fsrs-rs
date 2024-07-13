@@ -128,16 +128,7 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
             .mean()
             .round(2)
         )
-        rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
-        session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
-        self.first_rating_offset = np.array(
-            [rating_offset_dict.get((1, i), 0) for i in range(1, 5)]
-        )
-        self.first_session_len = np.array(
-            [session_len_dict.get((1, i), 0) for i in range(1, 5)]
-        )
-        self.forget_rating_offset = rating_offset_dict.get((2, 1), 0)
-        self.forget_session_len = session_len_dict.get((2, 1), 0)
+
 */
 fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     let mut grouped_data = HashMap::new();
@@ -255,6 +246,45 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
         .skip(1)
         .map(|x| x / review_buttons.iter().skip(1).sum::<i64>())
         .collect_vec();
+
+    /*
+    rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
+    */
+    let rating_offset_dict: HashMap<(i32, i32), i32> = Default::default();
+    // session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
+    let session_len_dict: HashMap<(i32, i32), i32> = Default::default();
+    /*
+    self.first_rating_offset = np.array(
+           [rating_offset_dict.get((1, i), 0) for i in range(1, 5)]
+       ) */
+    let first_rating_offset = (1..5)
+        .map(|i| {
+            rating_offset_dict
+                .get(&(1, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
+        .collect_vec();
+    /*
+    self.first_session_len = np.array(
+           [session_len_dict.get((1, i), 0) for i in range(1, 5)]
+       ) */
+    let first_session_len = (1..5)
+        .map(|i| {
+            session_len_dict
+                .get(&(1, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
+        .collect_vec();
+
+    // self.forget_rating_offset = rating_offset_dict.get((2, 1), 0)
+    let forget_rating_offset = rating_offset_dict
+        .get(&(2, 1))
+        .map(|x| *x)
+        .unwrap_or_default();
+    //  self.forget_session_len = session_len_dict.get((2, 1), 0)
+    let forget_session_len = session_len_dict.get(&(2, 1)).ok_or(0).unwrap();
 }
 
 fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
