@@ -107,16 +107,9 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     fn rating_counts(entries: &[RevlogEntry]) -> HashMap<usize, usize> {
         let mut counts = HashMap::new();
 
-        for entry in entries.iter() {
+        for entry in entries.iter().skip(1) {
             *counts.entry(entry.review_kind as usize).or_insert(0) += 1;
         }
-
-        if let Some(first) = entries.first() {
-            if let Some(count) = counts.get_mut(&(first.review_kind as usize)) {
-                *count -= 1;
-            }
-        }
-
         for i in 1..5 {
             counts.entry(i).or_insert(0);
         }
