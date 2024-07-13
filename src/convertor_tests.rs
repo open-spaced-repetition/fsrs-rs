@@ -104,7 +104,7 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
                        tmp[i] = 0
                return tmp
     */
-    fn rating_counts(entries: Vec<RevlogEntry>) -> HashMap<usize, usize> {
+    fn rating_counts(entries: &[RevlogEntry]) -> HashMap<usize, usize> {
         let mut counts = HashMap::new();
 
         for entry in entries.iter() {
@@ -155,21 +155,22 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
         let mut result: Vec<RevlogEntry> = Vec::new();
         for ((card_id, real_days), entries) in grouped_data {
             if let Some(first_entry) = entries.first() {
-                //         let review_state = first_entry.review_state.clone();
-                //         let review_rating_first = first_entry.review_rating;
-                //         let review_rating_count = rating_counts(entries);
-                //         let review_duration_sum: usize =
-                //             entries.iter().map(|entry| entry.review_duration).sum();
+                let review_state = first_entry.review_kind.clone();
+                let review_rating_first = first_entry.button_chosen;
+                let review_rating_count = rating_counts(&entries);
+                let review_duration_sum =
+                    entries.iter().map(|entry| entry.taken_millis).sum::<u32>();
                 let i_size = entries.len();
 
-                //         result.push(RevlogEntry {
-                //             cid: card_id,
-                //             real_days,
-                //             review_state,
-                //             review_rating: review_rating_first,
-                //             review_duration: review_duration_sum,
-                //             i: i_size,
-                //         });
+                result.push(RevlogEntry {
+                    cid: card_id,
+                    button_chosen: review_rating_first as u8,
+                    review_kind: review_state,
+                    taken_millis: review_duration_sum,
+                    interval: i_size as i32,
+                    // real_days: ?
+                    ..Default::default()
+                });
             }
         }
     };
