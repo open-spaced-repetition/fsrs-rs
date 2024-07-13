@@ -82,72 +82,111 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
     }
 }
 /*
-    def extract_simulation_config(self, df):
-        def rating_counts(x):
-            tmp = x.value_counts().to_dict()
-            first = x.iloc[0]
-            tmp[first] -= 1
-            for i in range(1, 5):
-                if i not in tmp:
-                    tmp[i] = 0
-            return tmp
 
-        df1 = (
-            df[(df["review_duration"] > 0) & (df["review_duration"] < 1200000)]
-            .groupby(by=["card_id", "real_days"])
-            .agg(
-                {
-                    "review_state": "first",
-                    "review_rating": ["first", rating_counts],
-                    "review_duration": "sum",
-                    "i": "size",
-                }
-            )
-            .reset_index()
-        )
-        df1.columns = [
-            "card_id",
-            "real_days",
-            "first_review_state",
-            "first_review_rating",
-            "review_rating_counts",
-            "sum_review_duration",
-            "review_count",
-        ]
-        rating_counts_df = (
-            df1["review_rating_counts"].apply(pd.Series).fillna(0).astype(int)
-        )
         df1 = pd.concat(
             [df1.drop("review_rating_counts", axis=1), rating_counts_df], axis=1
         )
-
-
 
         df2 = (
             df1.groupby(by=["first_review_state", "first_review_rating"])[[1, 2, 3, 4]]
             .mean()
             .round(2)
         )
-
 */
 fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
-    let mut grouped_data = HashMap::new();
+    /*
+               def rating_counts(x):
+               tmp = x.value_counts().to_dict()
+               first = x.iloc[0]
+               tmp[first] -= 1
+               for i in range(1, 5):
+                   if i not in tmp:
+                       tmp[i] = 0
+               return tmp
+    */
+    fn rating_counts(entries: Vec<RevlogEntry>) -> HashMap<usize, usize> {
+        let mut counts = HashMap::new();
 
+        for entry in entries.iter() {
+            *counts.entry(entry.review_kind as usize).or_insert(0) += 1;
+        }
+
+        if let Some(first) = entries.first() {
+            if let Some(count) = counts.get_mut(&(first.review_kind as usize)) {
+                *count -= 1;
+            }
+        }
+
+        for i in 1..5 {
+            counts.entry(i).or_insert(0);
+        }
+
+        counts
+    }
     /*
            df1 = (
            df[(df["review_duration"] > 0) & (df["review_duration"] < 1200000)]
            .groupby(by=["card_id", "real_days"])
-           TODO missing agg
+           .agg(
+               {
+                   "review_state": "first",
+                   "review_rating": ["first", rating_counts],
+                   "review_duration": "sum",
+                   "i": "size",
+               }
+           )
+           .reset_index()
+       )
     */
-    for row in df {
-        if row.taken_millis > 0 && row.taken_millis < 1200000 {
-            let real_days = (row.id / 1000 - day_cutoff) / 86400;
-            let key = (row.cid.clone(), real_days);
-            grouped_data.entry(key).or_insert_with(Vec::new).push(row);
+    let mut df_ = {
+        let mut grouped_data = HashMap::new();
+        for &row in df.iter() {
+            if row.taken_millis > 0 && row.taken_millis < 1200000 {
+                let real_days = (row.id / 1000 - day_cutoff) / 86400;
+                let key = (row.cid.clone(), real_days);
+                grouped_data.entry(key).or_insert_with(Vec::new).push(row);
+            }
         }
-    }
+
+        // Aggregate results
+
+        // TODO: fix field name below, they are different between rust and python.
+
+        let mut result: Vec<RevlogEntry> = Vec::new();
+        for ((card_id, real_days), entries) in grouped_data {
+            if let Some(first_entry) = entries.first() {
+                //         let review_state = first_entry.review_state.clone();
+                //         let review_rating_first = first_entry.review_rating;
+                //         let review_rating_count = rating_counts(entries);
+                //         let review_duration_sum: usize =
+                //             entries.iter().map(|entry| entry.review_duration).sum();
+                let i_size = entries.len();
+
+                //         result.push(RevlogEntry {
+                //             cid: card_id,
+                //             real_days,
+                //             review_state,
+                //             review_rating: review_rating_first,
+                //             review_duration: review_duration_sum,
+                //             i: i_size,
+                //         });
+            }
+        }
+    };
+
     // df1.columns rename
-    #[derive(Debug, Clone, Copy)]
+    /*
+               df1.columns = [
+               "card_id",
+               "real_days",
+               "first_review_state",
+               "first_review_rating",
+               "review_rating_counts",
+               "sum_review_duration",
+               "review_count",
+           ]
+    */
+    #[derive(Debug, Clone, Copy, Default)]
     struct Foo {
         card_id: i64,
         real_days: i64,
@@ -157,7 +196,20 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
         sum_review_duration: i64,
         review_count: i64,
     }
-    let mut df1: Vec<Foo> = Default::default();
+    // TODO: change the col name
+    let df1 = df
+        .iter()
+        .map(|x| Foo {
+            card_id: x.cid,
+            ..Default::default()
+        })
+        .collect_vec();
+    /*
+    rating_counts_df = (
+            df1["review_rating_counts"].apply(pd.Series).fillna(0).astype(int)
+        )
+     */
+    let rating_counts_df = df1.iter().map(|x| x.review_rating_counts).collect_vec();
     /*
            cost_dict = (
            df1.groupby(by=["first_review_state", "first_review_rating"])[
@@ -187,14 +239,14 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
        ) */
     let learn_costs = (1..5)
-        .map(|i| cost_dict.get(&(1, i)).ok_or(0).unwrap() / 1000)
+        .map(|i| cost_dict.get(&(1, i)).map(|x| *x).unwrap_or_default() / 1000)
         .collect_vec();
     /*
     self.review_costs = np.array(
            [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
        ) */
     let review_costs = (1..5)
-        .map(|i| cost_dict.get(&(2, i)).ok_or(0).unwrap() / 1000)
+        .map(|i| cost_dict.get(&(2, i)).map(|x| *x).unwrap_or_default() / 1000)
         .collect_vec();
     /*
         button_usage_dict = (
@@ -220,16 +272,24 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
         [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
     ) */
     let learn_buttons = (1..5)
-        .map(|i| button_usage_dict.get(&(1, i)).ok_or(0).unwrap())
-        .cloned()
+        .map(|i| {
+            button_usage_dict
+                .get(&(1, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
         .collect_vec();
     /*
     self.review_buttons = np.array(
           [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
       ) */
     let review_buttons = (1..5)
-        .map(|i| button_usage_dict.get(&(2, i)).ok_or(0).unwrap())
-        .cloned()
+        .map(|i| {
+            button_usage_dict
+                .get(&(2, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
         .collect_vec();
     /*
     self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum() */
@@ -250,9 +310,9 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     /*
     rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
     */
-    let rating_offset_dict: HashMap<(i32, i32), i32> = Default::default();
+    let rating_offset_dict: HashMap<(i32, i32), i32> = todo!();
     // session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
-    let session_len_dict: HashMap<(i32, i32), i32> = Default::default();
+    let session_len_dict: HashMap<(i32, i32), i32> = todo!();
     /*
     self.first_rating_offset = np.array(
            [rating_offset_dict.get((1, i), 0) for i in range(1, 5)]
