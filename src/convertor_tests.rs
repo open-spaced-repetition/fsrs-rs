@@ -121,34 +121,7 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
             [df1.drop("review_rating_counts", axis=1), rating_counts_df], axis=1
         )
 
-        cost_dict = (
-            df1.groupby(by=["first_review_state", "first_review_rating"])[
-                "sum_review_duration"
-            ]
-            .median()
-            .to_dict()
-        )
-        self.learn_costs = np.array(
-            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
-        )
-        self.review_costs = np.array(
-            [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
-        )
-        button_usage_dict = (
-            df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
-            .count()
-            .to_dict()
-        )
-        self.learn_buttons = np.array(
-            [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
-        )
-        self.review_buttons = np.array(
-            [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
-        )
-        self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
-        self.review_rating_prob = (
-            self.review_buttons[1:] / self.review_buttons[1:].sum()
-        )
+
 
         df2 = (
             df1.groupby(by=["first_review_state", "first_review_rating"])[[1, 2, 3, 4]]
@@ -205,7 +178,7 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     */
     let cost_dict = {
         let mut cost_dict1 = HashMap::new();
-        for row in df1 {
+        for row in df1.iter() {
             cost_dict1
                 .entry((row.first_review_state, row.first_review_rating))
                 .or_insert_with(Vec::new)
@@ -219,31 +192,68 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     };
 
     /*
-       self.learn_costs = np.array(
+    self.learn_costs = np.array(
            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
-       )
-       self.review_costs = np.array(
-           [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
-       )
-       button_usage_dict = (
-           df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
-           .count()
-           .to_dict()
-       )
-       self.learn_buttons = np.array(
-           [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
-       )
-       self.review_buttons = np.array(
-           [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
-       )
-       self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
-       self.review_rating_prob = (
-           self.review_buttons[1:] / self.review_buttons[1:].sum()
-       )
-
-    */
+       ) */
     let learn_costs = (1..5)
         .map(|i| cost_dict.get(&(1, i)).ok_or(0).unwrap() / 1000)
+        .collect_vec();
+    /*
+    self.review_costs = np.array(
+           [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
+       ) */
+    let review_costs = (1..5)
+        .map(|i| cost_dict.get(&(2, i)).ok_or(0).unwrap() / 1000)
+        .collect_vec();
+    /*
+        button_usage_dict = (
+        df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
+        .count()
+        .to_dict()
+    ) */
+    let button_usage_dict = {
+        let mut button_usage_dict = HashMap::new();
+        for row in df1.iter() {
+            button_usage_dict
+                .entry((row.first_review_state, row.first_review_rating))
+                .or_insert_with(Vec::new)
+                .push(row.card_id); // is this true?
+        }
+        button_usage_dict
+            .into_iter()
+            .map(|(x, y)| (x, y.len() as i64))
+            .collect::<HashMap<_, _>>()
+    };
+    /*
+        self.learn_buttons = np.array(
+        [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
+    ) */
+    let learn_buttons = (1..5)
+        .map(|i| button_usage_dict.get(&(1, i)).ok_or(0).unwrap())
+        .cloned()
+        .collect_vec();
+    /*
+    self.review_buttons = np.array(
+          [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
+      ) */
+    let review_buttons = (1..5)
+        .map(|i| button_usage_dict.get(&(2, i)).ok_or(0).unwrap())
+        .cloned()
+        .collect_vec();
+    /*
+    self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum() */
+    let first_rating_prob = learn_buttons
+        .iter()
+        .map(|x| *x / learn_buttons.iter().sum::<i64>())
+        .collect_vec();
+    /*
+    self.review_rating_prob = (
+               self.review_buttons[1:] / self.review_buttons[1:].sum()
+           ) */
+    let review_rating_prob = review_buttons
+        .iter()
+        .skip(1)
+        .map(|x| x / review_buttons.iter().skip(1).sum::<i64>())
         .collect_vec();
 }
 
