@@ -219,29 +219,29 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) {
     };
 
     /*
-        self.learn_costs = np.array(
-            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
-        )
-        self.review_costs = np.array(
-            [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
-        )
-        button_usage_dict = (
-            df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
-            .count()
-            .to_dict()
-        )
-        self.learn_buttons = np.array(
-            [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
-        )
-        self.review_buttons = np.array(
-            [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
-        )
-        self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
-        self.review_rating_prob = (
-            self.review_buttons[1:] / self.review_buttons[1:].sum()
-        )
+       self.learn_costs = np.array(
+           [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
+       )
+       self.review_costs = np.array(
+           [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
+       )
+       button_usage_dict = (
+           df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
+           .count()
+           .to_dict()
+       )
+       self.learn_buttons = np.array(
+           [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
+       )
+       self.review_buttons = np.array(
+           [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
+       )
+       self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
+       self.review_rating_prob = (
+           self.review_buttons[1:] / self.review_buttons[1:].sum()
+       )
 
-     */
+    */
     let learn_costs = (1..5)
         .map(|i| cost_dict.get(&(1, i)).ok_or(0).unwrap() / 1000)
         .collect_vec();
