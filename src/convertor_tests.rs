@@ -576,14 +576,14 @@ fn extract_simulator_config_from_revlog() {
     assert_eq!(
         simulator_config,
         SimulatorConfig {
-            learn_costs: vec![30.061, 0. ,17.298,12.352],
-            review_costs: vec![19.139,6.887,5.83,4.002],
-            learn_buttons: vec![690,0,512,2364],
-            review_buttons: vec![ 788,960,11767,331],
-            first_rating_prob: vec![0.19349411,0.,0.14357824,0.66292765],
-            review_rating_prob: vec![0.07351815,0.9011334,0.02534845],
-            first_rating_offset: vec![1.64,0.,0.69,1.11],
-            first_session_len: vec![2.74,0.,1.32,1.19],
+            learn_costs: vec![30.061, 0., 17.298, 12.352],
+            review_costs: vec![19.139, 6.887, 5.83, 4.002],
+            learn_buttons: vec![690, 0, 512, 2364],
+            review_buttons: vec![788, 960, 11767, 331],
+            first_rating_prob: vec![0.19349411, 0., 0.14357824, 0.66292765],
+            review_rating_prob: vec![0.07351815, 0.9011334, 0.02534845],
+            first_rating_offset: vec![1.64, 0., 0.69, 1.11],
+            first_session_len: vec![2.74, 0., 1.32, 1.19],
             forget_rating_offset: 1.2799999999999998,
             forget_session_len: 1.77
         }
