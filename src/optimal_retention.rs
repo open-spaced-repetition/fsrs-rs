@@ -2,7 +2,7 @@ use crate::error::{FSRSError, Result};
 use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MIN};
 use crate::{DEFAULT_PARAMETERS, FSRS};
 use burn::tensor::backend::Backend;
-use itertools::izip;
+use itertools::{izip, Itertools};
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
 use ndarray_rand::rand_distr::Distribution;
 use ndarray_rand::RandomExt;
@@ -13,6 +13,7 @@ use rand::{
 };
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use std::collections::HashMap;
 use strum::EnumCount;
 
 #[derive(Debug, EnumCount)]
@@ -43,24 +44,24 @@ impl From<Column> for SliceInfoElem {
     }
 }
 
-const R_MIN: f64 = 0.75;
-const R_MAX: f64 = 0.95;
+const R_MIN: f32 = 0.75;
+const R_MAX: f32 = 0.95;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SimulatorConfig {
     pub deck_size: usize,
     pub learn_span: usize,
-    pub max_cost_perday: f64,
-    pub max_ivl: f64,
-    pub learn_costs: [f64; 4],
-    pub review_costs: [f64; 4],
-    pub first_rating_prob: [f64; 4],
-    pub review_rating_prob: [f64; 3],
-    pub first_rating_offsets: [f64; 4],
-    pub first_session_lens: [f64; 4],
-    pub forget_rating_offset: f64,
-    pub forget_session_len: f64,
-    pub loss_aversion: f64,
+    pub max_cost_perday: f32,
+    pub max_ivl: f32,
+    pub learn_costs: [f32; 4],
+    pub review_costs: [f32; 4],
+    pub first_rating_prob: [f32; 4],
+    pub review_rating_prob: [f32; 3],
+    pub first_rating_offsets: [f32; 4],
+    pub first_session_lens: [f32; 4],
+    pub forget_rating_offset: f32,
+    pub forget_session_len: f32,
+    pub loss_aversion: f32,
     pub learn_limit: usize,
     pub review_limit: usize,
 }
@@ -87,54 +88,54 @@ impl Default for SimulatorConfig {
     }
 }
 
-fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, rating: usize) -> f64 {
+fn stability_after_success(w: &[f32], s: f32, r: f32, d: f32, rating: usize) -> f32 {
     let hard_penalty = if rating == 2 { w[15] } else { 1.0 };
     let easy_bonus = if rating == 4 { w[16] } else { 1.0 };
-    s * (f64::exp(w[8])
+    s * (f32::exp(w[8])
         * (11.0 - d)
         * s.powf(-w[9])
-        * (f64::exp((1.0 - r) * w[10]) - 1.0)
+        * (f32::exp((1.0 - r) * w[10]) - 1.0)
         * hard_penalty)
         .mul_add(easy_bonus, 1.0)
 }
 
-fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
-    (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
+fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
+    (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f32::exp((1.0 - r) * w[14]))
         .clamp(S_MIN.into(), s)
 }
 
-fn stability_short_term(w: &[f64], s: f64, rating_offset: f64, session_len: f64) -> f64 {
+fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32) -> f32 {
     s * (w[17] * (rating_offset + session_len * w[18])).exp()
 }
 
-fn init_d(w: &[f64], rating: usize, rating_offset: f64) -> f64 {
-    let new_d = w[4] - (w[5] * (rating - 1) as f64).exp() + 1.0 - w[6] * rating_offset;
+fn init_d(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
+    let new_d = w[4] - (w[5] * (rating - 1) as f32).exp() + 1.0 - w[6] * rating_offset;
     new_d.clamp(1.0, 10.0)
 }
 
-fn next_d(w: &[f64], d: f64, rating: usize) -> f64 {
-    let new_d = d - w[6] * (rating as f64 - 3.0);
+fn next_d(w: &[f32], d: f32, rating: usize) -> f32 {
+    let new_d = d - w[6] * (rating as f32 - 3.0);
     mean_reversion(w, w[4], new_d).clamp(1.0, 10.0)
 }
 
-fn mean_reversion(w: &[f64], init: f64, current: f64) -> f64 {
+fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
 pub struct Card {
-    pub difficulty: f64,
-    pub stability: f64,
-    pub last_date: f64,
-    pub due: f64,
+    pub difficulty: f32,
+    pub stability: f32,
+    pub last_date: f32,
+    pub due: f32,
 }
 
 pub fn simulate(
     config: &SimulatorConfig,
-    w: &[f64],
-    desired_retention: f64,
+    w: &[f32],
+    desired_retention: f32,
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
-) -> (Array1<f64>, Array1<usize>, Array1<usize>, Array1<f64>) {
+) -> (Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>) {
     let SimulatorConfig {
         deck_size,
         learn_span,
@@ -155,7 +156,7 @@ pub fn simulate(
     let mut card_table = Array2::zeros((Column::COUNT, deck_size));
     card_table
         .slice_mut(s![Column::Due, ..])
-        .fill(learn_span as f64);
+        .fill(learn_span as f32);
     card_table.slice_mut(s![Column::Difficulty, ..]).fill(1e-10);
     card_table.slice_mut(s![Column::Stability, ..]).fill(1e-10);
 
@@ -200,13 +201,13 @@ pub fn simulate(
         izip!(&mut delta_t, &old_last_date, &has_learned)
             .filter(|(.., &has_learned_flag)| has_learned_flag)
             .for_each(|(delta_t, &last_date, ..)| {
-                *delta_t = today as f64 - last_date;
+                *delta_t = today as f32 - last_date;
             });
 
         let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
 
-        fn power_forgetting_curve(t: f64, s: f64) -> f64 {
-            (t / s).mul_add(FACTOR, 1.0).powf(DECAY)
+        fn power_forgetting_curve(t: f32, s: f32) -> f32 {
+            (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
         }
 
         // Calculate retrievability for entries where has_learned is true
@@ -217,11 +218,11 @@ pub fn simulate(
             });
 
         // Set 'cost' column to 0
-        let mut cost = Array1::<f64>::zeros(deck_size);
+        let mut cost = Array1::<f32>::zeros(deck_size);
 
         // Create 'need_review' mask
         let old_due = card_table.slice(s![Column::Due, ..]);
-        let need_review = old_due.mapv(|x| x <= today as f64);
+        let need_review = old_due.mapv(|x| x <= today as f32);
 
         // dbg!(&need_review.mapv(|x| x as i32).sum());
 
@@ -269,7 +270,7 @@ pub fn simulate(
             });
 
         // Calculate cumulative sum of 'cost'
-        let mut cum_sum = Array1::<f64>::zeros(deck_size);
+        let mut cum_sum = Array1::<f32>::zeros(deck_size);
         cum_sum[0] = cost[0];
         for i in 1..deck_size {
             cum_sum[i] = cum_sum[i - 1] + cost[i];
@@ -289,7 +290,7 @@ pub fn simulate(
                         && (review_count <= review_limit)
                 });
 
-        let need_learn = old_due.mapv(|x| x == learn_span as f64);
+        let need_learn = old_due.mapv(|x| x == learn_span as f32);
         // Update 'cost' column based on 'need_learn'
         izip!(&mut cost, &need_learn, &init_ratings)
             .filter(|(_, &need_learn_flag, _)| need_learn_flag)
@@ -365,7 +366,7 @@ pub fn simulate(
         izip!(&mut new_last_date, &true_review, &true_learn)
             .filter(|(_, &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
             .for_each(|(new_last_date, ..)| {
-                *new_last_date = today as f64;
+                *new_last_date = today as f32;
             });
 
         // Initialize stability and difficulty for new cards
@@ -390,7 +391,7 @@ pub fn simulate(
         izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
             .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
             .for_each(|(new_ivl, &new_stab, ..)| {
-                *new_ivl = (next_interval(new_stab as f32, desired_retention as f32) as f64)
+                *new_ivl = (next_interval(new_stab as f32, desired_retention as f32) as f32)
                     .clamp(1.0, max_ivl);
             });
 
@@ -399,7 +400,7 @@ pub fn simulate(
         izip!(&mut new_due, &new_interval, &true_review, &true_learn)
             .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
             .for_each(|(new_due, &new_ivl, ..)| {
-                *new_due = today as f64 + new_ivl;
+                *new_due = today as f32 + new_ivl;
             });
 
         // Update the card_table with the new values
@@ -436,11 +437,11 @@ pub fn simulate(
 
 fn sample<F>(
     config: &SimulatorConfig,
-    parameters: &[f64],
-    desired_retention: f64,
+    parameters: &[f32],
+    desired_retention: f32,
     n: usize,
     progress: &mut F,
-) -> Result<f64>
+) -> Result<f32>
 where
     F: FnMut() -> bool,
 {
@@ -461,8 +462,8 @@ where
             let total_cost = cost_per_day.sum();
             total_cost / total_memorized
         })
-        .sum::<f64>()
-        / n as f64)
+        .sum::<f32>()
+        / n as f32)
 }
 
 const SAMPLE_SIZE: usize = 4;
@@ -475,7 +476,7 @@ impl<B: Backend> FSRS<B> {
         config: &SimulatorConfig,
         parameters: &Parameters,
         mut progress: F,
-    ) -> Result<f64>
+    ) -> Result<f32>
     where
         F: FnMut(ItemProgress) -> bool + Send,
     {
@@ -487,7 +488,7 @@ impl<B: Backend> FSRS<B> {
             parameters
         }
         .iter()
-        .map(|v| *v as f64)
+        .map(|v| *v as f32)
         .collect::<Vec<_>>();
         let mut progress_info = ItemProgress {
             current: 0,
@@ -505,16 +506,16 @@ impl<B: Backend> FSRS<B> {
     /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
     fn brent<F>(
         config: &SimulatorConfig,
-        parameters: &[f64],
+        parameters: &[f32],
         mut progress: F,
-    ) -> Result<f64, FSRSError>
+    ) -> Result<f32, FSRSError>
     where
         F: FnMut() -> bool,
     {
         let mintol = 1e-10;
         let cg = 0.3819660;
         let maxiter = 64;
-        let tol = 0.01f64;
+        let tol = 0.01f32;
 
         let (xb, fb) = (
             R_MIN,
@@ -523,7 +524,7 @@ impl<B: Backend> FSRS<B> {
         let (mut x, mut v, mut w) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
         let (mut a, mut b) = (R_MIN, R_MAX);
-        let mut deltax: f64 = 0.0;
+        let mut deltax: f32 = 0.0;
         let mut iter = 0;
         let mut rat = 0.0;
         let mut u;
@@ -533,7 +534,7 @@ impl<B: Backend> FSRS<B> {
             let tol2 = 2.0 * tol1;
             let xmid = 0.5 * (a + b);
             // check for convergence
-            if (x - xmid).abs() < 0.5f64.mul_add(-(b - a), tol2) {
+            if (x - xmid).abs() < 0.5f32.mul_add(-(b - a), tol2) {
                 break;
             }
             if deltax.abs() <= tol1 {
@@ -616,26 +617,334 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RevlogReviewKind {
+    #[default]
+    Learning = 0,
+    Review = 1,
+    Relearning = 2,
+    /// Old Anki versions called this "Cram" or "Early", and assigned it when
+    /// reviewing cards ahead. It is now only used for filtered decks with
+    /// rescheduling disabled.
+    Filtered = 3,
+    Manual = 4,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RevlogEntry {
+    pub id: i64,
+    pub cid: i64,
+    pub usn: i32,
+    /// - In the V1 scheduler, 3 represents easy in the learning case.
+    /// - 0 represents manual rescheduling.
+    pub button_chosen: u8,
+    /// Positive values are in days, negative values in seconds.
+    pub interval: i32,
+    /// Positive values are in days, negative values in seconds.
+    pub last_interval: i32,
+    /// Card's ease after answering, stored as 10x the %, eg 2500 represents
+    /// 250%.
+    pub ease_factor: u32,
+    /// Amount of milliseconds taken to answer the card.
+    pub taken_millis: u32,
+    pub review_kind: RevlogReviewKind,
+}
+
+pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> SimulatorConfig {
+    /*
+        def rating_counts(x):
+            tmp = defaultdict(int, x.value_counts().to_dict())
+            first = x.iloc[0]
+            tmp[first] -= 1
+            return tmp
+    */
+    fn rating_counts(entries: &[RevlogEntry]) -> [u32; 4] {
+        let mut counts = [0; 4];
+
+        for entry in entries.iter().skip(1) {
+            counts[entry.button_chosen as usize - 1] += 1;
+        }
+
+        counts
+    }
+    /*
+        df1 = (
+            df[(df["review_duration"] > 0) & (df["review_duration"] < 1200000)]
+            .groupby(by=["card_id", "real_days"])
+            .agg(
+                {
+                    "review_state": "first",
+                    "review_rating": ["first", rating_counts],
+                    "review_duration": "sum",
+                }
+            )
+            .reset_index()
+        )
+    */
+    struct Df1Row {
+        card_id: i64,
+        first_review_state: u8,
+        first_review_rating: u8,
+        review_rating_counts: [u32; 4],
+        sum_review_duration: u32,
+    }
+    let df1 = {
+        let mut grouped_data = HashMap::new();
+        for &row in df.iter() {
+            if row.taken_millis > 0 && row.taken_millis < 1200000 {
+                let real_days = (row.id / 1000 - day_cutoff) / 86400;
+                let key = (row.cid.clone(), real_days);
+                grouped_data.entry(key).or_insert_with(Vec::new).push(row);
+            }
+        }
+
+        grouped_data
+            .into_iter()
+            .filter_map(|((card_id, _real_days), entries)| {
+                entries.first().map(|first_entry| {
+                    let first_review_state = first_entry.review_kind as u8 + 1;
+                    let first_review_rating = first_entry.button_chosen;
+                    let review_rating_counts = rating_counts(&entries);
+                    let sum_review_duration =
+                        entries.iter().map(|entry| entry.taken_millis).sum::<u32>();
+
+                    Df1Row {
+                        card_id,
+                        first_review_state,
+                        first_review_rating,
+                        review_rating_counts,
+                        sum_review_duration,
+                    }
+                })
+            })
+            .collect_vec()
+    };
+
+    let cost_dict = {
+        let mut cost_dict = HashMap::new();
+        for row in df1.iter() {
+            cost_dict
+                .entry((row.first_review_state, row.first_review_rating))
+                .or_insert_with(Vec::new)
+                .push(row.sum_review_duration);
+        }
+        // calculate the median of the sum_review_duration
+        fn median(x: &mut [u32]) -> u32 {
+            x.sort_unstable();
+            let n = x.len();
+            if n % 2 == 0 {
+                (x[n / 2 - 1] + x[n / 2]) / 2
+            } else {
+                x[n / 2]
+            }
+        }
+        cost_dict
+            .into_iter()
+            .map(|(k, mut v)| (k, median(&mut v)))
+            .collect::<HashMap<_, _>>()
+    };
+
+    // [cost_dict[(1, i)] / 1000 for i in range(1, 5)]
+    let learn_costs = (1..5)
+        .map(|i| cost_dict.get(&(1, i)).map(|x| *x).unwrap_or_default() as f32 / 1000f32)
+        .collect_vec()
+        .try_into()
+        .unwrap();
+    // [cost_dict[(2, i)] / 1000 for i in range(1, 5)]
+    let review_costs = (1..5)
+        .map(|i| cost_dict.get(&(2, i)).map(|x| *x).unwrap_or_default() as f32 / 1000f32)
+        .collect_vec()
+        .try_into()
+        .unwrap();
+    /*
+        button_usage_dict = (
+        df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
+        .count()
+        .to_dict()
+    ) */
+    let button_usage_dict = {
+        let mut button_usage_dict = HashMap::new();
+        for row in df1.iter() {
+            button_usage_dict
+                .entry((row.first_review_state, row.first_review_rating))
+                .or_insert_with(Vec::new)
+                .push(row.card_id); // is this correct?
+        }
+        button_usage_dict
+            .into_iter()
+            .map(|(x, y)| (x, y.len() as i64))
+            .collect::<HashMap<_, _>>()
+    };
+    // [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
+    let learn_buttons: [i64; 4] = (1..5)
+        .map(|i| {
+            button_usage_dict
+                .get(&(1, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
+        .collect_vec()
+        .try_into()
+        .unwrap();
+    // [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
+    let review_buttons: [i64; 4] = (1..5)
+        .map(|i| {
+            button_usage_dict
+                .get(&(2, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
+        .collect_vec()
+        .try_into()
+        .unwrap();
+
+    // self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
+    let first_rating_prob = learn_buttons
+        .iter()
+        .map(|x| *x as f32 / learn_buttons.iter().sum::<i64>() as f32)
+        .collect_vec()
+        .try_into()
+        .unwrap();
+    // self.review_buttons[1:] / self.review_buttons[1:].sum()
+    let review_rating_prob = review_buttons
+        .iter()
+        .skip(1)
+        .map(|x| *x as f32 / review_buttons.iter().skip(1).sum::<i64>() as f32)
+        .collect_vec()
+        .try_into()
+        .unwrap();
+
+    // df2 = (
+    //     df1.groupby(by=["first_review_state", "first_review_rating"])[[1, 2, 3, 4]]
+    //     .mean()
+    //     .round(2)
+    // )
+
+    let df2 = {
+        let mut grouped = HashMap::new();
+        for review in df1 {
+            grouped
+                .entry((review.first_review_state, review.first_review_rating))
+                .or_insert_with(Vec::new)
+                .push(review);
+        }
+        grouped
+            .iter()
+            .map(|((state, rating), group)| {
+                let count = group.len() as f32;
+                let (sum1, sum2, sum3, sum4) =
+                    group
+                        .iter()
+                        .fold((0, 0, 0, 0), |(sum1, sum2, sum3, sum4), review| {
+                            (
+                                sum1 + review.review_rating_counts[0],
+                                sum2 + review.review_rating_counts[1],
+                                sum3 + review.review_rating_counts[2],
+                                sum4 + review.review_rating_counts[3],
+                            )
+                        });
+
+                let averages = [
+                    (sum1 as f32 / count * 100.0).round() / 100.0,
+                    (sum2 as f32 / count * 100.0).round() / 100.0,
+                    (sum3 as f32 / count * 100.0).round() / 100.0,
+                    (sum4 as f32 / count * 100.0).round() / 100.0,
+                ];
+
+                ((*state, *rating), averages)
+            })
+            .collect::<HashMap<_, _>>()
+    };
+    // rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
+    let rating_offset_dict = {
+        let mut rating_offset_dict = HashMap::new();
+        for (k, averages) in df2.iter() {
+            let offset = averages
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| ((i + 1) as f32 - 3.0) * v)
+                .sum::<f32>();
+            rating_offset_dict.insert(k, (offset * 100.0).round() / 100.0);
+        }
+        rating_offset_dict
+    };
+    // session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
+    let session_len_dict = {
+        let mut session_len_dict = HashMap::new();
+        for (k, averages) in df2.iter() {
+            let sum = averages.iter().sum::<f32>();
+            session_len_dict.insert(k, (sum * 100.0).round() / 100.0);
+        }
+        session_len_dict
+    };
+    // [rating_offset_dict[(1, i)] for i in range(1, 5)]
+    let first_rating_offsets = (1..5)
+        .map(|i| {
+            rating_offset_dict
+                .get(&(1, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
+        .collect_vec()
+        .try_into()
+        .unwrap();
+
+    // [session_len_dict[(1, i)] for i in range(1, 5)]
+    let first_session_lens = (1..5)
+        .map(|i| {
+            session_len_dict
+                .get(&(1, i))
+                .map(|x| *x)
+                .unwrap_or_default()
+        })
+        .collect_vec()
+        .try_into()
+        .unwrap();
+
+    // rating_offset_dict[(2, 1)]
+    let forget_rating_offset = rating_offset_dict
+        .get(&(2, 1))
+        .map(|x| *x)
+        .unwrap_or_default();
+    // session_len_dict[(2, 1)]
+    let forget_session_len = session_len_dict
+        .get(&(2, 1))
+        .map(|x| *x)
+        .unwrap_or_default();
+
+    SimulatorConfig {
+        learn_costs,
+        review_costs,
+        first_rating_prob,
+        review_rating_prob,
+        first_rating_offsets,
+        first_session_lens,
+        forget_rating_offset,
+        forget_session_len,
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::DEFAULT_PARAMETERS;
+    use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
 
     #[test]
     fn simulator() {
         let config = SimulatorConfig::default();
         let (memorized_cnt_per_day, _, _, _) = simulate(
             &config,
-            &DEFAULT_PARAMETERS.iter().map(|v| *v as f64).collect_vec(),
+            &DEFAULT_PARAMETERS.iter().map(|v| *v as f32).collect_vec(),
             0.9,
             None,
             None,
         );
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            8213.201407696866
+            8222.023
         )
     }
 
@@ -645,7 +954,7 @@ mod tests {
             learn_span: 30,
             learn_limit: 60,
             review_limit: 200,
-            max_cost_perday: f64::INFINITY,
+            max_cost_perday: f32::INFINITY,
             ..Default::default()
         };
         let cards = vec![
@@ -664,7 +973,7 @@ mod tests {
         ];
         let memorization = simulate(
             &config,
-            &DEFAULT_PARAMETERS.iter().map(|v| *v as f64).collect_vec(),
+            &DEFAULT_PARAMETERS.iter().map(|v| *v as f32).collect_vec(),
             0.9,
             None,
             Some(cards),
@@ -678,12 +987,12 @@ mod tests {
             learn_span: 30,
             learn_limit: 60,
             review_limit: 200,
-            max_cost_perday: f64::INFINITY,
+            max_cost_perday: f32::INFINITY,
             ..Default::default()
         };
         let results = simulate(
             &config,
-            &DEFAULT_PARAMETERS.iter().map(|v| *v as f64).collect_vec(),
+            &DEFAULT_PARAMETERS.iter().map(|v| *v as f32).collect_vec(),
             0.9,
             None,
             None,
@@ -691,8 +1000,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 15, 17, 31, 76, 76, 64, 81, 92, 85, 74, 111, 102, 87, 125, 117, 121, 132, 117,
-                125, 111, 148, 149, 139, 163, 149, 166, 147, 153, 160
+                0, 15, 16, 17, 70, 73, 77, 82, 75, 87, 86, 111, 113, 110, 105, 112, 124, 131, 127,
+                119, 122, 163, 145, 150, 171, 150, 136, 163, 167, 156
             ]
         );
         assert_eq!(
@@ -709,14 +1018,36 @@ mod tests {
         let config = SimulatorConfig {
             deck_size: learn_span * learn_limit,
             learn_span,
-            max_cost_perday: f64::INFINITY,
+            max_cost_perday: f32::INFINITY,
             learn_limit,
             loss_aversion: 1.5,
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.786971401181512);
+        assert_eq!(optimal_retention, 0.7791796);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn extract_simulator_config_from_revlog() {
+        let mut revlogs = read_collection().unwrap();
+        revlogs.sort_by_cached_key(|r| (r.cid, r.id));
+        let day_cutoff = 1720900800;
+        let simulator_config = extract_simulation_config(revlogs, day_cutoff);
+        assert_eq!(
+            simulator_config,
+            SimulatorConfig {
+                learn_costs: [30.061, 0., 17.298, 12.352],
+                review_costs: [19.139, 6.887, 5.83, 4.002],
+                first_rating_prob: [0.19349411, 0., 0.14357824, 0.66292765],
+                review_rating_prob: [0.07351815, 0.9011334, 0.025348445],
+                first_rating_offsets: [1.64, 0., 0.69, 1.11],
+                first_session_lens: [2.74, 0., 1.32, 1.19],
+                forget_rating_offset: 1.28,
+                forget_session_len: 1.77,
+                ..Default::default()
+            }
+        )
     }
 }
