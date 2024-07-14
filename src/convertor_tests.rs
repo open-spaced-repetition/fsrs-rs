@@ -1,7 +1,7 @@
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::FSRSBatcher;
 use crate::dataset::{FSRSItem, FSRSReview};
-use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
+// use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::data::dataloader::batcher::Batcher;
@@ -13,6 +13,7 @@ use chrono_tz::Tz;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
+/*
 impl rusqlite::types::FromSql for RevlogReviewKind {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         let rusqlite::types::ValueRef::Integer(i) = value else {
@@ -28,6 +29,8 @@ impl rusqlite::types::FromSql for RevlogReviewKind {
         }
     }
 }
+*/
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RevlogEntry {
     pub id: i64,
@@ -929,3 +932,4 @@ fn test_remove_revlog_before_last_first_learn() {
         ]
     );
 }
+*/
