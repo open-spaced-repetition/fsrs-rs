@@ -184,11 +184,22 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
             cost_dict1
                 .entry((row.first_review_state, row.first_review_rating))
                 .or_insert_with(Vec::new)
-                .push(row.sum_review_duration); // is this correct?
+                .push(row.sum_review_duration);
         }
+        // calculate the median of the sum_review_duration
+        let median = |x: &Vec<u32>| {
+            let mut x = x.clone();
+            x.sort();
+            let n = x.len();
+            if n % 2 == 0 {
+                (x[n / 2 - 1] + x[n / 2]) / 2
+            } else {
+                x[n / 2]
+            }
+        };
         let foo = cost_dict1
-            .into_iter()
-            .map(|(x, y)| (x, y.iter().sum::<u32>() / y.len() as u32))
+            .iter()
+            .map(|(k, v)| (*k, median(v)))
             .collect::<HashMap<_, _>>();
         foo
     };
@@ -595,7 +606,7 @@ fn extract_simulator_config_from_revlog() {
             learn_buttons: vec![690, 0, 512, 2364],
             review_buttons: vec![788, 960, 11767, 331],
             first_rating_prob: vec![0.19349411, 0., 0.14357824, 0.66292765],
-            review_rating_prob: vec![0.07351815, 0.9011334, 0.02534845],
+            review_rating_prob: vec![0.07351815, 0.9011334, 0.025348445],
             first_rating_offset: vec![1.64, 0., 0.69, 1.11],
             first_session_len: vec![2.74, 0., 1.32, 1.19],
             forget_rating_offset: 1.28,
