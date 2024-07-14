@@ -14,24 +14,26 @@ pub(crate) fn parameter_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<
 
 pub(crate) fn clip_parameters(parameters: &Parameters) -> Vec<f32> {
     // https://regex101.com/r/21mXNI/1
-    const CLAMPS: [(f32, f32); 17] = [
+    const CLAMPS: [(f32, f32); 19] = [
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
         (1.0, 10.0),
-        (0.1, 5.0),
-        (0.1, 5.0),
+        (0.1, 4.0),
+        (0.1, 4.0),
         (0.0, 0.75),
-        (0.0, 4.0),
+        (0.0, 4.5),
         (0.0, 0.8),
-        (0.01, 3.0),
-        (0.5, 5.0),
-        (0.01, 0.2),
+        (0.01, 3.5),
+        (0.1, 5.0),
+        (0.01, 0.25),
         (0.01, 0.9),
-        (0.01, 3.0),
+        (0.01, 4.0),
         (0.0, 1.0),
         (1.0, 6.0),
+        (0.0, 2.0),
+        (0.0, 2.0),
     ];
 
     let mut parameters = parameters.to_vec();

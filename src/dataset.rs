@@ -36,6 +36,21 @@ impl FSRSItem {
         self.reviews.last().unwrap()
     }
 
+    pub(crate) fn long_term_review_cnt(&self) -> usize {
+        self.reviews
+            .iter()
+            .filter(|review| review.delta_t > 0)
+            .count()
+    }
+
+    pub(crate) fn first_long_term_review(&self) -> FSRSReview {
+        self.reviews
+            .iter()
+            .find(|review| review.delta_t > 0)
+            .unwrap()
+            .clone()
+    }
+
     pub(crate) fn r_matrix_index(&self) -> (u32, u32, u32) {
         let delta_t = self.current().delta_t as f64;
         let delta_t_bin = (2.48 * 3.62f64.powf(delta_t.log(3.62).floor()) * 100.0).round() as u32;
@@ -205,18 +220,20 @@ pub fn filter_outlier(
     }
     // keep the items in trainset if they are not removed from filtered_items
     trainset.retain(|item| {
-        !removed_pairs[item.reviews[0].rating as usize].contains(&item.reviews[1].delta_t)
+        !removed_pairs[item.reviews[0].rating as usize]
+            .contains(&item.first_long_term_review().delta_t)
     });
     (filtered_items, trainset)
 }
 
-pub fn split_filter_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
-    let (mut pretrainset, mut trainset) =
-        items.into_iter().partition(|item| item.reviews.len() == 2);
+pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
+    let (mut pretrainset, mut trainset) = items
+        .into_iter()
+        .partition(|item| item.long_term_review_cnt() == 1);
     if std::env::var("FSRS_NO_OUTLIER").is_err() {
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
     }
-    (pretrainset, trainset)
+    (pretrainset.clone(), [pretrainset, trainset].concat())
 }
 
 #[cfg(test)]
@@ -234,12 +251,12 @@ mod tests {
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
-                        rating: 1,
+                        rating: 3,
                         delta_t: 0,
                     },
                     FSRSReview {
-                        rating: 4,
-                        delta_t: 2,
+                        rating: 3,
+                        delta_t: 1,
                     },
                 ],
             }
@@ -433,7 +450,7 @@ mod tests {
         let dataset = anki21_sample_file_converted_to_fsrs();
         let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = dataset
             .into_iter()
-            .partition(|item| item.reviews.len() == 2);
+            .partition(|item| item.long_term_review_cnt() == 1);
         assert_eq!(pretrainset.len(), 3315);
         assert_eq!(trainset.len(), 10975);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
