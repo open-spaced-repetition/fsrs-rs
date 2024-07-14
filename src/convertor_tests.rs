@@ -179,27 +179,26 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
     };
 
     let cost_dict = {
-        let mut cost_dict1 = HashMap::new();
+        let mut cost_dict = HashMap::new();
         for row in df1.iter() {
-            cost_dict1
+            cost_dict
                 .entry((row.first_review_state, row.first_review_rating))
                 .or_insert_with(Vec::new)
                 .push(row.sum_review_duration);
         }
         // calculate the median of the sum_review_duration
-        let median = |x: &Vec<u32>| {
-            let mut x = x.clone();
-            x.sort();
+        fn median(x: &mut [u32]) -> u32 {
+            x.sort_unstable();
             let n = x.len();
             if n % 2 == 0 {
                 (x[n / 2 - 1] + x[n / 2]) / 2
             } else {
                 x[n / 2]
             }
-        };
-        let foo = cost_dict1
-            .iter()
-            .map(|(k, v)| (*k, median(v)))
+        }
+        let foo = cost_dict
+            .into_iter()
+            .map(|(k, mut v)| (k, median(&mut v)))
             .collect::<HashMap<_, _>>();
         foo
     };
