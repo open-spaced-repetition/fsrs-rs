@@ -154,28 +154,26 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
         }
 
         // Aggregate results
+        grouped_data
+            .into_iter()
+            .filter_map(|((card_id, _real_days), entries)| {
+                entries.first().map(|first_entry| {
+                    let first_review_state = first_entry.review_kind as u8 + 1;
+                    let first_review_rating = first_entry.button_chosen;
+                    let review_rating_counts = rating_counts(&entries);
+                    let sum_review_duration =
+                        entries.iter().map(|entry| entry.taken_millis).sum::<u32>();
 
-        // TODO: fix field name below, they are different between rust and python.
-
-        let mut result = Vec::new();
-        for ((card_id, _real_days), entries) in grouped_data {
-            if let Some(first_entry) = entries.first() {
-                let first_review_state = first_entry.review_kind as u8 + 1;
-                let first_review_rating = first_entry.button_chosen;
-                let review_rating_counts = rating_counts(&entries);
-                let sum_review_duration =
-                    entries.iter().map(|entry| entry.taken_millis).sum::<u32>();
-
-                result.push(Df1Row {
-                    card_id,
-                    first_review_state,
-                    first_review_rating,
-                    review_rating_counts,
-                    sum_review_duration,
-                });
-            }
-        }
-        result
+                    Df1Row {
+                        card_id,
+                        first_review_state,
+                        first_review_rating,
+                        review_rating_counts,
+                        sum_review_duration,
+                    }
+                })
+            })
+            .collect_vec()
     };
 
     let cost_dict = {
@@ -196,11 +194,10 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
                 x[n / 2]
             }
         }
-        let foo = cost_dict
+        cost_dict
             .into_iter()
             .map(|(k, mut v)| (k, median(&mut v)))
-            .collect::<HashMap<_, _>>();
-        foo
+            .collect::<HashMap<_, _>>()
     };
 
     /*
@@ -294,27 +291,32 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
                 .push(review);
         }
         // 计算平均值
-        let mut averages = HashMap::new();
-        for ((state, rating), group) in grouped.iter() {
-            let (mut sum1, mut sum2, mut sum3, mut sum4) = (0, 0, 0, 0);
-            let count = group.len() as f32;
+        grouped
+            .iter()
+            .map(|((state, rating), group)| {
+                let count = group.len() as f32;
+                let (sum1, sum2, sum3, sum4) =
+                    group
+                        .iter()
+                        .fold((0, 0, 0, 0), |(sum1, sum2, sum3, sum4), review| {
+                            (
+                                sum1 + review.review_rating_counts[0],
+                                sum2 + review.review_rating_counts[1],
+                                sum3 + review.review_rating_counts[2],
+                                sum4 + review.review_rating_counts[3],
+                            )
+                        });
 
-            for review in group {
-                sum1 += review.review_rating_counts[0];
-                sum2 += review.review_rating_counts[1];
-                sum3 += review.review_rating_counts[2];
-                sum4 += review.review_rating_counts[3];
-            }
-            averages.entry((*state, *rating)).or_insert_with(|| {
-                [
+                let averages = [
                     (sum1 as f32 / count * 100.0).round() / 100.0,
                     (sum2 as f32 / count * 100.0).round() / 100.0,
                     (sum3 as f32 / count * 100.0).round() / 100.0,
                     (sum4 as f32 / count * 100.0).round() / 100.0,
-                ]
-            });
-        }
-        averages
+                ];
+
+                ((*state, *rating), averages)
+            })
+            .collect::<HashMap<_, _>>()
     };
     /*
     rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
