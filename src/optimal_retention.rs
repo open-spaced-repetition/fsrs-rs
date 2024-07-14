@@ -101,7 +101,7 @@ fn stability_after_success(w: &[f32], s: f32, r: f32, d: f32, rating: usize) -> 
 
 fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
     (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f32::exp((1.0 - r) * w[14]))
-        .clamp(S_MIN.into(), s)
+        .clamp(S_MIN, s)
 }
 
 fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32) -> f32 {
@@ -391,7 +391,7 @@ pub fn simulate(
         izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
             .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
             .for_each(|(new_ivl, &new_stab, ..)| {
-                *new_ivl = (next_interval(new_stab as f32, desired_retention as f32) as f32)
+                *new_ivl = (next_interval(new_stab, desired_retention) as f32)
                     .clamp(1.0, max_ivl);
             });
 
@@ -482,14 +482,11 @@ impl<B: Backend> FSRS<B> {
     {
         let parameters = if parameters.is_empty() {
             &DEFAULT_PARAMETERS
-        } else if parameters.len() != 17 {
+        } else if parameters.len() != 19 {
             return Err(FSRSError::InvalidParameters);
         } else {
             parameters
-        }
-        .iter()
-        .map(|v| *v as f32)
-        .collect::<Vec<_>>();
+        }.to_vec();
         let mut progress_info = ItemProgress {
             current: 0,
             // not provided for this method
@@ -513,7 +510,7 @@ impl<B: Backend> FSRS<B> {
         F: FnMut() -> bool,
     {
         let mintol = 1e-10;
-        let cg = 0.3819660;
+        let cg = 0.381_966;
         let maxiter = 64;
         let tol = 0.01f32;
 
@@ -693,7 +690,7 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
         for &row in df.iter() {
             if row.taken_millis > 0 && row.taken_millis < 1200000 {
                 let real_days = (row.id / 1000 - day_cutoff) / 86400;
-                let key = (row.cid.clone(), real_days);
+                let key = (row.cid, real_days);
                 grouped_data.entry(key).or_insert_with(Vec::new).push(row);
             }
         }
@@ -746,13 +743,13 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
 
     // [cost_dict[(1, i)] / 1000 for i in range(1, 5)]
     let learn_costs = (1..5)
-        .map(|i| cost_dict.get(&(1, i)).map(|x| *x).unwrap_or_default() as f32 / 1000f32)
+        .map(|i| cost_dict.get(&(1, i)).copied().unwrap_or_default() as f32 / 1000f32)
         .collect_vec()
         .try_into()
         .unwrap();
     // [cost_dict[(2, i)] / 1000 for i in range(1, 5)]
     let review_costs = (1..5)
-        .map(|i| cost_dict.get(&(2, i)).map(|x| *x).unwrap_or_default() as f32 / 1000f32)
+        .map(|i| cost_dict.get(&(2, i)).copied().unwrap_or_default() as f32 / 1000f32)
         .collect_vec()
         .try_into()
         .unwrap();
@@ -779,8 +776,7 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
     let learn_buttons: [i64; 4] = (1..5)
         .map(|i| {
             button_usage_dict
-                .get(&(1, i))
-                .map(|x| *x)
+                .get(&(1, i)).copied()
                 .unwrap_or_default()
         })
         .collect_vec()
@@ -790,8 +786,7 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
     let review_buttons: [i64; 4] = (1..5)
         .map(|i| {
             button_usage_dict
-                .get(&(2, i))
-                .map(|x| *x)
+                .get(&(2, i)).copied()
                 .unwrap_or_default()
         })
         .collect_vec()
@@ -881,8 +876,7 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
     let first_rating_offsets = (1..5)
         .map(|i| {
             rating_offset_dict
-                .get(&(1, i))
-                .map(|x| *x)
+                .get(&(1, i)).copied()
                 .unwrap_or_default()
         })
         .collect_vec()
@@ -893,8 +887,7 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
     let first_session_lens = (1..5)
         .map(|i| {
             session_len_dict
-                .get(&(1, i))
-                .map(|x| *x)
+                .get(&(1, i)).copied()
                 .unwrap_or_default()
         })
         .collect_vec()
@@ -903,13 +896,11 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
 
     // rating_offset_dict[(2, 1)]
     let forget_rating_offset = rating_offset_dict
-        .get(&(2, 1))
-        .map(|x| *x)
+        .get(&(2, 1)).copied()
         .unwrap_or_default();
     // session_len_dict[(2, 1)]
     let forget_session_len = session_len_dict
-        .get(&(2, 1))
-        .map(|x| *x)
+        .get(&(2, 1)).copied()
         .unwrap_or_default();
 
     SimulatorConfig {
@@ -927,8 +918,6 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
-
     use super::*;
     use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
 
@@ -937,7 +926,7 @@ mod tests {
         let config = SimulatorConfig::default();
         let (memorized_cnt_per_day, _, _, _) = simulate(
             &config,
-            &DEFAULT_PARAMETERS.iter().map(|v| *v as f32).collect_vec(),
+            &DEFAULT_PARAMETERS,
             0.9,
             None,
             None,
@@ -973,7 +962,7 @@ mod tests {
         ];
         let memorization = simulate(
             &config,
-            &DEFAULT_PARAMETERS.iter().map(|v| *v as f32).collect_vec(),
+            &DEFAULT_PARAMETERS,
             0.9,
             None,
             Some(cards),
@@ -992,7 +981,7 @@ mod tests {
         };
         let results = simulate(
             &config,
-            &DEFAULT_PARAMETERS.iter().map(|v| *v as f32).collect_vec(),
+            &DEFAULT_PARAMETERS,
             0.9,
             None,
             None,
@@ -1040,7 +1029,7 @@ mod tests {
             SimulatorConfig {
                 learn_costs: [30.061, 0., 17.298, 12.352],
                 review_costs: [19.139, 6.887, 5.83, 4.002],
-                first_rating_prob: [0.19349411, 0., 0.14357824, 0.66292765],
+                first_rating_prob: [0.19349411, 0., 0.14357824, 0.662_927_6],
                 review_rating_prob: [0.07351815, 0.9011334, 0.025348445],
                 first_rating_offsets: [1.64, 0., 0.69, 1.11],
                 first_session_lens: [2.74, 0., 1.32, 1.19],

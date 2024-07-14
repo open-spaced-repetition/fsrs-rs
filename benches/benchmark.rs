@@ -35,7 +35,7 @@ pub(crate) fn next_states(inf: &FSRS) -> NextStates {
     .unwrap()
 }
 
-pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f64 {
+pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f32 {
     inf.optimal_retention(config, &[], |_v| true).unwrap()
 }
 
@@ -63,7 +63,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let config = SimulatorConfig {
         deck_size: 3650,
         learn_span: 365,
-        max_cost_perday: f64::INFINITY,
+        max_cost_perday: f32::INFINITY,
         learn_limit: 10,
         loss_aversion: 1.0,
         ..Default::default()
