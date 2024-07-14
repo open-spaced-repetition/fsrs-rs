@@ -89,16 +89,16 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
 */
 #[derive(Debug, PartialEq)]
 struct SimulatorConfig {
-    learn_costs: Vec<f64>,
-    review_costs: Vec<f64>,
+    learn_costs: Vec<f32>,
+    review_costs: Vec<f32>,
     learn_buttons: Vec<i64>,
     review_buttons: Vec<i64>,
-    first_rating_prob: Vec<f64>,
-    review_rating_prob: Vec<f64>,
-    first_rating_offset: Vec<f64>,
-    first_session_len: Vec<f64>,
-    forget_rating_offset: f64,
-    forget_session_len: f64,
+    first_rating_prob: Vec<f32>,
+    review_rating_prob: Vec<f32>,
+    first_rating_offset: Vec<f32>,
+    first_session_len: Vec<f32>,
+    forget_rating_offset: f32,
+    forget_session_len: f32,
 }
 
 fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> SimulatorConfig {
@@ -198,14 +198,14 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
            [cost_dict.get((1, i), 0) / 1000 for i in range(1, 5)]
        ) */
     let learn_costs = (1..5)
-        .map(|i| cost_dict.get(&(1, i)).map(|x| *x).unwrap_or_default() as f64 / 1000.0)
+        .map(|i| cost_dict.get(&(1, i)).map(|x| *x).unwrap_or_default() as f32 / 1000.0)
         .collect_vec();
     /*
     self.review_costs = np.array(
            [cost_dict.get((2, i), 0) / 1000 for i in range(1, 5)]
        ) */
     let review_costs = (1..5)
-        .map(|i| cost_dict.get(&(2, i)).map(|x| *x).unwrap_or_default() as f64 / 1000.0)
+        .map(|i| cost_dict.get(&(2, i)).map(|x| *x).unwrap_or_default() as f32 / 1000.0)
         .collect_vec();
     /*
         button_usage_dict = (
@@ -255,7 +255,7 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
     self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum() */
     let first_rating_prob = learn_buttons
         .iter()
-        .map(|x| *x as f64 / learn_buttons.iter().sum::<i64>() as f64)
+        .map(|x| *x as f32 / learn_buttons.iter().sum::<i64>() as f32)
         .collect_vec();
     /*
     self.review_rating_prob = (
@@ -264,7 +264,7 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
     let review_rating_prob = review_buttons
         .iter()
         .skip(1)
-        .map(|x| *x as f64 / review_buttons.iter().skip(1).sum::<i64>() as f64)
+        .map(|x| *x as f32 / review_buttons.iter().skip(1).sum::<i64>() as f32)
         .collect_vec();
 
     // df2 = (
@@ -273,7 +273,7 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
     //     .round(2)
     // )
 
-    let df2: HashMap<(u8, u8), [f64; 4]> = {
+    let df2: HashMap<(u8, u8), [f32; 4]> = {
         let mut grouped = HashMap::new();
 
         // 将数据分组
@@ -284,10 +284,10 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
                 .push(review);
         }
         // 计算平均值
-        let mut averages: HashMap<(u8, u8), [f64; 4]> = HashMap::new();
+        let mut averages: HashMap<(u8, u8), [f32; 4]> = HashMap::new();
         for ((state, rating), group) in grouped.iter() {
             let (mut sum1, mut sum2, mut sum3, mut sum4) = (0, 0, 0, 0);
-            let count = group.len() as f64;
+            let count = group.len() as f32;
 
             for review in group {
                 sum1 += review.review_rating_counts[0];
@@ -297,10 +297,10 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
             }
             averages.entry((*state, *rating)).or_insert_with(|| {
                 [
-                    sum1 as f64 / count,
-                    sum2 as f64 / count,
-                    sum3 as f64 / count,
-                    sum4 as f64 / count,
+                    (sum1 as f32 / count * 100.0).round() / 100.0,
+                    (sum2 as f32 / count * 100.0).round() / 100.0,
+                    (sum3 as f32 / count * 100.0).round() / 100.0,
+                    (sum4 as f32 / count * 100.0).round() / 100.0,
                 ]
             });
         }
@@ -316,9 +316,9 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
             let offset = averages
                 .iter()
                 .enumerate()
-                .map(|(i, &v)| (i as f64 + 1.0 - 3.0) * v)
-                .sum::<f64>();
-            rating_offset_dict.insert((*state, *rating), offset);
+                .map(|(i, &v)| (i as f32 + 1.0 - 3.0) * v)
+                .sum::<f32>();
+            rating_offset_dict.insert((*state, *rating), (offset * 100.0).round() / 100.0);
         }
         rating_offset_dict
     };
@@ -327,8 +327,8 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
         let mut session_len_dict = HashMap::new();
         for (state, rating) in df2.keys() {
             let averages = df2.get(&(*state, *rating)).unwrap();
-            let sum = averages.iter().sum::<f64>();
-            session_len_dict.insert((*state, *rating), sum);
+            let sum = averages.iter().sum::<f32>();
+            session_len_dict.insert((*state, *rating), (sum * 100.0).round() / 100.0);
         }
         session_len_dict
     };
@@ -598,7 +598,7 @@ fn extract_simulator_config_from_revlog() {
             review_rating_prob: vec![0.07351815, 0.9011334, 0.02534845],
             first_rating_offset: vec![1.64, 0., 0.69, 1.11],
             first_session_len: vec![2.74, 0., 1.32, 1.19],
-            forget_rating_offset: 1.2799999999999998,
+            forget_rating_offset: 1.28,
             forget_session_len: 1.77
         }
     )
