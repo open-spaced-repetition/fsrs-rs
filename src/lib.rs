@@ -8,10 +8,10 @@ mod error;
 mod inference;
 mod model;
 mod optimal_retention;
+mod parameter_clipper;
 mod pre_training;
 mod test_helpers;
 mod training;
-mod weight_clipper;
 
 pub use convertor_tests::{anki_to_fsrs, to_revlog_entry};
 pub use dataset::{FSRSItem, FSRSReview};
@@ -20,6 +20,8 @@ pub use inference::{
     ItemProgress, ItemState, MemoryState, ModelEvaluation, NextStates, DEFAULT_PARAMETERS,
 };
 pub use model::FSRS;
-pub use optimal_retention::{simulate, Card, SimulatorConfig};
+pub use optimal_retention::{
+    extract_simulation_config, simulate, Card, RevlogEntry, RevlogReviewKind, SimulatorConfig,
+};
 pub use training::CombinedProgressState;
 pub use training::Progress;

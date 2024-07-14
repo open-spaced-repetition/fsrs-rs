@@ -1,6 +1,7 @@
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::FSRSBatcher;
 use crate::dataset::{FSRSItem, FSRSReview};
+use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::data::dataloader::batcher::Batcher;
@@ -12,6 +13,21 @@ use chrono_tz::Tz;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
+impl rusqlite::types::FromSql for RevlogReviewKind {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let rusqlite::types::ValueRef::Integer(i) = value else {
+            return Err(rusqlite::types::FromSqlError::InvalidType);
+        };
+        match i {
+            0 => Ok(RevlogReviewKind::Learning),
+            1 => Ok(RevlogReviewKind::Review),
+            2 => Ok(RevlogReviewKind::Relearning),
+            3 => Ok(RevlogReviewKind::Filtered),
+            4 => Ok(RevlogReviewKind::Manual),
+            _ => Err(rusqlite::types::FromSqlError::InvalidType),
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RevlogEntry {
     pub id: i64,
@@ -81,18 +97,6 @@ fn convert_to_date(timestamp: i64, minute_offset: i32) -> NaiveDate {
     datetime.date_naive()
 }
 
-fn keep_first_revlog_same_date(
-    mut entries: Vec<RevlogEntry>,
-    minute_offset: i32,
-) -> Vec<RevlogEntry> {
-    let mut unique_dates = std::collections::HashSet::new();
-    entries.retain(|entry| {
-        let date = convert_to_date(entry.id, minute_offset);
-        unique_dates.insert(date)
-    });
-    entries
-}
-
 /// Given a list of revlog entries for a single card with length n, we create
 /// n-1 FSRS items, where each item contains the history of the preceding reviews.
 
@@ -103,7 +107,6 @@ fn convert_to_fsrs_items(
     // entries = filter_out_cram(entries);
     // entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
-    entries = keep_first_revlog_same_date(entries, minute_offset);
 
     for i in 1..entries.len() {
         let date_current = convert_to_date(entries[i].id, minute_offset);
@@ -127,6 +130,7 @@ fn convert_to_fsrs_items(
                     .collect();
                 FSRSItem { reviews }
             })
+            .filter(|item| item.current().delta_t > 0)
             .collect(),
     )
 }
@@ -229,7 +233,7 @@ pub(crate) fn anki21_sample_file_converted_to_fsrs() -> Vec<FSRSItem> {
     anki_to_fsrs(read_collection().expect("read error"))
 }
 
-fn read_collection() -> Result<Vec<RevlogEntry>> {
+pub(crate) fn read_collection() -> Result<Vec<RevlogEntry>> {
     let db = Connection::open("tests/data/collection.anki21")?;
     let filter_out_suspended_cards = false;
     let filter_out_flags = [];
@@ -280,110 +284,6 @@ fn read_collection() -> Result<Vec<RevlogEntry>> {
 }
 */
 
-#[test]
-fn extract_simulator_config_from_revlog() {
-    let revlogs = read_collection().unwrap();
-    let first_rating_count = revlogs
-        .iter()
-        .filter(|r| {
-            r.review_kind == RevlogReviewKind::Learning
-                && r.ease_factor == 0
-                && r.button_chosen >= 1
-        })
-        .counts_by(|r| r.button_chosen);
-    let total_ratings = first_rating_count.values().sum::<usize>() as f32;
-    let first_rating_prob = {
-        let mut arr = [0.0; 4];
-        first_rating_count
-            .iter()
-            .for_each(|(button_chosen, count)| {
-                arr[*button_chosen as usize - 1] = *count as f32 / total_ratings
-            });
-        arr
-    };
-    assert_eq!(first_rating_prob, [0.15339181, 0.0, 0.15339181, 0.6932164,]);
-    let review_rating_count = revlogs
-        .iter()
-        .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen != 1)
-        .counts_by(|r| r.button_chosen);
-    let review_rating_prob = {
-        let mut arr = [0.0; 3];
-        review_rating_count
-            .iter()
-            .filter(|(&button_chosen, ..)| button_chosen >= 2)
-            .for_each(|(button_chosen, count)| {
-                arr[*button_chosen as usize - 2] =
-                    *count as f32 / review_rating_count.values().sum::<usize>() as f32;
-            });
-        arr
-    };
-    assert_eq!(review_rating_prob, [0.07380187, 0.90085745, 0.025340684,]);
-
-    let recall_costs = {
-        let mut arr = [0.0; 5];
-        revlogs
-            .iter()
-            .filter(|r| r.review_kind == RevlogReviewKind::Review && r.button_chosen > 0)
-            .sorted_by(|a, b| a.button_chosen.cmp(&b.button_chosen))
-            .group_by(|r| r.button_chosen)
-            .into_iter()
-            .for_each(|(button_chosen, group)| {
-                let group_vec = group.into_iter().map(|r| r.taken_millis).collect_vec();
-                let average_secs =
-                    group_vec.iter().sum::<u32>() as f32 / group_vec.len() as f32 / 1000.0;
-                arr[button_chosen as usize - 1] = average_secs
-            });
-        arr
-    };
-    let learn_cost = {
-        let revlogs_filter = revlogs
-            .iter()
-            .filter(|r| r.review_kind == RevlogReviewKind::Learning && r.ease_factor == 0)
-            .map(|r| r.taken_millis);
-        revlogs_filter.clone().sum::<u32>() as f32 / revlogs_filter.count() as f32 / 1000.0
-    };
-    assert_eq!(learn_cost, 8.980446);
-
-    let forget_cost = {
-        let review_kind_to_total_millis = revlogs
-            .iter()
-            .sorted_by(|a, b| a.cid.cmp(&b.cid).then(a.id.cmp(&b.id)))
-            .group_by(|r| r.review_kind)
-            /*
-                for example:
-                o  x x  o o x x x o o x x o x
-                  |<->|    |<--->|   |<->| |<>|
-                x means forgotten, there are 4 consecutive sets of internal relearning in this card.
-                So each group is counted separately, and each group is summed up internally.(following code)
-                Finally averaging all groups, so sort by cid and id.
-            */
-            .into_iter()
-            .map(|(review_kind, group)| {
-                let total_millis: u32 = group.into_iter().map(|r| r.taken_millis).sum();
-                (review_kind, total_millis)
-            })
-            .collect_vec();
-        let mut group_sec_by_review_kind: [Vec<_>; 5] = Default::default();
-        for (review_kind, sec) in review_kind_to_total_millis.into_iter() {
-            group_sec_by_review_kind[review_kind as usize].push(sec)
-        }
-        let mut arr = [0.0; 5];
-        group_sec_by_review_kind
-            .iter()
-            .enumerate()
-            .for_each(|(review_kind, group)| {
-                let average_secs = group.iter().sum::<u32>() as f32 / group.len() as f32 / 1000.0;
-                arr[review_kind] = average_secs
-            });
-        arr
-    };
-
-    let forget_cost = forget_cost[RevlogReviewKind::Relearning as usize] + recall_costs[0];
-    assert_eq!(forget_cost, 23.481838);
-
-    assert_eq!(recall_costs[1..=3], [9.047336, 7.774851, 5.149275,]);
-}
-
 // This test currently expects the following .anki21 file to be placed in tests/data/:
 // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
 /*
@@ -399,7 +299,10 @@ fn conversion_works() {
     let fsrs_items = anki_to_fsrs(revlogs);
     assert_eq!(fsrs_items.len(), 14290);
     assert_eq!(
-        fsrs_items.iter().map(|x| x.reviews.len()).sum::<usize>(),
+        fsrs_items
+            .iter()
+            .map(|x| x.long_term_review_cnt() + 1)
+            .sum::<usize>(),
         49382 + 14290
     );
 
@@ -419,15 +322,23 @@ fn conversion_works() {
                         delta_t: 0
                     },
                     FSRSReview {
+                        rating: 4,
+                        delta_t: 0
+                    },
+                    FSRSReview {
                         rating: 3,
                         delta_t: 5
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -438,12 +349,16 @@ fn conversion_works() {
                         rating: 3,
                         delta_t: 10
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -458,12 +373,16 @@ fn conversion_works() {
                         rating: 3,
                         delta_t: 22
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -482,12 +401,16 @@ fn conversion_works() {
                         rating: 2,
                         delta_t: 56
                     }
-                ],
+                ]
             },
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
                         rating: 3,
+                        delta_t: 0
+                    },
+                    FSRSReview {
+                        rating: 4,
                         delta_t: 0
                     },
                     FSRSReview {
@@ -510,7 +433,7 @@ fn conversion_works() {
                         rating: 3,
                         delta_t: 64
                     }
-                ],
+                ]
             }
         ]
     );
@@ -521,11 +444,11 @@ fn conversion_works() {
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     assert_eq!(
         res.r_historys.squeeze(1).to_data(),
-        Data::from([3.0, 3.0, 3.0, 3.0, 2.0])
+        Data::from([3.0, 4.0, 3.0, 3.0, 3.0, 2.0])
     );
     assert_eq!(
         res.t_historys.squeeze(1).to_data(),
-        Data::from([0.0, 5.0, 10.0, 22.0, 56.0])
+        Data::from([0.0, 0.0, 5.0, 10.0, 22.0, 56.0])
     );
     assert_eq!(res.labels.to_data(), Data::from([1]));
 }
@@ -1006,93 +929,3 @@ fn test_remove_revlog_before_last_first_learn() {
         ]
     );
 }
-
-#[test]
-fn test_keep_first_revlog_same_date() {
-    let revlog_vec = vec![
-        RevlogEntry {
-            id: 1581372095493,
-            cid: 1559076329057,
-            usn: 5212,
-            button_chosen: 1,
-            interval: -60,
-            last_interval: -60,
-            ease_factor: 0,
-            taken_millis: 60000,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581372260598,
-            cid: 1559076329057,
-            usn: 5212,
-            button_chosen: 3,
-            interval: -600,
-            last_interval: -60,
-            ease_factor: 0,
-            taken_millis: 46425,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581406251414,
-            cid: 1559076329057,
-            usn: 5213,
-            button_chosen: 2,
-            interval: -600,
-            last_interval: -600,
-            ease_factor: 0,
-            taken_millis: 17110,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581407568344,
-            cid: 1559076329057,
-            usn: 5213,
-            button_chosen: 3,
-            interval: 1,
-            last_interval: -600,
-            ease_factor: 2500,
-            taken_millis: 8861,
-            review_kind: Learning,
-        },
-        RevlogEntry {
-            id: 1581454426227,
-            cid: 1559076329057,
-            usn: 5215,
-            button_chosen: 3,
-            interval: 3,
-            last_interval: 1,
-            ease_factor: 2500,
-            taken_millis: 13128,
-            review_kind: Review,
-        },
-    ];
-    let revlog_vec = keep_first_revlog_same_date(revlog_vec, 4, Tz::Asia__Shanghai);
-    assert_eq!(
-        revlog_vec,
-        vec![
-            RevlogEntry {
-                id: 1581372095493,
-                cid: 1559076329057,
-                usn: 5212,
-                button_chosen: 1,
-                interval: -60,
-                last_interval: -60,
-                ease_factor: 0,
-                taken_millis: 60000,
-                review_kind: Learning,
-            },
-            RevlogEntry {
-                id: 1581454426227,
-                cid: 1559076329057,
-                usn: 5215,
-                button_chosen: 3,
-                interval: 3,
-                last_interval: 1,
-                ease_factor: 2500,
-                taken_millis: 13128,
-                review_kind: Review,
-            },
-        ]
-    )
-}
-*/

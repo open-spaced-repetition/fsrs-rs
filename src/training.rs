@@ -1,10 +1,10 @@
 use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{split_filter_data, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{prepare_training_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
+use crate::parameter_clipper::parameter_clipper;
 use crate::pre_training::pretrain;
-use crate::weight_clipper::weight_clipper;
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
 use wasm_bindgen::prelude::*;
@@ -237,7 +237,7 @@ impl<B: Backend> FSRS<B> {
         };
 
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, next_train_set) = split_filter_data(train_set);
+        let (pre_train_set, next_train_set) = prepare_training_data(train_set);
         if pre_train_set.len() + next_train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
@@ -258,7 +258,7 @@ impl<B: Backend> FSRS<B> {
 
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: true,
+                freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
             AdamConfig::new(),
@@ -297,7 +297,7 @@ impl<B: Backend> FSRS<B> {
 
         if optimized_parameters
             .iter()
-            .any(|weight: &f32| weight.is_infinite())
+            .any(|parameter: &f32| parameter.is_infinite())
         {
             return Err(FSRSError::InvalidInput);
         }
@@ -309,11 +309,11 @@ impl<B: Backend> FSRS<B> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, next_train_set) = train_set
             .into_iter()
-            .partition(|item| item.reviews.len() == 2);
+            .partition(|item| item.long_term_review_cnt() == 1);
         let initial_stability = pretrain(pre_train_set, average_recall).unwrap();
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: true,
+                freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
             AdamConfig::new(),
@@ -366,7 +366,7 @@ fn train<B: AutodiffBackend>(
     let mut model: Model<B> = config.model.init();
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
-    let mut best_loss = std::f64::INFINITY;
+    let mut best_loss = f64::INFINITY;
     let mut best_model = model.clone();
     for epoch in 1..=config.num_epochs {
         let mut iterator = dataloader_train.iter();
@@ -388,7 +388,7 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            model.w = Param::from_tensor(weight_clipper(model.w.val()));
+            model.w = Param::from_tensor(parameter_clipper(model.w.val()));
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
