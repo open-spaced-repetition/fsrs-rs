@@ -112,14 +112,11 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
                        tmp[i] = 0
                return tmp
     */
-    fn rating_counts(entries: &[RevlogEntry]) -> HashMap<usize, usize> {
-        let mut counts = HashMap::new();
+    fn rating_counts(entries: &[RevlogEntry]) -> [u32; 4] {
+        let mut counts = [0; 4];
 
         for entry in entries.iter().skip(1) {
-            *counts.entry(entry.review_kind as usize).or_insert(0) += 1;
-        }
-        for i in 1..5 {
-            counts.entry(i).or_insert(0);
+            counts[entry.button_chosen as usize - 1] += 1;
         }
 
         counts
@@ -139,7 +136,14 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
            .reset_index()
        )
     */
-    let mut df_ = {
+    struct Df1Row {
+        card_id: i64,
+        first_review_state: u8,
+        first_review_rating: u8,
+        review_rating_counts: [u32; 4],
+        sum_review_duration: u32,
+    }
+    let df1 = {
         let mut grouped_data = HashMap::new();
         for &row in df.iter() {
             if row.taken_millis > 0 && row.taken_millis < 1200000 {
@@ -153,84 +157,27 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
 
         // TODO: fix field name below, they are different between rust and python.
 
-        let mut result: Vec<RevlogEntry> = Vec::new();
-        for ((card_id, real_days), entries) in grouped_data {
+        let mut result: Vec<Df1Row> = Vec::new();
+        for ((card_id, _real_days), entries) in grouped_data {
             if let Some(first_entry) = entries.first() {
-                let review_state = first_entry.review_kind.clone();
-                let review_rating_first = first_entry.button_chosen;
-                let review_rating_count = rating_counts(&entries);
-                let review_duration_sum =
+                let first_review_state = first_entry.review_kind as u8 + 1;
+                let first_review_rating = first_entry.button_chosen;
+                let review_rating_counts = rating_counts(&entries);
+                let sum_review_duration =
                     entries.iter().map(|entry| entry.taken_millis).sum::<u32>();
-                let i_size = entries.len();
 
-                result.push(RevlogEntry {
-                    cid: card_id,
-                    button_chosen: review_rating_first as u8,
-                    review_kind: review_state,
-                    taken_millis: review_duration_sum,
-                    interval: i_size as i32,
-                    // real_days: ?
-                    ..Default::default()
+                result.push(Df1Row {
+                    card_id,
+                    first_review_state,
+                    first_review_rating,
+                    review_rating_counts,
+                    sum_review_duration,
                 });
             }
         }
         result
     };
 
-    // df1.columns rename
-    /*
-               df1.columns = [
-               "card_id",
-               "real_days",
-               "first_review_state",
-               "first_review_rating",
-               "review_rating_counts",
-               "sum_review_duration",
-               "review_count",
-           ]
-    */
-    #[derive(Debug, Clone, Default)]
-    struct Foo {
-        card_id: i64,
-        real_days: i64,
-        first_review_state: i64,
-        first_review_rating: i64,
-        review_rating_counts: Vec<i64>,
-        sum_review_duration: i64,
-        review_count: i64,
-    }
-    // TODO: change the col name
-    let df1 = df_
-        .iter()
-        .map(|x| Foo {
-            card_id: x.cid,
-            ..Default::default()
-        })
-        .collect_vec();
-    /*
-    rating_counts_df = (
-            df1["review_rating_counts"].apply(pd.Series).fillna(0).astype(int)
-        )
-     */
-    let rating_counts_df = df1
-        .iter()
-        .map(|x| x.review_rating_counts.clone())
-        .collect_vec();
-
-    // df1 = pd.concat(
-    //     [df1.drop("review_rating_counts", axis=1), rating_counts_df], axis=1
-    // )
-    // idk if this is needed
-
-    /*
-           cost_dict = (
-           df1.groupby(by=["first_review_state", "first_review_rating"])[
-               "sum_review_duration"
-           ]
-           .median()
-           .to_dict()
-       )
-    */
     let cost_dict = {
         let mut cost_dict1 = HashMap::new();
         for row in df1.iter() {
@@ -241,7 +188,7 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
         }
         let foo = cost_dict1
             .into_iter()
-            .map(|(x, y)| (x, y.iter().sum::<i64>() / y.len() as i64))
+            .map(|(x, y)| (x, y.iter().sum::<u32>() / y.len() as u32))
             .collect::<HashMap<_, _>>();
         foo
     };
@@ -304,59 +251,6 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
         })
         .collect_vec();
 
-    // df2 = (
-    //     df1.groupby(by=["first_review_state", "first_review_rating"])[[1, 2, 3, 4]]
-    //     .mean()
-    //     .round(2)
-    // )
-
-    let df2 = {
-        let mut grouped = HashMap::new();
-
-        // 将数据分组
-        for review in df1 {
-            grouped
-                .entry((review.first_review_state, review.first_review_rating))
-                .or_insert_with(Vec::new)
-                .push(review);
-        }
-        // 计算平均值
-        let mut averages = HashMap::new();
-        for ((state, rating), group) in grouped.iter() {
-            let (mut sum1, mut sum2, mut sum3, mut sum4) = (0, 0, 0, 0);
-            let count = group.len() as f64;
-
-            for review in group {
-                sum1 += review
-                    .review_rating_counts
-                    .iter()
-                    .filter(|x| **x == 1)
-                    .count();
-                sum2 += review
-                    .review_rating_counts
-                    .iter()
-                    .filter(|x| **x == 2)
-                    .count();
-                sum3 += review
-                    .review_rating_counts
-                    .iter()
-                    .filter(|x| **x == 3)
-                    .count();
-                sum4 += review
-                    .review_rating_counts
-                    .iter()
-                    .filter(|x| **x == 4)
-                    .count();
-            }
-            averages = HashMap::from([
-                (1, (sum1 as f64 / count).round()),
-                (2, (sum2 as f64 / count).round()),
-                (3, (sum3 as f64 / count).round()),
-                (4, (sum4 as f64 / count).round()),
-            ]);
-        }
-        averages
-    };
     /*
     self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum() */
     let first_rating_prob = learn_buttons
@@ -373,26 +267,70 @@ fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simulator
         .map(|x| *x as f64 / review_buttons.iter().skip(1).sum::<i64>() as f64)
         .collect_vec();
 
+    // df2 = (
+    //     df1.groupby(by=["first_review_state", "first_review_rating"])[[1, 2, 3, 4]]
+    //     .mean()
+    //     .round(2)
+    // )
+
+    let df2: HashMap<(u8, u8), [f64; 4]> = {
+        let mut grouped = HashMap::new();
+
+        // 将数据分组
+        for review in df1 {
+            grouped
+                .entry((review.first_review_state, review.first_review_rating))
+                .or_insert_with(Vec::new)
+                .push(review);
+        }
+        // 计算平均值
+        let mut averages: HashMap<(u8, u8), [f64; 4]> = HashMap::new();
+        for ((state, rating), group) in grouped.iter() {
+            let (mut sum1, mut sum2, mut sum3, mut sum4) = (0, 0, 0, 0);
+            let count = group.len() as f64;
+
+            for review in group {
+                sum1 += review.review_rating_counts[0];
+                sum2 += review.review_rating_counts[1];
+                sum3 += review.review_rating_counts[2];
+                sum4 += review.review_rating_counts[3];
+            }
+            averages.entry((*state, *rating)).or_insert_with(|| {
+                [
+                    sum1 as f64 / count,
+                    sum2 as f64 / count,
+                    sum3 as f64 / count,
+                    sum4 as f64 / count,
+                ]
+            });
+        }
+        averages
+    };
     /*
     rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
     */
-    let rating_offset_dict: HashMap<(i32, i32), f64> = {
-        // (1..5)
-        //     .map(|g| {
-        //         (
-        //             g,
-        //             df2.get(&g).map(|v| *v).unwrap_or_default() * (g * 3) as f64,
-        //         )
-        //     })
-        //     .collect::<HashMap<_, _>>()
-        Default::default()
+    let rating_offset_dict = {
+        let mut rating_offset_dict = HashMap::new();
+        for (state, rating) in df2.keys() {
+            let averages = df2.get(&(*state, *rating)).unwrap();
+            let offset = averages
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| (i as f64 + 1.0 - 3.0) * v)
+                .sum::<f64>();
+            rating_offset_dict.insert((*state, *rating), offset);
+        }
+        rating_offset_dict
     };
     // session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
-    let session_len_dict: HashMap<(i32, i32), f64> = {
-        // (1..5)
-        //     .map(|g| (g, df2.get(&g).map(|v| *v).unwrap_or_default()))
-        //     .collect::<HashMap<_, _>>()
-        HashMap::default()
+    let session_len_dict = {
+        let mut session_len_dict = HashMap::new();
+        for (state, rating) in df2.keys() {
+            let averages = df2.get(&(*state, *rating)).unwrap();
+            let sum = averages.iter().sum::<f64>();
+            session_len_dict.insert((*state, *rating), sum);
+        }
+        session_len_dict
     };
     /*
      self.first_rating_offset = np.array(
