@@ -391,8 +391,7 @@ pub fn simulate(
         izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
             .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
             .for_each(|(new_ivl, &new_stab, ..)| {
-                *new_ivl = (next_interval(new_stab, desired_retention) as f32)
-                    .clamp(1.0, max_ivl);
+                *new_ivl = (next_interval(new_stab, desired_retention) as f32).clamp(1.0, max_ivl);
             });
 
         let old_due = card_table.slice(s![Column::Due, ..]);
@@ -486,7 +485,8 @@ impl<B: Backend> FSRS<B> {
             return Err(FSRSError::InvalidParameters);
         } else {
             parameters
-        }.to_vec();
+        }
+        .to_vec();
         let mut progress_info = ItemProgress {
             current: 0,
             // not provided for this method
@@ -774,21 +774,13 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
     };
     // [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
     let learn_buttons: [i64; 4] = (1..5)
-        .map(|i| {
-            button_usage_dict
-                .get(&(1, i)).copied()
-                .unwrap_or_default()
-        })
+        .map(|i| button_usage_dict.get(&(1, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
     // [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
     let review_buttons: [i64; 4] = (1..5)
-        .map(|i| {
-            button_usage_dict
-                .get(&(2, i)).copied()
-                .unwrap_or_default()
-        })
+        .map(|i| button_usage_dict.get(&(2, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
@@ -874,34 +866,22 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
     };
     // [rating_offset_dict[(1, i)] for i in range(1, 5)]
     let first_rating_offsets = (1..5)
-        .map(|i| {
-            rating_offset_dict
-                .get(&(1, i)).copied()
-                .unwrap_or_default()
-        })
+        .map(|i| rating_offset_dict.get(&(1, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
 
     // [session_len_dict[(1, i)] for i in range(1, 5)]
     let first_session_lens = (1..5)
-        .map(|i| {
-            session_len_dict
-                .get(&(1, i)).copied()
-                .unwrap_or_default()
-        })
+        .map(|i| session_len_dict.get(&(1, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
 
     // rating_offset_dict[(2, 1)]
-    let forget_rating_offset = rating_offset_dict
-        .get(&(2, 1)).copied()
-        .unwrap_or_default();
+    let forget_rating_offset = rating_offset_dict.get(&(2, 1)).copied().unwrap_or_default();
     // session_len_dict[(2, 1)]
-    let forget_session_len = session_len_dict
-        .get(&(2, 1)).copied()
-        .unwrap_or_default();
+    let forget_session_len = session_len_dict.get(&(2, 1)).copied().unwrap_or_default();
 
     SimulatorConfig {
         learn_costs,
@@ -924,13 +904,8 @@ mod tests {
     #[test]
     fn simulator() {
         let config = SimulatorConfig::default();
-        let (memorized_cnt_per_day, _, _, _) = simulate(
-            &config,
-            &DEFAULT_PARAMETERS,
-            0.9,
-            None,
-            None,
-        );
+        let (memorized_cnt_per_day, _, _, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             8222.023
@@ -960,13 +935,7 @@ mod tests {
                 due: 0.0,
             },
         ];
-        let memorization = simulate(
-            &config,
-            &DEFAULT_PARAMETERS,
-            0.9,
-            None,
-            Some(cards),
-        );
+        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
         dbg!(memorization);
     }
 
@@ -979,13 +948,7 @@ mod tests {
             max_cost_perday: f32::INFINITY,
             ..Default::default()
         };
-        let results = simulate(
-            &config,
-            &DEFAULT_PARAMETERS,
-            0.9,
-            None,
-            None,
-        );
+        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(
             results.1.to_vec(),
             vec![
