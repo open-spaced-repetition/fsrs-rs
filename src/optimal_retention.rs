@@ -480,13 +480,18 @@ impl<B: Backend> FSRS<B> {
         F: FnMut(ItemProgress) -> bool + Send,
     {
         let parameters = if parameters.is_empty() {
-            &DEFAULT_PARAMETERS
+            DEFAULT_PARAMETERS.to_vec()
         } else if parameters.len() != 19 {
-            return Err(FSRSError::InvalidParameters);
+            if parameters.len() == 17 {
+                let mut parameters = parameters.to_vec();
+                parameters.extend_from_slice(&[0.0, 0.0]);
+                parameters
+            } else {
+                return Err(FSRSError::InvalidParameters);
+            }
         } else {
-            parameters
-        }
-        .to_vec();
+            parameters.to_vec()
+        };
         let mut progress_info = ItemProgress {
             current: 0,
             // not provided for this method
@@ -978,6 +983,26 @@ mod tests {
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
         assert_eq!(optimal_retention, 0.7791796);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn optimal_retention_with_old_parameters() -> Result<()> {
+        let learn_span = 1000;
+        let learn_limit = 10;
+        let fsrs = FSRS::new(None)?;
+        let config = SimulatorConfig {
+            deck_size: learn_span * learn_limit,
+            learn_span,
+            max_cost_perday: f32::INFINITY,
+            learn_limit,
+            loss_aversion: 1.5,
+            ..Default::default()
+        };
+        let optimal_retention = fsrs
+            .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
+            .unwrap();
+        assert_eq!(optimal_retention, 0.76764786);
         Ok(())
     }
 

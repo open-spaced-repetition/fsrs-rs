@@ -214,7 +214,7 @@ impl<B: Backend> FSRS<B> {
         if let Some(parameters) = &mut parameters {
             if parameters.is_empty() {
                 *parameters = DEFAULT_PARAMETERS.as_slice()
-            } else if parameters.len() != 19 {
+            } else if parameters.len() != 19 && parameters.len() != 17 {
                 return Err(FSRSError::InvalidParameters);
             }
         }
@@ -238,8 +238,15 @@ impl<B: Backend> FSRS<B> {
 pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::new(config);
+    let new_params = if  parameters.len() == 17 {
+        let mut new_params = parameters.to_vec();
+        new_params.extend_from_slice(&[0.0, 0.0]);
+        new_params
+    } else {
+        parameters.to_vec()
+    };
     model.w = Param::from_tensor(Tensor::from_floats(
-        Data::new(clip_parameters(parameters), Shape { dims: [19] }),
+        Data::new(clip_parameters(&new_params), Shape { dims: [19] }),
         &B::Device::default(),
     ));
     model
@@ -398,5 +405,6 @@ mod tests {
         assert!(FSRS::new(Some(&[])).is_ok());
         assert!(FSRS::new(Some(&[1.])).is_err());
         assert!(FSRS::new(Some(DEFAULT_PARAMETERS.as_slice())).is_ok());
+        assert!(FSRS::new(Some(&DEFAULT_PARAMETERS[..17])).is_ok());
     }
 }
