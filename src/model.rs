@@ -238,7 +238,7 @@ impl<B: Backend> FSRS<B> {
 pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::new(config);
-    let new_params = if  parameters.len() == 17 {
+    let new_params = if parameters.len() == 17 {
         let mut new_params = parameters.to_vec();
         new_params.extend_from_slice(&[0.0, 0.0]);
         new_params
