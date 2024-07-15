@@ -307,7 +307,8 @@ impl<B: Backend> FSRS<B> {
 
     pub fn benchmark(&self, train_set: Vec<FSRSItem>) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, next_train_set) = train_set
+        let (pre_train_set, _next_train_set) = train_set
+            .clone()
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
         let initial_stability = pretrain(pre_train_set, average_recall).unwrap();
@@ -318,13 +319,8 @@ impl<B: Backend> FSRS<B> {
             },
             AdamConfig::new(),
         );
-        let model = train::<Autodiff<B>>(
-            next_train_set.clone(),
-            next_train_set,
-            &config,
-            self.device(),
-            None,
-        );
+        let model =
+            train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
         let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
         parameters
     }
