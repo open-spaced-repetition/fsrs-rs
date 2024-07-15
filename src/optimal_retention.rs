@@ -940,11 +940,18 @@ pub fn extract_simulator_config(
         );
 
         let mut weight = [0.0f32; 4];
-        for i in 0..4 {
-            weight[i] = review_buttons[i] as f32 / (50.0 + review_buttons[i] as f32);
-            review_costs[i] =
-                lerp(review_costs[i], config.review_costs[i], weight[i]).to_2_decimal();
-        }
+        izip!(
+            &mut weight,
+            &mut review_costs,
+            &review_buttons,
+            &config.review_costs
+        )
+        .for_each(
+            |(weight, review_cost, review_button, config_review_costs)| {
+                *weight = *review_button as f32 / (50.0 + *review_button as f32);
+                *review_cost = lerp(*review_cost, *config_review_costs, *weight).to_2_decimal();
+            },
+        );
 
         forget_rating_offset =
             lerp(forget_rating_offset, config.forget_rating_offset, weight[0]).to_2_decimal();
@@ -954,16 +961,18 @@ pub fn extract_simulator_config(
 
         let total_learn_buttons: i64 = learn_buttons.iter().sum();
         let weight = total_learn_buttons as f32 / (50.0 + total_learn_buttons as f32);
-        for (i, prob) in first_rating_prob.iter_mut().enumerate() {
-            *prob = lerp(*prob, config.first_rating_prob[i], weight);
-        }
-
+        first_rating_prob
+            .iter_mut()
+            .zip(config.first_rating_prob)
+            .for_each(|(prob, first_rating_prob)| *prob = lerp(*prob, first_rating_prob, weight));
         let total_review_buttons_except_first: i64 = review_buttons[1..].iter().sum();
         let weight = total_review_buttons_except_first as f32
             / (50.0 + total_review_buttons_except_first as f32);
-        for (i, prob) in review_rating_prob.iter_mut().enumerate() {
-            *prob = lerp(*prob, config.review_rating_prob[i], weight);
-        }
+
+        review_rating_prob
+            .iter_mut()
+            .zip(config.review_rating_prob)
+            .for_each(|(prob, review_rating_prob)| *prob = lerp(*prob, review_rating_prob, weight));
     }
 
     SimulatorConfig {
