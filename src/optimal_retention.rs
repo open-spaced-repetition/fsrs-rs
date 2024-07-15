@@ -904,7 +904,10 @@ pub fn extract_simulator_config(
     let mut forget_rating_offset = rating_offset_dict.get(&(2, 1)).copied().unwrap_or_default();
     // session_len_dict[(2, 1)]
     let mut forget_session_len = session_len_dict.get(&(2, 1)).copied().unwrap_or_default();
-
+    ///  t * v0 + (1f32 - t) * v1
+    fn lerp(v0: f32, v1: f32, t: f32) -> f32 {
+        t * v0 + (1f32 - t) * v1
+    }
     if smooth {
         let config = SimulatorConfig::default();
 
@@ -928,14 +931,11 @@ pub fn extract_simulator_config(
                 &config_first_session_len,
             )| {
                 let weight = learn_button as f32 / (50.0 + learn_button as f32);
-                *learn_cost = *learn_cost * weight + config_learn_cost * (1.0 - weight);
-                *learn_cost = learn_cost.to_2_decimal();
+                *learn_cost = lerp(*learn_cost, config_learn_cost, weight).to_2_decimal();
                 *first_rating_offset =
-                    *first_rating_offset * weight + config_first_rating_offset * (1.0 - weight);
-                *first_rating_offset = first_rating_offset.to_2_decimal();
+                    lerp(*first_rating_offset, config_first_rating_offset, weight).to_2_decimal();
                 *first_session_len =
-                    *first_session_len * weight + config_first_session_len * (1.0 - weight);
-                *first_session_len = first_session_len.to_2_decimal();
+                    lerp(*first_session_len, config_first_session_len, weight).to_2_decimal();
             },
         );
 
@@ -943,30 +943,26 @@ pub fn extract_simulator_config(
         for i in 0..4 {
             weight[i] = review_buttons[i] as f32 / (50.0 + review_buttons[i] as f32);
             review_costs[i] =
-                review_costs[i] * weight[i] + config.review_costs[i] * (1.0 - weight[i]);
-
-            review_costs[i] = review_costs[i].to_2_decimal();
+                lerp(review_costs[i], config.review_costs[i], weight[i]).to_2_decimal();
         }
 
         forget_rating_offset =
-            forget_rating_offset * weight[0] + config.forget_rating_offset * (1.0 - weight[0]);
-        forget_session_len =
-            forget_session_len * weight[0] + config.forget_session_len * (1.0 - weight[0]);
+            lerp(forget_rating_offset, config.forget_rating_offset, weight[0]).to_2_decimal();
 
-        forget_rating_offset = forget_rating_offset.to_2_decimal();
-        forget_session_len = forget_session_len.to_2_decimal();
+        forget_session_len =
+            lerp(forget_session_len, config.forget_session_len, weight[0]).to_2_decimal();
 
         let total_learn_buttons: i64 = learn_buttons.iter().sum();
         let weight = total_learn_buttons as f32 / (50.0 + total_learn_buttons as f32);
         for (i, prob) in first_rating_prob.iter_mut().enumerate() {
-            *prob = *prob * weight + config.first_rating_prob[i] * (1.0 - weight);
+            *prob = lerp(*prob, config.first_rating_prob[i], weight);
         }
 
         let total_review_buttons_except_first: i64 = review_buttons[1..].iter().sum();
         let weight = total_review_buttons_except_first as f32
             / (50.0 + total_review_buttons_except_first as f32);
         for (i, prob) in review_rating_prob.iter_mut().enumerate() {
-            *prob = *prob * weight + config.review_rating_prob[i] * (1.0 - weight);
+            *prob = lerp(*prob, config.review_rating_prob[i], weight);
         }
     }
 
