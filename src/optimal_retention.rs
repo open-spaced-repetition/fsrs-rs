@@ -930,17 +930,15 @@ pub fn extract_simulator_config(
 
         let total_learn_buttons: i64 = learn_buttons.iter().sum();
         let weight = total_learn_buttons as f32 / (50.0 + total_learn_buttons as f32);
-        for i in 0..4 {
-            first_rating_prob[i] =
-                first_rating_prob[i] * weight + config.first_rating_prob[i] * (1.0 - weight);
+        for (i, prob) in first_rating_prob.iter_mut().enumerate() {
+            *prob = *prob * weight + config.first_rating_prob[i] * (1.0 - weight);
         }
 
         let total_review_buttons_except_first: i64 = review_buttons[1..].iter().sum();
         let weight = total_review_buttons_except_first as f32
             / (50.0 + total_review_buttons_except_first as f32);
-        for i in 0..3 {
-            review_rating_prob[i] =
-                review_rating_prob[i] * weight + config.review_rating_prob[i] * (1.0 - weight);
+        for (i, prob) in review_rating_prob.iter_mut().enumerate() {
+            *prob = *prob * weight + config.review_rating_prob[i] * (1.0 - weight);
         }
     }
 
