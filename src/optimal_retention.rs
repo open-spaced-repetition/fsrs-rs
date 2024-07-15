@@ -81,7 +81,7 @@ impl Default for SimulatorConfig {
             first_session_lens: [2.02, 1.28, 0.81, 0.0],
             forget_rating_offset: -0.28,
             forget_session_len: 1.05,
-            loss_aversion: 1.5,
+            loss_aversion: 2.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
         }
@@ -969,7 +969,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            8222.023
+            7020.523
         )
     }
 
@@ -1033,11 +1033,10 @@ mod tests {
             learn_span,
             max_cost_perday: f32::INFINITY,
             learn_limit,
-            loss_aversion: 1.5,
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.7791796);
+        assert_eq!(optimal_retention, 0.8263932);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1052,13 +1051,12 @@ mod tests {
             learn_span,
             max_cost_perday: f32::INFINITY,
             learn_limit,
-            loss_aversion: 1.5,
             ..Default::default()
         };
         let optimal_retention = fsrs
             .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
             .unwrap();
-        assert_eq!(optimal_retention, 0.76764786);
+        assert_eq!(optimal_retention, 0.81812924);
         Ok(())
     }
 
