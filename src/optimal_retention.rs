@@ -16,6 +16,16 @@ use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use strum::EnumCount;
 
+trait Round {
+    fn to_2_decimal(self) -> f32;
+}
+
+impl Round for f32 {
+    fn to_2_decimal(self) -> f32 {
+        (self * 100.0).round() / 100.0
+    }
+}
+
 #[derive(Debug, EnumCount)]
 enum Column {
     Difficulty,
@@ -841,10 +851,10 @@ pub fn extract_simulator_config(
                         });
 
                 let averages = [
-                    (sum1 as f32 / count * 100.0).round() / 100.0,
-                    (sum2 as f32 / count * 100.0).round() / 100.0,
-                    (sum3 as f32 / count * 100.0).round() / 100.0,
-                    (sum4 as f32 / count * 100.0).round() / 100.0,
+                    (sum1 as f32 / count).to_2_decimal(),
+                    (sum2 as f32 / count).to_2_decimal(),
+                    (sum3 as f32 / count).to_2_decimal(),
+                    (sum4 as f32 / count).to_2_decimal(),
                 ];
 
                 ((*state, *rating), averages)
@@ -860,7 +870,7 @@ pub fn extract_simulator_config(
                 .enumerate()
                 .map(|(i, &v)| ((i + 1) as f32 - 3.0) * v)
                 .sum::<f32>();
-            rating_offset_dict.insert(k, (offset * 100.0).round() / 100.0);
+            rating_offset_dict.insert(k, (offset).to_2_decimal());
         }
         rating_offset_dict
     };
@@ -869,7 +879,7 @@ pub fn extract_simulator_config(
         let mut session_len_dict = HashMap::new();
         for (k, averages) in df2.iter() {
             let sum = averages.iter().sum::<f32>();
-            session_len_dict.insert(k, (sum * 100.0).round() / 100.0);
+            session_len_dict.insert(k, (sum).to_2_decimal());
         }
         session_len_dict
     };
@@ -908,8 +918,8 @@ pub fn extract_simulator_config(
                 + config.first_session_lens[i] * (1.0 - weight[i]);
 
             learn_costs[i] = (learn_costs[i] * 100.0).round() / 100.0;
-            first_rating_offsets[i] = (first_rating_offsets[i] * 100.0).round() / 100.0;
-            first_session_lens[i] = (first_session_lens[i] * 100.0).round() / 100.0;
+            first_rating_offsets[i] = first_rating_offsets[i].to_2_decimal();
+            first_session_lens[i] = first_session_lens[i].to_2_decimal();
         }
 
         let mut weight = [0.0f32; 4];
@@ -918,15 +928,15 @@ pub fn extract_simulator_config(
             review_costs[i] =
                 review_costs[i] * weight[i] + config.review_costs[i] * (1.0 - weight[i]);
 
-            review_costs[i] = (review_costs[i] * 100.0).round() / 100.0;
+            review_costs[i] = review_costs[i].to_2_decimal();
         }
         forget_rating_offset =
             forget_rating_offset * weight[0] + config.forget_rating_offset * (1.0 - weight[0]);
         forget_session_len =
             forget_session_len * weight[0] + config.forget_session_len * (1.0 - weight[0]);
 
-        forget_rating_offset = (forget_rating_offset * 100.0).round() / 100.0;
-        forget_session_len = (forget_session_len * 100.0).round() / 100.0;
+        forget_rating_offset = forget_rating_offset.to_2_decimal();
+        forget_session_len = forget_session_len.to_2_decimal();
 
         let total_learn_buttons: i64 = learn_buttons.iter().sum();
         let weight = total_learn_buttons as f32 / (50.0 + total_learn_buttons as f32);
