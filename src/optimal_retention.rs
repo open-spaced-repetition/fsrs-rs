@@ -16,6 +16,16 @@ use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use strum::EnumCount;
 
+trait Round {
+    fn to_2_decimal(self) -> f32;
+}
+
+impl Round for f32 {
+    fn to_2_decimal(self) -> f32 {
+        (self * 100.0).round() / 100.0
+    }
+}
+
 #[derive(Debug, EnumCount)]
 enum Column {
     Difficulty,
@@ -81,7 +91,7 @@ impl Default for SimulatorConfig {
             first_session_lens: [2.02, 1.28, 0.81, 0.0],
             forget_rating_offset: -0.28,
             forget_session_len: 1.05,
-            loss_aversion: 1.5,
+            loss_aversion: 2.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
         }
@@ -652,7 +662,11 @@ pub struct RevlogEntry {
     pub review_kind: RevlogReviewKind,
 }
 
-pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> SimulatorConfig {
+pub fn extract_simulator_config(
+    df: Vec<RevlogEntry>,
+    day_cutoff: i64,
+    smooth: bool,
+) -> SimulatorConfig {
     /*
         def rating_counts(x):
             tmp = defaultdict(int, x.value_counts().to_dict())
@@ -747,13 +761,13 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
     };
 
     // [cost_dict[(1, i)] / 1000 for i in range(1, 5)]
-    let learn_costs = (1..5)
+    let mut learn_costs: [f32; 4] = (1..5)
         .map(|i| cost_dict.get(&(1, i)).copied().unwrap_or_default() as f32 / 1000f32)
         .collect_vec()
         .try_into()
         .unwrap();
     // [cost_dict[(2, i)] / 1000 for i in range(1, 5)]
-    let review_costs = (1..5)
+    let mut review_costs: [f32; 4] = (1..5)
         .map(|i| cost_dict.get(&(2, i)).copied().unwrap_or_default() as f32 / 1000f32)
         .collect_vec()
         .try_into()
@@ -791,14 +805,14 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
         .unwrap();
 
     // self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
-    let first_rating_prob = learn_buttons
+    let mut first_rating_prob: [f32; 4] = learn_buttons
         .iter()
         .map(|x| *x as f32 / learn_buttons.iter().sum::<i64>() as f32)
         .collect_vec()
         .try_into()
         .unwrap();
     // self.review_buttons[1:] / self.review_buttons[1:].sum()
-    let review_rating_prob = review_buttons
+    let mut review_rating_prob: [f32; 3] = review_buttons
         .iter()
         .skip(1)
         .map(|x| *x as f32 / review_buttons.iter().skip(1).sum::<i64>() as f32)
@@ -837,10 +851,10 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
                         });
 
                 let averages = [
-                    (sum1 as f32 / count * 100.0).round() / 100.0,
-                    (sum2 as f32 / count * 100.0).round() / 100.0,
-                    (sum3 as f32 / count * 100.0).round() / 100.0,
-                    (sum4 as f32 / count * 100.0).round() / 100.0,
+                    (sum1 as f32 / count).to_2_decimal(),
+                    (sum2 as f32 / count).to_2_decimal(),
+                    (sum3 as f32 / count).to_2_decimal(),
+                    (sum4 as f32 / count).to_2_decimal(),
                 ];
 
                 ((*state, *rating), averages)
@@ -856,7 +870,7 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
                 .enumerate()
                 .map(|(i, &v)| ((i + 1) as f32 - 3.0) * v)
                 .sum::<f32>();
-            rating_offset_dict.insert(k, (offset * 100.0).round() / 100.0);
+            rating_offset_dict.insert(k, (offset).to_2_decimal());
         }
         rating_offset_dict
     };
@@ -865,28 +879,101 @@ pub fn extract_simulation_config(df: Vec<RevlogEntry>, day_cutoff: i64) -> Simul
         let mut session_len_dict = HashMap::new();
         for (k, averages) in df2.iter() {
             let sum = averages.iter().sum::<f32>();
-            session_len_dict.insert(k, (sum * 100.0).round() / 100.0);
+            session_len_dict.insert(k, (sum).to_2_decimal());
         }
         session_len_dict
     };
     // [rating_offset_dict[(1, i)] for i in range(1, 5)]
-    let first_rating_offsets = (1..5)
+    let mut first_rating_offsets: [f32; 4] = (1..5)
         .map(|i| rating_offset_dict.get(&(1, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
 
     // [session_len_dict[(1, i)] for i in range(1, 5)]
-    let first_session_lens = (1..5)
+    let mut first_session_lens: [f32; 4] = (1..5)
         .map(|i| session_len_dict.get(&(1, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
 
+    first_rating_offsets[3] = 0.0;
+    first_session_lens[3] = 0.0;
+
     // rating_offset_dict[(2, 1)]
-    let forget_rating_offset = rating_offset_dict.get(&(2, 1)).copied().unwrap_or_default();
+    let mut forget_rating_offset = rating_offset_dict.get(&(2, 1)).copied().unwrap_or_default();
     // session_len_dict[(2, 1)]
-    let forget_session_len = session_len_dict.get(&(2, 1)).copied().unwrap_or_default();
+    let mut forget_session_len = session_len_dict.get(&(2, 1)).copied().unwrap_or_default();
+    ///  t * v0 + (1f32 - t) * v1
+    fn lerp(v0: f32, v1: f32, t: f32) -> f32 {
+        t * v0 + (1f32 - t) * v1
+    }
+    if smooth {
+        let config = SimulatorConfig::default();
+
+        izip!(
+            &mut learn_costs,
+            &mut first_rating_offsets,
+            &mut first_session_lens,
+            &learn_buttons,
+            &config.learn_costs,
+            &config.first_rating_offsets,
+            &config.first_session_lens,
+        )
+        .for_each(
+            |(
+                learn_cost,
+                first_rating_offset,
+                first_session_len,
+                &learn_button,
+                &config_learn_cost,
+                &config_first_rating_offset,
+                &config_first_session_len,
+            )| {
+                let weight = learn_button as f32 / (50.0 + learn_button as f32);
+                *learn_cost = lerp(*learn_cost, config_learn_cost, weight).to_2_decimal();
+                *first_rating_offset =
+                    lerp(*first_rating_offset, config_first_rating_offset, weight).to_2_decimal();
+                *first_session_len =
+                    lerp(*first_session_len, config_first_session_len, weight).to_2_decimal();
+            },
+        );
+
+        let mut weight = [0.0f32; 4];
+        izip!(
+            &mut weight,
+            &mut review_costs,
+            &review_buttons,
+            &config.review_costs
+        )
+        .for_each(
+            |(weight, review_cost, review_button, config_review_costs)| {
+                *weight = *review_button as f32 / (50.0 + *review_button as f32);
+                *review_cost = lerp(*review_cost, *config_review_costs, *weight).to_2_decimal();
+            },
+        );
+
+        forget_rating_offset =
+            lerp(forget_rating_offset, config.forget_rating_offset, weight[0]).to_2_decimal();
+
+        forget_session_len =
+            lerp(forget_session_len, config.forget_session_len, weight[0]).to_2_decimal();
+
+        let total_learn_buttons: i64 = learn_buttons.iter().sum();
+        let weight = total_learn_buttons as f32 / (50.0 + total_learn_buttons as f32);
+        first_rating_prob
+            .iter_mut()
+            .zip(config.first_rating_prob)
+            .for_each(|(prob, first_rating_prob)| *prob = lerp(*prob, first_rating_prob, weight));
+        let total_review_buttons_except_first: i64 = review_buttons[1..].iter().sum();
+        let weight = total_review_buttons_except_first as f32
+            / (50.0 + total_review_buttons_except_first as f32);
+
+        review_rating_prob
+            .iter_mut()
+            .zip(config.review_rating_prob)
+            .for_each(|(prob, review_rating_prob)| *prob = lerp(*prob, review_rating_prob, weight));
+    }
 
     SimulatorConfig {
         learn_costs,
@@ -913,7 +1000,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            8222.023
+            7020.523
         )
     }
 
@@ -977,11 +1064,10 @@ mod tests {
             learn_span,
             max_cost_perday: f32::INFINITY,
             learn_limit,
-            loss_aversion: 1.5,
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.7791796);
+        assert_eq!(optimal_retention, 0.8263932);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -996,13 +1082,12 @@ mod tests {
             learn_span,
             max_cost_perday: f32::INFINITY,
             learn_limit,
-            loss_aversion: 1.5,
             ..Default::default()
         };
         let optimal_retention = fsrs
             .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
             .unwrap();
-        assert_eq!(optimal_retention, 0.76764786);
+        assert_eq!(optimal_retention, 0.81812924);
         Ok(())
     }
 
@@ -1011,7 +1096,7 @@ mod tests {
         let mut revlogs = read_collection().unwrap();
         revlogs.sort_by_cached_key(|r| (r.cid, r.id));
         let day_cutoff = 1720900800;
-        let simulator_config = extract_simulation_config(revlogs, day_cutoff);
+        let simulator_config = extract_simulator_config(revlogs.clone(), day_cutoff, false);
         assert_eq!(
             simulator_config,
             SimulatorConfig {
@@ -1019,12 +1104,28 @@ mod tests {
                 review_costs: [19.139, 6.887, 5.83, 4.002],
                 first_rating_prob: [0.19349411, 0., 0.14357824, 0.662_927_6],
                 review_rating_prob: [0.07351815, 0.9011334, 0.025348445],
-                first_rating_offsets: [1.64, 0., 0.69, 1.11],
-                first_session_lens: [2.74, 0., 1.32, 1.19],
+                first_rating_offsets: [1.64, 0., 0.69, 0.],
+                first_session_lens: [2.74, 0., 1.32, 0.],
                 forget_rating_offset: 1.28,
                 forget_session_len: 1.77,
                 ..Default::default()
             }
-        )
+        );
+
+        let simulator_config = extract_simulator_config(revlogs, day_cutoff, true);
+        assert_eq!(
+            simulator_config,
+            SimulatorConfig {
+                learn_costs: [30.31, 24.3, 16.98, 12.23],
+                review_costs: [19.37, 7.12, 5.84, 4.21],
+                first_rating_prob: [0.19413717, 0.0012997796, 0.1484375, 0.65612555],
+                review_rating_prob: [0.07409216, 0.900103, 0.025804851],
+                first_rating_offsets: [1.48, -0.15, 0.63, 0.],
+                first_session_lens: [2.69, 1.28, 1.27, 0.],
+                forget_rating_offset: 1.19,
+                forget_session_len: 1.73,
+                ..Default::default()
+            }
+        );
     }
 }
