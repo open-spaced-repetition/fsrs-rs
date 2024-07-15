@@ -908,19 +908,36 @@ pub fn extract_simulator_config(
     if smooth {
         let config = SimulatorConfig::default();
 
-        let mut weight = [0.0f32; 4];
-        for i in 0..4 {
-            weight[i] = learn_buttons[i] as f32 / (50.0 + learn_buttons[i] as f32);
-            learn_costs[i] = learn_costs[i] * weight[i] + config.learn_costs[i] * (1.0 - weight[i]);
-            first_rating_offsets[i] = first_rating_offsets[i] * weight[i]
-                + config.first_rating_offsets[i] * (1.0 - weight[i]);
-            first_session_lens[i] = first_session_lens[i] * weight[i]
-                + config.first_session_lens[i] * (1.0 - weight[i]);
-
-            learn_costs[i] = (learn_costs[i] * 100.0).round() / 100.0;
-            first_rating_offsets[i] = first_rating_offsets[i].to_2_decimal();
-            first_session_lens[i] = first_session_lens[i].to_2_decimal();
-        }
+        izip!(
+            &mut learn_costs,
+            &mut first_rating_offsets,
+            &mut first_session_lens,
+            &learn_buttons,
+            &config.learn_costs,
+            &config.first_rating_offsets,
+            &config.first_session_lens,
+        )
+        .for_each(
+            |(
+                learn_cost,
+                first_rating_offset,
+                first_session_len,
+                &learn_button,
+                &config_learn_cost,
+                &config_first_rating_offset,
+                &config_first_session_len,
+            )| {
+                let weight = learn_button as f32 / (50.0 + learn_button as f32);
+                *learn_cost = *learn_cost * weight + config_learn_cost * (1.0 - weight);
+                *learn_cost = learn_cost.to_2_decimal();
+                *first_rating_offset =
+                    *first_rating_offset * weight + config_first_rating_offset * (1.0 - weight);
+                *first_rating_offset = first_rating_offset.to_2_decimal();
+                *first_session_len =
+                    *first_session_len * weight + config_first_session_len * (1.0 - weight);
+                *first_session_len = first_session_len.to_2_decimal();
+            },
+        );
 
         let mut weight = [0.0f32; 4];
         for i in 0..4 {
@@ -930,6 +947,7 @@ pub fn extract_simulator_config(
 
             review_costs[i] = review_costs[i].to_2_decimal();
         }
+
         forget_rating_offset =
             forget_rating_offset * weight[0] + config.forget_rating_offset * (1.0 - weight[0]);
         forget_session_len =
