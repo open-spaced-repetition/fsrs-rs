@@ -207,8 +207,8 @@ impl<B: Backend> FSRS<B> {
         };
 
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, next_train_set) = prepare_training_data(train_set);
-        if pre_train_set.len() + next_train_set.len() < 8 {
+        let (pre_train_set, train_set) = prepare_training_data(train_set);
+        if train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
         }
@@ -221,7 +221,7 @@ impl<B: Backend> FSRS<B> {
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
-        if next_train_set.is_empty() || pre_train_set.len() + next_train_set.len() < 64 {
+        if train_set.len() == pre_train_set.len() || train_set.len() < 64 {
             finish_progress();
             return Ok(pretrained_parameters);
         }
@@ -237,7 +237,7 @@ impl<B: Backend> FSRS<B> {
         if let Some(progress) = &progress {
             let progress_state = ProgressState {
                 epoch_total: config.num_epochs,
-                items_total: next_train_set.len(),
+                items_total: train_set.len(),
                 epoch: 0,
                 items_processed: 0,
             };
@@ -245,8 +245,8 @@ impl<B: Backend> FSRS<B> {
         }
 
         let model = train::<Autodiff<B>>(
-            next_train_set.clone(),
-            next_train_set,
+            train_set.clone(),
+            train_set,
             &config,
             self.device(),
             progress.clone().map(|p| ProgressCollector::new(p, 0)),
