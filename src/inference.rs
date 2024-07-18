@@ -474,25 +474,35 @@ mod tests {
             .partition(|item| item.long_term_review_cnt() == 1);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         let items = [pretrainset, trainset].concat();
-        let fsrs = FSRS::new(Some(&[]))?;
 
+        let fsrs = FSRS::new(Some(&[
+            0.669, 1.679, 4.1355, 9.862, 7.9435, 0.9379, 1.0148, 0.1588, 1.3851, 0.1248, 0.8421,
+            1.992, 0.153, 0.284, 2.4282, 0.2547, 3.1847, 0.2196, 0.1906,
+        ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.216539, 0.045964]), 5);
+            .assert_approx_eq(&Data::from([0.202137, 0.025207]), 5);
+
+        let fsrs = FSRS::new(Some(&[]))?;
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+
+        Data::from([metrics.log_loss, metrics.rmse_bins])
+            .assert_approx_eq(&Data::from([0.216539, 0.039671]), 5);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.202754, 0.032861]), 5);
+            .assert_approx_eq(&Data::from([0.202754, 0.026365]), 5);
 
         let (self_by_other, other_by_self) = fsrs
-            .universal_metrics(items, &DEFAULT_PARAMETERS, |_| true)
+            .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
         Data::from([self_by_other, other_by_self])
             .assert_approx_eq(&Data::from([0.015230, 0.032233]), 5);
+
         Ok(())
     }
 
