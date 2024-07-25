@@ -528,8 +528,8 @@ impl<B: Backend> FSRS<B> {
         let tol = 0.01f32;
 
         let sample_size = match config.learn_span {
-            x if x < 100 => 16,
-            x if x < 365 => 8,
+            ..100 => 16,
+            100..365 => 8,
             _ => 4,
         };
 
