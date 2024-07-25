@@ -475,8 +475,6 @@ where
         / n as f32)
 }
 
-const SAMPLE_SIZE: usize = 4;
-
 impl<B: Backend> FSRS<B> {
     /// For the given simulator parameters and parameters, determine the suggested `desired_retention`
     /// value.
@@ -529,9 +527,15 @@ impl<B: Backend> FSRS<B> {
         let maxiter = 64;
         let tol = 0.01f32;
 
+        let sample_size = match config.learn_span {
+            x if x < 100 => 16,
+            x if x < 365 => 8,
+            _ => 4,
+        };
+
         let (xb, fb) = (
             R_MIN,
-            sample(config, parameters, R_MIN, SAMPLE_SIZE, &mut progress)?,
+            sample(config, parameters, R_MIN, sample_size, &mut progress)?,
         );
         let (mut x, mut v, mut w) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
@@ -589,7 +593,7 @@ impl<B: Backend> FSRS<B> {
                 rat
             };
             // calculate new output value
-            let fu = sample(config, parameters, u, SAMPLE_SIZE, &mut progress)?;
+            let fu = sample(config, parameters, u, sample_size, &mut progress)?;
 
             // if it's bigger than current
             if fu > fx {
