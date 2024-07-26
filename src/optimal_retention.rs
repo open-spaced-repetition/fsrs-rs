@@ -125,7 +125,7 @@ fn init_d(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
 
 fn next_d(w: &[f32], d: f32, rating: usize) -> f32 {
     let new_d = d - w[6] * (rating as f32 - 3.0);
-    mean_reversion(w, w[4], new_d).clamp(1.0, 10.0)
+    mean_reversion(w, w[4] - (w[5] * 3.0).exp() + 1.0, new_d).clamp(1.0, 10.0)
 }
 
 fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
@@ -1004,7 +1004,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            7020.523
+            6521.068
         )
     }
 
@@ -1048,8 +1048,7 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 15, 16, 17, 70, 73, 77, 82, 75, 87, 86, 111, 113, 110, 105, 112, 124, 131, 127,
-                119, 122, 163, 145, 150, 171, 150, 136, 163, 167, 156
+                0, 15, 16, 27, 69, 66, 81, 83, 75, 85, 90, 102, 107, 105, 122, 120, 141, 117, 132, 153, 153, 154, 152, 152, 149, 157, 166, 165, 184, 174
             ]
         );
         assert_eq!(
@@ -1071,7 +1070,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8263932);
+        assert_eq!(optimal_retention, 0.7921062);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1091,7 +1090,7 @@ mod tests {
         let optimal_retention = fsrs
             .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
             .unwrap();
-        assert_eq!(optimal_retention, 0.81812924);
+        assert_eq!(optimal_retention, 0.8430037);
         Ok(())
     }
 

@@ -92,7 +92,7 @@ impl<B: Backend> Model<B> {
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w.get(7) * (self.w.get(4) - new_d.clone()) + new_d
+        self.w.get(7) * (self.w.get(4) - (self.w.get(5) * 3).exp() + 1 - new_d.clone()) + new_d
     }
 
     pub(crate) fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -358,7 +358,7 @@ mod tests {
         next_difficulty.clone().backward();
         assert_eq!(
             next_difficulty.to_data(),
-            Data::from([7.0109706, 6.077718, 5.144465, 4.211212])
+            Data::from([7.040172, 5.999995, 4.959819, 3.9196422])
         )
     }
 
@@ -379,24 +379,24 @@ mod tests {
         s_recall.clone().backward();
         assert_eq!(
             s_recall.to_data(),
-            Data::from([28.603035, 16.240442, 68.610886, 237.08693])
+            Data::from([27.43741, 15.276875, 65.24019, 224.3506])
         );
         let s_forget = model.stability_after_failure(stability.clone(), difficulty, retention);
         s_forget.clone().backward();
         assert_eq!(
             s_forget.to_data(),
-            Data::from([1.7989675, 2.089014, 2.4897401, 2.9990985])
+            Data::from([1.7390966, 2.029377, 2.433932, 2.9520853])
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
         assert_eq!(
             next_stability.to_data(),
-            Data::from([1.7989675, 16.240442, 68.610886, 237.08693])
+            Data::from([1.7390966, 15.276875, 65.24019, 224.3506])
         );
         let next_stability = model.stability_short_term(stability, rating);
         assert_eq!(
             next_stability.to_data(),
-            Data::from([2.5794802, 4.206739, 6.8605514, 11.188516])
+            Data::from([2.542685, 4.2064567, 6.958895, 11.512355])
         )
     }
 
