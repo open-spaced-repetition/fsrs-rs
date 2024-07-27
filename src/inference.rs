@@ -544,7 +544,36 @@ mod tests {
         let state = fsrs.memory_state(item, None).unwrap();
         assert_eq!(
             fsrs.next_states(Some(state), 0.9, 21).unwrap(),
-            NextStates { again: ItemState { memory: MemoryState { stability: 2.969144, difficulty: 9.520562 }, interval: 3 }, hard: ItemState { memory: MemoryState { stability: 17.091442, difficulty: 8.4513445 }, interval: 17 }, good: ItemState { memory: MemoryState { stability: 31.722975, difficulty: 7.382128 }, interval: 32 }, easy: ItemState { memory: MemoryState { stability: 71.75015, difficulty: 6.3129106 }, interval: 72 } }
+            NextStates {
+                again: ItemState {
+                    memory: MemoryState {
+                        stability: 2.969144,
+                        difficulty: 9.520562
+                    },
+                    interval: 3
+                },
+                hard: ItemState {
+                    memory: MemoryState {
+                        stability: 17.091442,
+                        difficulty: 8.4513445
+                    },
+                    interval: 17
+                },
+                good: ItemState {
+                    memory: MemoryState {
+                        stability: 31.722975,
+                        difficulty: 7.382128
+                    },
+                    interval: 32
+                },
+                easy: ItemState {
+                    memory: MemoryState {
+                        stability: 71.75015,
+                        difficulty: 6.3129106
+                    },
+                    interval: 72
+                }
+            }
         );
         assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121);
         Ok(())

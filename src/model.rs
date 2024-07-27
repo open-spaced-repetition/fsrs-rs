@@ -92,7 +92,8 @@ impl<B: Backend> Model<B> {
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w.get(7) * (self.w.get(4) - (self.w.get(5) * 3).exp() + 1 - new_d.clone()) + new_d
+        let rating = Tensor::from_floats([4.0], &B::Device::default());
+        self.w.get(7) * (self.init_difficulty(rating) - new_d.clone()) + new_d
     }
 
     pub(crate) fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
