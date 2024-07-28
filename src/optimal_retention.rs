@@ -118,14 +118,18 @@ fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32)
     s * (w[17] * (rating_offset + session_len * w[18])).exp()
 }
 
-fn init_d(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
-    let new_d = w[4] - (w[5] * (rating - 1) as f32).exp() + 1.0 - w[6] * rating_offset;
+fn init_d(w: &[f32], rating: usize) -> f32 {
+    w[4] - (w[5] * (rating - 1) as f32).exp() + 1.0
+}
+
+fn init_d_with_short_term(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
+    let new_d = init_d(w, rating) - w[6] * rating_offset;
     new_d.clamp(1.0, 10.0)
 }
 
 fn next_d(w: &[f32], d: f32, rating: usize) -> f32 {
     let new_d = d - w[6] * (rating as f32 - 3.0);
-    mean_reversion(w, w[4], new_d).clamp(1.0, 10.0)
+    mean_reversion(w, init_d(w, 4), new_d).clamp(1.0, 10.0)
 }
 
 fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
@@ -394,7 +398,7 @@ pub fn simulate(
                 first_rating_offsets[rating - 1],
                 first_session_lens[rating - 1],
             );
-            *new_diff = init_d(w, rating, first_rating_offsets[rating - 1]);
+            *new_diff = init_d_with_short_term(w, rating, first_rating_offsets[rating - 1]);
         });
         let old_interval = card_table.slice(s![Column::Interval, ..]);
         let mut new_interval = old_interval.to_owned();
@@ -528,8 +532,8 @@ impl<B: Backend> FSRS<B> {
         let tol = 0.01f32;
 
         let sample_size = match config.learn_span {
-            x if x < 100 => 16,
-            x if x < 365 => 8,
+            ..100 => 16,
+            100..365 => 8,
             _ => 4,
         };
 
@@ -1004,7 +1008,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            7020.523
+            6521.068
         )
     }
 
@@ -1048,8 +1052,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 15, 16, 17, 70, 73, 77, 82, 75, 87, 86, 111, 113, 110, 105, 112, 124, 131, 127,
-                119, 122, 163, 145, 150, 171, 150, 136, 163, 167, 156
+                0, 15, 16, 27, 69, 66, 81, 83, 75, 85, 90, 102, 107, 105, 122, 120, 141, 117, 132,
+                153, 153, 154, 152, 152, 149, 157, 166, 165, 184, 174
             ]
         );
         assert_eq!(
@@ -1071,7 +1075,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8263932);
+        assert_eq!(optimal_retention, 0.7921062);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1091,7 +1095,7 @@ mod tests {
         let optimal_retention = fsrs
             .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
             .unwrap();
-        assert_eq!(optimal_retention, 0.81812924);
+        assert_eq!(optimal_retention, 0.8430037);
         Ok(())
     }
 
