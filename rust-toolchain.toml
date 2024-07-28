@@ -1,4 +1,4 @@
 [toolchain]
 # older versions may fail to compile; newer versions may fail the clippy tests
-channel = "1.80" # I guess this works now? nightly-2023-12-21
+channel = "1.80"
 components = ["rustfmt", "clippy"]
