@@ -22,8 +22,8 @@ pub type Parameters = [f32];
 use itertools::izip;
 
 pub static DEFAULT_PARAMETERS: [f32; 19] = [
-    0.4197, 1.1869, 3.0412, 15.2441, 7.1434, 0.6477, 1.0007, 0.0674, 1.6597, 0.1712, 1.1178,
-    2.0225, 0.0904, 0.3025, 2.1214, 0.2498, 2.9466, 0.4891, 0.6468,
+    0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0234, 1.616, 0.1544, 1.0824, 1.9813,
+    0.0953, 0.2975, 2.2042, 0.2407, 2.9466, 0.5034, 0.6567,
 ];
 
 fn infer<B: Backend>(
@@ -377,9 +377,25 @@ mod tests {
     };
 
     static PARAMETERS: &[f32] = &[
-        0.72466177, 1.6790825, 4.562257, 10.0608635, 7.7002444, 0.912309, 1.0909119, 0.03472257,
-        1.4395499, 0.1712, 0.8977034, 2.1090207, 0.0904, 0.3025, 2.3506782, 0.23486121, 3.1349943,
-        0.18253358, 0.13885707,
+        0.6845422,
+        1.6790825,
+        4.7349424,
+        10.042885,
+        7.4410233,
+        0.64219797,
+        1.071918,
+        0.0025195254,
+        1.432437,
+        0.1544,
+        0.8692766,
+        2.0696752,
+        0.0953,
+        0.2975,
+        2.4691248,
+        0.19542035,
+        3.201072,
+        0.18046261,
+        0.121442534,
     ];
 
     #[test]
@@ -427,8 +443,8 @@ mod tests {
         assert_eq!(
             fsrs.memory_state(item, None).unwrap(),
             MemoryState {
-                stability: 29.448196,
-                difficulty: 7.7002444
+                stability: 31.722975,
+                difficulty: 7.382128
             }
         );
 
@@ -445,8 +461,8 @@ mod tests {
             .good
             .memory,
             MemoryState {
-                stability: 40.669125,
-                difficulty: 7.0292006
+                stability: 40.874535,
+                difficulty: 6.9913807
             }
         );
         Ok(())
@@ -478,26 +494,26 @@ mod tests {
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.202137, 0.025207]), 5);
+            .assert_approx_eq(&Data::from([0.210983, 0.037216]), 5);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.216539, 0.039671]), 5);
+            .assert_approx_eq(&Data::from([0.217689, 0.039710]), 5);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         Data::from([metrics.log_loss, metrics.rmse_bins])
-            .assert_approx_eq(&Data::from([0.202754, 0.026365]), 5);
+            .assert_approx_eq(&Data::from([0.203235, 0.026295]), 5);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
         Data::from([self_by_other, other_by_self])
-            .assert_approx_eq(&Data::from([0.015230, 0.032233]), 5);
+            .assert_approx_eq(&Data::from([0.014476, 0.031874]), 5);
 
         Ok(())
     }
@@ -531,31 +547,31 @@ mod tests {
             NextStates {
                 again: ItemState {
                     memory: MemoryState {
-                        stability: 3.0271175,
-                        difficulty: 9.80631
+                        stability: 2.969144,
+                        difficulty: 9.520562
                     },
                     interval: 3
                 },
                 hard: ItemState {
                     memory: MemoryState {
-                        stability: 16.725859,
-                        difficulty: 8.753278
+                        stability: 17.091442,
+                        difficulty: 8.4513445
                     },
                     interval: 17
                 },
                 good: ItemState {
                     memory: MemoryState {
-                        stability: 29.448196,
-                        difficulty: 7.7002444
+                        stability: 31.722975,
+                        difficulty: 7.382128
                     },
-                    interval: 29
+                    interval: 32
                 },
                 easy: ItemState {
                     memory: MemoryState {
-                        stability: 64.947784,
-                        difficulty: 6.647212
+                        stability: 71.75015,
+                        difficulty: 6.3129106
                     },
-                    interval: 65
+                    interval: 72
                 }
             }
         );
@@ -581,13 +597,13 @@ mod tests {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
         Data::from([memory_state.stability, memory_state.difficulty])
-            .assert_approx_eq(&Data::from([9.999996, 7.422087]), 5);
+            .assert_approx_eq(&Data::from([9.999996, 7.279789]), 5);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
         Data::from([memory_state.stability, memory_state.difficulty])
-            .assert_approx_eq(&Data::from([4.170096, 9.545_82]), 5);
+            .assert_approx_eq(&Data::from([4.170096, 9.462736]), 5);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
         Data::from([memory_state.stability, memory_state.difficulty])
-            .assert_approx_eq(&Data::from([21.712555, 2.593589]), 5);
+            .assert_approx_eq(&Data::from([21.712555, 2.380210]), 5);
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
         Data::from([memory_state.stability, memory_state.difficulty])
             .assert_approx_eq(&Data::from([19.999992, 10.0]), 5);
