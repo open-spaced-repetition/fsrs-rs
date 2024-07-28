@@ -1,4 +1,4 @@
 [toolchain]
 # older versions may fail to compile; newer versions may fail the clippy tests
-channel = "nightly-2023-12-21"
+channel = "nightly-2024-07-26"     # If you're here due to a merge conflict, you probably want to change this to the latest nightly. See https://github.com/open-spaced-repetition/fsrs-browser#updating-the-git-submodules
 components = ["rustfmt", "clippy"]
