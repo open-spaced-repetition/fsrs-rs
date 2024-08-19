@@ -12,6 +12,31 @@ For more information about the algorithm, please refer to [the wiki page of FSRS
 
 ---
 
+## Quickstart
+
+Read up [this](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Optimal-Retention) to determine the optimal retention for your use case.
+
+```rust
+// Pick to your liking (see above)
+let optimal_retention = 0.75;
+// Use default parameters/Weights for scheduler
+let fsrs = FSRS::new(Some(&[]))?;
+
+// Create a completely new card
+let day1_states = fsrs.next_states(None, optimal_retention, 0)?;
+
+// Rate as `hard` on first day
+let day1 = day1_states.hard;
+dbg!(&day1); // scheduled as `in 4 days`
+
+// Now we review the card 2 days later
+let day3_states = fsrs.next_states(Some(day1.memory), optimal_retention, 2)?;
+
+// Rate as `good` this time
+let day3 = day3_states.good;
+dbg!(day3);
+```
+
 ## Development
 
 add

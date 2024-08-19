@@ -4,7 +4,7 @@ use crate::dataset::{prepare_training_data, FSRSBatcher, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
-use crate::pre_training::pretrain;
+use crate::pre_training::{pretrain, smooth_and_fill};
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
 use wasm_bindgen::prelude::*;
@@ -243,10 +243,11 @@ impl<B: Backend> FSRS<B> {
             return Ok(DEFAULT_PARAMETERS.to_vec());
         }
 
-        let initial_stability = pretrain(pre_train_set.clone(), average_recall).map_err(|e| {
-            finish_progress();
-            e
-        })?;
+        let (initial_stability, initial_rating_count) =
+            pretrain(pre_train_set.clone(), average_recall).map_err(|e| {
+                finish_progress();
+                e
+            })?;
         let pretrained_parameters: Vec<f32> = initial_stability
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
@@ -302,6 +303,18 @@ impl<B: Backend> FSRS<B> {
             return Err(FSRSError::InvalidInput);
         }
 
+        let mut optimized_initial_stability = optimized_parameters[0..4]
+            .iter()
+            .enumerate()
+            .map(|(i, &val)| (i as u32 + 1, val))
+            .collect();
+        let clamped_stability =
+            smooth_and_fill(&mut optimized_initial_stability, &initial_rating_count).unwrap();
+        let optimized_parameters = clamped_stability
+            .into_iter()
+            .chain(optimized_parameters[4..].iter().copied())
+            .collect();
+
         Ok(optimized_parameters)
     }
 
@@ -311,7 +324,7 @@ impl<B: Backend> FSRS<B> {
             .clone()
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        let initial_stability = pretrain(pre_train_set, average_recall).unwrap();
+        let initial_stability = pretrain(pre_train_set, average_recall).unwrap().0;
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: false,
