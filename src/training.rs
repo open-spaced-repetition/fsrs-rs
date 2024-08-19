@@ -21,7 +21,6 @@ use burn::train::TrainingInterrupter;
 use burn::{config::Config, module::Param, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
-use std::collections::HashMap;
 
 use std::sync::{Arc, Mutex};
 
