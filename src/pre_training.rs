@@ -12,11 +12,17 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
     (4, DEFAULT_PARAMETERS[3]),
 ];
 
-pub fn pretrain(fsrs_items: Vec<FSRSItem>, average_recall: f32) -> Result<[f32; 4]> {
+pub fn pretrain(
+    fsrs_items: Vec<FSRSItem>,
+    average_recall: f32,
+) -> Result<([f32; 4], HashMap<u32, u32>)> {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(&pretrainset);
     let mut rating_stability = search_parameters(pretrainset, average_recall);
-    smooth_and_fill(&mut rating_stability, &rating_count)
+    Ok((
+        smooth_and_fill(&mut rating_stability, &rating_count)?,
+        rating_count,
+    ))
 }
 
 type FirstRating = u32;
@@ -158,7 +164,7 @@ fn search_parameters(
     optimal_stabilities
 }
 
-fn smooth_and_fill(
+pub(crate) fn smooth_and_fill(
     rating_stability: &mut HashMap<u32, f32>,
     rating_count: &HashMap<u32, u32>,
 ) -> Result<[f32; 4]> {
@@ -349,7 +355,7 @@ mod tests {
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         let items = [pretrainset.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
-        Data::from(pretrain(pretrainset, average_recall).unwrap())
+        Data::from(pretrain(pretrainset, average_recall).unwrap().0)
             .assert_approx_eq(&Data::from([0.908_688, 1.678_973, 4.216_837, 9.615_904]), 6)
     }
 
