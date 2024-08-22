@@ -144,6 +144,7 @@ pub struct Card {
     pub due: f32,
 }
 
+#[allow(clippy::type_complexity)]
 pub fn simulate(
     config: &SimulatorConfig,
     w: &Parameters,
