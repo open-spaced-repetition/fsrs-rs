@@ -209,20 +209,19 @@ impl FSRS<NdArray> {
 
 impl<B: Backend> FSRS<B> {
     pub fn new_with_backend<B2: Backend>(
-        mut parameters: Option<&Parameters>,
+        parameters: Option<&Parameters>,
         device: B2::Device,
     ) -> Result<FSRS<B2>> {
-        if let Some(parameters) = &mut parameters {
-            if parameters.is_empty() {
-                *parameters = DEFAULT_PARAMETERS.as_slice()
-            } else if parameters.len() != 19 && parameters.len() != 17 {
-                return Err(FSRSError::InvalidParameters);
+        let model = match parameters {
+            Some(params) => {
+                let parameters = check_and_fill_parameters(params)?;
+                let model = parameters_to_model::<B2>(&parameters);
+                Some(model)
             }
-        }
-        Ok(FSRS {
-            model: parameters.map(parameters_to_model),
-            device,
-        })
+            None => None,
+        };
+
+        Ok(FSRS { model, device })
     }
 
     pub(crate) fn model(&self) -> &Model<B> {
@@ -239,18 +238,25 @@ impl<B: Backend> FSRS<B> {
 pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
     let mut model = Model::new(config);
-    let new_params = if parameters.len() == 17 {
-        let mut new_params = parameters.to_vec();
-        new_params.extend_from_slice(&[0.0, 0.0]);
-        new_params
-    } else {
-        parameters.to_vec()
-    };
     model.w = Param::from_tensor(Tensor::from_floats(
-        Data::new(clip_parameters(&new_params), Shape { dims: [19] }),
+        Data::new(clip_parameters(&parameters), Shape { dims: [19] }),
         &B::Device::default(),
     ));
     model
+}
+
+pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
+    let parameters = match parameters.len() {
+        0 => DEFAULT_PARAMETERS.to_vec(),
+        17 => {
+            let mut parameters = parameters.to_vec();
+            parameters.extend_from_slice(&[0.0, 0.0]);
+            parameters
+        }
+        19 => parameters.to_vec(),
+        _ => return Err(FSRSError::InvalidParameters),
+    };
+    Ok(parameters)
 }
 
 #[cfg(test)]

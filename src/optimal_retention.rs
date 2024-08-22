@@ -1,6 +1,7 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MIN};
-use crate::{DEFAULT_PARAMETERS, FSRS};
+use crate::model::check_and_fill_parameters;
+use crate::FSRS;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
@@ -145,11 +146,12 @@ pub struct Card {
 
 pub fn simulate(
     config: &SimulatorConfig,
-    w: &[f32],
+    w: &Parameters,
     desired_retention: f32,
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
-) -> (Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>) {
+) -> Result<(Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>), FSRSError> {
+    let w = &check_and_fill_parameters(w)?;
     let SimulatorConfig {
         deck_size,
         learn_span,
@@ -440,28 +442,28 @@ pub fn simulate(
             .sum();
     }
 
-    (
+    Ok((
         memorized_cnt_per_day,
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
-    )
+    ))
 }
 
 fn sample<F>(
     config: &SimulatorConfig,
-    parameters: &[f32],
+    parameters: &Parameters,
     desired_retention: f32,
     n: usize,
     progress: &mut F,
-) -> Result<f32>
+) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
 {
     if !progress() {
         return Err(FSRSError::Interrupted);
     }
-    Ok((0..n)
+    let results: Result<Vec<f32>, FSRSError> = (0..n)
         .into_par_iter()
         .map(|i| {
             let (memorized_cnt_per_day, _, _, cost_per_day) = simulate(
@@ -470,13 +472,14 @@ where
                 desired_retention,
                 Some((i + 42).try_into().unwrap()),
                 None,
-            );
+            )
+            .map_err(|e| e)?;
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
             let total_cost = cost_per_day.sum();
-            total_cost / total_memorized
+            Ok(total_cost / total_memorized)
         })
-        .sum::<f32>()
-        / n as f32)
+        .collect();
+    results.map(|v| v.iter().sum::<f32>() / n as f32)
 }
 
 impl<B: Backend> FSRS<B> {
@@ -491,19 +494,6 @@ impl<B: Backend> FSRS<B> {
     where
         F: FnMut(ItemProgress) -> bool + Send,
     {
-        let parameters = if parameters.is_empty() {
-            DEFAULT_PARAMETERS.to_vec()
-        } else if parameters.len() != 19 {
-            if parameters.len() == 17 {
-                let mut parameters = parameters.to_vec();
-                parameters.extend_from_slice(&[0.0, 0.0]);
-                parameters
-            } else {
-                return Err(FSRSError::InvalidParameters);
-            }
-        } else {
-            parameters.to_vec()
-        };
         let mut progress_info = ItemProgress {
             current: 0,
             // not provided for this method
@@ -520,7 +510,7 @@ impl<B: Backend> FSRS<B> {
     /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
     fn brent<F>(
         config: &SimulatorConfig,
-        parameters: &[f32],
+        parameters: &Parameters,
         mut progress: F,
     ) -> Result<f32, FSRSError>
     where
@@ -1002,18 +992,19 @@ mod tests {
     use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
 
     #[test]
-    fn simulator() {
+    fn simulator() -> Result<()> {
         let config = SimulatorConfig::default();
         let (memorized_cnt_per_day, _, _, _) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             6521.068
-        )
+        );
+        Ok(())
     }
 
     #[test]
-    fn simulate_with_existing_cards() {
+    fn simulate_with_existing_cards() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1035,12 +1026,13 @@ mod tests {
                 due: 0.0,
             },
         ];
-        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
+        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
         dbg!(memorization);
+        Ok(())
     }
 
     #[test]
-    fn simulate_with_learn_review_limit() {
+    fn simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1048,7 +1040,7 @@ mod tests {
             max_cost_perday: f32::INFINITY,
             ..Default::default()
         };
-        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
+        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             results.1.to_vec(),
             vec![
@@ -1059,7 +1051,8 @@ mod tests {
         assert_eq!(
             results.2.to_vec(),
             vec![config.learn_limit; config.learn_span]
-        )
+        );
+        Ok(())
     }
 
     #[test]
