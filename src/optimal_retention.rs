@@ -405,7 +405,9 @@ pub fn simulate(
         izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
             .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
             .for_each(|(new_ivl, &new_stab, ..)| {
-                *new_ivl = (next_interval(new_stab, desired_retention) as f32).clamp(1.0, max_ivl);
+                *new_ivl = next_interval(new_stab, desired_retention)
+                    .round()
+                    .clamp(1.0, max_ivl);
             });
 
         let old_due = card_table.slice(s![Column::Due, ..]);
