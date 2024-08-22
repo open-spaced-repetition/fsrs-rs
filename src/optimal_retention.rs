@@ -472,8 +472,7 @@ where
                 desired_retention,
                 Some((i + 42).try_into().unwrap()),
                 None,
-            )
-            .map_err(|e| e)?;
+            )?;
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
             let total_cost = cost_per_day.sum();
             Ok(total_cost / total_memorized)
@@ -504,7 +503,7 @@ impl<B: Backend> FSRS<B> {
             progress(progress_info)
         };
 
-        Self::brent(config, &parameters, inc_progress)
+        Self::brent(config, parameters, inc_progress)
     }
     /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
     /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446

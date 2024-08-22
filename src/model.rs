@@ -239,7 +239,7 @@ pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<
     let config = ModelConfig::default();
     let mut model = Model::new(config);
     model.w = Param::from_tensor(Tensor::from_floats(
-        Data::new(clip_parameters(&parameters), Shape { dims: [19] }),
+        Data::new(clip_parameters(parameters), Shape { dims: [19] }),
         &B::Device::default(),
     ));
     model
