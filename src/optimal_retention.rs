@@ -170,7 +170,7 @@ pub fn simulate(
         learn_limit,
         review_limit,
     } = config.clone();
-    if deck_size <= 0 {
+    if deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
     let mut card_table = Array2::zeros((Column::COUNT, deck_size));
