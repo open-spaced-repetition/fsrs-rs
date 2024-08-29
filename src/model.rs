@@ -256,6 +256,9 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
         19 => parameters.to_vec(),
         _ => return Err(FSRSError::InvalidParameters),
     };
+    if parameters.iter().any(|&w| !w.is_finite()) {
+        return Err(FSRSError::InvalidParameters);
+    }
     Ok(parameters)
 }
 
