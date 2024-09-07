@@ -1,6 +1,7 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MIN};
-use crate::{DEFAULT_PARAMETERS, FSRS};
+use crate::model::check_and_fill_parameters;
+use crate::FSRS;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
 use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
@@ -143,13 +144,15 @@ pub struct Card {
     pub due: f32,
 }
 
+#[allow(clippy::type_complexity)]
 pub fn simulate(
     config: &SimulatorConfig,
-    w: &[f32],
+    w: &Parameters,
     desired_retention: f32,
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
-) -> (Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>) {
+) -> Result<(Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>), FSRSError> {
+    let w = &check_and_fill_parameters(w)?;
     let SimulatorConfig {
         deck_size,
         learn_span,
@@ -167,6 +170,9 @@ pub fn simulate(
         learn_limit,
         review_limit,
     } = config.clone();
+    if deck_size == 0 {
+        return Err(FSRSError::InvalidDeckSize);
+    }
     let mut card_table = Array2::zeros((Column::COUNT, deck_size));
     card_table
         .slice_mut(s![Column::Due, ..])
@@ -176,6 +182,9 @@ pub fn simulate(
 
     // fill card table based on existing_cards
     if let Some(existing_cards) = existing_cards {
+        if existing_cards.len() > deck_size {
+            return Err(FSRSError::InvalidDeckSize);
+        }
         for (i, card) in existing_cards.into_iter().enumerate() {
             card_table[[Column::Difficulty as usize, i]] = card.difficulty;
             card_table[[Column::Stability as usize, i]] = card.stability;
@@ -442,28 +451,28 @@ pub fn simulate(
             .sum();
     }
 
-    (
+    Ok((
         memorized_cnt_per_day,
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
-    )
+    ))
 }
 
 fn sample<F>(
     config: &SimulatorConfig,
-    parameters: &[f32],
+    parameters: &Parameters,
     desired_retention: f32,
     n: usize,
     progress: &mut F,
-) -> Result<f32>
+) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
 {
     if !progress() {
         return Err(FSRSError::Interrupted);
     }
-    Ok((0..n)
+    let results: Result<Vec<f32>, FSRSError> = (0..n)
         .into_par_iter()
         .map(|i| {
             let (memorized_cnt_per_day, _, _, cost_per_day) = simulate(
@@ -472,13 +481,13 @@ where
                 desired_retention,
                 Some((i + 42).try_into().unwrap()),
                 None,
-            );
+            )?;
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
             let total_cost = cost_per_day.sum();
-            total_cost / total_memorized
+            Ok(total_cost / total_memorized)
         })
-        .sum::<f32>()
-        / n as f32)
+        .collect();
+    results.map(|v| v.iter().sum::<f32>() / n as f32)
 }
 
 impl<B: Backend> FSRS<B> {
@@ -493,19 +502,6 @@ impl<B: Backend> FSRS<B> {
     where
         F: FnMut(ItemProgress) -> bool + Send,
     {
-        let parameters = if parameters.is_empty() {
-            DEFAULT_PARAMETERS.to_vec()
-        } else if parameters.len() != 19 {
-            if parameters.len() == 17 {
-                let mut parameters = parameters.to_vec();
-                parameters.extend_from_slice(&[0.0, 0.0]);
-                parameters
-            } else {
-                return Err(FSRSError::InvalidParameters);
-            }
-        } else {
-            parameters.to_vec()
-        };
         let mut progress_info = ItemProgress {
             current: 0,
             // not provided for this method
@@ -516,13 +512,13 @@ impl<B: Backend> FSRS<B> {
             progress(progress_info)
         };
 
-        Self::brent(config, &parameters, inc_progress)
+        Self::brent(config, parameters, inc_progress)
     }
     /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
     /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
     fn brent<F>(
         config: &SimulatorConfig,
-        parameters: &[f32],
+        parameters: &Parameters,
         mut progress: F,
     ) -> Result<f32, FSRSError>
     where
@@ -677,6 +673,9 @@ pub fn extract_simulator_config(
     day_cutoff: i64,
     smooth: bool,
 ) -> SimulatorConfig {
+    if df.is_empty() {
+        return SimulatorConfig::default();
+    }
     /*
         def rating_counts(x):
             tmp = defaultdict(int, x.value_counts().to_dict())
@@ -802,18 +801,23 @@ pub fn extract_simulator_config(
             .collect::<HashMap<_, _>>()
     };
     // [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
-    let learn_buttons: [i64; 4] = (1..5)
+    let mut learn_buttons: [i64; 4] = (1..=4)
         .map(|i| button_usage_dict.get(&(1, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
+    if learn_buttons.iter().all(|&x| x == 0) {
+        learn_buttons = [1, 1, 1, 1];
+    }
     // [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
-    let review_buttons: [i64; 4] = (1..5)
+    let mut review_buttons: [i64; 4] = (1..=4)
         .map(|i| button_usage_dict.get(&(2, i)).copied().unwrap_or_default())
         .collect_vec()
         .try_into()
         .unwrap();
-
+    if review_buttons.iter().skip(1).all(|&x| x == 0) {
+        review_buttons = [review_buttons[0], 1, 1, 1];
+    }
     // self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
     let mut first_rating_prob: [f32; 4] = learn_buttons
         .iter()
@@ -1004,18 +1008,19 @@ mod tests {
     use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
 
     #[test]
-    fn simulator() {
+    fn simulator() -> Result<()> {
         let config = SimulatorConfig::default();
         let (memorized_cnt_per_day, _, _, _) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             6521.068
-        )
+        );
+        Ok(())
     }
 
     #[test]
-    fn simulate_with_existing_cards() {
+    fn simulate_with_existing_cards() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1037,12 +1042,13 @@ mod tests {
                 due: 0.0,
             },
         ];
-        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
+        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
         dbg!(memorization);
+        Ok(())
     }
 
     #[test]
-    fn simulate_with_learn_review_limit() {
+    fn simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1050,7 +1056,7 @@ mod tests {
             max_cost_perday: f32::INFINITY,
             ..Default::default()
         };
-        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
+        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             results.1.to_vec(),
             vec![
@@ -1061,7 +1067,44 @@ mod tests {
         assert_eq!(
             results.2.to_vec(),
             vec![config.learn_limit; config.learn_span]
-        )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_zero_card() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 0,
+            ..Default::default()
+        };
+        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
+        assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_existing_cards_with_wrong_deck_size() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 1,
+            ..Default::default()
+        };
+        let cards = vec![
+            Card {
+                difficulty: 5.0,
+                stability: 5.0,
+                last_date: -5.0,
+                due: 0.0,
+            },
+            Card {
+                difficulty: 5.0,
+                stability: 2.0,
+                last_date: -2.0,
+                due: 0.0,
+            },
+        ];
+        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
+        assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
     }
 
     #[test]
@@ -1137,5 +1180,11 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn extract_simulator_config_without_revlog() {
+        let simulator_config = extract_simulator_config(vec![], 0, true);
+        assert_eq!(simulator_config, SimulatorConfig::default());
     }
 }

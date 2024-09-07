@@ -1077,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "fsrs"
-version = "1.1.5"
+version = "1.2.1"
 dependencies = [
  "burn",
  "chrono",
