@@ -56,7 +56,7 @@ impl From<Column> for SliceInfoElem {
 }
 
 const R_MIN: f32 = 0.75;
-const R_MAX: f32 = 0.95;
+const R_MAX: f32 = 0.98;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimulatorConfig {
