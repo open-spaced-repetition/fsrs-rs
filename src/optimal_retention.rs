@@ -56,7 +56,7 @@ impl From<Column> for SliceInfoElem {
 }
 
 const R_MIN: f32 = 0.75;
-const R_MAX: f32 = 0.95;
+const R_MAX: f32 = 0.98;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimulatorConfig {
@@ -1118,7 +1118,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.7921062);
+        assert_eq!(optimal_retention, 0.8378522);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1138,7 +1138,7 @@ mod tests {
         let optimal_retention = fsrs
             .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
             .unwrap();
-        assert_eq!(optimal_retention, 0.8430037);
+        assert_eq!(optimal_retention, 0.8378522);
         Ok(())
     }
 
