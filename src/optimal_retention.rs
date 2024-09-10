@@ -533,7 +533,7 @@ impl<B: Backend> FSRS<B> {
                 let (a1, a2, a3) = (8.20e-7, 2.41e-3, 1.30e-2);
                 let factor = (config.learn_span as f32)
                     .powf(2.0)
-                    .mul_add(a1, a2 * config.learn_span as f32 + a3);
+                    .mul_add(a1, config.learn_span as f32 * a2 + a3);
                 let default_sample_size = 4.0;
                 (default_sample_size / factor).round() as usize
             }
