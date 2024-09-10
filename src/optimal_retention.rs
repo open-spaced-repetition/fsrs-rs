@@ -528,9 +528,16 @@ impl<B: Backend> FSRS<B> {
         let tol = 0.01f32;
 
         let sample_size = match config.learn_span {
-            ..100 => 16,
-            100..365 => 8,
-            _ => 4,
+            ..=30 => 45,
+            31..365 => {
+                let (a1, a2, a3) = (8.20e-7, 2.41e-3, 1.30e-2);
+                let factor = (config.learn_span as f32)
+                    .powf(2.0)
+                    .mul_add(a1, config.learn_span as f32 * a2 + a3);
+                let default_sample_size = 4.0;
+                (default_sample_size / factor).round() as usize
+            }
+            365.. => 8,
         };
 
         let (xb, fb) = (
@@ -1118,7 +1125,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.7921062);
+        assert_eq!(optimal_retention, 0.80994797);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1138,7 +1145,7 @@ mod tests {
         let optimal_retention = fsrs
             .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
             .unwrap();
-        assert_eq!(optimal_retention, 0.8430037);
+        assert_eq!(optimal_retention, 0.8435673);
         Ok(())
     }
 
