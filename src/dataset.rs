@@ -6,6 +6,7 @@ use burn::{
     tensor::{backend::Backend, Data, ElementConversion, Float, Int, Shape, Tensor},
 };
 
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 /// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
@@ -190,7 +191,7 @@ pub fn filter_outlier(
     let mut filtered_items = vec![];
     let mut removed_pairs: [HashSet<_>; 5] = Default::default();
 
-    for (rating, delta_t_groups) in groups.into_iter() {
+    for (rating, delta_t_groups) in groups.into_iter().sorted_by_key(|&(k, _)| k) {
         let mut sub_groups = delta_t_groups.into_iter().collect::<Vec<_>>();
 
         // order by size of sub group ascending and delta_t descending

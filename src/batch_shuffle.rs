@@ -263,12 +263,41 @@ where
 
 #[cfg(test)]
 mod tests {
+    use burn::backend::{ndarray::NdArrayDevice, NdArray};
+
     use super::*;
-    use crate::{convertor_tests::anki21_sample_file_converted_to_fsrs, FSRSItem, FSRSReview};
+    use crate::{
+        convertor_tests::anki21_sample_file_converted_to_fsrs,
+        dataset::{prepare_training_data, FSRSBatcher, FSRSDataset},
+        FSRSItem, FSRSReview,
+    };
+
+    #[test]
+    fn batch_shuffle_dataloader() {
+        let train_set = anki21_sample_file_converted_to_fsrs();
+        let (_pre_train_set, train_set) = prepare_training_data(train_set);
+        let dataset = FSRSDataset::from(train_set);
+        let batch_size = 512;
+        let seed = 42;
+        let device = NdArrayDevice::Cpu;
+        type Backend = NdArray<f32>;
+        let batcher = FSRSBatcher::<Backend>::new(device);
+        let dataloader =
+            BatchShuffledDataLoaderBuilder::new(batcher).build(dataset, batch_size, seed);
+        let item = dataloader.iter().next().unwrap();
+        assert_eq!(
+            item.t_historys.shape(),
+            burn::tensor::Shape { dims: [6, 512] }
+        );
+        let item2 = dataloader.iter().next().unwrap();
+        assert_eq!(
+            item2.t_historys.shape(),
+            burn::tensor::Shape { dims: [4, 512] }
+        );
+    }
 
     #[test]
     fn batch_shuffle() {
-        use crate::dataset::FSRSDataset;
         let dataset = Arc::new(FSRSDataset::from(anki21_sample_file_converted_to_fsrs()));
         let batch_size = 10;
         let seed = 42;
@@ -484,7 +513,6 @@ mod tests {
 
     #[test]
     fn item_shuffle() {
-        use crate::dataset::FSRSDataset;
         use burn::data::dataset::transform::ShuffledDataset;
         let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
         let seed = 42;
