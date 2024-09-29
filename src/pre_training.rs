@@ -168,6 +168,7 @@ pub(crate) fn smooth_and_fill(
     rating_stability: &mut HashMap<u32, f32>,
     rating_count: &HashMap<u32, u32>,
 ) -> Result<[f32; 4]> {
+    rating_stability.retain(|&key, _| rating_count.contains_key(&key));
     for (small_rating, big_rating) in [(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
         if let (Some(&small_value), Some(&big_value)) = (
             rating_stability.get(&small_rating),
