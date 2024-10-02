@@ -49,3 +49,7 @@ git add .
 ```
 
 to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
+
+## Bindings
+
+- python <https://github.com/open-spaced-repetition/fsrs-rs-python>
