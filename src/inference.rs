@@ -65,10 +65,8 @@ impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     }
 }
 
-pub fn next_interval(stability: f32, desired_retention: f32) -> u32 {
-    (stability / FACTOR as f32 * (desired_retention.powf(1.0 / DECAY as f32) - 1.0))
-        .round()
-        .max(1.0) as u32
+pub fn next_interval(stability: f32, desired_retention: f32) -> f32 {
+    stability / FACTOR as f32 * (desired_retention.powf(1.0 / DECAY as f32) - 1.0)
 }
 
 impl<B: Backend> FSRS<B> {
@@ -144,7 +142,7 @@ impl<B: Backend> FSRS<B> {
         stability: Option<f32>,
         desired_retention: f32,
         rating: u32,
-    ) -> u32 {
+    ) -> f32 {
         let stability = stability.unwrap_or_else(|| {
             // get initial stability for new card
             let rating = Tensor::from_data(
@@ -333,7 +331,7 @@ pub struct NextStates {
 #[derive(Debug, PartialEq, Clone)]
 pub struct ItemState {
     pub memory: MemoryState,
-    pub interval: u32,
+    pub interval: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -475,7 +473,7 @@ mod tests {
         let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
         let intervals = desired_retentions
             .iter()
-            .map(|r| next_interval(1.0, *r))
+            .map(|r| next_interval(1.0, *r).round().max(1.0) as i32)
             .collect::<Vec<_>>();
         assert_eq!(intervals, [422, 102, 43, 22, 13, 8, 4, 2, 1, 1]);
     }
@@ -548,32 +546,32 @@ mod tests {
                         stability: 2.969144,
                         difficulty: 9.520562
                     },
-                    interval: 3
+                    interval: 2.9691453
                 },
                 hard: ItemState {
                     memory: MemoryState {
                         stability: 17.091442,
                         difficulty: 8.4513445
                     },
-                    interval: 17
+                    interval: 17.09145
                 },
                 good: ItemState {
                     memory: MemoryState {
                         stability: 31.722975,
                         difficulty: 7.382128
                     },
-                    interval: 32
+                    interval: 31.722988
                 },
                 easy: ItemState {
                     memory: MemoryState {
                         stability: 71.75015,
                         difficulty: 6.3129106
                     },
-                    interval: 72
+                    interval: 71.75018
                 }
             }
         );
-        assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121);
+        assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121.01557);
         Ok(())
     }
 
