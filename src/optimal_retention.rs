@@ -55,7 +55,7 @@ impl From<Column> for SliceInfoElem {
     }
 }
 
-const R_MIN: f32 = 0.75;
+const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
 
 #[derive(Debug, Clone, PartialEq)]
