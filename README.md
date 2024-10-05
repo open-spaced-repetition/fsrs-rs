@@ -53,3 +53,23 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 ## Bindings
 
 - python <https://github.com/open-spaced-repetition/fsrs-rs-python>
+
+## Q&A
+
+- What is the difference with [rs-fsrs](https://github.com/open-spaced-repetition/rs-fsrs)
+
+  If you want to schedule the card, use \[lang\]-fsrs or the [bindings](https://github.com/open-spaced-repetition/rs-fsrs?tab=readme-ov-file#bindings),
+  
+  If you do the optimization, use this crate or its bindings.
+
+- Why not in one crate but two?
+
+  Calculating the weight involves tensor operations. So the initial data type is different(Tensor vs Vec/Slice). In one crate means use `cfg` to change type, which is tedious, so here we keep two versions.
+
+  Another reason is, other languages will be hard to port their version when `Tensor` is used.
+
+- What about the name?
+
+  At first, there are `go-fsrs` and other libraries, so `rs-fsrs` is used.
+
+  Then we want to port the torch version to rust so everyone can calculate on their own devices (tch-rs use libtorch which is too heavy), since the algorithm is called `fsrs`, add `-rs`.
