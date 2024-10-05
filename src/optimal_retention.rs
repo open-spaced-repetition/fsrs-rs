@@ -1144,9 +1144,9 @@ mod tests {
             learn_limit,
             ..Default::default()
         };
-        let optimal_retention = fsrs
-            .optimal_retention(&config, &DEFAULT_PARAMETERS[..17], |_v| true)
-            .unwrap();
+        let mut param = DEFAULT_PARAMETERS[..17].to_vec();
+        param.extend_from_slice(&[0.0, 0.0]);
+        let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
         assert_eq!(optimal_retention, 0.85450846);
         Ok(())
     }
