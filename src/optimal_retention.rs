@@ -2,22 +2,19 @@ use crate::error::{FSRSError, Result};
 use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MIN};
 use crate::model::check_and_fill_parameters;
 use crate::FSRS;
-use burn::module::Module;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
-use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
+use ndarray::Array1;
 use ndarray_rand::rand_distr::Distribution;
-use ndarray_rand::RandomExt;
 use rand::Rng;
 use rand::{
-    distributions::{Uniform, WeightedIndex},
+    distributions::WeightedIndex,
     rngs::StdRng,
     SeedableRng,
 };
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
-use strum::EnumCount;
 
 trait Round {
     fn to_2_decimal(self) -> f32;
@@ -26,34 +23,6 @@ trait Round {
 impl Round for f32 {
     fn to_2_decimal(self) -> f32 {
         (self * 100.0).round() / 100.0
-    }
-}
-
-#[derive(Debug, EnumCount)]
-enum Column {
-    Difficulty,
-    Stability,
-    #[allow(unused)]
-    Retrievability,
-    #[allow(unused)]
-    DeltaT,
-    LastDate,
-    Due,
-    Interval,
-    #[allow(unused)]
-    Cost,
-    #[allow(unused)]
-    Rand,
-}
-
-impl ndarray::SliceNextDim for Column {
-    type InDim = Ix1;
-    type OutDim = Ix0;
-}
-
-impl From<Column> for SliceInfoElem {
-    fn from(value: Column) -> Self {
-        Self::Index(value as isize)
     }
 }
 
@@ -211,12 +180,12 @@ pub fn simulate(
             stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
         let day = i / learn_limit;
 
-        return Card {
+        Card {
             difficulty: init_d_with_short_term(w, rating, offset),
-            stability: stability,
+            stability,
             last_date: day as f32,
             due: day as f32 + next_interval(stability, desired_retention),
-        };
+        }
     });
 
     cards.extend(init_ratings);
