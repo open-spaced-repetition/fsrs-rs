@@ -232,7 +232,7 @@ pub fn simulate(
             {
                 today += 1;
             }
-            if today + 1 >= learn_span {
+            if today >= learn_span {
                 break;
             }
 
