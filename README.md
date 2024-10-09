@@ -59,7 +59,7 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 - What is the difference with [rs-fsrs](https://github.com/open-spaced-repetition/rs-fsrs)
 
   If you want to schedule the card, use \[lang\]-fsrs or the [bindings](https://github.com/open-spaced-repetition/rs-fsrs?tab=readme-ov-file#bindings),
-  
+
   If you do the optimization, use this crate or its bindings.
 
 - Why not in one crate but two?
