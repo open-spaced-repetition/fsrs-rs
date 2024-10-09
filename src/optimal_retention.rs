@@ -204,10 +204,10 @@ pub fn simulate(
             let delta_t = card.due - card.last_date;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrivablitity = power_forgetting_curve(delta_t, card.stability).clamp(0., 1.);
+            let retrievability = power_forgetting_curve(delta_t, card.stability).clamp(0., 1.);
 
             // Create 'forget' mask
-            let forget = !rng.gen_bool(retrivablitity as f64);
+            let forget = !rng.gen_bool(retrievability as f64);
 
             // Sample 'rating' for 'need_review' entries
             let rating = if forget {
@@ -244,16 +244,16 @@ pub fn simulate(
             // Update days statistics
             review_cnt_per_day[today] += 1;
             learn_cnt_per_day[today] += if need_learn { 0 } else { 1 };
-            memorized_cnt_per_day[today] += retrivablitity;
+            memorized_cnt_per_day[today] += retrievability;
             cost_per_day[today] += cost;
 
             // Update stability
             card.stability = if forget {
                 let post_lapse_stab =
-                    stability_after_failure(w, card.stability, retrivablitity, card.difficulty);
+                    stability_after_failure(w, card.stability, retrievability, card.difficulty);
                 stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len)
             } else {
-                stability_after_success(w, card.stability, retrivablitity, card.difficulty, rating)
+                stability_after_success(w, card.stability, retrievability, card.difficulty, rating)
             };
 
             // Update difficulty for review cards
