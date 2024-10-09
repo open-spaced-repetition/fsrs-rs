@@ -7,11 +7,7 @@ use itertools::{izip, Itertools};
 use ndarray::Array1;
 use ndarray_rand::rand_distr::Distribution;
 use rand::Rng;
-use rand::{
-    distributions::WeightedIndex,
-    rngs::StdRng,
-    SeedableRng,
-};
+use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
@@ -169,31 +165,36 @@ pub fn simulate(
         if existing_cards.len() > deck_size {
             return Err(FSRSError::InvalidDeckSize);
         }
-        cards.extend(existing_cards);
+        cards.extend(
+            existing_cards
+                .into_iter()
+                .filter(|card| card.stability > 1e-9),
+        );
     }
 
-    let init_ratings = (0..deck_size - cards.len()).map(|i| {
-        // Initialize stability and difficulty for new cards
-        let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
-        let offset = first_rating_offsets[rating - 1];
-        let stability =
-            stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
-        let day = i / learn_limit;
+    if learn_limit > 0 {
+        let init_ratings = (0..deck_size - cards.len()).map(|i| {
+            // Initialize stability and difficulty for new cards
+            let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
+            let offset = first_rating_offsets[rating - 1];
+            let stability =
+                stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
+            let day = i / learn_limit;
 
-        Card {
-            difficulty: init_d_with_short_term(w, rating, offset),
-            stability,
-            last_date: day as f32,
-            due: day as f32 + next_interval(stability, desired_retention),
-        }
-    });
-
-    cards.extend(init_ratings);
+            Card {
+                difficulty: init_d_with_short_term(w, rating, offset),
+                stability,
+                last_date: day as f32,
+                due: day as f32 + next_interval(stability, desired_retention),
+            }
+        });
+        cards.extend(init_ratings);
+    }
 
     // Main simulation loop
     for mut card in cards {
         //dbg!("New card");
-        let mut today: usize = if card.due > 0. {
+        let mut today: usize = if card.due > 1. {
             card.due as usize - 1
         } else {
             0
