@@ -219,10 +219,10 @@ pub fn simulate(
             //dbg!(&card, &rating);
 
             // Update 'cost' based on 'forget' and 'rating'
-            let mut cost = if forget {
+            let cost = if forget {
                 review_costs[0] * loss_aversion
             } else {
-                review_costs[rating - 1]
+                review_costs[rating - 1] + learn_costs[rating - 1]
             };
 
             // Wait until a day which is available
@@ -236,14 +236,9 @@ pub fn simulate(
                 break;
             }
 
-            let need_learn = card.due == learn_span as f32;
-            if need_learn {
-                cost += learn_costs[rating - 1]
-            }
-
             // Update days statistics
             review_cnt_per_day[today] += 1;
-            learn_cnt_per_day[today] += if need_learn { 0 } else { 1 };
+            learn_cnt_per_day[today] += if forget { 0 } else { 1 };
             memorized_cnt_per_day[today] += retrievability;
             cost_per_day[today] += cost;
 
@@ -274,6 +269,13 @@ pub fn simulate(
             today = card.due as usize - 1;
         }
     }
+
+    /* dbg!((
+        &memorized_cnt_per_day[learn_span - 1],
+        &review_cnt_per_day[learn_span - 1],
+        &learn_cnt_per_day[learn_span - 1],
+        &cost_per_day[learn_span - 1],
+    )); */
 
     Ok((
         memorized_cnt_per_day,
