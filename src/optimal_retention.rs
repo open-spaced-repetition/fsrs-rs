@@ -108,7 +108,7 @@ fn power_forgetting_curve(t: f32, s: f32) -> f32 {
     (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Card {
     pub difficulty: f32,
     pub stability: f32,
@@ -181,15 +181,26 @@ pub fn simulate(
                 stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
             let day = i / learn_limit;
 
+            let ivl = next_interval(stability, desired_retention);
+            let retrievability = power_forgetting_curve(ivl, stability);
+            
+            if day < learn_span {                
+                learn_cnt_per_day[day] += 1;
+                memorized_cnt_per_day[day] += retrievability;
+                cost_per_day[day] += learn_costs[rating - 1];
+            }
+            
             Card {
                 difficulty: init_d_with_short_term(w, rating, offset),
                 stability,
                 last_date: day as f32,
-                due: day as f32 + next_interval(stability, desired_retention),
+                due: day as f32 + ivl,
             }
         });
+
         cards.extend(init_ratings);
     }
+
 
     // Main simulation loop
     for mut card in cards {
@@ -222,7 +233,7 @@ pub fn simulate(
             let cost = if forget {
                 review_costs[0] * loss_aversion
             } else {
-                review_costs[rating - 1] + learn_costs[rating - 1]
+                review_costs[rating - 1] 
             };
 
             // Wait until a day which is available
