@@ -204,7 +204,7 @@ pub fn simulate(
             let delta_t = card.due - card.last_date;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = power_forgetting_curve(delta_t, card.stability).clamp(0., 1.);
+            let retrievability = power_forgetting_curve(delta_t, card.stability);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
