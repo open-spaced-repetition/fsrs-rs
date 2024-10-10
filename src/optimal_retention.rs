@@ -184,13 +184,13 @@ pub fn simulate(
 
             let ivl = next_interval(stability, desired_retention);
             let retrievability = power_forgetting_curve(ivl, stability);
-            
-            if day < learn_span {                
+
+            if day < learn_span {
                 learn_cnt_per_day[day] += 1;
                 memorized_cnt_per_day[day] += retrievability;
                 cost_per_day[day] += learn_costs[rating - 1];
             }
-            
+
             Card {
                 difficulty: init_d_with_short_term(w, rating, offset),
                 stability,
@@ -201,7 +201,6 @@ pub fn simulate(
 
         cards.extend(init_ratings);
     }
-
 
     // Main simulation loop
     for mut card in cards {
@@ -234,11 +233,11 @@ pub fn simulate(
             let cost = if forget {
                 review_costs[0] * loss_aversion
             } else {
-                review_costs[rating - 1] 
+                review_costs[rating - 1]
             };
 
             // Wait until a day which is available
-            while day_index < learn_span 
+            while day_index < learn_span
                 && (cost_per_day[day_index] + cost > max_cost_perday
                     || review_cnt_per_day[day_index] + 1 > review_limit)
             {
@@ -275,11 +274,15 @@ pub fn simulate(
 
             // Update days statistics
             if day_index > 0 {
-                review_cnt_per_day[day_index] += if card.last_date.round() != card.due.round() {1} else {0};
+                review_cnt_per_day[day_index] += if card.last_date.round() != card.due.round() {
+                    1
+                } else {
+                    0
+                };
                 cost_per_day[day_index] += cost;
-                
-                let upper = min(day_index+ivl as usize, learn_span); 
-                for i in day_index..upper{
+
+                let upper = min(day_index + ivl as usize, learn_span);
+                for i in day_index..upper {
                     memorized_cnt_per_day[i] += retrievability;
                 }
             }
