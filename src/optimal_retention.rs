@@ -168,7 +168,7 @@ pub fn simulate(
         cards.extend(
             existing_cards
                 .into_iter()
-                .filter(|card| card.stability > 1e-9 && card.due > 0.),
+                .filter(|card| card.stability > 1e-9),
         );
     }
 
@@ -179,7 +179,7 @@ pub fn simulate(
             let offset = first_rating_offsets[rating - 1];
             let stability =
                 stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
-            let day = i / learn_limit;
+            let day = 1 + (i / learn_limit);
 
             let ivl = next_interval(stability, desired_retention);
             let retrievability = power_forgetting_curve(ivl, stability);
@@ -205,12 +205,12 @@ pub fn simulate(
     // Main simulation loop
     for mut card in cards {
         //dbg!("New card");
-        let mut today: usize = if card.due > 1. {
+        let mut today: usize = if card.due >= 1. {
             card.due as usize
         } else {
             0
         };
-        while today < learn_span {
+        while today <= learn_span {
             // Updating delta_t for 'has_learned' cards
             let delta_t = card.due - card.last_date;
 
@@ -237,9 +237,9 @@ pub fn simulate(
             };
 
             // Wait until a day which is available
-            while today < learn_span
-                && (cost_per_day[today] + cost > max_cost_perday
-                    || review_cnt_per_day[today] + 1 > review_limit)
+            while today <= learn_span && today > 0
+                && (cost_per_day[today - 1] + cost > max_cost_perday
+                    || review_cnt_per_day[today - 1] + 1 > review_limit)
             {
                 today += 1;
             }
@@ -248,10 +248,12 @@ pub fn simulate(
             }
 
             // Update days statistics
-            review_cnt_per_day[today] += if card.last_date.round() != card.due.round() {1} else {0};
-            learn_cnt_per_day[today] += if forget { 0 } else { 1 };
-            memorized_cnt_per_day[today] += retrievability;
-            cost_per_day[today] += cost;
+            if today > 0 {
+                review_cnt_per_day[today - 1] += if card.last_date.round() != card.due.round() {1} else {0};
+                learn_cnt_per_day[today - 1] += if forget { 0 } else { 1 };
+                memorized_cnt_per_day[today - 1] += retrievability;
+                cost_per_day[today - 1] += cost;
+            }
 
             // Update stability
             card.stability = if forget {
@@ -274,7 +276,7 @@ pub fn simulate(
 
             // dbg!(ivl);
 
-            card.last_date = today as f32;
+            card.last_date = (today + 1) as f32;
             card.due = card.last_date + ivl;
 
             today = card.due as usize;
