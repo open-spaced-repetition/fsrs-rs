@@ -185,9 +185,13 @@ pub fn simulate(
             let ivl = next_interval(stability, desired_retention);
             let retrievability = power_forgetting_curve(ivl, stability);
 
+            let upper = min(day, learn_span);
+            for i in 0..upper {
+                memorized_cnt_per_day[i] += retrievability;
+            }
+
             if day < learn_span {
                 learn_cnt_per_day[day] += 1;
-                memorized_cnt_per_day[day] += retrievability;
                 cost_per_day[day] += learn_costs[rating - 1];
             }
 
