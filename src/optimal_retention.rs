@@ -277,7 +277,7 @@ pub fn simulate(
             for i in day_index..upper {
                 memorized_cnt_per_day[i] += retrievability;
             }
-            
+
             // +1 because the day index is one less than the actual day as today is not graphed.
             card.last_date = (day_index + 1) as f32;
             card.due = card.last_date + ivl;
