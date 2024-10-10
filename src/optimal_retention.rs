@@ -168,12 +168,12 @@ pub fn simulate(
         cards.extend(
             existing_cards
                 .into_iter()
-                .filter(|card| card.stability > 1e-9),
+                .filter(|card| card.stability > 1e-9 && card.due > 0.),
         );
     }
 
     if learn_limit > 0 {
-        let init_ratings = (0..deck_size - cards.len()).map(|i| {
+        let init_ratings = (0..(deck_size - cards.len())).map(|i| {
             // Initialize stability and difficulty for new cards
             let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
             let offset = first_rating_offsets[rating - 1];
@@ -281,12 +281,12 @@ pub fn simulate(
         }
     }
 
-    /* dbg!((
-        &memorized_cnt_per_day[learn_span - 1],
-        &review_cnt_per_day[learn_span - 1],
-        &learn_cnt_per_day[learn_span - 1],
-        &cost_per_day[learn_span - 1],
-    )); */
+    dbg!((
+        &memorized_cnt_per_day[0],
+        &review_cnt_per_day[0],
+        &learn_cnt_per_day[0],
+        &cost_per_day[0],
+    ));
 
     Ok((
         memorized_cnt_per_day,
