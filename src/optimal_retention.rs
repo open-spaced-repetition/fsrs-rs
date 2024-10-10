@@ -206,7 +206,7 @@ pub fn simulate(
     for mut card in cards {
         //dbg!("New card");
         let mut today: usize = if card.due > 1. {
-            card.due as usize - 1
+            card.due as usize
         } else {
             0
         };
@@ -248,7 +248,7 @@ pub fn simulate(
             }
 
             // Update days statistics
-            review_cnt_per_day[today] += 1;
+            review_cnt_per_day[today] += if card.last_date.round() != card.due.round() {1} else {0};
             learn_cnt_per_day[today] += if forget { 0 } else { 1 };
             memorized_cnt_per_day[today] += retrievability;
             cost_per_day[today] += cost;
@@ -277,7 +277,7 @@ pub fn simulate(
             card.last_date = today as f32;
             card.due = card.last_date + ivl;
 
-            today = card.due as usize - 1;
+            today = card.due as usize;
         }
     }
 
