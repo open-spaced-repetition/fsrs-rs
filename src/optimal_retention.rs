@@ -10,6 +10,7 @@ use rand::Rng;
 use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use std::cmp::min;
 use std::collections::HashMap;
 
 trait Round {
@@ -205,12 +206,12 @@ pub fn simulate(
     // Main simulation loop
     for mut card in cards {
         //dbg!("New card");
-        let mut today: usize = if card.due >= 1. {
-            card.due as usize
+        let mut day_index: usize = if card.due >= 1. {
+            card.due as usize - 1
         } else {
             0
         };
-        while today <= learn_span {
+        while day_index < learn_span {
             // Updating delta_t for 'has_learned' cards
             let delta_t = card.due - card.last_date;
 
@@ -237,22 +238,14 @@ pub fn simulate(
             };
 
             // Wait until a day which is available
-            while today <= learn_span && today > 0
-                && (cost_per_day[today - 1] + cost > max_cost_perday
-                    || review_cnt_per_day[today - 1] + 1 > review_limit)
+            while day_index < learn_span 
+                && (cost_per_day[day_index] + cost > max_cost_perday
+                    || review_cnt_per_day[day_index] + 1 > review_limit)
             {
-                today += 1;
+                day_index += 1;
             }
-            if today >= learn_span {
+            if day_index >= learn_span {
                 break;
-            }
-
-            // Update days statistics
-            if today > 0 {
-                review_cnt_per_day[today - 1] += if card.last_date.round() != card.due.round() {1} else {0};
-                learn_cnt_per_day[today - 1] += if forget { 0 } else { 1 };
-                memorized_cnt_per_day[today - 1] += retrievability;
-                cost_per_day[today - 1] += cost;
             }
 
             // Update stability
@@ -276,19 +269,31 @@ pub fn simulate(
 
             // dbg!(ivl);
 
-            card.last_date = (today + 1) as f32;
+            // +1 because the day index is one less than the actual day because today is not graphed.
+            card.last_date = (day_index + 1) as f32;
             card.due = card.last_date + ivl;
 
-            today = card.due as usize;
+            // Update days statistics
+            if day_index > 0 {
+                review_cnt_per_day[day_index] += if card.last_date.round() != card.due.round() {1} else {0};
+                cost_per_day[day_index] += cost;
+                
+                let upper = min(day_index+ivl as usize, learn_span); 
+                for i in day_index..upper{
+                    memorized_cnt_per_day[i] += retrievability;
+                }
+            }
+
+            day_index = card.due as usize - 1;
         }
     }
 
-    dbg!((
+    /*dbg!((
         &memorized_cnt_per_day[0],
         &review_cnt_per_day[0],
         &learn_cnt_per_day[0],
         &cost_per_day[0],
-    ));
+    ));*/
 
     Ok((
         memorized_cnt_per_day,
