@@ -6,6 +6,7 @@ use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
 use ndarray::Array1;
 use ndarray_rand::rand_distr::Distribution;
+use priority_queue::PriorityQueue;
 use rand::Rng;
 use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
@@ -160,7 +161,7 @@ pub fn simulate(
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
-    let mut cards = vec![];
+    let mut cards = Vec::with_capacity(deck_size);
 
     if let Some(existing_cards) = existing_cards {
         if existing_cards.len() > deck_size {
@@ -206,95 +207,115 @@ pub fn simulate(
         cards.extend(init_ratings);
     }
 
+    let mut card_priorities = PriorityQueue::new();
+
+    let mut add_order: usize = 0;
+    let mut card_priority = |card: &Card| {
+        add_order += 1;
+        // High difficulty priority as example
+        (-card.due as usize, -card.difficulty as usize, add_order)
+    };
+
+    for (i, card) in cards.iter().enumerate() {
+        card_priorities.push(i, card_priority(card));
+    }
+
     // Main simulation loop
-    for mut card in cards {
-        //dbg!("New card");
+    while let Some((&card_index, _)) = card_priorities.peek() {
+        let card = &mut cards[card_index];
+
         let mut day_index: usize = if card.due >= 1. {
             card.due as usize - 1
         } else {
             0
         };
-        while day_index < learn_span {
-            // Updating delta_t for 'has_learned' cards
-            let delta_t = card.due - card.last_date;
 
-            // Calculate retrievability for entries where has_learned is true
-            let retrievability = power_forgetting_curve(delta_t, card.stability);
+        // dbg!(&day_index);
 
-            // Create 'forget' mask
-            let forget = !rng.gen_bool(retrievability as f64);
+        // Updating delta_t for 'has_learned' cards
+        let delta_t = card.due - card.last_date;
 
-            // Sample 'rating' for 'need_review' entries
-            let rating = if forget {
-                1
-            } else {
-                review_rating_choices[review_rating_dist.sample(&mut rng)]
-            };
+        // Calculate retrievability for entries where has_learned is true
+        let retrievability = power_forgetting_curve(delta_t, card.stability);
 
-            //dbg!(&card, &rating);
+        // Create 'forget' mask
+        let forget = !rng.gen_bool(retrievability as f64);
 
-            // Update 'cost' based on 'forget' and 'rating'
-            let cost = if forget {
-                review_costs[0] * loss_aversion
-            } else {
-                review_costs[rating - 1]
-            };
+        // Sample 'rating' for 'need_review' entries
+        let rating = if forget {
+            1
+        } else {
+            review_rating_choices[review_rating_dist.sample(&mut rng)]
+        };
 
-            // Wait until a day which is available
-            while day_index < learn_span
-                && (cost_per_day[day_index] + cost > max_cost_perday
-                    || review_cnt_per_day[day_index] + 1 > review_limit)
-            {
-                day_index += 1;
-            }
-            if day_index >= learn_span {
-                break;
-            }
+        //dbg!(&card, &rating);
 
-            // Update stability
-            card.stability = if forget {
-                let post_lapse_stab =
-                    stability_after_failure(w, card.stability, retrievability, card.difficulty);
-                stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len)
-            } else {
-                stability_after_success(w, card.stability, retrievability, card.difficulty, rating)
-            };
+        // Update 'cost' based on 'forget' and 'rating'
+        let cost = if forget {
+            review_costs[0] * loss_aversion
+        } else {
+            review_costs[rating - 1]
+        };
 
-            // Update difficulty for review cards
-            card.difficulty = next_d(w, card.difficulty, rating);
-            if rating == 1 {
-                card.difficulty -= (w[6] * forget_rating_offset).clamp(1.0, 10.0);
-            }
+        // Wait until a day which is available
+        while day_index < learn_span
+            && (cost_per_day[day_index] + cost > max_cost_perday
+                || review_cnt_per_day[day_index] + 1 > review_limit)
+        {
+            day_index += 1;
+        }
+        if day_index >= learn_span {
+            card_priorities.pop();
+            continue;
+        }
 
-            let ivl = next_interval(card.stability, desired_retention)
-                .round()
-                .clamp(1.0, max_ivl);
+        // Update stability
+        card.stability = if forget {
+            let post_lapse_stab =
+                stability_after_failure(w, card.stability, retrievability, card.difficulty);
+            stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len)
+        } else {
+            stability_after_success(w, card.stability, retrievability, card.difficulty, rating)
+        };
 
-            // dbg!(ivl);
+        // Update difficulty for review cards
+        card.difficulty = next_d(w, card.difficulty, rating);
+        if rating == 1 {
+            card.difficulty -= (w[6] * forget_rating_offset).clamp(1.0, 10.0);
+        }
 
-            // Update days statistics
+        let ivl = next_interval(card.stability, desired_retention)
+            .round()
+            .clamp(1.0, max_ivl);
 
-            review_cnt_per_day[day_index] += 1;
-            cost_per_day[day_index] += cost;
+        // dbg!(ivl);
 
-            let upper = min(day_index + ivl as usize, learn_span);
-            for i in day_index..upper {
-                memorized_cnt_per_day[i] += retrievability;
-            }
+        // Update days statistics
 
-            // +1 because the day index is one less than the actual day as today is not graphed.
-            card.last_date = (day_index + 1) as f32;
-            card.due = card.last_date + ivl;
+        review_cnt_per_day[day_index] += 1;
+        cost_per_day[day_index] += cost;
 
-            day_index = card.due as usize - 1;
+        // dbg!(&review_cnt_per_day);
+
+        let upper = min(day_index + ivl as usize, learn_span);
+        for i in day_index..upper {
+            memorized_cnt_per_day[i] += retrievability;
+        }
+
+        // +1 because the day index is one less than the actual day as today is not graphed.
+        card.last_date = (day_index + 1) as f32;
+        card.due = card.last_date + ivl;
+
+        if (card.due as usize) <= learn_span {
+            card_priorities.change_priority(&card_index, card_priority(card));
         }
     }
 
     /*dbg!((
-        &memorized_cnt_per_day[0],
-        &review_cnt_per_day[0],
-        &learn_cnt_per_day[0],
-        &cost_per_day[0],
+        &memorized_cnt_per_day[learn_span - 1],
+        &review_cnt_per_day[learn_span - 1],
+        &learn_cnt_per_day[learn_span - 1],
+        &cost_per_day[learn_span - 1],
     ));*/
 
     Ok((
