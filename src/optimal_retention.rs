@@ -209,12 +209,10 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    let mut add_order: usize = 0;
-    let mut card_priority = |card: &Card| {
-        add_order += 1;
+    fn card_priority(card: &Card) -> (usize, usize) {
         // High difficulty priority as example
-        (-card.due as usize, -card.difficulty as usize, add_order)
-    };
+        (-card.due as usize, -card.difficulty as usize)
+    }
 
     for (i, card) in cards.iter().enumerate() {
         card_priorities.push(i, card_priority(card));
