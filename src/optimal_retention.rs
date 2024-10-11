@@ -227,9 +227,9 @@ pub fn simulate(
         // dbg!(&day_index);
 
         // Updating delta_t for 'has_learned' cards
-        let delta_t = card.due - card.last_date;
 
         // Calculate retrievability for entries where has_learned is true
+        let delta_t = card.due - card.last_date;
         let retrievability = power_forgetting_curve(delta_t, card.stability);
 
         // Create 'forget' mask
@@ -262,6 +262,9 @@ pub fn simulate(
             card_priorities.pop();
             continue;
         }
+
+        let retrievability =
+            power_forgetting_curve(day_index as f32 - card.last_date, card.stability);
 
         // Update stability
         card.stability = if forget {
