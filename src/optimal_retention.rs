@@ -222,11 +222,7 @@ pub fn simulate(
     while let Some((&card_index, _)) = card_priorities.peek() {
         let card = &mut cards[card_index];
 
-        let mut day_index: usize = if card.due >= 1. {
-            card.due as usize - 1
-        } else {
-            0
-        };
+        let mut day_index = card.due as usize;
 
         // dbg!(&day_index);
 
@@ -301,7 +297,7 @@ pub fn simulate(
         }
 
         // +1 because the day index is one less than the actual day as today is not graphed.
-        card.last_date = (day_index + 1) as f32;
+        card.last_date = day_index as f32;
         card.due = card.last_date + ivl;
 
         if (card.due as usize) <= learn_span {
