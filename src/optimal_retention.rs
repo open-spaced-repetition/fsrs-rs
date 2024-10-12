@@ -933,6 +933,31 @@ mod tests {
     }
 
     #[test]
+    fn simulate_with_learn_limit() -> Result<()> {
+        let config = SimulatorConfig {
+            learn_limit: 3,
+            review_limit: 10,
+            learn_span: 3,
+            ..Default::default()
+        };
+        
+        let cards = vec![
+            Card {
+                difficulty: 5.0,
+                stability: 5.0,
+                last_date: -5.0,
+                due: 0.0,
+            }; 9
+        ];
+
+        let (_, _ ,learn_cnt_per_day, _) = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        assert_eq!(learn_cnt_per_day.to_vec(), vec![1, 3, 3]);
+
+        Ok(())
+    }
+
+    #[test]
     fn simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
