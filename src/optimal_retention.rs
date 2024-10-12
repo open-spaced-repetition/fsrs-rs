@@ -163,10 +163,17 @@ pub fn simulate(
 
     let mut cards = Vec::with_capacity(deck_size);
 
+    let existing_count = if let Some(existing_cards) = &existing_cards {
+        existing_cards.len()
+    } else {
+        0
+    };
+
+    if existing_count > deck_size {
+        return Err(FSRSError::InvalidDeckSize);
+    }
+
     if let Some(existing_cards) = existing_cards {
-        if existing_cards.len() > deck_size {
-            return Err(FSRSError::InvalidDeckSize);
-        }
         cards.extend(
             existing_cards
                 .into_iter()
@@ -183,24 +190,11 @@ pub fn simulate(
                 stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
             let day = i / learn_limit;
 
-            let ivl = next_interval(stability, desired_retention);
-            let retrievability = power_forgetting_curve(ivl, stability);
-
-            let upper = min(day, learn_span);
-            for i in 0..upper {
-                memorized_cnt_per_day[i] += retrievability;
-            }
-
-            if day < learn_span {
-                learn_cnt_per_day[day] += 1;
-                cost_per_day[day] += learn_costs[rating - 1];
-            }
-
             Card {
                 difficulty: init_d_with_short_term(w, rating, offset),
                 stability,
-                last_date: day as f32,
-                due: day as f32 + ivl,
+                last_date: -1.,
+                due: day as f32,
             }
         });
 
@@ -209,20 +203,31 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn card_priority(card: &Card) -> (usize, usize) {
+    fn card_priority(card: &Card, learn: bool) -> (usize, bool, usize) {
         // High difficulty priority as example
-        (-card.due as usize, -card.difficulty as usize)
+        (-card.due as usize, !learn, -card.difficulty as usize)
     }
 
     for (i, card) in cards.iter().enumerate() {
-        card_priorities.push(i, card_priority(card));
+        card_priorities.push(i, card_priority(card, i >= existing_count));
     }
 
     // Main simulation loop
-    while let Some((&card_index, _)) = card_priorities.peek() {
+    while let Some((&card_index, &(_, not_learn, _))) = card_priorities.peek() {
         let card = &mut cards[card_index];
 
         let mut day_index = card.due as usize;
+
+        // Guards
+        if card.due >= learn_span as f32 {
+            card_priorities.pop();
+            continue;
+        }
+        else if review_cnt_per_day[day_index] + learn_cnt_per_day[day_index] + 1 > review_limit {
+            card.due += 1.;
+            card_priorities.change_priority(&card_index, card_priority(card, !not_learn));
+            continue;
+        }
 
         // dbg!(&day_index);
 
@@ -245,16 +250,20 @@ pub fn simulate(
         //dbg!(&card, &rating);
 
         // Update 'cost' based on 'forget' and 'rating'
-        let cost = if forget {
-            review_costs[0] * loss_aversion
-        } else {
-            review_costs[rating - 1]
+        let cost = if not_learn {            
+            if forget {
+                review_costs[0] * loss_aversion
+            } else {
+                review_costs[rating - 1]
+            }
+        }
+        else {
+            learn_costs[rating - 1]
         };
 
         // Wait until a day which is available
         while day_index < learn_span
-            && (cost_per_day[day_index] + cost > max_cost_perday
-                || review_cnt_per_day[day_index] + 1 > review_limit)
+            && cost_per_day[day_index] + cost > max_cost_perday
         {
             day_index += 1;
         }
@@ -289,7 +298,12 @@ pub fn simulate(
 
         // Update days statistics
 
-        review_cnt_per_day[day_index] += 1;
+        if not_learn {
+            review_cnt_per_day[day_index] += 1;
+        }
+        else {
+            learn_cnt_per_day[day_index] += 1
+        }
         cost_per_day[day_index] += cost;
 
         // dbg!(&review_cnt_per_day);
@@ -304,7 +318,7 @@ pub fn simulate(
         card.due = card.last_date + ivl;
 
         if (card.due as usize) <= learn_span {
-            card_priorities.change_priority(&card_index, card_priority(card));
+            card_priorities.change_priority(&card_index, card_priority(card, false));
         }
     }
 
