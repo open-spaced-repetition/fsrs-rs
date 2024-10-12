@@ -226,8 +226,6 @@ pub fn simulate(
         if (review_cnt_per_day[day_index] + learn_cnt_per_day[day_index] + 1 > review_limit)
             || (!not_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
         {
-            dbg!(&learn_cnt_per_day[day_index]);
-
             card.due += 1.;
             card_priorities.change_priority(&card_index, card_priority(card, !not_learn));
             continue;
