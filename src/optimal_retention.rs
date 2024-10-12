@@ -224,11 +224,10 @@ pub fn simulate(
             continue;
         }
         if (review_cnt_per_day[day_index] + learn_cnt_per_day[day_index] + 1 > review_limit)
-        || (!not_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
+            || (!not_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
         {
-
             dbg!(&learn_cnt_per_day[day_index]);
-            
+
             card.due += 1.;
             card_priorities.change_priority(&card_index, card_priority(card, !not_learn));
             continue;
@@ -255,21 +254,18 @@ pub fn simulate(
         //dbg!(&card, &rating);
 
         // Update 'cost' based on 'forget' and 'rating'
-        let cost = if not_learn {            
+        let cost = if not_learn {
             if forget {
                 review_costs[0] * loss_aversion
             } else {
                 review_costs[rating - 1]
             }
-        }
-        else {
+        } else {
             learn_costs[rating - 1]
         };
 
         // Wait until a day which is available
-        while day_index < learn_span
-            && cost_per_day[day_index] + cost > max_cost_perday
-        {
+        while day_index < learn_span && cost_per_day[day_index] + cost > max_cost_perday {
             day_index += 1;
         }
         if day_index >= learn_span {
@@ -305,8 +301,7 @@ pub fn simulate(
 
         if not_learn {
             review_cnt_per_day[day_index] += 1;
-        }
-        else {
+        } else {
             learn_cnt_per_day[day_index] += 1
         }
         cost_per_day[day_index] += cost;
@@ -945,17 +940,19 @@ mod tests {
             learn_span: 3,
             ..Default::default()
         };
-        
+
         let cards = vec![
             Card {
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
-            }; 9
+            };
+            9
         ];
 
-        let (_, _ ,learn_cnt_per_day, _) = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        let (_, _, learn_cnt_per_day, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
 
         assert_eq!(learn_cnt_per_day.to_vec(), vec![1, 3, 3]);
 
