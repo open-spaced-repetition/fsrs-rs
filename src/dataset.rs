@@ -19,7 +19,7 @@ pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FSRSReview {
     /// 1-4
     pub rating: u32,
@@ -47,11 +47,11 @@ impl FSRSItem {
     }
 
     pub(crate) fn first_long_term_review(&self) -> FSRSReview {
-        self.reviews
+        *self
+            .reviews
             .iter()
             .find(|review| review.delta_t > 0)
             .unwrap()
-            .clone()
     }
 
     pub(crate) fn r_matrix_index(&self) -> (u32, u32, u32) {
