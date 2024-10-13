@@ -19,7 +19,7 @@ pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FSRSReview {
     /// 1-4
     pub rating: u32,
