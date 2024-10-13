@@ -47,7 +47,8 @@ impl FSRSItem {
     }
 
     pub(crate) fn first_long_term_review(&self) -> FSRSReview {
-        *self.reviews
+        *self
+            .reviews
             .iter()
             .find(|review| review.delta_t > 0)
             .unwrap()
