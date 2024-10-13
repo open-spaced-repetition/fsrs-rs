@@ -223,7 +223,7 @@ pub fn simulate(
             card_priorities.pop();
             continue;
         }
-        if (review_cnt_per_day[day_index] + learn_cnt_per_day[day_index] + 1 > review_limit)
+        if (review_cnt_per_day[day_index] + 1 > review_limit)
             || (!not_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
         {
             card.due += 1.;
@@ -952,7 +952,7 @@ mod tests {
         let (_, _, learn_cnt_per_day, _) =
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
 
-        assert_eq!(learn_cnt_per_day.to_vec(), vec![1, 3, 3]);
+        assert_eq!(learn_cnt_per_day.to_vec(), vec![3, 3, 3]);
 
         Ok(())
     }
