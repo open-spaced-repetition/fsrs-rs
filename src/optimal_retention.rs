@@ -297,9 +297,10 @@ pub fn simulate(
 
         // dbg!(&review_cnt_per_day);
 
-        let upper = min(day_index + ivl as usize, learn_span);
-        for i in day_index..upper {
-            memorized_cnt_per_day[i] += retrievability;
+        let upper = min(ivl as usize, learn_span - day_index);
+        for i in 0..upper {
+            memorized_cnt_per_day[day_index + i] +=
+                power_forgetting_curve(i as f32, card.stability);
         }
 
         // +1 because the day index is one less than the actual day as today is not graphed.
