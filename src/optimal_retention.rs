@@ -13,6 +13,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::min;
 use std::collections::HashMap;
+use std::f32::NEG_INFINITY;
 
 trait Round {
     fn to_2_decimal(self) -> f32;
@@ -202,16 +203,16 @@ pub fn simulate(
     }
 
     for (i, card) in cards.iter().enumerate() {
-        card_priorities.push(i, card_priority(card, i >= existing_count));
+        card_priorities.push(i, card_priority(card, card.last_date == NEG_INFINITY));
     }
 
     // Main simulation loop
-    while let Some((&card_index, (_, is_review ,_))) = card_priorities.peek() {
+    while let Some((&card_index, _)) = card_priorities.peek() {
         let card = &mut cards[card_index];
 
         let day_index = card.due as usize;
 
-        let is_learn = !is_review;
+        let is_learn = card.last_date == f32::NEG_INFINITY;
         
         // Guards
         if card.due >= learn_span as f32 {
