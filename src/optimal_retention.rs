@@ -163,6 +163,8 @@ pub fn simulate(
 
     let mut cards = Vec::with_capacity(deck_size);
 
+    let fail_cost = review_costs[0] * loss_aversion;
+
     let existing_count = if let Some(existing_cards) = &existing_cards {
         existing_cards.len()
     } else {
@@ -216,7 +218,7 @@ pub fn simulate(
     while let Some((&card_index, &(_, not_learn, _))) = card_priorities.peek() {
         let card = &mut cards[card_index];
 
-        let mut day_index = card.due as usize;
+        let day_index = card.due as usize;
 
         // Guards
         if card.due >= learn_span as f32 {
@@ -225,6 +227,7 @@ pub fn simulate(
         }
         if (review_cnt_per_day[day_index] + 1 > review_limit)
             || (!not_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
+            || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
             card.due += 1.;
             card_priorities.change_priority(&card_index, card_priority(card, !not_learn));
@@ -234,9 +237,9 @@ pub fn simulate(
         // dbg!(&day_index);
 
         // Updating delta_t for 'has_learned' cards
+        let delta_t = card.due - card.last_date;
 
         // Calculate retrievability for entries where has_learned is true
-        let delta_t = card.due - card.last_date;
         let retrievability = power_forgetting_curve(delta_t, card.stability);
 
         // Create 'forget' mask
@@ -254,25 +257,13 @@ pub fn simulate(
         // Update 'cost' based on 'forget' and 'rating'
         let cost = if not_learn {
             if forget {
-                review_costs[0] * loss_aversion
+                fail_cost
             } else {
                 review_costs[rating - 1]
             }
         } else {
             learn_costs[rating - 1]
         };
-
-        // Wait until a day which is available
-        while day_index < learn_span && cost_per_day[day_index] + cost > max_cost_perday {
-            day_index += 1;
-        }
-        if day_index >= learn_span {
-            card_priorities.pop();
-            continue;
-        }
-
-        let retrievability =
-            power_forgetting_curve(day_index as f32 - card.last_date, card.stability);
 
         // Update stability
         card.stability = if forget {
