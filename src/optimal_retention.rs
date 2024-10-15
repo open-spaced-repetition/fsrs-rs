@@ -13,7 +13,6 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::min;
 use std::collections::HashMap;
-use std::f32::NEG_INFINITY;
 
 trait Round {
     fn to_2_decimal(self) -> f32;
@@ -203,7 +202,7 @@ pub fn simulate(
     }
 
     for (i, card) in cards.iter().enumerate() {
-        card_priorities.push(i, card_priority(card, card.last_date == NEG_INFINITY));
+        card_priorities.push(i, card_priority(card, card.last_date == f32::NEG_INFINITY));
     }
 
     // Main simulation loop
