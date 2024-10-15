@@ -952,6 +952,35 @@ mod tests {
     }
 
     #[test]
+    fn simulator_learn_review_costs() -> Result<()> {
+        const LEARN_COST: f32 = 42.;
+        const REVIEW_COST: f32 = 43.;
+
+        let config = SimulatorConfig {
+            deck_size: 1, // 1 learn card, 1
+            learn_costs: [LEARN_COST; 4],
+            review_costs: [REVIEW_COST; 4],
+            learn_span: 1,
+            ..Default::default()
+        };
+
+        let cards = vec![Card {
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 0.0,
+        }];
+
+        let (_, _, _, cost_per_day_learn) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(cost_per_day_learn[0], LEARN_COST);
+        let (_, _, _, cost_per_day_review) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(cost_per_day_review[0], REVIEW_COST);
+        Ok(())
+    }
+
+    #[test]
     fn simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
