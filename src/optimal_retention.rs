@@ -213,7 +213,7 @@ pub fn simulate(
         let day_index = card.due as usize;
 
         let is_learn = card.last_date == f32::NEG_INFINITY;
-        
+
         // Guards
         if card.due >= learn_span as f32 {
             card_priorities.pop();
@@ -308,7 +308,7 @@ pub fn simulate(
 
         // +1 because the day index is one less than the actual day as today is not graphed.
         card.last_date = card.due;
-        card.due += ivl.round().clamp(1.0, max_ivl);      
+        card.due += ivl.round().clamp(1.0, max_ivl);
 
         if (card.due as usize) <= learn_span {
             card_priorities.change_priority(&card_index, card_priority(card, false));
