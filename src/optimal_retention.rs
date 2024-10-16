@@ -413,7 +413,7 @@ impl<B: Backend> FSRS<B> {
                 let default_sample_size = 8.0;
                 (default_sample_size / factor).round() as usize
             }
-            365.. => 16,
+            365.. => 8,
         };
 
         let (xb, fb) = (
