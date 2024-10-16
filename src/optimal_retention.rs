@@ -400,16 +400,16 @@ impl<B: Backend> FSRS<B> {
         let tol = 0.01f32;
 
         let sample_size = match config.learn_span {
-            ..=30 => 45,
+            ..=30 => 90,
             31..365 => {
                 let (a1, a2, a3) = (8.20e-7, 2.41e-3, 1.30e-2);
                 let factor = (config.learn_span as f32)
                     .powf(2.0)
                     .mul_add(a1, config.learn_span as f32 * a2 + a3);
-                let default_sample_size = 4.0;
+                let default_sample_size = 8.0;
                 (default_sample_size / factor).round() as usize
             }
-            365.. => 8,
+            365.. => 16,
         };
 
         let (xb, fb) = (
@@ -891,7 +891,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6521.068
+            6594.4546
         );
         Ok(())
     }
@@ -993,8 +993,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 15, 16, 27, 69, 66, 81, 83, 75, 85, 90, 102, 107, 105, 122, 120, 141, 117, 132,
-                153, 153, 154, 152, 152, 149, 157, 166, 165, 184, 174
+                0, 13, 23, 30, 58, 81, 83, 81, 86, 88, 88, 106, 120, 110, 122, 133, 132, 121, 131,
+                143, 161, 188, 142, 179, 145, 156, 172, 191, 174, 165
             ]
         );
         assert_eq!(
@@ -1053,7 +1053,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8277919);
+        assert_eq!(optimal_retention, 0.82606554);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1073,7 +1073,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.85450846);
+        assert_eq!(optimal_retention, 0.8386744);
         Ok(())
     }
 
