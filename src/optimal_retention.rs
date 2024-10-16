@@ -403,6 +403,7 @@ impl<B: Backend> FSRS<B> {
         let maxiter = 64;
         let tol = 0.01f32;
 
+        let default_sample_size = 16.0;
         let sample_size = match config.learn_span {
             ..=30 => 180,
             31..365 => {
@@ -410,7 +411,6 @@ impl<B: Backend> FSRS<B> {
                 let factor = (config.learn_span as f32)
                     .powf(2.0)
                     .mul_add(a1, config.learn_span as f32 * a2 + a3);
-                let default_sample_size = 16.0;
                 (default_sample_size / factor).round() as usize
             }
             365.. => default_sample_size as usize,
