@@ -240,7 +240,9 @@ pub fn simulate(
             card.stability =
                 stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
 
-            ivl = next_interval(card.stability, desired_retention);
+            ivl = next_interval(card.stability, desired_retention)
+                .round()
+                .clamp(1.0, max_ivl);
 
             // Update days statistics
             learn_cnt_per_day[day_index] += 1;
@@ -286,7 +288,9 @@ pub fn simulate(
                 review_costs[rating - 1]
             };
 
-            ivl = next_interval(card.stability, desired_retention);
+            ivl = next_interval(card.stability, desired_retention)
+                .round()
+                .clamp(1.0, max_ivl);
 
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
@@ -307,7 +311,7 @@ pub fn simulate(
 
         // +1 because the day index is one less than the actual day as today is not graphed.
         card.last_date = card.due;
-        card.due += ivl.round().clamp(1.0, max_ivl);
+        card.due += ivl;
 
         if (card.due as usize) <= learn_span {
             card_priorities.change_priority(&card_index, card_priority(card, false));
@@ -891,7 +895,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6594.4546
+            6647.9404
         );
         Ok(())
     }
@@ -1005,6 +1009,17 @@ mod tests {
     }
 
     #[test]
+    fn simulate_with_max_ivl() -> Result<()> {
+        let config = SimulatorConfig {
+            max_ivl: 100.0,
+            ..Default::default()
+        };
+        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(results.0[results.0.len() - 1], 6284.7783);
+        Ok(())
+    }
+
+    #[test]
     fn simulate_with_zero_card() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 0,
@@ -1053,7 +1068,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.82606554);
+        assert_eq!(optimal_retention, 0.8451333);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1073,7 +1088,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8386744);
+        assert_eq!(optimal_retention, 0.83150166);
         Ok(())
     }
 
