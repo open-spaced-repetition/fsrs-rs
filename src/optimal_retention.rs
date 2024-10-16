@@ -4,18 +4,15 @@ use crate::model::check_and_fill_parameters;
 use crate::FSRS;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
-use ndarray::{s, Array1, Array2, Ix0, Ix1, SliceInfoElem, Zip};
+use ndarray::Array1;
 use ndarray_rand::rand_distr::Distribution;
-use ndarray_rand::RandomExt;
-use rand::{
-    distributions::{Uniform, WeightedIndex},
-    rngs::StdRng,
-    SeedableRng,
-};
+use priority_queue::PriorityQueue;
+use rand::Rng;
+use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use std::cmp::min;
 use std::collections::HashMap;
-use strum::EnumCount;
 
 trait Round {
     fn to_2_decimal(self) -> f32;
@@ -24,34 +21,6 @@ trait Round {
 impl Round for f32 {
     fn to_2_decimal(self) -> f32 {
         (self * 100.0).round() / 100.0
-    }
-}
-
-#[derive(Debug, EnumCount)]
-enum Column {
-    Difficulty,
-    Stability,
-    #[allow(unused)]
-    Retrievability,
-    #[allow(unused)]
-    DeltaT,
-    LastDate,
-    Due,
-    Interval,
-    #[allow(unused)]
-    Cost,
-    #[allow(unused)]
-    Rand,
-}
-
-impl ndarray::SliceNextDim for Column {
-    type InDim = Ix1;
-    type OutDim = Ix0;
-}
-
-impl From<Column> for SliceInfoElem {
-    fn from(value: Column) -> Self {
-        Self::Index(value as isize)
     }
 }
 
@@ -137,6 +106,11 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
+fn power_forgetting_curve(t: f32, s: f32) -> f32 {
+    (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
+}
+
+#[derive(Debug, Clone)]
 pub struct Card {
     pub difficulty: f32,
     pub stability: f32,
@@ -173,25 +147,6 @@ pub fn simulate(
     if deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
-    let mut card_table = Array2::zeros((Column::COUNT, deck_size));
-    card_table
-        .slice_mut(s![Column::Due, ..])
-        .fill(learn_span as f32);
-    card_table.slice_mut(s![Column::Difficulty, ..]).fill(1e-10);
-    card_table.slice_mut(s![Column::Stability, ..]).fill(1e-10);
-
-    // fill card table based on existing_cards
-    if let Some(existing_cards) = existing_cards {
-        if existing_cards.len() > deck_size {
-            return Err(FSRSError::InvalidDeckSize);
-        }
-        for (i, card) in existing_cards.into_iter().enumerate() {
-            card_table[[Column::Difficulty as usize, i]] = card.difficulty;
-            card_table[[Column::Stability as usize, i]] = card.stability;
-            card_table[[Column::LastDate as usize, i]] = card.last_date;
-            card_table[[Column::Due as usize, i]] = card.due;
-        }
-    }
 
     let mut review_cnt_per_day = Array1::<usize>::zeros(learn_span);
     let mut learn_cnt_per_day = Array1::<usize>::zeros(learn_span);
@@ -206,250 +161,169 @@ pub fn simulate(
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
-    let mut init_ratings = Array1::zeros(deck_size);
-    init_ratings.iter_mut().for_each(|rating| {
-        *rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
-    });
+    let mut cards = Vec::with_capacity(deck_size);
+
+    let fail_cost = review_costs[0] * loss_aversion;
+
+    let existing_count = if let Some(existing_cards) = &existing_cards {
+        existing_cards.len()
+    } else {
+        0
+    };
+
+    if existing_count > deck_size {
+        return Err(FSRSError::InvalidDeckSize);
+    }
+
+    if let Some(existing_cards) = existing_cards {
+        cards.extend(
+            existing_cards
+                .into_iter()
+                .filter(|card| card.stability > 1e-9),
+        );
+    }
+
+    if learn_limit > 0 {
+        let init_ratings = (0..(deck_size - cards.len())).map(|i| Card {
+            difficulty: f32::NEG_INFINITY,
+            stability: f32::NEG_INFINITY,
+            last_date: f32::NEG_INFINITY,
+            due: (i / learn_limit) as f32,
+        });
+
+        cards.extend(init_ratings);
+    }
+
+    let mut card_priorities = PriorityQueue::new();
+
+    fn card_priority(card: &Card, learn: bool) -> (usize, bool, usize) {
+        // High difficulty priority as example
+        (-card.due as usize, !learn, -card.difficulty as usize)
+    }
+
+    for (i, card) in cards.iter().enumerate() {
+        card_priorities.push(i, card_priority(card, card.last_date == f32::NEG_INFINITY));
+    }
 
     // Main simulation loop
-    for today in 0..learn_span {
-        let old_stability = card_table.slice(s![Column::Stability, ..]);
-        let has_learned = old_stability.mapv(|x| x > 1e-9);
-        let old_last_date = card_table.slice(s![Column::LastDate, ..]);
+    while let Some((&card_index, _)) = card_priorities.peek() {
+        let card = &mut cards[card_index];
 
-        // Updating delta_t for 'has_learned' cards
-        let mut delta_t = Array1::zeros(deck_size); // Create an array of the same length for delta_t
+        let day_index = card.due as usize;
 
-        // Calculate delta_t for entries where has_learned is true
-        izip!(&mut delta_t, &old_last_date, &has_learned)
-            .filter(|(.., &has_learned_flag)| has_learned_flag)
-            .for_each(|(delta_t, &last_date, ..)| {
-                *delta_t = today as f32 - last_date;
-            });
+        let is_learn = card.last_date == f32::NEG_INFINITY;
 
-        let mut retrievability = Array1::zeros(deck_size); // Create an array for retrievability
-
-        fn power_forgetting_curve(t: f32, s: f32) -> f32 {
-            (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
+        // Guards
+        if card.due >= learn_span as f32 {
+            card_priorities.pop();
+            continue;
+        }
+        if (review_cnt_per_day[day_index] + 1 > review_limit)
+            || (is_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
+            || (cost_per_day[day_index] + fail_cost > max_cost_perday)
+        {
+            card.due += 1.;
+            card_priorities.change_priority(&card_index, card_priority(card, is_learn));
+            continue;
         }
 
-        // Calculate retrievability for entries where has_learned is true
-        izip!(&mut retrievability, &delta_t, &old_stability, &has_learned)
-            .filter(|(.., &has_learned_flag)| has_learned_flag)
-            .for_each(|(retrievability, &delta_t, &stability, ..)| {
-                *retrievability = power_forgetting_curve(delta_t, stability)
-            });
+        let ivl;
 
-        // Set 'cost' column to 0
-        let mut cost = Array1::<f32>::zeros(deck_size);
+        // dbg!(&day_index);
+        if is_learn {
+            // For learning cards
+            // Initialize stability and difficulty for new cards
+            let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
+            let offset = first_rating_offsets[rating - 1];
 
-        // Create 'need_review' mask
-        let old_due = card_table.slice(s![Column::Due, ..]);
-        let need_review = old_due.mapv(|x| x <= today as f32);
+            card.difficulty = init_d_with_short_term(w, rating, offset);
+            card.stability =
+                stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
 
-        // dbg!(&need_review.mapv(|x| x as i32).sum());
+            ivl = next_interval(card.stability, desired_retention)
+                .round()
+                .clamp(1.0, max_ivl);
 
-        // Update 'rand' column for 'need_review' entries
-        let mut rand_slice = Array1::zeros(deck_size);
-        let n_need_review = need_review.iter().filter(|&&x| x).count();
-        let random_values = Array1::random_using(n_need_review, Uniform::new(0.0, 1.0), &mut rng);
+            // Update days statistics
+            learn_cnt_per_day[day_index] += 1;
+            cost_per_day[day_index] += learn_costs[rating - 1];
+        } else {
+            // For review cards
+            // Updating delta_t for 'has_learned' cards
+            let delta_t = card.due - card.last_date;
 
-        rand_slice
-            .iter_mut()
-            .zip(&need_review)
-            .filter(|(_, &need_review_flag)| need_review_flag)
-            .map(|(x, _)| x)
-            .zip(random_values)
-            .for_each(|(rand_elem, random_value)| {
-                *rand_elem = random_value;
-            });
+            // Calculate retrievability for entries where has_learned is true
+            let retrievability = power_forgetting_curve(delta_t, card.stability);
 
-        // Create 'forget' mask
-        let forget = Zip::from(&rand_slice)
-            .and(&retrievability)
-            .map_collect(|&rand_val, &retriev_val| rand_val > retriev_val);
+            // Create 'forget' mask
+            let forget = !rng.gen_bool(retrievability as f64);
 
-        // Sample 'rating' for 'need_review' entries
-        let mut ratings = Array1::zeros(deck_size);
-        izip!(&mut ratings, &need_review, &forget)
-            .filter(|(_, &condition, _)| condition)
-            .for_each(|(rating, _, forget)| {
-                *rating = if *forget {
-                    1
-                } else {
-                    review_rating_choices[review_rating_dist.sample(&mut rng)]
-                };
-            });
+            // Sample 'rating' for 'need_review' entries
+            let rating = if forget {
+                1
+            } else {
+                review_rating_choices[review_rating_dist.sample(&mut rng)]
+            };
 
-        // Update 'cost' column based on 'need_review', 'forget' and 'ratings'
-        izip!(&mut cost, &need_review, &forget, &ratings)
-            .filter(|(_, &need_review_flag, _, _)| need_review_flag)
-            .for_each(|(cost, _, &forget_flag, &rating)| {
-                *cost = if forget_flag {
-                    review_costs[0] * loss_aversion
-                } else {
-                    review_costs[rating - 1]
-                }
-            });
+            //dbg!(&card, &rating);
 
-        // Calculate cumulative sum of 'cost'
-        let mut cum_sum = Array1::<f32>::zeros(deck_size);
-        cum_sum[0] = cost[0];
-        for i in 1..deck_size {
-            cum_sum[i] = cum_sum[i - 1] + cost[i];
+            // Update stability
+            card.stability = if forget {
+                let post_lapse_stab =
+                    stability_after_failure(w, card.stability, retrievability, card.difficulty);
+                stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len)
+            } else {
+                stability_after_success(w, card.stability, retrievability, card.difficulty, rating)
+            };
+
+            // Update difficulty for review cards
+            card.difficulty = next_d(w, card.difficulty, rating);
+            if rating == 1 {
+                card.difficulty -= (w[6] * forget_rating_offset).clamp(1.0, 10.0);
+            }
+
+            let cost = if forget {
+                fail_cost
+            } else {
+                review_costs[rating - 1]
+            };
+
+            ivl = next_interval(card.stability, desired_retention)
+                .round()
+                .clamp(1.0, max_ivl);
+
+            // Update days statistics
+            review_cnt_per_day[day_index] += 1;
+            cost_per_day[day_index] += cost;
+
+            let upper = min(ivl as usize, learn_span - day_index);
+            for i in 0..upper {
+                memorized_cnt_per_day[day_index + i] +=
+                    power_forgetting_curve(i as f32, card.stability);
+            }
         }
 
-        // Create 'true_review' mask based on 'need_review' and 'cum_sum' and 'review_limit'
-        let mut review_count = 0;
-        let true_review =
-            Zip::from(&need_review)
-                .and(&cum_sum)
-                .map_collect(|&need_review_flag, &cum_cost| {
-                    if need_review_flag {
-                        review_count += 1;
-                    }
-                    need_review_flag
-                        && (cum_cost <= max_cost_perday)
-                        && (review_count <= review_limit)
-                });
+        // dbg!(ivl);
 
-        let need_learn = old_due.mapv(|x| x == learn_span as f32);
-        // Update 'cost' column based on 'need_learn'
-        izip!(&mut cost, &need_learn, &init_ratings)
-            .filter(|(_, &need_learn_flag, _)| need_learn_flag)
-            .for_each(|(cost, _, &rating)| {
-                *cost = learn_costs[rating - 1];
-            });
+        // Update 'cost' based on 'forget' and 'rating'
 
-        cum_sum[0] = cost[0];
-        for i in 1..deck_size {
-            cum_sum[i] = cum_sum[i - 1] + cost[i];
+        // dbg!(&review_cnt_per_day);
+
+        // +1 because the day index is one less than the actual day as today is not graphed.
+        card.last_date = card.due;
+        card.due += ivl;
+
+        if (card.due as usize) <= learn_span {
+            card_priorities.change_priority(&card_index, card_priority(card, false));
         }
-
-        // dbg!(&cum_sum);
-
-        // Create 'true_learn' mask based on 'need_learn' and 'cum_sum' and 'learn_limit'
-        let mut learn_count = 0;
-        let true_learn =
-            Zip::from(&need_learn)
-                .and(&cum_sum)
-                .map_collect(|&need_learn_flag, &cum_cost| {
-                    if need_learn_flag {
-                        learn_count += 1;
-                    }
-                    need_learn_flag && (cum_cost <= max_cost_perday) && (learn_count <= learn_limit)
-                });
-
-        let mut new_stability = old_stability.to_owned();
-        let old_difficulty = card_table.slice(s![Column::Difficulty, ..]);
-        // Iterate over slices and apply stability_after_failure function
-        izip!(
-            &mut new_stability,
-            &old_stability,
-            &retrievability,
-            &old_difficulty,
-            &(&true_review & &forget)
-        )
-        .filter(|(.., &condition)| condition)
-        .for_each(|(new_stab, &stab, &retr, &diff, ..)| {
-            let post_lapse_stab = stability_after_failure(w, stab, retr, diff);
-            *new_stab =
-                stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len);
-        });
-
-        // Iterate over slices and apply stability_after_success function
-        izip!(
-            &mut new_stability,
-            &ratings,
-            &old_stability,
-            &retrievability,
-            &old_difficulty,
-            &(&true_review & !&forget)
-        )
-        .filter(|(.., &condition)| condition)
-        .for_each(|(new_stab, &rating, &stab, &retr, &diff, _)| {
-            *new_stab = stability_after_success(w, stab, retr, diff, rating);
-        });
-
-        // Initialize a new Array1 to store updated difficulty values
-        let mut new_difficulty = old_difficulty.to_owned();
-
-        // Update difficulty for review cards
-        izip!(&mut new_difficulty, &old_difficulty, &ratings, &true_review,)
-            .filter(|(.., &condition)| condition)
-            .for_each(|(new_diff, &old_diff, &rating, ..)| {
-                *new_diff = next_d(w, old_diff, rating);
-                if rating == 1 {
-                    *new_diff -= (w[6] * forget_rating_offset).clamp(1.0, 10.0);
-                }
-            });
-
-        // Update 'last_date' column where 'true_review' or 'true_learn' is true
-        let mut new_last_date = old_last_date.to_owned();
-        izip!(&mut new_last_date, &true_review, &true_learn)
-            .filter(|(_, &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
-            .for_each(|(new_last_date, ..)| {
-                *new_last_date = today as f32;
-            });
-
-        // Initialize stability and difficulty for new cards
-        izip!(
-            &mut new_stability,
-            &mut new_difficulty,
-            &init_ratings,
-            &true_learn
-        )
-        .filter(|(.., &true_learn_flag)| true_learn_flag)
-        .for_each(|(new_stab, new_diff, &rating, _)| {
-            *new_stab = stability_short_term(
-                w,
-                w[rating - 1],
-                first_rating_offsets[rating - 1],
-                first_session_lens[rating - 1],
-            );
-            *new_diff = init_d_with_short_term(w, rating, first_rating_offsets[rating - 1]);
-        });
-        let old_interval = card_table.slice(s![Column::Interval, ..]);
-        let mut new_interval = old_interval.to_owned();
-        izip!(&mut new_interval, &new_stability, &true_review, &true_learn)
-            .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
-            .for_each(|(new_ivl, &new_stab, ..)| {
-                *new_ivl = next_interval(new_stab, desired_retention)
-                    .round()
-                    .clamp(1.0, max_ivl);
-            });
-
-        let old_due = card_table.slice(s![Column::Due, ..]);
-        let mut new_due = old_due.to_owned();
-        izip!(&mut new_due, &new_interval, &true_review, &true_learn)
-            .filter(|(.., &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
-            .for_each(|(new_due, &new_ivl, ..)| {
-                *new_due = today as f32 + new_ivl;
-            });
-
-        // Update the card_table with the new values
-        card_table
-            .slice_mut(s![Column::Difficulty, ..])
-            .assign(&new_difficulty);
-        card_table
-            .slice_mut(s![Column::Stability, ..])
-            .assign(&new_stability);
-        card_table
-            .slice_mut(s![Column::LastDate, ..])
-            .assign(&new_last_date);
-        card_table.slice_mut(s![Column::Due, ..]).assign(&new_due);
-        card_table
-            .slice_mut(s![Column::Interval, ..])
-            .assign(&new_interval);
-        // Update the review_cnt_per_day, learn_cnt_per_day and memorized_cnt_per_day
-        review_cnt_per_day[today] = true_review.iter().filter(|&&x| x).count();
-        learn_cnt_per_day[today] = true_learn.iter().filter(|&&x| x).count();
-        memorized_cnt_per_day[today] = retrievability.sum();
-        cost_per_day[today] = izip!(cost, &true_review, &true_learn)
-            .filter(|(_, &true_review_flag, &true_learn_flag)| true_review_flag || true_learn_flag)
-            .map(|(cost, ..)| cost)
-            .sum();
     }
+
+    /*dbg!((
+        &memorized_cnt_per_day[learn_span - 1],
+        &review_cnt_per_day[learn_span - 1],
+        &learn_cnt_per_day[learn_span - 1],
+        &cost_per_day[learn_span - 1],
+    ));*/
 
     Ok((
         memorized_cnt_per_day,
@@ -530,16 +404,16 @@ impl<B: Backend> FSRS<B> {
         let tol = 0.01f32;
 
         let sample_size = match config.learn_span {
-            ..=30 => 45,
+            ..=30 => 90,
             31..365 => {
                 let (a1, a2, a3) = (8.20e-7, 2.41e-3, 1.30e-2);
                 let factor = (config.learn_span as f32)
                     .powf(2.0)
                     .mul_add(a1, config.learn_span as f32 * a2 + a3);
-                let default_sample_size = 4.0;
+                let default_sample_size = 8.0;
                 (default_sample_size / factor).round() as usize
             }
-            365.. => 8,
+            365.. => 16,
         };
 
         let (xb, fb) = (
@@ -1021,7 +895,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6521.068
+            6647.9404
         );
         Ok(())
     }
@@ -1055,6 +929,62 @@ mod tests {
     }
 
     #[test]
+    fn simulate_with_learn_limit() -> Result<()> {
+        let config = SimulatorConfig {
+            learn_limit: 3,
+            review_limit: 10,
+            learn_span: 3,
+            ..Default::default()
+        };
+
+        let cards = vec![
+            Card {
+                difficulty: 5.0,
+                stability: 5.0,
+                last_date: -5.0,
+                due: 0.0,
+            };
+            9
+        ];
+
+        let (_, _, learn_cnt_per_day, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        assert_eq!(learn_cnt_per_day.to_vec(), vec![3, 3, 3]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn simulator_learn_review_costs() -> Result<()> {
+        const LEARN_COST: f32 = 42.;
+        const REVIEW_COST: f32 = 43.;
+
+        let config = SimulatorConfig {
+            deck_size: 1, // 1 learn card, 1
+            learn_costs: [LEARN_COST; 4],
+            review_costs: [REVIEW_COST; 4],
+            learn_span: 1,
+            ..Default::default()
+        };
+
+        let cards = vec![Card {
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 0.0,
+        }];
+
+        let (_, _, _, cost_per_day_learn) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(cost_per_day_learn[0], LEARN_COST);
+        let (_, _, _, cost_per_day_review) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(cost_per_day_review[0], REVIEW_COST);
+        Ok(())
+    }
+
+    #[test]
     fn simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
@@ -1067,14 +997,25 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 15, 16, 27, 69, 66, 81, 83, 75, 85, 90, 102, 107, 105, 122, 120, 141, 117, 132,
-                153, 153, 154, 152, 152, 149, 157, 166, 165, 184, 174
+                0, 13, 23, 30, 58, 81, 83, 81, 86, 88, 88, 106, 120, 110, 122, 133, 132, 121, 131,
+                143, 161, 188, 142, 179, 145, 156, 172, 191, 174, 165
             ]
         );
         assert_eq!(
             results.2.to_vec(),
             vec![config.learn_limit; config.learn_span]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_max_ivl() -> Result<()> {
+        let config = SimulatorConfig {
+            max_ivl: 100.0,
+            ..Default::default()
+        };
+        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(results.0[results.0.len() - 1], 6284.7783);
         Ok(())
     }
 
@@ -1127,7 +1068,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8277919);
+        assert_eq!(optimal_retention, 0.8451333);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1147,7 +1088,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.85450846);
+        assert_eq!(optimal_retention, 0.83150166);
         Ok(())
     }
 
