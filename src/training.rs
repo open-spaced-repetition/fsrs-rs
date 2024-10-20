@@ -441,6 +441,8 @@ mod tests {
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::convertor_tests::data_from_csv;
+    use crate::dataset::FSRSBatch;
+    use burn::backend::NdArray;
     use log::LevelFilter;
 
     #[test]
@@ -448,6 +450,64 @@ mod tests {
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
         assert_eq!(average_recall, 0.9435269);
+    }
+
+    #[test]
+    fn test_loss_and_grad() {
+        use burn::backend::ndarray::NdArrayDevice;
+        use burn::tensor::Data;
+
+        let config = ModelConfig::default();
+        let device = NdArrayDevice::Cpu;
+        let model: Model<Autodiff<NdArray<f32>>> = config.init();
+
+        let item = FSRSBatch {
+            t_historys: Tensor::from_floats(
+                Data::from([
+                    [0.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                    [0.0, 1.0, 1.0, 3.0],
+                    [1.0, 3.0, 3.0, 5.0],
+                    [3.0, 6.0, 6.0, 12.0],
+                ]),
+                &device,
+            ),
+            r_historys: Tensor::from_floats(
+                Data::from([
+                    [1.0, 2.0, 3.0, 4.0],
+                    [3.0, 4.0, 2.0, 4.0],
+                    [1.0, 4.0, 4.0, 3.0],
+                    [4.0, 3.0, 3.0, 3.0],
+                    [3.0, 1.0, 3.0, 3.0],
+                    [2.0, 3.0, 3.0, 4.0],
+                ]),
+                &device,
+            ),
+            delta_ts: Tensor::from_floats(Data::from([4.0, 11.0, 12.0, 23.0]), &device),
+            labels: Tensor::from_ints(Data::from([1, 1, 1, 0]), &device),
+        };
+
+        let loss = model.forward_classification(
+            item.t_historys,
+            item.r_historys,
+            item.delta_ts,
+            item.labels,
+            Reduction::Sum,
+        );
+
+        assert_eq!(loss.clone().into_data().convert::<f32>().value[0], 4.380769);
+        let gradients = loss.backward();
+
+        let w_grad = model.w.grad(&gradients).unwrap();
+        dbg!(&w_grad);
+
+        Data::from([
+            -0.044447, -0.004000, -0.002020, 0.009756, -0.036012, 1.126084, 0.101431, -0.888184,
+            0.540923, -2.830812, 0.492003, -0.008362, 0.024086, -0.077360, -0.000585, -0.135484,
+            0.203740, 0.208560, 0.037535,
+        ])
+        .assert_approx_eq(&w_grad.clone().into_data(), 5);
     }
 
     #[test]
