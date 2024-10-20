@@ -97,8 +97,13 @@ fn init_d_with_short_term(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
     new_d.clamp(1.0, 10.0)
 }
 
+fn linear_damping(delta_d: f32, old_d: f32) -> f32 {
+    (10.0 - old_d) / 9.0 * delta_d
+}
+
 fn next_d(w: &[f32], d: f32, rating: usize) -> f32 {
-    let new_d = d - w[6] * (rating as f32 - 3.0);
+    let delta_d = -w[6] * (rating as f32 - 3.0);
+    let new_d = d + linear_damping(delta_d, d);
     mean_reversion(w, init_d(w, 4), new_d).clamp(1.0, 10.0)
 }
 

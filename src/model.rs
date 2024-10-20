@@ -104,8 +104,13 @@ impl<B: Backend> Model<B> {
         self.w.get(4) - (self.w.get(5) * (rating - 1)).exp() + 1
     }
 
+    fn linear_damping(&self, delta_d: Tensor<B, 1>, old_d: Tensor<B, 1>) -> Tensor<B, 1> {
+        old_d.neg().add_scalar(10.0) * delta_d.div_scalar(9.0)
+    }
+
     fn next_difficulty(&self, difficulty: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        difficulty - self.w.get(6) * (rating - 3)
+        let delta_d = -self.w.get(6) * (rating - 3);
+        difficulty.clone() + self.linear_damping(delta_d, difficulty)
     }
 
     pub(crate) fn step(
