@@ -553,8 +553,13 @@ mod tests {
             });
 
             let fsrs = FSRS::new(Some(&[])).unwrap();
-            let parameters = fsrs.compute_parameters(items, progress2).unwrap();
+            let parameters = fsrs.compute_parameters(items.clone(), progress2).unwrap();
             dbg!(&parameters);
+
+            // evaluate
+            let model = FSRS::new(Some(&parameters)).unwrap();
+            let metrics = model.evaluate(items, |_| true).unwrap();
+            dbg!(&metrics);
         }
     }
 }
