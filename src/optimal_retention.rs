@@ -97,8 +97,13 @@ fn init_d_with_short_term(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
     new_d.clamp(1.0, 10.0)
 }
 
+fn linear_damping(delta_d: f32, old_d: f32) -> f32 {
+    (10.0 - old_d) / 9.0 * delta_d
+}
+
 fn next_d(w: &[f32], d: f32, rating: usize) -> f32 {
-    let new_d = d - w[6] * (rating as f32 - 3.0);
+    let delta_d = -w[6] * (rating as f32 - 3.0);
+    let new_d = d + linear_damping(delta_d, d);
     mean_reversion(w, init_d(w, 4), new_d).clamp(1.0, 10.0)
 }
 
@@ -895,7 +900,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6647.9404
+            6919.944
         );
         Ok(())
     }
@@ -997,8 +1002,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 13, 23, 30, 58, 81, 83, 81, 86, 88, 88, 106, 120, 110, 122, 133, 132, 121, 131,
-                143, 161, 188, 142, 179, 145, 156, 172, 191, 174, 165
+                0, 16, 25, 34, 60, 65, 76, 85, 91, 92, 100, 103, 119, 107, 103, 113, 122, 143, 149,
+                151, 148, 172, 154, 175, 156, 169, 155, 191, 185, 170
             ]
         );
         assert_eq!(
@@ -1015,7 +1020,7 @@ mod tests {
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6284.7783);
+        assert_eq!(results.0[results.0.len() - 1], 6591.4854);
         Ok(())
     }
 
@@ -1068,7 +1073,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8451333);
+        assert_eq!(optimal_retention, 0.84499365);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1088,7 +1093,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.83150166);
+        assert_eq!(optimal_retention, 0.85450846);
         Ok(())
     }
 

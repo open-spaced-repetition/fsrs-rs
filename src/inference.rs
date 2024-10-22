@@ -23,8 +23,8 @@ pub type Parameters = [f32];
 use itertools::izip;
 
 pub static DEFAULT_PARAMETERS: [f32; 19] = [
-    0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0234, 1.616, 0.1544, 1.0824, 1.9813,
-    0.0953, 0.2975, 2.2042, 0.2407, 2.9466, 0.5034, 0.6567,
+    0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925,
+    1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621,
 ];
 
 fn infer<B: Backend>(
@@ -497,23 +497,23 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.210983, 0.037216]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.211007, 0.037216]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.217689, 0.039710]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.216326, 0.038727]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.203235, 0.026295]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.203049, 0.027558]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        assert_approx_eq([self_by_other, other_by_self], [0.014476, 0.031874]);
+        assert_approx_eq([self_by_other, other_by_self], [0.016236, 0.031085]);
 
         Ok(())
     }
@@ -548,14 +548,14 @@ mod tests {
                 again: ItemState {
                     memory: MemoryState {
                         stability: 2.969144,
-                        difficulty: 9.520562
+                        difficulty: 8.000659
                     },
                     interval: 2.9691453
                 },
                 hard: ItemState {
                     memory: MemoryState {
                         stability: 17.091442,
-                        difficulty: 8.4513445
+                        difficulty: 7.6913934
                     },
                     interval: 17.09145
                 },
@@ -569,7 +569,7 @@ mod tests {
                 easy: ItemState {
                     memory: MemoryState {
                         stability: 71.75015,
-                        difficulty: 6.3129106
+                        difficulty: 7.0728626
                     },
                     interval: 71.75018
                 }
@@ -598,17 +598,17 @@ mod tests {
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
         assert_approx_eq(
             [memory_state.stability, memory_state.difficulty],
-            [9.999996, 7.279789],
+            [9.999996, 7.079161],
         );
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
         assert_approx_eq(
             [memory_state.stability, memory_state.difficulty],
-            [4.170096, 9.462736],
+            [4.170096, 9.323614],
         );
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
         assert_approx_eq(
             [memory_state.stability, memory_state.difficulty],
-            [21.712555, 2.380_21],
+            [21.712555, 2.174237],
         );
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
         assert_approx_eq(

@@ -526,16 +526,19 @@ mod tests {
             Reduction::Sum,
         );
 
-        assert_eq!(loss.clone().into_data().convert::<f32>().value[0], 4.380769);
+        assert_eq!(
+            loss.clone().into_data().convert::<f32>().value[0],
+            4.4467363
+        );
         let gradients = loss.backward();
 
         let w_grad = model.w.grad(&gradients).unwrap();
         dbg!(&w_grad);
 
         Data::from([
-            -0.044447, -0.004000, -0.002020, 0.009756, -0.036012, 1.126084, 0.101431, -0.888184,
-            0.540923, -2.830812, 0.492003, -0.008362, 0.024086, -0.077360, -0.000585, -0.135484,
-            0.203740, 0.208560, 0.037535,
+            -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
+            0.534472, -2.89288, 0.514163, -0.01306, 0.041905, -0.11830, -0.00092, -0.14452,
+            0.202374, 0.214104, 0.032307,
         ])
         .assert_approx_eq(&w_grad.clone().into_data(), 5);
     }
@@ -580,8 +583,13 @@ mod tests {
             });
 
             let fsrs = FSRS::new(Some(&[])).unwrap();
-            let parameters = fsrs.compute_parameters(items, progress2).unwrap();
+            let parameters = fsrs.compute_parameters(items.clone(), progress2).unwrap();
             dbg!(&parameters);
+
+            // evaluate
+            let model = FSRS::new(Some(&parameters)).unwrap();
+            let metrics = model.evaluate(items, |_| true).unwrap();
+            dbg!(&metrics);
         }
     }
 }
