@@ -269,6 +269,7 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
             let mut parameters = parameters.to_vec();
             parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
             parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
+            parameters[6] = parameters[6] + 0.5;
             parameters.extend_from_slice(&[0.0, 0.0]);
             parameters
         }
@@ -303,7 +304,7 @@ mod tests {
         assert_eq!(
             fsrs5_param,
             vec![
-                0.4, 0.6, 2.4, 5.8, 6.81, 0.44675013, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05,
+                0.4, 0.6, 2.4, 5.8, 6.81, 0.44675013, 1.36, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05,
                 0.34, 1.26, 0.29, 2.61, 0.0, 0.0,
             ]
         )
