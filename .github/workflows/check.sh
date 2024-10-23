@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -eux -o pipefail
 
 cargo fmt --check || (
     echo
@@ -14,4 +14,6 @@ install -d tests/data/
 pushd tests/data/
 wget https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
 unzip *.zip
-SKIP_TRAINING=1 cargo test --release
+
+cargo install cargo-llvm-cov --locked
+SKIP_TRAINING=1 cargo llvm-cov --release
