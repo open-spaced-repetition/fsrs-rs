@@ -17,4 +17,3 @@ unzip *.zip
 
 cargo install cargo-llvm-cov --locked
 SKIP_TRAINING=1 cargo llvm-cov --release
-SKIP_TRAINING=1 cargo test --release
