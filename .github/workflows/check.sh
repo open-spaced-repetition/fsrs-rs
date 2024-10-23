@@ -16,6 +16,5 @@ wget https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/1239418
 unzip *.zip
 
 cargo install cargo-llvm-cov --locked
-cargo llvm-cov
-
+SKIP_TRAINING=1 cargo llvm-cov --release
 SKIP_TRAINING=1 cargo test --release
