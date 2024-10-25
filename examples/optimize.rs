@@ -2,14 +2,13 @@ use chrono::NaiveDate;
 use fsrs::{FSRSItem, FSRSReview, DEFAULT_PARAMETERS, FSRS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create review histories for 10 cards
-    let card_histories = create_card_histories();
+    // Create review histories for cards
+    let review_histories_of_cards = create_review_histories_for_cards();
 
-    // Convert card histories to FSRSItems
-    let fsrs_items: Vec<FSRSItem> = card_histories
+    // Convert review histories to FSRSItems
+    let fsrs_items: Vec<FSRSItem> = review_histories_of_cards
         .into_iter()
-        .map(|history| convert_to_fsrs_item(history))
-        .flatten()
+        .flat_map(convert_to_fsrs_item)
         .collect();
 
     println!("Size of FSRSItems: {}", fsrs_items.len());
@@ -26,7 +25,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_card_histories() -> Vec<Vec<(NaiveDate, u32)>> {
+fn create_review_histories_for_cards() -> Vec<Vec<(NaiveDate, u32)>> {
+    // This vector represents a collection of review histories for multiple cards.
+    // Each inner vector represents the review history of a single card.
+    // The structure is as follows:
+    // - Outer vector: Contains review histories for multiple cards
+    // - Inner vector: Represents the review history of a single card
+    //   - Each element is a tuple: (Date, Rating)
+    //     - Date: The date of the review (NaiveDate)
+    //     - Rating: The rating given during the review (u32)
+    //
+    // The ratings typically follow this scale:
+    // 1: Again, 2: Hard, 3: Good, 4: Easy
+    //
+    // This sample data includes various review patterns, such as:
+    // - Cards with different numbers of reviews
+    // - Various intervals between reviews
+    // - Different rating patterns (e.g., consistently high, mixed, or improving over time)
+    //
+    // The data is then cycled and repeated to create a larger dataset of 100 cards.
     vec![
         vec![
             (NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 3),
@@ -95,7 +112,9 @@ fn create_card_histories() -> Vec<Vec<(NaiveDate, u32)>> {
         ],
         vec![
             (NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 1),
+            (NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 3),
             (NaiveDate::from_ymd_opt(2023, 1, 2).unwrap(), 1),
+            (NaiveDate::from_ymd_opt(2023, 1, 2).unwrap(), 3),
             (NaiveDate::from_ymd_opt(2023, 1, 3).unwrap(), 3),
             (NaiveDate::from_ymd_opt(2023, 1, 7).unwrap(), 3),
             (NaiveDate::from_ymd_opt(2023, 1, 15).unwrap(), 4),
