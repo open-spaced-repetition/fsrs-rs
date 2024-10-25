@@ -1,6 +1,6 @@
 [package]
 name = "fsrs"
-version = "1.3.5"
+version = "1.4.0"
 authors = ["Open Spaced Repetition"]
 categories = ["algorithms", "science"]
 edition = "2021"
@@ -61,3 +61,7 @@ path = "examples/schedule.rs"
 [[example]]
 name = "migrate"
 path = "examples/migrate.rs"
+
+[[example]]
+name = "optimize"
+path = "examples/optimize.rs"
