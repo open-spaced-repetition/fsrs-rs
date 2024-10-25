@@ -39,7 +39,7 @@ impl FSRSItem {
         self.reviews.last().unwrap()
     }
 
-    pub(crate) fn long_term_review_cnt(&self) -> usize {
+    pub fn long_term_review_cnt(&self) -> usize {
         self.reviews
             .iter()
             .filter(|review| review.delta_t > 0)
