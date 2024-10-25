@@ -57,3 +57,7 @@ harness = false
 [[example]]
 name = "schedule"
 path = "examples/schedule.rs"
+
+[[example]]
+name = "migrate"
+path = "examples/migrate.rs"
