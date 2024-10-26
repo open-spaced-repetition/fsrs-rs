@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// first one.
 /// When used during review, the last item should include the correct delta_t, but
 /// the provided rating is ignored as all four ratings are returned by .next_states()
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
 }
