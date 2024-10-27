@@ -169,7 +169,7 @@ pub(crate) struct TrainingConfig {
     pub num_epochs: usize,
     #[config(default = 512)]
     pub batch_size: usize,
-    #[config(default = 42)]
+    #[config(default = 2023)]
     pub seed: u64,
     #[config(default = 4e-2)]
     pub learning_rate: f64,
@@ -232,7 +232,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
-            AdamConfig::new(),
+            AdamConfig::new().with_epsilon(1e-8),
         );
 
         if let Some(progress) = &progress {
@@ -300,7 +300,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
-            AdamConfig::new(),
+            AdamConfig::new().with_epsilon(1e-8),
         );
         let model =
             train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
@@ -359,7 +359,7 @@ fn train<B: AutodiffBackend>(
                 item.r_historys,
                 item.delta_ts,
                 item.labels,
-                Reduction::Mean,
+                Reduction::Sum,
             );
             let mut gradients = loss.backward();
             if model.config.freeze_stability {
@@ -459,7 +459,8 @@ mod tests {
 
         let config = ModelConfig::default();
         let device = NdArrayDevice::Cpu;
-        let model: Model<Autodiff<NdArray<f32>>> = config.init();
+        type B = Autodiff<NdArray<f32>>;
+        let mut model: Model<B> = config.init();
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
@@ -503,7 +504,6 @@ mod tests {
         let gradients = loss.backward();
 
         let w_grad = model.w.grad(&gradients).unwrap();
-        dbg!(&w_grad);
 
         Data::from([
             -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
@@ -511,6 +511,21 @@ mod tests {
             0.202374, 0.214104, 0.032307,
         ])
         .assert_approx_eq(&w_grad.clone().into_data(), 5);
+
+        let config =
+            TrainingConfig::new(ModelConfig::default(), AdamConfig::new().with_epsilon(1e-8));
+        let mut optim = config.optimizer.init::<B, Model<B>>();
+        let lr = 0.04;
+        let grads = GradientsParams::from_grads(gradients, &model);
+        model = optim.step(lr, model, grads);
+        assert_eq!(
+            model.w.val().to_data(),
+            Data::from([
+                0.44255, 1.22385, 3.2129998, 15.65105, 7.2349, 0.4945, 1.4204, 0.0446, 1.5057501,
+                0.1592, 0.97925, 1.9794999, 0.07000001, 0.33605, 2.3097994, 0.2715, 2.9498,
+                0.47655, 0.62210006
+            ])
+        );
     }
 
     #[test]
