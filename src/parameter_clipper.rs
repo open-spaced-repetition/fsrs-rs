@@ -2,13 +2,23 @@ use crate::{
     inference::{Parameters, S_MIN},
     pre_training::INIT_S_MAX,
 };
-use burn::tensor::{backend::Backend, Data, Tensor};
+use burn::{
+    module::Param,
+    tensor::{backend::Backend, Data, Tensor},
+};
 
-pub(crate) fn parameter_clipper<B: Backend>(parameters: Tensor<B, 1>) -> Tensor<B, 1> {
-    let val = clip_parameters(&parameters.to_data().convert().value);
-    Tensor::from_data(
-        Data::new(val, parameters.shape()).convert(),
-        &B::Device::default(),
+pub(crate) fn parameter_clipper<B: Backend>(
+    parameters: Param<Tensor<B, 1>>,
+) -> Param<Tensor<B, 1>> {
+    let (id, val) = parameters.consume();
+    let clipped = clip_parameters(&val.to_data().convert().value);
+    Param::initialized(
+        id,
+        Tensor::from_data(
+            Data::new(clipped, val.shape()).convert(),
+            &B::Device::default(),
+        )
+        .require_grad(),
     )
 }
 
@@ -58,7 +68,7 @@ mod tests {
             &device,
         );
 
-        let param: Tensor<1> = parameter_clipper(tensor);
+        let param = parameter_clipper(Param::from_tensor(tensor));
         let values = &param.to_data().value;
 
         assert_eq!(
