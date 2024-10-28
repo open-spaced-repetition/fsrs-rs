@@ -18,7 +18,7 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
 use burn::train::TrainingInterrupter;
-use burn::{config::Config, module::Param, tensor::backend::AutodiffBackend};
+use burn::{config::Config, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
 
@@ -369,8 +369,7 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            // TODO: bug in https://github.com/tracel-ai/burn/issues/2428
-            model.w = Param::from_tensor(parameter_clipper(model.w.val()));
+            model.w = parameter_clipper(model.w);
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
@@ -521,7 +520,7 @@ mod tests {
         let lr = 0.04;
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = Param::from_tensor(parameter_clipper(model.w.val()));
+        model.w = parameter_clipper(model.w);
         assert_eq!(
             model.w.val().to_data(),
             Data::from([
@@ -592,7 +591,7 @@ mod tests {
         .assert_approx_eq(&w_grad.clone().into_data(), 5);
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = Param::from_tensor(parameter_clipper(model.w.val()));
+        model.w = parameter_clipper(model.w);
         assert_eq!(
             model.w.val().to_data(),
             Data::from([
