@@ -173,6 +173,8 @@ pub(crate) struct TrainingConfig {
     pub seed: u64,
     #[config(default = 4e-2)]
     pub learning_rate: f64,
+    #[config(default = 64)]
+    pub max_seq_len: usize,
 }
 
 pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -207,7 +209,7 @@ impl<B: Backend> FSRS<B> {
         };
 
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, train_set) = prepare_training_data(train_set);
+        let (pre_train_set, mut train_set) = prepare_training_data(train_set);
         if train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
@@ -226,7 +228,6 @@ impl<B: Backend> FSRS<B> {
             finish_progress();
             return Ok(pretrained_parameters);
         }
-
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: false,
@@ -234,6 +235,8 @@ impl<B: Backend> FSRS<B> {
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
+        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
+        train_set.sort_by_cached_key(|item| item.reviews.len());
 
         if let Some(progress) = &progress {
             let progress_state = ProgressState {
@@ -302,8 +305,8 @@ impl<B: Backend> FSRS<B> {
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
-        train_set.retain(|item| item.reviews.len() <= 64);
-        train_set.sort_by_cached_key(|item| item.long_term_review_cnt());
+        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
+        train_set.sort_by_cached_key(|item| item.reviews.len());
         let model =
             train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
         let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
