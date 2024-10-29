@@ -1,6 +1,7 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MAX, S_MIN};
 use crate::model::check_and_fill_parameters;
+use crate::parameter_clipper::clip_parameters;
 use crate::FSRS;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
@@ -133,6 +134,7 @@ pub fn simulate(
     existing_cards: Option<Vec<Card>>,
 ) -> Result<(Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>), FSRSError> {
     let w = &check_and_fill_parameters(w)?;
+    let w = &clip_parameters(w);
     let SimulatorConfig {
         deck_size,
         learn_span,
