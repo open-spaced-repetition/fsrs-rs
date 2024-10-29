@@ -47,10 +47,9 @@ impl FSRSItem {
     }
 
     pub(crate) fn first_long_term_review(&self) -> FSRSReview {
-        self.reviews
+        *self.reviews
             .iter()
             .find(|review| review.delta_t > 0)
-            .copied()
             .expect("Invalid FSRS item: at least one review with delta_t > 0 is required")
     }
 
