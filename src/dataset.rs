@@ -51,7 +51,7 @@ impl FSRSItem {
             .reviews
             .iter()
             .find(|review| review.delta_t > 0)
-            .unwrap()
+            .expect("Invalid FSRS item: at least one review with delta_t > 0 is required")
     }
 
     pub(crate) fn r_matrix_index(&self) -> (u32, u32, u32) {
