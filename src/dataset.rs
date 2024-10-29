@@ -106,17 +106,21 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                     item.history().map(|r| (r.delta_t, r.rating)).unzip();
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
-                let delta_t = Tensor::from_data(
+                let delta_t = Tensor::<B, 2>::from_floats(
                     TensorData::new(
                         delta_t,
-                        vec![1, pad_size],
+                        Shape {
+                            dims: vec![1, pad_size],
+                        },
                     ),
                     &self.device,
                 );
-                let rating = Tensor::from_data(
+                let rating = Tensor::<B, 2>::from_data(
                     TensorData::new(
                         rating,
-                        vec![1, pad_size],
+                        Shape {
+                            dims: vec![1, pad_size],
+                        },
                     ),
                     &self.device,
                 );
