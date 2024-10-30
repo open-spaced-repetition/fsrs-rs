@@ -1,6 +1,6 @@
-use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
+use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader};
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{prepare_training_data, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{prepare_training_data, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
@@ -8,7 +8,6 @@ use crate::pre_training::{pretrain, smooth_and_fill};
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
 
-use burn::data::dataloader::DataLoaderBuilder;
 use burn::lr_scheduler::LrScheduler;
 use burn::module::AutodiffModule;
 use burn::nn::loss::Reduction;
@@ -325,17 +324,19 @@ fn train<B: AutodiffBackend>(
 
     // Training data
     let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
-    let batcher_train = FSRSBatcher::<B>::new(device.clone());
-    let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train).build(
+    let batch_dataset = BatchTensorDataset::<B>::new(
         FSRSDataset::from(train_set),
         config.batch_size,
-        config.seed,
+        device.clone(),
     );
+    let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
 
-    let batcher_valid = FSRSBatcher::new(device);
-    let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
-        .batch_size(config.batch_size)
-        .build(FSRSDataset::from(test_set.clone()));
+    let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
+        FSRSDataset::from(test_set.clone()),
+        config.batch_size,
+        device,
+    );
+    let dataloader_valid = ShuffleDataLoader::new(batch_dataset, config.seed);
 
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let interrupter = TrainingInterrupter::new();

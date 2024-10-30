@@ -107,11 +107,23 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
                 let delta_t = Tensor::from_data(
-                    Data::new(delta_t, Shape { dims: [1, pad_size] }).convert(),
+                    Data::new(
+                        delta_t,
+                        Shape {
+                            dims: [1, pad_size],
+                        },
+                    )
+                    .convert(),
                     &self.device,
                 );
                 let rating = Tensor::from_data(
-                    Data::new(rating, Shape { dims: [1, pad_size] }).convert(),
+                    Data::new(
+                        rating,
+                        Shape {
+                            dims: [1, pad_size],
+                        },
+                    )
+                    .convert(),
                     &self.device,
                 );
                 (delta_t, rating)
@@ -154,7 +166,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
 }
 
 pub(crate) struct FSRSDataset {
-    items: Vec<FSRSItem>,
+    pub(crate) items: Vec<FSRSItem>,
 }
 
 impl Dataset<FSRSItem> for FSRSDataset {
