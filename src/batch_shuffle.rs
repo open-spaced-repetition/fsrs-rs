@@ -140,6 +140,16 @@ mod tests {
             }
         );
 
+        let lengths = iterator
+            .map(|batch| batch.t_historys.shape().dims[0])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lengths,
+            vec![
+                48, 6, 8, 5, 11, 5, 10, 19, 6, 13, 9, 6, 5, 3, 9, 6, 3, 13, 7, 5, 4, 4, 4, 6, 4, 3,
+            ]
+        );
+
         let mut iterator = dataloader.iter();
         // dbg!(&iterator.indices);
         let batch = iterator.next().unwrap();
@@ -155,6 +165,14 @@ mod tests {
             Shape {
                 dims: [9, batch_size]
             }
+        );
+
+        let lengths = iterator
+            .map(|batch| batch.t_historys.shape().dims[0])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lengths,
+            vec![3, 11, 3, 6, 6, 6, 5, 5, 7, 6, 4, 9, 10, 4, 48, 3, 4, 5, 13, 13, 7, 5, 4, 8, 6, 6]
         );
     }
 }
