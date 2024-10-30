@@ -141,10 +141,7 @@ impl<B: Backend> FSRS<B> {
     ) -> f32 {
         let stability = stability.unwrap_or_else(|| {
             // get initial stability for new card
-            let rating = Tensor::from_data(
-                TensorData::new(vec![rating], Shape { dims: vec![1] }),
-                &self.device(),
-            );
+            let rating = Tensor::from_floats([rating], &self.device());
             let model = self.model();
             model.init_stability(rating).into_scalar().elem()
         });
