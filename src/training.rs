@@ -1,6 +1,6 @@
-use crate::batch_shuffle::BatchShuffledDataLoaderBuilder;
+use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader};
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{prepare_training_data, FSRSBatcher, FSRSDataset, FSRSItem};
+use crate::dataset::{prepare_training_data, FSRSDataset, FSRSItem};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
@@ -9,7 +9,6 @@ use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
 use wasm_bindgen::prelude::*;
 
-use burn::data::dataloader::DataLoaderBuilder;
 use burn::lr_scheduler::LrScheduler;
 use burn::module::AutodiffModule;
 use burn::nn::loss::Reduction;
@@ -19,7 +18,7 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
 use burn::train::TrainingInterrupter;
-use burn::{config::Config, module::Param, tensor::backend::AutodiffBackend};
+use burn::{config::Config, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
 
@@ -199,10 +198,12 @@ pub(crate) struct TrainingConfig {
     pub num_epochs: usize,
     #[config(default = 512)]
     pub batch_size: usize,
-    #[config(default = 42)]
+    #[config(default = 2023)]
     pub seed: u64,
     #[config(default = 4e-2)]
     pub learning_rate: f64,
+    #[config(default = 64)]
+    pub max_seq_len: usize,
 }
 
 pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -237,7 +238,7 @@ impl<B: Backend> FSRS<B> {
         };
 
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, train_set) = prepare_training_data(train_set);
+        let (pre_train_set, mut train_set) = prepare_training_data(train_set);
         if train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
@@ -256,14 +257,15 @@ impl<B: Backend> FSRS<B> {
             finish_progress();
             return Ok(pretrained_parameters);
         }
-
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
-            AdamConfig::new(),
+            AdamConfig::new().with_epsilon(1e-8),
         );
+        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
+        train_set.sort_by_cached_key(|item| item.reviews.len());
 
         if let Some(progress) = &progress {
             let progress_state = ProgressState {
@@ -318,7 +320,7 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, train_set: Vec<FSRSItem>) -> Vec<f32> {
+    pub fn benchmark(&self, mut train_set: Vec<FSRSItem>) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -330,8 +332,10 @@ impl<B: Backend> FSRS<B> {
                 freeze_stability: false,
                 initial_stability: Some(initial_stability),
             },
-            AdamConfig::new(),
+            AdamConfig::new().with_epsilon(1e-8),
         );
+        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
+        train_set.sort_by_cached_key(|item| item.reviews.len());
         let model =
             train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
         let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
@@ -350,17 +354,19 @@ fn train<B: AutodiffBackend>(
 
     // Training data
     let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
-    let batcher_train = FSRSBatcher::<B>::new(device.clone());
-    let dataloader_train = BatchShuffledDataLoaderBuilder::new(batcher_train).build(
+    let batch_dataset = BatchTensorDataset::<B>::new(
         FSRSDataset::from(train_set),
         config.batch_size,
-        config.seed,
+        device.clone(),
     );
+    let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
 
-    let batcher_valid = FSRSBatcher::new(device);
-    let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
-        .batch_size(config.batch_size)
-        .build(FSRSDataset::from(test_set.clone()));
+    let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
+        FSRSDataset::from(test_set.clone()),
+        config.batch_size,
+        device,
+    );
+    let dataloader_valid = ShuffleDataLoader::new(batch_dataset, config.seed);
 
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let interrupter = TrainingInterrupter::new();
@@ -389,7 +395,7 @@ fn train<B: AutodiffBackend>(
                 item.r_historys,
                 item.delta_ts,
                 item.labels,
-                Reduction::Mean,
+                Reduction::Sum,
             );
             let mut gradients = loss.backward();
             if model.config.freeze_stability {
@@ -397,7 +403,7 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            model.w = Param::from_tensor(parameter_clipper(model.w.val()));
+            model.w = parameter_clipper(model.w);
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
@@ -489,7 +495,8 @@ mod tests {
 
         let config = ModelConfig::default();
         let device = NdArrayDevice::Cpu;
-        let model: Model<Autodiff<NdArray<f32>>> = config.init();
+        type B = Autodiff<NdArray<f32>>;
+        let mut model: Model<B> = config.init();
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
@@ -533,7 +540,6 @@ mod tests {
         let gradients = loss.backward();
 
         let w_grad = model.w.grad(&gradients).unwrap();
-        dbg!(&w_grad);
 
         Data::from([
             -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
@@ -541,6 +547,109 @@ mod tests {
             0.202374, 0.214104, 0.032307,
         ])
         .assert_approx_eq(&w_grad.clone().into_data(), 5);
+
+        let config =
+            TrainingConfig::new(ModelConfig::default(), AdamConfig::new().with_epsilon(1e-8));
+        let mut optim = config.optimizer.init::<B, Model<B>>();
+        let lr = 0.04;
+        let grads = GradientsParams::from_grads(gradients, &model);
+        model = optim.step(lr, model, grads);
+        model.w = parameter_clipper(model.w);
+        assert_eq!(
+            model.w.val().to_data(),
+            Data::from([
+                0.44255, 1.22385, 3.2129998, 15.65105, 7.2349, 0.4945, 1.4204, 0.0446, 1.5057501,
+                0.1592, 0.97925, 1.9794999, 0.07000001, 0.33605, 2.3097994, 0.2715, 2.9498,
+                0.47655, 0.62210006
+            ])
+        );
+
+        let item = FSRSBatch {
+            t_historys: Tensor::from_floats(
+                Data::from([
+                    [0.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                    [0.0, 1.0, 1.0, 3.0],
+                    [1.0, 3.0, 3.0, 5.0],
+                    [3.0, 6.0, 6.0, 12.0],
+                ]),
+                &device,
+            ),
+            r_historys: Tensor::from_floats(
+                Data::from([
+                    [1.0, 2.0, 3.0, 4.0],
+                    [3.0, 4.0, 2.0, 4.0],
+                    [1.0, 4.0, 4.0, 3.0],
+                    [4.0, 3.0, 3.0, 3.0],
+                    [3.0, 1.0, 3.0, 3.0],
+                    [2.0, 3.0, 3.0, 4.0],
+                ]),
+                &device,
+            ),
+            delta_ts: Tensor::from_floats(Data::from([4.0, 11.0, 12.0, 23.0]), &device),
+            labels: Tensor::from_ints(Data::from([1, 1, 1, 0]), &device),
+        };
+
+        let loss = model.forward_classification(
+            item.t_historys,
+            item.r_historys,
+            item.delta_ts,
+            item.labels,
+            Reduction::Sum,
+        );
+        assert_eq!(loss.clone().into_data().convert::<f32>().value[0], 4.176347);
+        let gradients = loss.backward();
+        let w_grad = model.w.grad(&gradients).unwrap();
+        Data::from([
+            -0.0401341,
+            -0.0061790533,
+            -0.00288913,
+            0.01216853,
+            -0.05624995,
+            1.147413,
+            0.068084724,
+            -0.6906936,
+            0.48760873,
+            -2.5428302,
+            0.49044546,
+            -0.011574259,
+            0.037729632,
+            -0.09633919,
+            -0.0009513022,
+            -0.12789416,
+            0.19088513,
+            0.2574597,
+            0.049311582,
+        ])
+        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        let grads = GradientsParams::from_grads(gradients, &model);
+        model = optim.step(lr, model, grads);
+        model.w = parameter_clipper(model.w);
+        assert_eq!(
+            model.w.val().to_data(),
+            Data::from([
+                0.48150504,
+                1.2636971,
+                3.2530522,
+                15.611003,
+                7.2749534,
+                0.45482785,
+                1.3808222,
+                0.083782874,
+                1.4658877,
+                0.19898315,
+                0.9393105,
+                2.0193,
+                0.030164223,
+                0.37562984,
+                2.3498251,
+                0.3112984,
+                2.909878,
+                0.43652722,
+                0.5825156
+            ])
+        );
     }
 
     #[test]

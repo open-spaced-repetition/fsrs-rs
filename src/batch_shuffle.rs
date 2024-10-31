@@ -1,70 +1,34 @@
-use burn::data::{
-    dataloader::{
-        batcher::DynBatcher, BatchStrategy, DataLoader, DataLoaderIterator, FixBatchStrategy,
-        Progress,
-    },
-    dataset::Dataset,
-};
+use std::sync::Mutex;
 
-use rand::{distributions::Standard, prelude::SliceRandom, rngs::StdRng, Rng, SeedableRng};
-use std::{
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-};
+use burn::data::dataloader::batcher::Batcher;
+use burn::data::dataloader::{DataLoaderIterator, Progress};
+use burn::prelude::Backend;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 
-use crate::{dataset::FSRSDataset, FSRSItem};
+use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 
-pub(crate) struct BatchShuffledDataset<I> {
-    dataset: Arc<FSRSDataset>,
-    indices: Vec<usize>,
-    input: PhantomData<I>,
+#[derive(Clone)]
+pub(crate) struct BatchTensorDataset<B: Backend> {
+    dataset: Vec<FSRSBatch<B>>,
 }
 
-impl<FSRSItem> BatchShuffledDataset<FSRSItem> {
+impl<B: Backend> BatchTensorDataset<B> {
     /// Creates a new shuffled dataset.
-    pub fn new(dataset: Arc<FSRSDataset>, batch_size: usize, rng: &mut StdRng) -> Self {
-        let len = dataset.len();
-
-        // Calculate the number of batches
-        // 计算批数
-        let num_batches = (len + batch_size - 1) / batch_size;
-
-        // Create a vector of batch indices and shuffle it
-        // 创建一个批数索引的向量并打乱
-        let mut batch_indices: Vec<_> = (0..num_batches).collect();
-        batch_indices.shuffle(rng);
-        // info!("batch_indices: {:?}", &batch_indices);
-        // Generate the corresponding item indices for each shuffled batch
-        // 为每个打乱的批次生成相应的元素索引
-        let mut indices = vec![];
-        for batch_index in batch_indices {
-            let start_index = batch_index * batch_size;
-            let end_index = (start_index + batch_size).min(len);
-            indices.extend(start_index..end_index);
-        }
-        // info!("indices: {:?}", &indices);
-        Self {
-            dataset,
-            indices,
-            input: PhantomData,
-        }
-    }
-
-    /// Creates a new shuffled dataset with a fixed seed.
-    pub fn with_seed(dataset: Arc<FSRSDataset>, batch_size: usize, seed: u64) -> Self {
-        let mut rng = StdRng::seed_from_u64(seed);
-        Self::new(dataset, batch_size, &mut rng)
+    pub fn new(dataset: FSRSDataset, batch_size: usize, device: B::Device) -> Self {
+        let batcher = FSRSBatcher::<B>::new(device);
+        let dataset = dataset
+            .items
+            .chunks(batch_size)
+            .map(|items| batcher.batch(items.to_vec()))
+            .collect();
+        Self { dataset }
     }
 }
 
-impl Dataset<FSRSItem> for BatchShuffledDataset<FSRSItem> {
-    fn get(&self, index: usize) -> Option<FSRSItem> {
-        let shuffled_index = self.indices.get(index)?;
-        // info!(
-        //     "original index: {}, shuffled index: {}",
-        //     index, shuffled_index
-        // );
-        self.dataset.get(*shuffled_index)
+impl<B: Backend> BatchTensorDataset<B> {
+    fn get(&self, index: usize) -> Option<FSRSBatch<B>> {
+        self.dataset.get(index).cloned()
     }
 
     fn len(&self) -> usize {
@@ -72,129 +36,36 @@ impl Dataset<FSRSItem> for BatchShuffledDataset<FSRSItem> {
     }
 }
 
-/// A data loader that can be used to iterate over a dataset in batches.
-pub(crate) struct BatchShuffledDataLoader<I, O> {
-    strategy: Box<dyn BatchStrategy<I>>,
-    dataset: Arc<FSRSDataset>,
-    batcher: Box<dyn DynBatcher<I, O>>,
+pub struct ShuffleDataLoader<B: Backend> {
+    dataset: BatchTensorDataset<B>,
     rng: Mutex<rand::rngs::StdRng>,
-    batch_size: usize,
 }
 
-impl<I, O> BatchShuffledDataLoader<I, O> {
-    /// Creates a new batch data loader.
-    ///
-    /// # Arguments
-    ///
-    /// * `strategy` - The batch strategy.
-    /// * `dataset` - The dataset.
-    /// * `batcher` - The batcher.
-    /// * `rng`     - The rng determining if the dataset is shuffled each time a dataloader
-    ///               iterator is created.
-    ///
-    /// # Returns
-    ///
-    /// The batch data loader.
-    pub fn new(
-        strategy: Box<dyn BatchStrategy<I>>,
-        dataset: Arc<FSRSDataset>,
-        batcher: Box<dyn DynBatcher<I, O>>,
-        rng: rand::rngs::StdRng,
-        batch_size: usize,
-    ) -> Self {
+impl<B: Backend> ShuffleDataLoader<B> {
+    pub fn new(dataset: BatchTensorDataset<B>, seed: u64) -> Self {
         Self {
-            strategy,
             dataset,
-            batcher,
-            rng: Mutex::new(rng),
-            batch_size,
+            rng: Mutex::new(rand::rngs::StdRng::seed_from_u64(seed)),
         }
     }
 }
 
-/// A data loader iterator that can be used to iterate over a data loader.
-struct BatchShuffledDataloaderIterator<I, O> {
+pub(crate) struct ShuffleDataLoaderIterator<B: Backend> {
     current_index: usize,
-    strategy: Box<dyn BatchStrategy<I>>,
-    dataset: Arc<dyn Dataset<I>>,
-    batcher: Box<dyn DynBatcher<I, O>>,
+    indices: Vec<usize>,
+    dataset: BatchTensorDataset<B>,
 }
 
-impl<I: Send + Sync + Clone + 'static, O: Send> DataLoader<O> for BatchShuffledDataLoader<I, O>
-where
-    BatchShuffledDataset<I>: Dataset<I>,
-{
-    fn iter<'a>(&'a self) -> Box<dyn DataLoaderIterator<O> + 'a> {
-        // When starting a new iteration, we first check if the dataloader was created with an rng,
-        // implying that we should shuffle the dataset beforehand, while advancing the current
-        // rng to ensure that each new iteration shuffles the dataset differently.
-        let dataset = Arc::new(BatchShuffledDataset::with_seed(
-            self.dataset.clone(),
-            self.batch_size,
-            self.rng.lock().unwrap().sample(Standard),
-        ));
-        Box::new(BatchShuffledDataloaderIterator::new(
-            self.strategy.clone_dyn(),
-            dataset,
-            self.batcher.clone_dyn(),
-        ))
-    }
-
-    fn num_items(&self) -> usize {
-        self.dataset.len()
-    }
-}
-
-impl<I: 'static, O> BatchShuffledDataloaderIterator<I, O>
-where
-    BatchShuffledDataset<I>: Dataset<I>,
-{
-    /// Creates a new batch data loader iterator.
-    ///
-    /// # Arguments
-    ///
-    /// * `strategy` - The batch strategy.
-    /// * `dataset` - The dataset.
-    /// * `batcher` - The batcher.
-    ///
-    /// # Returns
-    ///
-    /// The batch data loader iterator.
-    pub fn new(
-        strategy: Box<dyn BatchStrategy<I>>,
-        dataset: Arc<BatchShuffledDataset<I>>,
-        batcher: Box<dyn DynBatcher<I, O>>,
-    ) -> Self {
+impl<B: Backend> ShuffleDataLoaderIterator<B> {
+    pub(crate) fn new(dataset: BatchTensorDataset<B>, indices: Vec<usize>) -> Self {
         Self {
             current_index: 0,
-            strategy,
+            indices,
             dataset,
-            batcher,
         }
     }
-}
 
-impl<I, O> Iterator for BatchShuffledDataloaderIterator<I, O> {
-    type Item = O;
-
-    fn next(&mut self) -> Option<O> {
-        while let Some(item) = self.dataset.get(self.current_index) {
-            self.current_index += 1;
-            self.strategy.add(item);
-
-            if let Some(items) = self.strategy.batch(false) {
-                return Some(self.batcher.batch(items));
-            }
-        }
-
-        let items = self.strategy.batch(true)?;
-
-        Some(self.batcher.batch(items))
-    }
-}
-
-impl<I, O> DataLoaderIterator<O> for BatchShuffledDataloaderIterator<I, O> {
-    fn progress(&self) -> Progress {
+    pub(crate) fn progress(&self) -> Progress {
         Progress {
             items_processed: self.current_index,
             items_total: self.dataset.len(),
@@ -202,323 +73,106 @@ impl<I, O> DataLoaderIterator<O> for BatchShuffledDataloaderIterator<I, O> {
     }
 }
 
-/// A builder for data loaders.
-pub struct BatchShuffledDataLoaderBuilder<I, O> {
-    batcher: Box<dyn DynBatcher<I, O>>,
+impl<B: Backend> Iterator for ShuffleDataLoaderIterator<B> {
+    type Item = FSRSBatch<B>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(index) = self.indices.get(self.current_index) {
+            self.current_index += 1;
+            return self.dataset.get(*index);
+        }
+        None
+    }
 }
 
-impl<I, O> BatchShuffledDataLoaderBuilder<I, O>
-where
-    I: Send + Sync + Clone + std::fmt::Debug + 'static,
-    O: Send + Clone + std::fmt::Debug + 'static,
-    BatchShuffledDataset<I>: Dataset<I>,
-{
-    /// Creates a new data loader builder.
-    ///
-    /// # Arguments
-    ///
-    /// * `batcher` - The batcher.
-    ///
-    /// # Returns
-    ///
-    /// The data loader builder.
-    pub fn new<B>(batcher: B) -> Self
-    where
-        B: DynBatcher<I, O> + 'static,
-    {
-        Self {
-            batcher: Box::new(batcher),
-        }
+impl<B: Backend> DataLoaderIterator<FSRSBatch<B>> for ShuffleDataLoaderIterator<B> {
+    fn progress(&self) -> Progress {
+        Progress::new(self.current_index, self.dataset.len())
     }
+}
 
-    /// Builds the data loader.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset` - The dataset.
-    ///
-    /// # Returns
-    ///
-    /// The data loader.
-    pub fn build(
-        self,
-        dataset: FSRSDataset,
-        batch_size: usize,
-        seed: u64,
-    ) -> Arc<dyn DataLoader<O>> {
-        let dataset = Arc::new(dataset);
-
-        let rng = StdRng::seed_from_u64(seed);
-        let strategy = Box::new(FixBatchStrategy::new(batch_size));
-
-        Arc::new(BatchShuffledDataLoader::new(
-            strategy,
-            dataset,
-            self.batcher,
-            rng,
-            batch_size,
-        ))
+impl<B: Backend> ShuffleDataLoader<B> {
+    pub(crate) fn iter(&self) -> ShuffleDataLoaderIterator<B> {
+        let mut indices: Vec<_> = (0..self.dataset.len()).collect();
+        indices.shuffle(&mut *self.rng.lock().unwrap());
+        ShuffleDataLoaderIterator::new(self.dataset.clone(), indices)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use burn::backend::{ndarray::NdArrayDevice, NdArray};
+    use burn::{
+        backend::{ndarray::NdArrayDevice, NdArray},
+        tensor::Shape,
+    };
 
     use super::*;
     use crate::{
-        convertor_tests::anki21_sample_file_converted_to_fsrs,
-        dataset::{prepare_training_data, FSRSBatcher, FSRSDataset},
-        FSRSItem, FSRSReview,
+        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::prepare_training_data,
     };
 
     #[test]
-    fn batch_shuffle_dataloader() {
+    fn test_simple_dataloader() {
         let train_set = anki21_sample_file_converted_to_fsrs();
         let (_pre_train_set, train_set) = prepare_training_data(train_set);
         let dataset = FSRSDataset::from(train_set);
         let batch_size = 512;
-        let seed = 42;
+        let seed = 114514;
         let device = NdArrayDevice::Cpu;
         type Backend = NdArray<f32>;
-        let batcher = FSRSBatcher::<Backend>::new(device);
-        let dataloader =
-            BatchShuffledDataLoaderBuilder::new(batcher).build(dataset, batch_size, seed);
-        let item = dataloader.iter().next().unwrap();
-        assert_eq!(
-            item.t_historys.shape(),
-            burn::tensor::Shape { dims: [6, 512] }
-        );
-        let item2 = dataloader.iter().next().unwrap();
-        assert_eq!(
-            item2.t_historys.shape(),
-            burn::tensor::Shape { dims: [4, 512] }
-        );
-    }
 
-    #[test]
-    fn batch_shuffle() {
-        let dataset = Arc::new(FSRSDataset::from(anki21_sample_file_converted_to_fsrs()));
-        let batch_size = 10;
-        let seed = 42;
-        let batch_shuffled_dataset = BatchShuffledDataset::with_seed(dataset, batch_size, seed);
+        let dataset = BatchTensorDataset::<Backend>::new(dataset, batch_size, device);
+        let dataloader = ShuffleDataLoader::new(dataset, seed);
+        let mut iterator = dataloader.iter();
+        // dbg!(&iterator.indices);
+        let batch = iterator.next().unwrap();
         assert_eq!(
-            (0..batch_shuffled_dataset.len().min(batch_size))
-                .map(|i| batch_shuffled_dataset.get(i).unwrap())
-                .collect::<Vec<_>>(),
-            [
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 1,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 2
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 1,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 1,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 3
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 1
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        },
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 2
-                        }
-                    ]
-                },
-                FSRSItem {
-                    reviews: vec![
-                        FSRSReview {
-                            rating: 3,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 0
-                        },
-                        FSRSReview {
-                            rating: 4,
-                            delta_t: 1
-                        }
-                    ]
-                }
+            batch.t_historys.shape(),
+            Shape {
+                dims: [7, batch_size]
+            }
+        );
+        let batch = iterator.next().unwrap();
+        assert_eq!(
+            batch.t_historys.shape(),
+            Shape {
+                dims: [6, batch_size]
+            }
+        );
+
+        let lengths = iterator
+            .map(|batch| batch.t_historys.shape().dims[0])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lengths,
+            vec![
+                48, 6, 8, 5, 11, 5, 10, 19, 6, 13, 9, 6, 5, 3, 9, 6, 3, 13, 7, 5, 4, 4, 4, 6, 4, 3,
             ]
         );
-    }
 
-    #[test]
-    fn item_shuffle() {
-        use burn::data::dataset::transform::ShuffledDataset;
-        let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
-        let seed = 42;
-        let shuffled_dataset = ShuffledDataset::with_seed(dataset, seed);
-        for i in 0..shuffled_dataset.len().min(10) {
-            dbg!(shuffled_dataset.get(i).unwrap());
-        }
+        let mut iterator = dataloader.iter();
+        // dbg!(&iterator.indices);
+        let batch = iterator.next().unwrap();
+        assert_eq!(
+            batch.t_historys.shape(),
+            Shape {
+                dims: [19, batch_size]
+            }
+        );
+        let batch = iterator.next().unwrap();
+        assert_eq!(
+            batch.t_historys.shape(),
+            Shape {
+                dims: [9, batch_size]
+            }
+        );
+
+        let lengths = iterator
+            .map(|batch| batch.t_historys.shape().dims[0])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lengths,
+            vec![3, 11, 3, 6, 6, 6, 5, 5, 7, 6, 4, 9, 10, 4, 48, 3, 4, 5, 13, 13, 7, 5, 4, 8, 6, 6]
+        );
     }
 }

@@ -1,6 +1,7 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MIN};
+use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MAX, S_MIN};
 use crate::model::check_and_fill_parameters;
+use crate::parameter_clipper::clip_parameters;
 use crate::FSRS;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
@@ -71,12 +72,13 @@ impl Default for SimulatorConfig {
 fn stability_after_success(w: &[f32], s: f32, r: f32, d: f32, rating: usize) -> f32 {
     let hard_penalty = if rating == 2 { w[15] } else { 1.0 };
     let easy_bonus = if rating == 4 { w[16] } else { 1.0 };
-    s * (f32::exp(w[8])
+    (s * (f32::exp(w[8])
         * (11.0 - d)
         * s.powf(-w[9])
         * (f32::exp((1.0 - r) * w[10]) - 1.0)
         * hard_penalty)
-        .mul_add(easy_bonus, 1.0)
+        .mul_add(easy_bonus, 1.0))
+    .clamp(S_MIN, S_MAX)
 }
 
 fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
@@ -85,7 +87,7 @@ fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
 }
 
 fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32) -> f32 {
-    s * (w[17] * (rating_offset + session_len * w[18])).exp()
+    (s * (w[17] * (rating_offset + session_len * w[18])).exp()).clamp(S_MIN, S_MAX)
 }
 
 fn init_d(w: &[f32], rating: usize) -> f32 {
@@ -132,6 +134,7 @@ pub fn simulate(
     existing_cards: Option<Vec<Card>>,
 ) -> Result<(Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>), FSRSError> {
     let w = &check_and_fill_parameters(w)?;
+    let w = &clip_parameters(w);
     let SimulatorConfig {
         deck_size,
         learn_span,

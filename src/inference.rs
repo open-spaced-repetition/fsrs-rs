@@ -18,6 +18,7 @@ pub(crate) const DECAY: f64 = -0.5;
 /// (9/10) ^ (1 / DECAY) - 1
 pub(crate) const FACTOR: f64 = 19f64 / 81f64;
 pub(crate) const S_MIN: f32 = 0.01;
+pub(crate) const S_MAX: f32 = 36500.0;
 /// This is a slice for efficiency, but should always be 17 in length.
 pub type Parameters = [f32];
 use itertools::izip;

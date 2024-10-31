@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// first one.
 /// When used during review, the last item should include the correct delta_t, but
 /// the provided rating is ignored as all four ratings are returned by .next_states()
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
 }
@@ -51,7 +51,7 @@ impl FSRSItem {
             .reviews
             .iter()
             .find(|review| review.delta_t > 0)
-            .unwrap()
+            .expect("Invalid FSRS item: at least one review with delta_t > 0 is required")
     }
 
     pub(crate) fn r_matrix_index(&self) -> (u32, u32, u32) {
@@ -107,15 +107,25 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
                 let delta_t = Tensor::from_data(
-                    Data::new(delta_t, Shape { dims: [pad_size] }).convert(),
+                    Data::new(
+                        delta_t,
+                        Shape {
+                            dims: [1, pad_size],
+                        },
+                    )
+                    .convert(),
                     &self.device,
-                )
-                .unsqueeze();
+                );
                 let rating = Tensor::from_data(
-                    Data::new(rating, Shape { dims: [pad_size] }).convert(),
+                    Data::new(
+                        rating,
+                        Shape {
+                            dims: [1, pad_size],
+                        },
+                    )
+                    .convert(),
                     &self.device,
-                )
-                .unsqueeze();
+                );
                 (delta_t, rating)
             })
             .unzip();
@@ -156,7 +166,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
 }
 
 pub(crate) struct FSRSDataset {
-    items: Vec<FSRSItem>,
+    pub(crate) items: Vec<FSRSItem>,
 }
 
 impl Dataset<FSRSItem> for FSRSDataset {
