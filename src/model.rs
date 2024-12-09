@@ -383,8 +383,14 @@ mod tests {
         let state = model.forward(delta_ts, ratings, None);
         let stability = state.stability.to_data();
         let difficulty = state.difficulty.to_data();
-        stability.assert_approx_eq(&Data::from([0.2619, 1.7074, 5.8691, 25.0124, 0.2859, 2.1482]), 4);
-        difficulty.assert_approx_eq(&Data::from([8.0827, 7.0405, 5.2729, 2.1301, 8.0827, 7.0405]), 4);
+        stability.assert_approx_eq(
+            &Data::from([0.2619, 1.7074, 5.8691, 25.0124, 0.2859, 2.1482]),
+            4,
+        );
+        difficulty.assert_approx_eq(
+            &Data::from([8.0827, 7.0405, 5.2729, 2.1301, 8.0827, 7.0405]),
+            4,
+        );
     }
 
     #[test]
