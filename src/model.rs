@@ -94,9 +94,10 @@ impl<B: Backend> Model<B> {
             * last_d.pow(-self.w.get(12))
             * ((last_s.clone() + 1).pow(self.w.get(13)) - 1)
             * ((-r + 1) * self.w.get(14)).exp();
+        let new_s_min = last_s / (self.w.get(17) * self.w.get(18)).exp();
         new_s
             .clone()
-            .mask_where(last_s.clone().lower(new_s), last_s)
+            .mask_where(new_s_min.clone().lower(new_s), new_s_min)
     }
 
     fn stability_short_term(&self, last_s: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -380,7 +381,16 @@ mod tests {
             &device,
         );
         let state = model.forward(delta_ts, ratings, None);
-        dbg!(&state);
+        let stability = state.stability.to_data();
+        let difficulty = state.difficulty.to_data();
+        stability.assert_approx_eq(
+            &Data::from([0.2619, 1.7074, 5.8691, 25.0124, 0.2859, 2.1482]),
+            4,
+        );
+        difficulty.assert_approx_eq(
+            &Data::from([8.0827, 7.0405, 5.2729, 2.1301, 8.0827, 7.0405]),
+            4,
+        );
     }
 
     #[test]

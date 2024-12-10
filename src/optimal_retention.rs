@@ -83,7 +83,7 @@ fn stability_after_success(w: &[f32], s: f32, r: f32, d: f32, rating: usize) -> 
 
 fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
     (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f32::exp((1.0 - r) * w[14]))
-        .clamp(S_MIN, s)
+        .clamp(S_MIN, s / (w[17] * w[18]).exp())
 }
 
 fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32) -> f32 {
@@ -903,7 +903,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6919.944
+            6911.91
         );
         Ok(())
     }
@@ -1023,7 +1023,7 @@ mod tests {
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6591.4854);
+        assert_eq!(results.0[results.0.len() - 1], 6559.517);
         Ok(())
     }
 
@@ -1076,7 +1076,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.84499365);
+        assert_eq!(optimal_retention, 0.84458643);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }

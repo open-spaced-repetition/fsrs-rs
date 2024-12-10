@@ -503,7 +503,7 @@ mod tests {
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.216326, 0.038727]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.216286, 0.038692]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
@@ -514,7 +514,7 @@ mod tests {
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        assert_approx_eq([self_by_other, other_by_self], [0.016236, 0.031085]);
+        assert_approx_eq([self_by_other, other_by_self], [0.016570, 0.031037]);
 
         Ok(())
     }
