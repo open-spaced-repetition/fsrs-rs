@@ -82,8 +82,11 @@ fn stability_after_success(w: &[f32], s: f32, r: f32, d: f32, rating: usize) -> 
 }
 
 fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
-    (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f32::exp((1.0 - r) * w[14]))
-        .clamp(S_MIN, s / (w[17] * w[18]).exp())
+    let new_s_min = s / (w[17] * w[18]).exp();
+    let new_s =
+        (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f32::exp((1.0 - r) * w[14]))
+            .min(new_s_min);
+    new_s.clamp(S_MIN, S_MAX)
 }
 
 fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32) -> f32 {
