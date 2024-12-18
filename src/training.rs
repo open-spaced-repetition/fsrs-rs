@@ -201,8 +201,24 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
 }
 
 impl<B: Backend> FSRS<B> {
-    /// Calculate appropriate parameters for the provided review history.
     pub fn compute_parameters(
+        &self,
+        train_set: Vec<FSRSItem>,
+        progress: Option<Arc<Mutex<CombinedProgressState>>>,
+    ) -> Result<Vec<f32>> {
+        self.compute_parameters_inner(train_set, progress, true)
+    }
+
+    pub fn compute_parameters_disable_short_term(
+        &self,
+        train_set: Vec<FSRSItem>,
+        progress: Option<Arc<Mutex<CombinedProgressState>>>,
+    ) -> Result<Vec<f32>> {
+        self.compute_parameters_inner(train_set, progress, false)
+    }
+
+    /// Calculate appropriate parameters for the provided review history.
+    fn compute_parameters_inner(
         &self,
         train_set: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
@@ -302,7 +318,15 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, mut train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
+    pub fn benchmark(&self, train_set: Vec<FSRSItem>) -> Vec<f32> {
+        self.benchmark_inner(train_set, true)
+    }
+
+    pub fn benchmark_disable_short_term(&self, train_set: Vec<FSRSItem>) -> Vec<f32> {
+        self.benchmark_inner(train_set, false)
+    }
+
+    fn benchmark_inner(&self, mut train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -680,7 +704,7 @@ mod tests {
 
                 let fsrs = FSRS::new(Some(&[])).unwrap();
                 let parameters = fsrs
-                    .compute_parameters(items.clone(), progress2, enable_short_term)
+                    .compute_parameters_inner(items.clone(), progress2, enable_short_term)
                     .unwrap();
                 dbg!(&parameters);
 
