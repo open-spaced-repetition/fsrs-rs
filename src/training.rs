@@ -77,6 +77,16 @@ impl<B: AutodiffBackend> Model<B> {
         self.w.grad_replace(&mut grad, updated_grad_tensor);
         grad
     }
+
+    fn free_short_term_stability(&self, mut grad: B::Gradients) -> B::Gradients {
+        let grad_tensor = self.w.grad(&grad).unwrap();
+        let updated_grad_tensor =
+            grad_tensor.slice_assign([17..19], Tensor::zeros([2], &B::Device::default()));
+
+        self.w.grad_remove(&mut grad);
+        self.w.grad_replace(&mut grad, updated_grad_tensor);
+        grad
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -191,11 +201,28 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
 }
 
 impl<B: Backend> FSRS<B> {
-    /// Calculate appropriate parameters for the provided review history.
     pub fn compute_parameters(
         &self,
         train_set: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
+    ) -> Result<Vec<f32>> {
+        self.compute_parameters_inner(train_set, progress, true)
+    }
+
+    pub fn compute_parameters_disable_short_term(
+        &self,
+        train_set: Vec<FSRSItem>,
+        progress: Option<Arc<Mutex<CombinedProgressState>>>,
+    ) -> Result<Vec<f32>> {
+        self.compute_parameters_inner(train_set, progress, false)
+    }
+
+    /// Calculate appropriate parameters for the provided review history.
+    fn compute_parameters_inner(
+        &self,
+        train_set: Vec<FSRSItem>,
+        progress: Option<Arc<Mutex<CombinedProgressState>>>,
+        enable_short_term: bool,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
             if let Some(progress) = &progress {
@@ -229,8 +256,9 @@ impl<B: Backend> FSRS<B> {
         }
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: false,
+                freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
+                freeze_short_term_stability: !enable_short_term,
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -290,7 +318,15 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, mut train_set: Vec<FSRSItem>) -> Vec<f32> {
+    pub fn benchmark(&self, train_set: Vec<FSRSItem>) -> Vec<f32> {
+        self.benchmark_inner(train_set, true)
+    }
+
+    pub fn benchmark_disable_short_term(&self, train_set: Vec<FSRSItem>) -> Vec<f32> {
+        self.benchmark_inner(train_set, false)
+    }
+
+    fn benchmark_inner(&self, mut train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -299,8 +335,9 @@ impl<B: Backend> FSRS<B> {
         let initial_stability = pretrain(pre_train_set, average_recall).unwrap().0;
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: false,
+                freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
+                freeze_short_term_stability: !enable_short_term,
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -368,8 +405,11 @@ fn train<B: AutodiffBackend>(
                 Reduction::Sum,
             );
             let mut gradients = loss.backward();
-            if model.config.freeze_stability {
+            if model.config.freeze_initial_stability {
                 gradients = model.freeze_initial_stability(gradients);
+            }
+            if model.config.freeze_short_term_stability {
+                gradients = model.free_short_term_stability(gradients);
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
@@ -649,26 +689,30 @@ mod tests {
                 .unwrap();
         }
         for items in [anki21_sample_file_converted_to_fsrs(), data_from_csv()] {
-            let progress = CombinedProgressState::new_shared();
-            let progress2 = Some(progress.clone());
-            thread::spawn(move || {
-                let mut finished = false;
-                while !finished {
-                    thread::sleep(Duration::from_millis(500));
-                    let guard = progress.lock().unwrap();
-                    finished = guard.finished();
-                    println!("progress: {}/{}", guard.current(), guard.total());
-                }
-            });
+            for enable_short_term in [true, false] {
+                let progress = CombinedProgressState::new_shared();
+                let progress2 = Some(progress.clone());
+                thread::spawn(move || {
+                    let mut finished = false;
+                    while !finished {
+                        thread::sleep(Duration::from_millis(500));
+                        let guard = progress.lock().unwrap();
+                        finished = guard.finished();
+                        println!("progress: {}/{}", guard.current(), guard.total());
+                    }
+                });
 
-            let fsrs = FSRS::new(Some(&[])).unwrap();
-            let parameters = fsrs.compute_parameters(items.clone(), progress2).unwrap();
-            dbg!(&parameters);
+                let fsrs = FSRS::new(Some(&[])).unwrap();
+                let parameters = fsrs
+                    .compute_parameters_inner(items.clone(), progress2, enable_short_term)
+                    .unwrap();
+                dbg!(&parameters);
 
-            // evaluate
-            let model = FSRS::new(Some(&parameters)).unwrap();
-            let metrics = model.evaluate(items, |_| true).unwrap();
-            dbg!(&metrics);
+                // evaluate
+                let model = FSRS::new(Some(&parameters)).unwrap();
+                let metrics = model.evaluate(items.clone(), |_| true).unwrap();
+                dbg!(&metrics);
+            }
         }
     }
 }

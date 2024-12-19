@@ -41,12 +41,16 @@ impl<B: Backend, const N: usize> Pow<B, N> for Tensor<B, N> {
 impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
-        let initial_params = config
+        let mut initial_params: Vec<f32> = config
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
+        if config.freeze_short_term_stability {
+            initial_params[17] = 0.0;
+            initial_params[18] = 0.0;
+        }
 
         Self {
             w: Param::from_tensor(Tensor::from_floats(
@@ -199,8 +203,10 @@ pub(crate) struct MemoryStateTensors<B: Backend> {
 #[derive(Config, Module, Debug, Default)]
 pub struct ModelConfig {
     #[config(default = false)]
-    pub freeze_stability: bool,
+    pub freeze_initial_stability: bool,
     pub initial_stability: Option<[f32; 4]>,
+    #[config(default = false)]
+    pub freeze_short_term_stability: bool,
 }
 
 impl ModelConfig {
