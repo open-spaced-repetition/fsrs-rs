@@ -69,6 +69,14 @@ pub fn next_interval(stability: f32, desired_retention: f32) -> f32 {
     stability / FACTOR as f32 * (desired_retention.powf(1.0 / DECAY as f32) - 1.0)
 }
 
+#[derive(Default)]
+struct RMatrixValue {
+    predicted: f32,
+    actual: f32,
+    count: f32,
+    weight: f32,
+}
+
 impl<B: Backend> FSRS<B> {
     /// Calculate the current memory state for a given card's history of reviews.
     /// In the case of truncated reviews, [starting_state] can be set to the value of
@@ -219,7 +227,7 @@ impl<B: Backend> FSRS<B> {
             total: items.len(),
         };
         let model = self.model();
-        let mut r_matrix: HashMap<(u32, u32, u32), (f32, f32, f32, f32)> = HashMap::new();
+        let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
 
         for chunk in items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
@@ -231,12 +239,11 @@ impl<B: Backend> FSRS<B> {
             all_weights.push(batch.weights);
             izip!(chunk, pred, true_val).for_each(|(item, p, y)| {
                 let bin = item.item.r_matrix_index();
-                let (pred, real, count, weight) =
-                    r_matrix.entry(bin).or_insert((0.0, 0.0, 0.0, 0.0));
-                *pred += p;
-                *real += y;
-                *count += 1.0;
-                *weight += item.weight;
+                let value = r_matrix.entry(bin).or_default();
+                value.predicted += p;
+                value.actual += y;
+                value.count += 1.0;
+                value.weight += item.weight;
             });
             progress_info.current += chunk.len();
             if !progress(progress_info) {
@@ -245,16 +252,13 @@ impl<B: Backend> FSRS<B> {
         }
         let rmse = (r_matrix
             .values()
-            .map(|(pred, real, count, weight)| {
-                let pred = pred / count;
-                let real = real / count;
-                (pred - real).powi(2) * weight
+            .map(|v| {
+                let pred = v.predicted / v.count;
+                let real = v.actual / v.count;
+                (pred - real).powi(2) * v.weight
             })
             .sum::<f32>()
-            / r_matrix
-                .values()
-                .map(|(_, _, _, weight)| weight)
-                .sum::<f32>())
+            / r_matrix.values().map(|v| v.weight).sum::<f32>())
         .sqrt();
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
