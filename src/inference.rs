@@ -219,7 +219,7 @@ impl<B: Backend> FSRS<B> {
             total: items.len(),
         };
         let model = self.model();
-        let mut r_matrix: HashMap<(u32, u32, u32), (f32, f32, f32)> = HashMap::new();
+        let mut r_matrix: HashMap<(u32, u32, u32), (f32, f32, f32, f32)> = HashMap::new();
 
         for chunk in items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
@@ -231,9 +231,11 @@ impl<B: Backend> FSRS<B> {
             all_weights.push(batch.weights);
             izip!(chunk, pred, true_val).for_each(|(item, p, y)| {
                 let bin = item.item.r_matrix_index();
-                let (pred, real, weight) = r_matrix.entry(bin).or_insert((0.0, 0.0, 0.0));
+                let (pred, real, count, weight) =
+                    r_matrix.entry(bin).or_insert((0.0, 0.0, 0.0, 0.0));
                 *pred += p;
                 *real += y;
+                *count += 1.0;
                 *weight += item.weight;
             });
             progress_info.current += chunk.len();
@@ -243,13 +245,16 @@ impl<B: Backend> FSRS<B> {
         }
         let rmse = (r_matrix
             .values()
-            .map(|(pred, real, weight)| {
-                let pred = pred / weight;
-                let real = real / weight;
+            .map(|(pred, real, count, weight)| {
+                let pred = pred / count;
+                let real = real / count;
                 (pred - real).powi(2) * weight
             })
             .sum::<f32>()
-            / r_matrix.values().map(|(_, _, weight)| weight).sum::<f32>())
+            / r_matrix
+                .values()
+                .map(|(_, _, _, weight)| weight)
+                .sum::<f32>())
         .sqrt();
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
@@ -498,17 +503,17 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.212817, 0.034676]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.212817, 0.040148]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.217251, 0.036590]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.217251, 0.041336]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.203552, 0.025646]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.203552, 0.029828]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
