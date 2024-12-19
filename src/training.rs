@@ -1,6 +1,9 @@
 use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader};
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{prepare_training_data, recency_weighted_fsrs_items, FSRSDataset, FSRSItem};
+use crate::dataset::{
+    prepare_training_data, recency_weighted_fsrs_items, sort_items_by_review_length, FSRSDataset,
+    FSRSItem,
+};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
@@ -238,7 +241,6 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new().with_epsilon(1e-8),
         );
         train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
-        train_set.sort_by_cached_key(|item| item.reviews.len());
 
         if let Some(progress) = &progress {
             let progress_state = ProgressState {
@@ -308,7 +310,6 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new().with_epsilon(1e-8),
         );
         train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
-        train_set.sort_by_cached_key(|item| item.reviews.len());
         let model =
             train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
         let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
@@ -328,14 +329,18 @@ fn train<B: AutodiffBackend>(
     // Training data
     let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
     let batch_dataset = BatchTensorDataset::<B>::new(
-        FSRSDataset::from(recency_weighted_fsrs_items(train_set)),
+        FSRSDataset::from(sort_items_by_review_length(recency_weighted_fsrs_items(
+            train_set,
+        ))),
         config.batch_size,
         device.clone(),
     );
     let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
 
     let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
-        FSRSDataset::from(recency_weighted_fsrs_items(test_set.clone())),
+        FSRSDataset::from(sort_items_by_review_length(recency_weighted_fsrs_items(
+            test_set.clone(),
+        ))),
         config.batch_size,
         device,
     );

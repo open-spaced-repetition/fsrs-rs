@@ -265,6 +265,12 @@ pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSIt
     (pretrainset.clone(), [pretrainset, trainset].concat())
 }
 
+pub(crate) fn sort_items_by_review_length(items: Vec<WeightedFSRSItem>) -> Vec<WeightedFSRSItem> {
+    let mut items = items;
+    items.sort_by_cached_key(|item| item.item.reviews.len());
+    items
+}
+
 pub(crate) fn simple_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
     items
         .into_iter()
@@ -294,21 +300,21 @@ mod tests {
     fn from_anki() {
         use burn::data::dataloader::Dataset;
 
-        let dataset = FSRSDataset::from(simple_weighted_fsrs_items(
+        let dataset = FSRSDataset::from(sort_items_by_review_length(simple_weighted_fsrs_items(
             anki21_sample_file_converted_to_fsrs(),
-        ));
+        )));
         assert_eq!(
             dataset.get(704).unwrap().item,
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
-                        rating: 3,
-                        delta_t: 0,
+                        rating: 4,
+                        delta_t: 0
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 1,
-                    },
+                        delta_t: 3
+                    }
                 ],
             }
         );

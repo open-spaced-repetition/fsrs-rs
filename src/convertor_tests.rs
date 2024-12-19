@@ -94,7 +94,7 @@ fn convert_to_fsrs_items(
     mut entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,
     timezone: Tz,
-) -> Option<Vec<FSRSItem>> {
+) -> Option<Vec<(i64, FSRSItem)>> {
     // entries = filter_out_cram(entries);
     // entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
@@ -110,7 +110,7 @@ fn convert_to_fsrs_items(
             .iter()
             .enumerate()
             .skip(1)
-            .map(|(idx, _)| {
+            .map(|(idx, entry)| {
                 let reviews = entries
                     .iter()
                     .take(idx + 1)
@@ -119,9 +119,9 @@ fn convert_to_fsrs_items(
                         delta_t: r.last_interval.max(0) as u32,
                     })
                     .collect();
-                FSRSItem { reviews }
+                (entry.id, FSRSItem { reviews })
             })
-            .filter(|item| item.current().delta_t > 0)
+            .filter(|(_, item)| item.current().delta_t > 0)
             .collect(),
     )
 }
@@ -137,8 +137,8 @@ pub(crate) fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
         })
         .flatten()
         .collect_vec();
-    revlogs.sort_by_cached_key(|r| r.reviews.len());
-    revlogs
+    revlogs.sort_by_cached_key(|(id, _)| *id);
+    revlogs.into_iter().map(|(_, item)| item).collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -260,6 +260,7 @@ fn conversion_works() {
         .into_iter()
         .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
         .flatten()
+        .map(|(_, item)| item)
         .collect_vec();
     assert_eq!(
         fsrs_items,
@@ -445,7 +446,8 @@ fn delta_t_is_correct() -> Result<()> {
             ],
             NEXT_DAY_AT,
             Tz::Asia__Shanghai
-        ),
+        )
+        .map(|items| items.into_iter().map(|(_, item)| item).collect_vec()),
         Some(vec![FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -470,7 +472,8 @@ fn delta_t_is_correct() -> Result<()> {
             ],
             NEXT_DAY_AT,
             Tz::Asia__Shanghai
-        ),
+        )
+        .map(|items| items.into_iter().map(|(_, item)| item).collect_vec()),
         Some(vec![
             FSRSItem {
                 reviews: vec![

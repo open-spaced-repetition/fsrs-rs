@@ -105,6 +105,7 @@ mod tests {
         backend::{ndarray::NdArrayDevice, NdArray},
         tensor::Shape,
     };
+    use itertools::Itertools;
 
     use super::*;
     use crate::{
@@ -114,7 +115,10 @@ mod tests {
 
     #[test]
     fn test_simple_dataloader() {
-        let train_set = anki21_sample_file_converted_to_fsrs();
+        let train_set = anki21_sample_file_converted_to_fsrs()
+            .into_iter()
+            .sorted_by_cached_key(|item| item.reviews.len())
+            .collect();
         let (_pre_train_set, train_set) = prepare_training_data(train_set);
         let dataset = FSRSDataset::from(simple_weighted_fsrs_items(train_set));
         let batch_size = 512;
