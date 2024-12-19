@@ -1,5 +1,5 @@
 use crate::convertor_tests::RevlogReviewKind::*;
-use crate::dataset::FSRSBatcher;
+use crate::dataset::{simple_weighted_fsrs_items, FSRSBatcher};
 use crate::dataset::{FSRSItem, FSRSReview};
 use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
@@ -256,7 +256,7 @@ fn conversion_works() {
     );
 
     // convert a subset and check it matches expectations
-    let mut fsrs_items = single_card_revlog
+    let fsrs_items = single_card_revlog
         .into_iter()
         .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
         .flatten()
@@ -387,9 +387,11 @@ fn conversion_works() {
         ]
     );
 
+    let mut weighted_fsrs_items = simple_weighted_fsrs_items(fsrs_items);
+
     let device = NdArrayDevice::Cpu;
     let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
-    let res = batcher.batch(vec![fsrs_items.pop().unwrap()]);
+    let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()]);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     assert_eq!(
         res.r_historys.squeeze(1).to_data(),

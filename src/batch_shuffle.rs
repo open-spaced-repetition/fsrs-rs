@@ -108,14 +108,15 @@ mod tests {
 
     use super::*;
     use crate::{
-        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::prepare_training_data,
+        convertor_tests::anki21_sample_file_converted_to_fsrs,
+        dataset::{prepare_training_data, simple_weighted_fsrs_items},
     };
 
     #[test]
     fn test_simple_dataloader() {
         let train_set = anki21_sample_file_converted_to_fsrs();
         let (_pre_train_set, train_set) = prepare_training_data(train_set);
-        let dataset = FSRSDataset::from(train_set);
+        let dataset = FSRSDataset::from(simple_weighted_fsrs_items(train_set));
         let batch_size = 512;
         let seed = 114514;
         let device = NdArrayDevice::Cpu;

@@ -6,8 +6,8 @@ use burn::nn::loss::Reduction;
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
-use crate::dataset::FSRSBatch;
 use crate::dataset::FSRSBatcher;
+use crate::dataset::{simple_weighted_fsrs_items, FSRSBatch};
 use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
@@ -210,9 +210,11 @@ impl<B: Backend> FSRS<B> {
         if items.is_empty() {
             return Err(FSRSError::NotEnoughData);
         }
+        let items = simple_weighted_fsrs_items(items);
         let batcher = FSRSBatcher::new(self.device());
         let mut all_retention = vec![];
         let mut all_labels = vec![];
+        let mut all_weights = vec![];
         let mut progress_info = ItemProgress {
             current: 0,
             total: items.len(),
@@ -227,8 +229,9 @@ impl<B: Backend> FSRS<B> {
             let true_val = batch.labels.clone().to_data().convert::<f32>().value;
             all_retention.push(retention);
             all_labels.push(batch.labels);
+            all_weights.push(batch.weights);
             izip!(chunk, pred, true_val).for_each(|(item, p, y)| {
-                let bin = item.r_matrix_index();
+                let bin = item.item.r_matrix_index();
                 let (pred, real, count) = r_matrix.entry(bin).or_insert((0.0, 0.0, 0.0));
                 *pred += p;
                 *real += y;
@@ -251,7 +254,8 @@ impl<B: Backend> FSRS<B> {
         .sqrt();
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
-        let loss = BCELoss::new().forward(all_retention, all_labels, Reduction::Mean);
+        let all_weights = Tensor::cat(all_weights, 0);
+        let loss = BCELoss::new().forward(all_retention, all_labels, all_weights, Reduction::Mean);
         Ok(ModelEvaluation {
             log_loss: loss.to_data().value[0].elem(),
             rmse_bins: rmse,
@@ -278,6 +282,7 @@ impl<B: Backend> FSRS<B> {
         if items.is_empty() {
             return Err(FSRSError::NotEnoughData);
         }
+        let items = simple_weighted_fsrs_items(items);
         let batcher = FSRSBatcher::new(self.device());
         let mut all_predictions_self = vec![];
         let mut all_predictions_other = vec![];
