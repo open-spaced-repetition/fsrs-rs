@@ -1,5 +1,5 @@
 use crate::convertor_tests::RevlogReviewKind::*;
-use crate::dataset::{simple_weighted_fsrs_items, FSRSBatcher};
+use crate::dataset::{constant_weighted_fsrs_items, FSRSBatcher};
 use crate::dataset::{FSRSItem, FSRSReview};
 use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
@@ -388,7 +388,7 @@ fn conversion_works() {
         ]
     );
 
-    let mut weighted_fsrs_items = simple_weighted_fsrs_items(fsrs_items);
+    let mut weighted_fsrs_items = constant_weighted_fsrs_items(fsrs_items);
 
     let device = NdArrayDevice::Cpu;
     let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);

@@ -6,8 +6,7 @@ use burn::nn::loss::Reduction;
 use burn::tensor::{Data, Shape, Tensor};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
-use crate::dataset::FSRSBatcher;
-use crate::dataset::{simple_weighted_fsrs_items, FSRSBatch};
+use crate::dataset::{recency_weighted_fsrs_items, FSRSBatch, FSRSBatcher};
 use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
@@ -210,7 +209,7 @@ impl<B: Backend> FSRS<B> {
         if items.is_empty() {
             return Err(FSRSError::NotEnoughData);
         }
-        let items = simple_weighted_fsrs_items(items);
+        let items = recency_weighted_fsrs_items(items);
         let batcher = FSRSBatcher::new(self.device());
         let mut all_retention = vec![];
         let mut all_labels = vec![];
@@ -232,10 +231,10 @@ impl<B: Backend> FSRS<B> {
             all_weights.push(batch.weights);
             izip!(chunk, pred, true_val).for_each(|(item, p, y)| {
                 let bin = item.item.r_matrix_index();
-                let (pred, real, count) = r_matrix.entry(bin).or_insert((0.0, 0.0, 0.0));
+                let (pred, real, weight) = r_matrix.entry(bin).or_insert((0.0, 0.0, 0.0));
                 *pred += p;
                 *real += y;
-                *count += 1.0;
+                *weight += item.weight;
             });
             progress_info.current += chunk.len();
             if !progress(progress_info) {
@@ -244,13 +243,13 @@ impl<B: Backend> FSRS<B> {
         }
         let rmse = (r_matrix
             .values()
-            .map(|(pred, real, count)| {
-                let pred = pred / count;
-                let real = real / count;
-                (pred - real).powi(2) * count
+            .map(|(pred, real, weight)| {
+                let pred = pred / weight;
+                let real = real / weight;
+                (pred - real).powi(2) * weight
             })
             .sum::<f32>()
-            / r_matrix.values().map(|(_, _, count)| count).sum::<f32>())
+            / r_matrix.values().map(|(_, _, weight)| weight).sum::<f32>())
         .sqrt();
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
@@ -282,7 +281,7 @@ impl<B: Backend> FSRS<B> {
         if items.is_empty() {
             return Err(FSRSError::NotEnoughData);
         }
-        let items = simple_weighted_fsrs_items(items);
+        let items = recency_weighted_fsrs_items(items);
         let batcher = FSRSBatcher::new(self.device());
         let mut all_predictions_self = vec![];
         let mut all_predictions_other = vec![];
@@ -499,17 +498,17 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.211007, 0.037216]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.212817, 0.034676]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.216286, 0.038692]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.217251, 0.036590]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.203049, 0.027558]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.203552, 0.025646]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)

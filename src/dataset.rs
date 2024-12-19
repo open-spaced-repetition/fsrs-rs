@@ -271,7 +271,8 @@ pub(crate) fn sort_items_by_review_length(items: Vec<WeightedFSRSItem>) -> Vec<W
     items
 }
 
-pub(crate) fn simple_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
+#[cfg(test)]
+pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
     items
         .into_iter()
         .map(|item| WeightedFSRSItem { weight: 1.0, item })
@@ -300,7 +301,7 @@ mod tests {
     fn from_anki() {
         use burn::data::dataloader::Dataset;
 
-        let dataset = FSRSDataset::from(sort_items_by_review_length(simple_weighted_fsrs_items(
+        let dataset = FSRSDataset::from(sort_items_by_review_length(constant_weighted_fsrs_items(
             anki21_sample_file_converted_to_fsrs(),
         )));
         assert_eq!(
