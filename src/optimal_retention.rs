@@ -192,6 +192,15 @@ pub fn simulate(
                 .into_iter()
                 .filter(|card| card.stability > 1e-9),
         );
+
+        for card in &cards {
+            let upper = min(card.due as usize, learn_span);
+            let elapsed_days = -card.last_date;
+            for i in 0..upper {
+                memorized_cnt_per_day[i] +=
+                    power_forgetting_curve(elapsed_days + i as f32, card.stability);
+            }
+        }
     }
 
     if learn_limit > 0 {
@@ -933,9 +942,18 @@ mod tests {
                 last_date: -2.0,
                 due: 0.0,
             },
+            Card {
+                difficulty: 5.0,
+                stability: 2.0,
+                last_date: -2.0,
+                due: 1.0,
+            },
         ];
-        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
-        dbg!(memorization);
+        let (memorized_cnt_per_day, review_cnt_per_day, learn_cnt_per_day, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(memorized_cnt_per_day[0], 62.9);
+        assert_eq!(review_cnt_per_day[0], 2);
+        assert_eq!(learn_cnt_per_day[0], 60);
         Ok(())
     }
 
