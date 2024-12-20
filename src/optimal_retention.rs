@@ -192,6 +192,15 @@ pub fn simulate(
                 .into_iter()
                 .filter(|card| card.stability > 1e-9),
         );
+
+        for card in &cards {
+            let upper = min(card.due as usize, learn_span);
+            let elapsed_days = -card.last_date;
+            for i in 0..upper {
+                memorized_cnt_per_day[i] +=
+                    power_forgetting_curve(elapsed_days + i as f32, card.stability);
+            }
+        }
     }
 
     if learn_limit > 0 {
@@ -306,12 +315,12 @@ pub fn simulate(
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
+        }
 
-            let upper = min(ivl as usize, learn_span - day_index);
-            for i in 0..upper {
-                memorized_cnt_per_day[day_index + i] +=
-                    power_forgetting_curve(i as f32, card.stability);
-            }
+        let upper = min(ivl as usize, learn_span - day_index);
+        for i in 0..upper {
+            memorized_cnt_per_day[day_index + i] +=
+                power_forgetting_curve(i as f32, card.stability);
         }
 
         // dbg!(ivl);
@@ -906,7 +915,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6911.91
+            7004.319
         );
         Ok(())
     }
@@ -933,9 +942,24 @@ mod tests {
                 last_date: -2.0,
                 due: 0.0,
             },
+            Card {
+                difficulty: 5.0,
+                stability: 2.0,
+                last_date: -2.0,
+                due: 1.0,
+            },
+            Card {
+                difficulty: 5.0,
+                stability: 2.0,
+                last_date: -8.0,
+                due: -1.0,
+            },
         ];
-        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
-        dbg!(memorization);
+        let (memorized_cnt_per_day, review_cnt_per_day, learn_cnt_per_day, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(memorized_cnt_per_day[0], 63.9);
+        assert_eq!(review_cnt_per_day[0], 3);
+        assert_eq!(learn_cnt_per_day[0], 60);
         Ok(())
     }
 
@@ -1026,7 +1050,7 @@ mod tests {
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6559.517);
+        assert_eq!(results.0[results.0.len() - 1], 6619.07);
         Ok(())
     }
 
@@ -1079,7 +1103,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.84458643);
+        assert_eq!(optimal_retention, 0.8372485);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
