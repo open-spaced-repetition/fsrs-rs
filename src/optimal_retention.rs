@@ -948,11 +948,17 @@ mod tests {
                 last_date: -2.0,
                 due: 1.0,
             },
+            Card {
+                difficulty: 5.0,
+                stability: 2.0,
+                last_date: -8.0,
+                due: -1.0,
+            },
         ];
         let (memorized_cnt_per_day, review_cnt_per_day, learn_cnt_per_day, _) =
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
-        assert_eq!(memorized_cnt_per_day[0], 62.9);
-        assert_eq!(review_cnt_per_day[0], 2);
+        assert_eq!(memorized_cnt_per_day[0], 63.9);
+        assert_eq!(review_cnt_per_day[0], 3);
         assert_eq!(learn_cnt_per_day[0], 60);
         Ok(())
     }
