@@ -306,12 +306,12 @@ pub fn simulate(
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
+        }
 
-            let upper = min(ivl as usize, learn_span - day_index);
-            for i in 0..upper {
-                memorized_cnt_per_day[day_index + i] +=
-                    power_forgetting_curve(i as f32, card.stability);
-            }
+        let upper = min(ivl as usize, learn_span - day_index);
+        for i in 0..upper {
+            memorized_cnt_per_day[day_index + i] +=
+                power_forgetting_curve(i as f32, card.stability);
         }
 
         // dbg!(ivl);
@@ -906,7 +906,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6911.91
+            7004.319
         );
         Ok(())
     }
@@ -1026,7 +1026,7 @@ mod tests {
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6559.517);
+        assert_eq!(results.0[results.0.len() - 1], 6619.07);
         Ok(())
     }
 
@@ -1079,7 +1079,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.84458643);
+        assert_eq!(optimal_retention, 0.8372485);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
