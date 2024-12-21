@@ -238,7 +238,7 @@ pub fn simulate(
             card_priorities.pop();
             continue;
         }
-        if (review_cnt_per_day[day_index] + 1 > review_limit)
+        if (!is_learn && review_cnt_per_day[day_index] + 1 > review_limit)
             || (is_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
             || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
