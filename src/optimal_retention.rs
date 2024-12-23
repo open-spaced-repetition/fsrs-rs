@@ -425,7 +425,7 @@ impl<B: Backend> FSRS<B> {
 
         let default_sample_size = 16.0;
         let sample_size = match config.learn_span {
-            ..=30 => 180,
+            ..=30 => 256,
             31..365 => {
                 let (a1, a2, a3) = (-3.56e-6, 4.19e-3, -6.41e-2);
                 let factor = (config.learn_span as f32)
