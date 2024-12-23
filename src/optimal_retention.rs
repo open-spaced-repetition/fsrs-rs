@@ -336,9 +336,7 @@ pub fn simulate(
         card.last_date = card.due;
         card.due += ivl;
 
-        if (card.due as usize) <= learn_span {
-            card_priorities.change_priority(&card_index, card_priority(card, false));
-        }
+        card_priorities.change_priority(&card_index, card_priority(card, false));
     }
 
     /*dbg!((
@@ -934,7 +932,7 @@ mod tests {
             deck_size: DECK_SIZE,
             ..Default::default()
         };
-        let (_, review_cnt_per_day_10, _, _) =
+        let (_, review_cnt_per_day_lower, _, _) =
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         let config = SimulatorConfig {
             learn_span: LOWER + 10,
@@ -942,18 +940,19 @@ mod tests {
             deck_size: DECK_SIZE,
             ..Default::default()
         };
-        let (_, review_cnt_per_day_11, _, _) =
+        let (_, review_cnt_per_day_higher, _, _) =
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         // Compare first LOWER items of review_cnt_per_day arrays
         for i in 0..LOWER {
             assert_eq!(
-                review_cnt_per_day_10[i], review_cnt_per_day_11[i],
+                review_cnt_per_day_lower[i], review_cnt_per_day_higher[i],
                 "at index {}",
                 i
             );
         }
         Ok(())
     }
+
     #[test]
     fn simulate_with_existing_cards() -> Result<()> {
         let config = SimulatorConfig {
