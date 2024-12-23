@@ -216,12 +216,15 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn card_priority(card: &Card, learn: bool) -> (usize, bool, usize) {
-        // High difficulty priority as example
-        (-card.due as usize, !learn, -card.difficulty as usize)
+    fn card_priority(card: &Card, learn: bool) -> (i32, bool, i32) {
+        // high priority for early due, review, low difficulty card
+        (-card.due as i32, !learn, -(card.difficulty * 100.0) as i32)
     }
 
     for (i, card) in cards.iter().enumerate() {
+        if card.due >= learn_span as f32 {
+            continue;
+        }
         card_priorities.push(i, card_priority(card, card.last_date == f32::NEG_INFINITY));
     }
 
@@ -915,8 +918,33 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            7004.319
+            6898.48
         );
+        Ok(())
+    }
+
+    #[test]
+    fn changing_learn_span_should_get_same_review_cnt_per_day() -> Result<()> {
+        let config = SimulatorConfig {
+            learn_span: 10,
+            learn_limit: 10,
+            deck_size: 200,
+            ..Default::default()
+        };
+        let (_, review_cnt_per_day_10, _, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let config = SimulatorConfig {
+            learn_span: 11,
+            learn_limit: 10,
+            deck_size: 200,
+            ..Default::default()
+        };
+        let (_, review_cnt_per_day_11, _, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        // Compare first 10 items of review_cnt_per_day arrays
+        for i in 0..10 {
+            assert_eq!(review_cnt_per_day_10[i], review_cnt_per_day_11[i]);
+        }
         Ok(())
     }
 
@@ -1032,8 +1060,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 16, 25, 34, 60, 65, 76, 85, 91, 92, 100, 103, 119, 107, 103, 113, 122, 143, 149,
-                151, 148, 172, 154, 175, 156, 169, 155, 191, 185, 170
+                0, 15, 18, 38, 64, 64, 80, 89, 95, 95, 100, 96, 107, 118, 120, 114, 126, 123, 139,
+                167, 158, 156, 167, 161, 154, 177, 162, 148, 165, 156
             ]
         );
         assert_eq!(
@@ -1050,7 +1078,7 @@ mod tests {
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6619.07);
+        assert_eq!(results.0[results.0.len() - 1], 6460.082);
         Ok(())
     }
 
@@ -1103,7 +1131,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8372485);
+        assert_eq!(optimal_retention, 0.85450846);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1123,7 +1151,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.85450846);
+        assert_eq!(optimal_retention, 0.83750373);
         Ok(())
     }
 
