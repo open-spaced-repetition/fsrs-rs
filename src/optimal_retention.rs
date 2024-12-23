@@ -916,7 +916,7 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6898.48
+            6781.4946
         );
         Ok(())
     }
@@ -1066,7 +1066,7 @@ mod tests {
             results.1.to_vec(),
             vec![
                 0, 15, 18, 38, 64, 64, 80, 89, 95, 95, 100, 96, 107, 118, 120, 114, 126, 123, 139,
-                167, 158, 156, 167, 161, 154, 177, 162, 148, 165, 156
+                167, 158, 156, 167, 161, 154, 178, 163, 151, 160, 151
             ]
         );
         assert_eq!(
@@ -1083,7 +1083,7 @@ mod tests {
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6460.082);
+        assert_eq!(results.0[results.0.len() - 1], 6484.7144);
         Ok(())
     }
 
