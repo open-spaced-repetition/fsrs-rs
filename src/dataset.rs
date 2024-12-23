@@ -286,7 +286,7 @@ pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedF
         .into_iter()
         .enumerate()
         .map(|(idx, item)| WeightedFSRSItem {
-            weight: idx as f32 / length + 0.5,
+            weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
             item,
         })
         .collect()

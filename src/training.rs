@@ -45,12 +45,12 @@ impl<B: Backend> BCELoss<B> {
     ) -> Tensor<B, 1> {
         let loss = (labels.clone() * retentions.clone().log()
             + (-labels + 1) * (-retentions + 1).log())
-            * weights;
+            * weights.clone();
         // info!("loss: {}", &loss);
         match mean {
             Reduction::Mean => loss.mean().neg(),
             Reduction::Sum => loss.sum().neg(),
-            Reduction::Auto => loss.neg(),
+            Reduction::Auto => (loss.sum() / weights.sum()).neg(),
         }
     }
 }

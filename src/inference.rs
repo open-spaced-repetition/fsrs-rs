@@ -263,7 +263,7 @@ impl<B: Backend> FSRS<B> {
         let all_retention = Tensor::cat(all_retention, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
         let all_weights = Tensor::cat(all_weights, 0);
-        let loss = BCELoss::new().forward(all_retention, all_labels, all_weights, Reduction::Mean);
+        let loss = BCELoss::new().forward(all_retention, all_labels, all_weights, Reduction::Auto);
         Ok(ModelEvaluation {
             log_loss: loss.to_data().value[0].elem(),
             rmse_bins: rmse,
@@ -502,22 +502,23 @@ mod tests {
         let items = [pretrainset, trainset].concat();
 
         let fsrs = FSRS::new(Some(&[
-            0.669, 1.679, 4.1355, 9.862, 7.9435, 0.9379, 1.0148, 0.1588, 1.3851, 0.1248, 0.8421,
-            1.992, 0.153, 0.284, 2.4282, 0.2547, 3.1847, 0.2196, 0.1906,
+            0.6032805, 1.3376843, 4.4167747, 9.933699, 7.654044, 0.78219295, 2.336606, 0.001,
+            1.3264198, 0.12967199, 0.82880765, 1.9360433, 0.13298263, 0.27427456, 2.4304862,
+            0.10340813, 3.108867, 0.2114512, 0.2826002,
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.212817, 0.040148]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.206160, 0.025809]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.217251, 0.041336]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.223601, 0.042738]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.203552, 0.029828]);
+        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.208656, 0.030946]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
