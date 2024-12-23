@@ -953,7 +953,7 @@ mod tests {
             );
         }
         Ok(())
-}
+    }
     #[test]
     fn simulate_with_existing_cards() -> Result<()> {
         let config = SimulatorConfig {
