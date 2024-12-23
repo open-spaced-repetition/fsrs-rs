@@ -925,29 +925,35 @@ mod tests {
 
     #[test]
     fn changing_learn_span_should_get_same_review_cnt_per_day() -> Result<()> {
+        const LOWER: usize = 365;
+        const DECK_SIZE: usize = 1000;
+        const LEARN_LIMIT: usize = 10;
         let config = SimulatorConfig {
-            learn_span: 10,
-            learn_limit: 10,
-            deck_size: 200,
+            learn_span: LOWER,
+            learn_limit: LEARN_LIMIT,
+            deck_size: DECK_SIZE,
             ..Default::default()
         };
         let (_, review_cnt_per_day_10, _, _) =
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         let config = SimulatorConfig {
-            learn_span: 11,
-            learn_limit: 10,
-            deck_size: 200,
+            learn_span: LOWER + 10,
+            learn_limit: LEARN_LIMIT,
+            deck_size: DECK_SIZE,
             ..Default::default()
         };
         let (_, review_cnt_per_day_11, _, _) =
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        // Compare first 10 items of review_cnt_per_day arrays
-        for i in 0..10 {
-            assert_eq!(review_cnt_per_day_10[i], review_cnt_per_day_11[i]);
+        // Compare first LOWER items of review_cnt_per_day arrays
+        for i in 0..LOWER {
+            assert_eq!(
+                review_cnt_per_day_10[i], review_cnt_per_day_11[i],
+                "at index {}",
+                i
+            );
         }
         Ok(())
-    }
-
+}
     #[test]
     fn simulate_with_existing_cards() -> Result<()> {
         let config = SimulatorConfig {
