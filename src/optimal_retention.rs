@@ -222,9 +222,6 @@ pub fn simulate(
     }
 
     for (i, card) in cards.iter().enumerate() {
-        if card.due >= learn_span as f32 {
-            continue;
-        }
         card_priorities.push(i, card_priority(card, card.last_date == f32::NEG_INFINITY));
     }
 
