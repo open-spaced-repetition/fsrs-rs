@@ -223,13 +223,15 @@ pub fn simulate(
 
         let is_learn = card.last_date == f32::NEG_INFINITY;
 
+        let last_date_index = card.last_date as usize;
+
         // Guards
         if card.due >= learn_span as f32 {
             if !is_learn {
-                let delta_t = learn_span - card.last_date as usize;
+                let delta_t = learn_span - last_date_index;
                 let pre_sim_days = (-card.last_date) as usize;
                 for i in 0..delta_t {
-                    memorized_cnt_per_day[card.last_date as usize + i] +=
+                    memorized_cnt_per_day[last_date_index + i] +=
                         power_forgetting_curve((pre_sim_days + i) as f32, card.stability);
                 }
             }
@@ -240,7 +242,7 @@ pub fn simulate(
             || (is_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
             || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
-            card.due = card.due.max(0.0) + 1.0;
+            card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(&card_index, card_priority(card, is_learn));
             continue;
         }
@@ -268,11 +270,11 @@ pub fn simulate(
         } else {
             // For review cards
             // Updating delta_t for 'has_learned' cards
-            let delta_t = card.due - card.last_date;
+            let elapsed_days = card.due - card.last_date;
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = power_forgetting_curve(delta_t, card.stability);
+            let retrievability = power_forgetting_curve(elapsed_days, card.stability);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
@@ -315,16 +317,16 @@ pub fn simulate(
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
-            let elapsed_days = day_index - card.last_date as usize;
+            let delta_t = day_index - last_date_index;
             let pre_sim_days = (-card.last_date) as usize;
-            for i in 0..elapsed_days {
-                memorized_cnt_per_day[card.last_date as usize + i] +=
+            for i in 0..delta_t {
+                memorized_cnt_per_day[last_date_index + i] +=
                     power_forgetting_curve((pre_sim_days + i) as f32, last_stability);
             }
         }
 
-        card.last_date = card.due.max(0.0);
-        card.due = card.due.max(0.0) + ivl;
+        card.last_date = day_index as f32;
+        card.due = day_index as f32 + ivl;
 
         card_priorities.change_priority(&card_index, card_priority(card, false));
     }
