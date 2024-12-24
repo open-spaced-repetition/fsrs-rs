@@ -98,19 +98,22 @@ pub(crate) struct FSRSBatch<B: Backend> {
 }
 
 impl<B: Backend> Batcher<WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
-    fn batch(&self, items: Vec<WeightedFSRSItem>) -> FSRSBatch<B> {
-        let pad_size = items
+    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>) -> FSRSBatch<B> {
+        let pad_size = weighted_items
             .iter()
             .map(|x| x.item.reviews.len())
             .max()
             .expect("FSRSItem is empty")
             - 1;
 
-        let (time_histories, rating_histories) = items
+        let (time_histories, rating_histories) = weighted_items
             .iter()
-            .map(|item| {
-                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
-                    item.item.history().map(|r| (r.delta_t, r.rating)).unzip();
+            .map(|weighted_item| {
+                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) = weighted_item
+                    .item
+                    .history()
+                    .map(|r| (r.delta_t, r.rating))
+                    .unzip();
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
                 let delta_t = Tensor::from_data(
@@ -137,10 +140,10 @@ impl<B: Backend> Batcher<WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             })
             .unzip();
 
-        let (delta_ts, labels, weights) = items
+        let (delta_ts, labels, weights) = weighted_items
             .iter()
-            .map(|item| {
-                let current = item.item.current();
+            .map(|weighted_item| {
+                let current = weighted_item.item.current();
                 let delta_t: Tensor<B, 1> =
                     Tensor::from_data(Data::from([current.delta_t.elem()]), &self.device);
                 let label = match current.rating {
@@ -150,7 +153,7 @@ impl<B: Backend> Batcher<WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                 let label: Tensor<B, 1, Int> =
                     Tensor::from_data(Data::from([label.elem()]), &self.device);
                 let weight: Tensor<B, 1> =
-                    Tensor::from_data(Data::from([item.weight.elem()]), &self.device);
+                    Tensor::from_data(Data::from([weighted_item.weight.elem()]), &self.device);
                 (delta_t, label, weight)
             })
             .multiunzip();
@@ -265,13 +268,13 @@ pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSIt
     (pretrainset.clone(), [pretrainset, trainset].concat())
 }
 
-pub(crate) fn sort_items_by_review_length(items: Vec<WeightedFSRSItem>) -> Vec<WeightedFSRSItem> {
-    let mut items = items;
-    items.sort_by_cached_key(|item| item.item.reviews.len());
-    items
+pub(crate) fn sort_items_by_review_length(
+    mut weighted_items: Vec<WeightedFSRSItem>,
+) -> Vec<WeightedFSRSItem> {
+    weighted_items.sort_by_cached_key(|weighted_item| weighted_item.item.reviews.len());
+    weighted_items
 }
 
-#[cfg(test)]
 pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
     items
         .into_iter()
