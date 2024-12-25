@@ -228,7 +228,7 @@ pub fn simulate(
         // Guards
         if card.due >= learn_span as f32 {
             if !is_learn {
-                let delta_t = learn_span - last_date_index;
+                let delta_t = learn_span.max(last_date_index) - last_date_index;
                 let pre_sim_days = (-card.last_date) as usize;
                 for i in 0..delta_t {
                     memorized_cnt_per_day[last_date_index + i] +=
