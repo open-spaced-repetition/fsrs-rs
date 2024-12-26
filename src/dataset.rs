@@ -25,7 +25,7 @@ pub struct FSRSReview {
     pub rating: u32,
     /// The number of days that passed
     /// # Warning
-    /// [`delta_t`] for item first(initial) review must be 0
+    /// `delta_t` for item first(initial) review must be 0
     pub delta_t: u32,
 }
 
