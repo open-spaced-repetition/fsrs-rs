@@ -72,7 +72,7 @@ pub fn next_interval(stability: f32, desired_retention: f32) -> f32 {
 
 impl<B: Backend> FSRS<B> {
     /// Calculate the current memory state for a given card's history of reviews.
-    /// In the case of truncated reviews, [starting_state] can be set to the value of
+    /// In the case of truncated reviews, `starting_state` can be set to the value of
     /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
     /// in FSRSItem). If not provided, the card starts as new.
     /// Parameters must have been provided when calling FSRS::new().
