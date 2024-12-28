@@ -44,6 +44,7 @@ pub struct SimulatorConfig {
     pub loss_aversion: f32,
     pub learn_limit: usize,
     pub review_limit: usize,
+    pub learn_affects_review_limit: bool,
 }
 
 impl Default for SimulatorConfig {
@@ -64,6 +65,7 @@ impl Default for SimulatorConfig {
             loss_aversion: 2.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
+            learn_affects_review_limit: false,
         }
     }
 }
@@ -153,6 +155,7 @@ pub fn simulate(
         loss_aversion,
         learn_limit,
         review_limit,
+        learn_affects_review_limit,
     } = config.clone();
     if deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
@@ -238,7 +241,9 @@ pub fn simulate(
             card_priorities.pop();
             continue;
         }
-        if (!is_learn && review_cnt_per_day[day_index] + 1 > review_limit)
+        if 
+            (learn_affects_review_limit && is_learn && review_cnt_per_day[day_index] + learn_cnt_per_day[day_index] + 1 > review_limit)
+            || (!is_learn && review_cnt_per_day[day_index] + 1 > review_limit)
             || (is_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
             || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
@@ -1011,6 +1016,35 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
 
         assert_eq!(learn_cnt_per_day.to_vec(), vec![3, 3, 3]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_learn_affects_review_limit() -> Result<()> {
+        let config = SimulatorConfig {
+            learn_limit: 3,
+            review_limit: 10,
+            learn_span: 3,
+            learn_affects_review_limit: true,
+            deck_size: 20,
+            ..Default::default()
+        };
+
+        let cards = vec![
+            Card {
+                difficulty: 5.0,
+                stability: 500.0,
+                last_date: -5.0,
+                due: 0.0,
+            };
+            9
+        ];
+
+        let (_, _, learn_cnt_per_day, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        assert_eq!(learn_cnt_per_day.to_vec(), vec![1, 3, 3]);
 
         Ok(())
     }
