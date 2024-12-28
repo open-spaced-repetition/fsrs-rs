@@ -241,11 +241,17 @@ pub fn simulate(
             card_priorities.pop();
             continue;
         }
-        if 
-            (learn_affects_review_limit && is_learn && review_cnt_per_day[day_index] + learn_cnt_per_day[day_index] + 1 > review_limit)
-            || (!is_learn && review_cnt_per_day[day_index] + 1 > review_limit)
-            || (is_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
-            || (cost_per_day[day_index] + fail_cost > max_cost_perday)
+
+        let todays_learn = learn_cnt_per_day[day_index];
+        let todays_review = review_cnt_per_day[day_index];
+
+        if match (learn_affects_review_limit, is_learn) {
+            (true, true) => {
+                todays_learn + todays_review + 1 > review_limit || todays_learn + 1 > learn_limit
+            }
+            (false, true) => todays_learn + 1 > learn_limit,
+            (_, false) => todays_review + 1 > review_limit,
+        } || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
             card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(&card_index, card_priority(card, is_learn));
