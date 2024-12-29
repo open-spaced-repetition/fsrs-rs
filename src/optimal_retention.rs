@@ -44,7 +44,7 @@ pub struct SimulatorConfig {
     pub loss_aversion: f32,
     pub learn_limit: usize,
     pub review_limit: usize,
-    pub learn_affects_review_limit: bool,
+    pub new_cards_ignore_review_limit: bool,
 }
 
 impl Default for SimulatorConfig {
@@ -65,7 +65,7 @@ impl Default for SimulatorConfig {
             loss_aversion: 2.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
-            learn_affects_review_limit: false,
+            new_cards_ignore_review_limit: true,
         }
     }
 }
@@ -155,7 +155,7 @@ pub fn simulate(
         loss_aversion,
         learn_limit,
         review_limit,
-        learn_affects_review_limit,
+        new_cards_ignore_review_limit,
     } = config.clone();
     if deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
@@ -245,11 +245,11 @@ pub fn simulate(
         let todays_learn = learn_cnt_per_day[day_index];
         let todays_review = review_cnt_per_day[day_index];
 
-        if match (learn_affects_review_limit, is_learn) {
-            (true, true) => {
+        if match (new_cards_ignore_review_limit, is_learn) {
+            (true, true) => todays_learn + 1 > learn_limit,
+            (false, true) => {
                 todays_learn + todays_review + 1 > review_limit || todays_learn + 1 > learn_limit
             }
-            (false, true) => todays_learn + 1 > learn_limit,
             (_, false) => todays_review + 1 > review_limit,
         } || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
@@ -1027,12 +1027,12 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_learn_affects_review_limit() -> Result<()> {
+    fn simulate_with_new_affects_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_limit: 3,
             review_limit: 10,
             learn_span: 3,
-            learn_affects_review_limit: true,
+            new_cards_ignore_review_limit: false,
             deck_size: 20,
             ..Default::default()
         };
