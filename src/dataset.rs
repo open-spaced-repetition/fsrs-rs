@@ -19,13 +19,19 @@ pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct WeightedFSRSItem {
+    pub weight: f32,
+    pub item: FSRSItem,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FSRSReview {
     /// 1-4
     pub rating: u32,
     /// The number of days that passed
     /// # Warning
-    /// [`delta_t`] for item first(initial) review must be 0
+    /// `delta_t` for item first(initial) review must be 0
     pub delta_t: u32,
 }
 
@@ -88,22 +94,26 @@ pub(crate) struct FSRSBatch<B: Backend> {
     pub r_historys: Tensor<B, 2, Float>,
     pub delta_ts: Tensor<B, 1, Float>,
     pub labels: Tensor<B, 1, Int>,
+    pub weights: Tensor<B, 1, Float>,
 }
 
-impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
-    fn batch(&self, items: Vec<FSRSItem>) -> FSRSBatch<B> {
-        let pad_size = items
+impl<B: Backend> Batcher<WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
+    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>) -> FSRSBatch<B> {
+        let pad_size = weighted_items
             .iter()
-            .map(|x| x.reviews.len())
+            .map(|x| x.item.reviews.len())
             .max()
             .expect("FSRSItem is empty")
             - 1;
 
-        let (time_histories, rating_histories) = items
+        let (time_histories, rating_histories) = weighted_items
             .iter()
-            .map(|item| {
-                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
-                    item.history().map(|r| (r.delta_t, r.rating)).unzip();
+            .map(|weighted_item| {
+                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) = weighted_item
+                    .item
+                    .history()
+                    .map(|r| (r.delta_t, r.rating))
+                    .unzip();
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
                 let delta_t = Tensor::from_data(
@@ -130,19 +140,23 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             })
             .unzip();
 
-        let (delta_ts, labels) = items
+        let (delta_ts, labels, weights) = weighted_items
             .iter()
-            .map(|item| {
-                let current = item.current();
-                let delta_t = Tensor::from_data(Data::from([current.delta_t.elem()]), &self.device);
+            .map(|weighted_item| {
+                let current = weighted_item.item.current();
+                let delta_t: Tensor<B, 1> =
+                    Tensor::from_data(Data::from([current.delta_t.elem()]), &self.device);
                 let label = match current.rating {
                     1 => 0.0,
                     _ => 1.0,
                 };
-                let label = Tensor::from_data(Data::from([label.elem()]), &self.device);
-                (delta_t, label)
+                let label: Tensor<B, 1, Int> =
+                    Tensor::from_data(Data::from([label.elem()]), &self.device);
+                let weight: Tensor<B, 1> =
+                    Tensor::from_data(Data::from([weighted_item.weight.elem()]), &self.device);
+                (delta_t, label, weight)
             })
-            .unzip();
+            .multiunzip();
 
         let t_historys = Tensor::cat(time_histories, 0)
             .transpose()
@@ -152,6 +166,7 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .to_device(&self.device); // [seq_len, batch_size]
         let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);
         let labels = Tensor::cat(labels, 0).to_device(&self.device);
+        let weights = Tensor::cat(weights, 0).to_device(&self.device);
 
         // dbg!(&items[0].t_history);
         // dbg!(&t_historys);
@@ -161,27 +176,28 @@ impl<B: Backend> Batcher<FSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             r_historys,
             delta_ts,
             labels,
+            weights,
         }
     }
 }
 
 pub(crate) struct FSRSDataset {
-    pub(crate) items: Vec<FSRSItem>,
+    pub(crate) items: Vec<WeightedFSRSItem>,
 }
 
-impl Dataset<FSRSItem> for FSRSDataset {
+impl Dataset<WeightedFSRSItem> for FSRSDataset {
     fn len(&self) -> usize {
         self.items.len()
     }
 
-    fn get(&self, index: usize) -> Option<FSRSItem> {
+    fn get(&self, index: usize) -> Option<WeightedFSRSItem> {
         // info!("get {}", index);
         self.items.get(index).cloned()
     }
 }
 
-impl From<Vec<FSRSItem>> for FSRSDataset {
-    fn from(items: Vec<FSRSItem>) -> Self {
+impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
+    fn from(items: Vec<WeightedFSRSItem>) -> Self {
         Self { items }
     }
 }
@@ -252,6 +268,33 @@ pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSIt
     (pretrainset.clone(), [pretrainset, trainset].concat())
 }
 
+pub(crate) fn sort_items_by_review_length(
+    mut weighted_items: Vec<WeightedFSRSItem>,
+) -> Vec<WeightedFSRSItem> {
+    weighted_items.sort_by_cached_key(|weighted_item| weighted_item.item.reviews.len());
+    weighted_items
+}
+
+pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
+    items
+        .into_iter()
+        .map(|item| WeightedFSRSItem { weight: 1.0, item })
+        .collect()
+}
+
+/// The input items should be sorted by the review timestamp.
+pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
+    let length = items.len() as f32;
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(idx, item)| WeightedFSRSItem {
+            weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
+            item,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,19 +304,21 @@ mod tests {
     fn from_anki() {
         use burn::data::dataloader::Dataset;
 
-        let dataset = FSRSDataset::from(anki21_sample_file_converted_to_fsrs());
+        let dataset = FSRSDataset::from(sort_items_by_review_length(constant_weighted_fsrs_items(
+            anki21_sample_file_converted_to_fsrs(),
+        )));
         assert_eq!(
-            dataset.get(704).unwrap(),
+            dataset.get(704).unwrap().item,
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
-                        rating: 3,
-                        delta_t: 0,
+                        rating: 4,
+                        delta_t: 0
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 1,
-                    },
+                        delta_t: 3
+                    }
                 ],
             }
         );
@@ -435,6 +480,10 @@ mod tests {
                 ],
             },
         ];
+        let items = items
+            .into_iter()
+            .map(|item| WeightedFSRSItem { weight: 1.0, item })
+            .collect();
         let batch = batcher.batch(items);
         assert_eq!(
             batch.t_historys.to_data(),

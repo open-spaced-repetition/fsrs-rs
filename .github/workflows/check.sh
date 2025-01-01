@@ -2,11 +2,7 @@
 
 set -eux -o pipefail
 
-cargo fmt --check || (
-    echo
-    echo "Please run 'cargo fmt' to format the code."
-    exit 1
-)
+cargo fmt --check
 
 cargo clippy -- -Dwarnings
 
@@ -14,6 +10,8 @@ install -d tests/data/
 pushd tests/data/
 wget https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
 unzip *.zip
+
+RUSTDOCFLAGS="-D warnings" cargo doc --release
 
 cargo install cargo-llvm-cov --locked
 SKIP_TRAINING=1 cargo llvm-cov --release

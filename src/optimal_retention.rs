@@ -14,6 +14,14 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 
+#[derive(Debug)]
+pub struct SimulationResult {
+    pub memorized_cnt_per_day: Array1<f32>,
+    pub review_cnt_per_day: Array1<usize>,
+    pub learn_cnt_per_day: Array1<usize>,
+    pub cost_per_day: Array1<f32>,
+}
+
 trait Round {
     fn to_2_decimal(self) -> f32;
 }
@@ -44,6 +52,7 @@ pub struct SimulatorConfig {
     pub loss_aversion: f32,
     pub learn_limit: usize,
     pub review_limit: usize,
+    pub new_cards_ignore_review_limit: bool,
 }
 
 impl Default for SimulatorConfig {
@@ -64,6 +73,7 @@ impl Default for SimulatorConfig {
             loss_aversion: 2.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
+            new_cards_ignore_review_limit: true,
         }
     }
 }
@@ -127,14 +137,13 @@ pub struct Card {
     pub due: f32,
 }
 
-#[allow(clippy::type_complexity)]
 pub fn simulate(
     config: &SimulatorConfig,
     w: &Parameters,
     desired_retention: f32,
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
-) -> Result<(Array1<f32>, Array1<usize>, Array1<usize>, Array1<f32>), FSRSError> {
+) -> Result<SimulationResult, FSRSError> {
     let w = &check_and_fill_parameters(w)?;
     let w = &clip_parameters(w);
     let SimulatorConfig {
@@ -153,6 +162,7 @@ pub fn simulate(
         loss_aversion,
         learn_limit,
         review_limit,
+        new_cards_ignore_review_limit,
     } = config.clone();
     if deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
@@ -238,9 +248,17 @@ pub fn simulate(
             card_priorities.pop();
             continue;
         }
-        if (!is_learn && review_cnt_per_day[day_index] + 1 > review_limit)
-            || (is_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
-            || (cost_per_day[day_index] + fail_cost > max_cost_perday)
+
+        let todays_learn = learn_cnt_per_day[day_index];
+        let todays_review = review_cnt_per_day[day_index];
+
+        if match (new_cards_ignore_review_limit, is_learn) {
+            (true, true) => todays_learn + 1 > learn_limit,
+            (false, true) => {
+                todays_learn + todays_review + 1 > review_limit || todays_learn + 1 > learn_limit
+            }
+            (_, false) => todays_review + 1 > review_limit,
+        } || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
             card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(&card_index, card_priority(card, is_learn));
@@ -338,12 +356,12 @@ pub fn simulate(
         &cost_per_day[learn_span - 1],
     ));*/
 
-    Ok((
+    Ok(SimulationResult {
         memorized_cnt_per_day,
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
-    ))
+    })
 }
 
 fn sample<F>(
@@ -362,7 +380,11 @@ where
     let results: Result<Vec<f32>, FSRSError> = (0..n)
         .into_par_iter()
         .map(|i| {
-            let (memorized_cnt_per_day, _, _, cost_per_day) = simulate(
+            let SimulationResult {
+                memorized_cnt_per_day,
+                cost_per_day,
+                ..
+            } = simulate(
                 config,
                 parameters,
                 desired_retention,
@@ -904,8 +926,10 @@ mod tests {
     #[test]
     fn simulator() -> Result<()> {
         let config = SimulatorConfig::default();
-        let (memorized_cnt_per_day, _, _, _) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let SimulationResult {
+            memorized_cnt_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             6781.493
@@ -924,16 +948,20 @@ mod tests {
             deck_size: DECK_SIZE,
             ..Default::default()
         };
-        let (_, review_cnt_per_day_lower, _, _) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let SimulationResult {
+            review_cnt_per_day: review_cnt_per_day_lower,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         let config = SimulatorConfig {
             learn_span: LOWER + 10,
             learn_limit: LEARN_LIMIT,
             deck_size: DECK_SIZE,
             ..Default::default()
         };
-        let (_, review_cnt_per_day_higher, _, _) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let SimulationResult {
+            review_cnt_per_day: review_cnt_per_day_higher,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         // Compare first LOWER items of review_cnt_per_day arrays
         for i in 0..LOWER {
             assert_eq!(
@@ -980,8 +1008,12 @@ mod tests {
                 due: -1.0,
             },
         ];
-        let (memorized_cnt_per_day, review_cnt_per_day, learn_cnt_per_day, _) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        let SimulationResult {
+            memorized_cnt_per_day,
+            review_cnt_per_day,
+            learn_cnt_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
         assert_eq!(memorized_cnt_per_day[0], 63.9);
         assert_eq!(review_cnt_per_day[0], 3);
         assert_eq!(learn_cnt_per_day[0], 60);
@@ -1007,10 +1039,41 @@ mod tests {
             9
         ];
 
-        let (_, _, learn_cnt_per_day, _) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        let SimulationResult {
+            learn_cnt_per_day, ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
 
         assert_eq!(learn_cnt_per_day.to_vec(), vec![3, 3, 3]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_new_affects_review_limit() -> Result<()> {
+        let config = SimulatorConfig {
+            learn_limit: 3,
+            review_limit: 10,
+            learn_span: 3,
+            new_cards_ignore_review_limit: false,
+            deck_size: 20,
+            ..Default::default()
+        };
+
+        let cards = vec![
+            Card {
+                difficulty: 5.0,
+                stability: 500.0,
+                last_date: -5.0,
+                due: 0.0,
+            };
+            9
+        ];
+
+        let SimulationResult {
+            learn_cnt_per_day, ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        assert_eq!(learn_cnt_per_day.to_vec(), vec![1, 3, 3]);
 
         Ok(())
     }
@@ -1021,7 +1084,7 @@ mod tests {
         const REVIEW_COST: f32 = 43.;
 
         let config = SimulatorConfig {
-            deck_size: 1, // 1 learn card, 1
+            deck_size: 1,
             learn_costs: [LEARN_COST; 4],
             review_costs: [REVIEW_COST; 4],
             learn_span: 1,
@@ -1035,11 +1098,16 @@ mod tests {
             due: 0.0,
         }];
 
-        let (_, _, _, cost_per_day_learn) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let SimulationResult {
+            cost_per_day: cost_per_day_learn,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(cost_per_day_learn[0], LEARN_COST);
-        let (_, _, _, cost_per_day_review) =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        let SimulationResult {
+            cost_per_day: cost_per_day_review,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
         assert_eq!(cost_per_day_review[0], REVIEW_COST);
         Ok(())
     }
@@ -1053,16 +1121,20 @@ mod tests {
             max_cost_perday: f32::INFINITY,
             ..Default::default()
         };
-        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let SimulationResult {
+            review_cnt_per_day,
+            learn_cnt_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
-            results.1.to_vec(),
+            review_cnt_per_day.to_vec(),
             vec![
                 0, 15, 18, 38, 64, 64, 80, 89, 95, 95, 100, 96, 107, 118, 120, 114, 126, 123, 139,
                 167, 158, 156, 167, 161, 154, 178, 163, 151, 160, 151
             ]
         );
         assert_eq!(
-            results.2.to_vec(),
+            learn_cnt_per_day.to_vec(),
             vec![config.learn_limit; config.learn_span]
         );
         Ok(())
@@ -1074,8 +1146,14 @@ mod tests {
             max_ivl: 100.0,
             ..Default::default()
         };
-        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6487.4004);
+        let SimulationResult {
+            memorized_cnt_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(
+            memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
+            6487.4004
+        );
         Ok(())
     }
 
