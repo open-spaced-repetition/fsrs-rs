@@ -1,6 +1,9 @@
 use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader};
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{prepare_training_data, FSRSDataset, FSRSItem};
+use crate::dataset::{
+    prepare_training_data, recency_weighted_fsrs_items, sort_items_by_review_length, FSRSDataset,
+    FSRSItem,
+};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
@@ -37,15 +40,17 @@ impl<B: Backend> BCELoss<B> {
         &self,
         retentions: Tensor<B, 1>,
         labels: Tensor<B, 1>,
+        weights: Tensor<B, 1>,
         mean: Reduction,
     ) -> Tensor<B, 1> {
-        let loss =
-            labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
+        let loss = (labels.clone() * retentions.clone().log()
+            + (-labels + 1) * (-retentions + 1).log())
+            * weights.clone();
         // info!("loss: {}", &loss);
         match mean {
             Reduction::Mean => loss.mean().neg(),
             Reduction::Sum => loss.sum().neg(),
-            Reduction::Auto => loss.neg(),
+            Reduction::Auto => (loss.sum() / weights.sum()).neg(),
         }
     }
 }
@@ -57,13 +62,14 @@ impl<B: Backend> Model<B> {
         r_historys: Tensor<B, 2>,
         delta_ts: Tensor<B, 1>,
         labels: Tensor<B, 1, Int>,
+        weights: Tensor<B, 1>,
         reduce: Reduction,
     ) -> Tensor<B, 1> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
         let retention = self.power_forgetting_curve(delta_ts, state.stability);
-        BCELoss::new().forward(retention, labels.float(), reduce)
+        BCELoss::new().forward(retention, labels.float(), weights, reduce)
     }
 }
 
@@ -247,7 +253,6 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new().with_epsilon(1e-8),
         );
         train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
-        train_set.sort_by_cached_key(|item| item.reviews.len());
 
         if let Some(progress) = &progress {
             let progress_state = ProgressState {
@@ -318,7 +323,6 @@ impl<B: Backend> FSRS<B> {
             AdamConfig::new().with_epsilon(1e-8),
         );
         train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
-        train_set.sort_by_cached_key(|item| item.reviews.len());
         let model =
             train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
         let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
@@ -338,14 +342,18 @@ fn train<B: AutodiffBackend>(
     // Training data
     let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
     let batch_dataset = BatchTensorDataset::<B>::new(
-        FSRSDataset::from(train_set),
+        FSRSDataset::from(sort_items_by_review_length(recency_weighted_fsrs_items(
+            train_set,
+        ))),
         config.batch_size,
         device.clone(),
     );
     let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
 
     let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
-        FSRSDataset::from(test_set.clone()),
+        FSRSDataset::from(sort_items_by_review_length(recency_weighted_fsrs_items(
+            test_set.clone(),
+        ))),
         config.batch_size,
         device,
     );
@@ -378,6 +386,7 @@ fn train<B: AutodiffBackend>(
                 item.r_historys,
                 item.delta_ts,
                 item.labels,
+                item.weights,
                 Reduction::Sum,
             );
             let mut gradients = loss.backward();
@@ -415,6 +424,7 @@ fn train<B: AutodiffBackend>(
                 batch.r_historys,
                 batch.delta_ts,
                 batch.labels,
+                batch.weights,
                 Reduction::Sum,
             );
             let loss = loss.into_data().convert::<f64>().value[0];
@@ -509,6 +519,7 @@ mod tests {
             ),
             delta_ts: Tensor::from_floats(Data::from([4.0, 11.0, 12.0, 23.0]), &device),
             labels: Tensor::from_ints(Data::from([1, 1, 1, 0]), &device),
+            weights: Tensor::from_floats(Data::from([1.0, 1.0, 1.0, 1.0]), &device),
         };
 
         let loss = model.forward_classification(
@@ -516,6 +527,7 @@ mod tests {
             item.r_historys,
             item.delta_ts,
             item.labels,
+            item.weights,
             Reduction::Sum,
         );
 
@@ -575,6 +587,7 @@ mod tests {
             ),
             delta_ts: Tensor::from_floats(Data::from([4.0, 11.0, 12.0, 23.0]), &device),
             labels: Tensor::from_ints(Data::from([1, 1, 1, 0]), &device),
+            weights: Tensor::from_floats(Data::from([1.0, 1.0, 1.0, 1.0]), &device),
         };
 
         let loss = model.forward_classification(
@@ -582,6 +595,7 @@ mod tests {
             item.r_historys,
             item.delta_ts,
             item.labels,
+            item.weights,
             Reduction::Sum,
         );
         assert_eq!(loss.clone().into_data().convert::<f32>().value[0], 4.176347);

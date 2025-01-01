@@ -12,7 +12,6 @@ use rand::Rng;
 use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use std::cmp::min;
 use std::collections::HashMap;
 
 trait Round {
@@ -207,9 +206,9 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn card_priority(card: &Card, learn: bool) -> (usize, bool, usize) {
-        // High difficulty priority as example
-        (-card.due as usize, !learn, -card.difficulty as usize)
+    fn card_priority(card: &Card, learn: bool) -> (i32, bool, i32) {
+        // high priority for early due, review, low difficulty card
+        (-card.due as i32, !learn, -(card.difficulty * 100.0) as i32)
     }
 
     for (i, card) in cards.iter().enumerate() {
@@ -224,16 +223,26 @@ pub fn simulate(
 
         let is_learn = card.last_date == f32::NEG_INFINITY;
 
+        let last_date_index = card.last_date as usize;
+
         // Guards
         if card.due >= learn_span as f32 {
+            if !is_learn {
+                let delta_t = learn_span.max(last_date_index) - last_date_index;
+                let pre_sim_days = (-card.last_date) as usize;
+                for i in 0..delta_t {
+                    memorized_cnt_per_day[last_date_index + i] +=
+                        power_forgetting_curve((pre_sim_days + i) as f32, card.stability);
+                }
+            }
             card_priorities.pop();
             continue;
         }
-        if (review_cnt_per_day[day_index] + 1 > review_limit)
+        if (!is_learn && review_cnt_per_day[day_index] + 1 > review_limit)
             || (is_learn && learn_cnt_per_day[day_index] + 1 > learn_limit)
             || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
-            card.due += 1.;
+            card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(&card_index, card_priority(card, is_learn));
             continue;
         }
@@ -261,10 +270,11 @@ pub fn simulate(
         } else {
             // For review cards
             // Updating delta_t for 'has_learned' cards
-            let delta_t = card.due - card.last_date;
+            let elapsed_days = card.due - card.last_date;
+            let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = power_forgetting_curve(delta_t, card.stability);
+            let retrievability = power_forgetting_curve(elapsed_days, card.stability);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
@@ -281,10 +291,10 @@ pub fn simulate(
             // Update stability
             card.stability = if forget {
                 let post_lapse_stab =
-                    stability_after_failure(w, card.stability, retrievability, card.difficulty);
+                    stability_after_failure(w, last_stability, retrievability, card.difficulty);
                 stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len)
             } else {
-                stability_after_success(w, card.stability, retrievability, card.difficulty, rating)
+                stability_after_success(w, last_stability, retrievability, card.difficulty, rating)
             };
 
             // Update difficulty for review cards
@@ -307,26 +317,18 @@ pub fn simulate(
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
-            let upper = min(ivl as usize, learn_span - day_index);
-            for i in 0..upper {
-                memorized_cnt_per_day[day_index + i] +=
-                    power_forgetting_curve(i as f32, card.stability);
+            let delta_t = day_index - last_date_index;
+            let pre_sim_days = (-card.last_date) as usize;
+            for i in 0..delta_t {
+                memorized_cnt_per_day[last_date_index + i] +=
+                    power_forgetting_curve((pre_sim_days + i) as f32, last_stability);
             }
         }
 
-        // dbg!(ivl);
+        card.last_date = day_index as f32;
+        card.due = day_index as f32 + ivl;
 
-        // Update 'cost' based on 'forget' and 'rating'
-
-        // dbg!(&review_cnt_per_day);
-
-        // +1 because the day index is one less than the actual day as today is not graphed.
-        card.last_date = card.due;
-        card.due += ivl;
-
-        if (card.due as usize) <= learn_span {
-            card_priorities.change_priority(&card_index, card_priority(card, false));
-        }
+        card_priorities.change_priority(&card_index, card_priority(card, false));
     }
 
     /*dbg!((
@@ -906,8 +908,40 @@ mod tests {
             simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6911.91
+            6781.493
         );
+        Ok(())
+    }
+
+    #[test]
+    fn changing_learn_span_should_get_same_review_cnt_per_day() -> Result<()> {
+        const LOWER: usize = 365;
+        const DECK_SIZE: usize = 1000;
+        const LEARN_LIMIT: usize = 10;
+        let config = SimulatorConfig {
+            learn_span: LOWER,
+            learn_limit: LEARN_LIMIT,
+            deck_size: DECK_SIZE,
+            ..Default::default()
+        };
+        let (_, review_cnt_per_day_lower, _, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let config = SimulatorConfig {
+            learn_span: LOWER + 10,
+            learn_limit: LEARN_LIMIT,
+            deck_size: DECK_SIZE,
+            ..Default::default()
+        };
+        let (_, review_cnt_per_day_higher, _, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        // Compare first LOWER items of review_cnt_per_day arrays
+        for i in 0..LOWER {
+            assert_eq!(
+                review_cnt_per_day_lower[i], review_cnt_per_day_higher[i],
+                "at index {}",
+                i
+            );
+        }
         Ok(())
     }
 
@@ -933,9 +967,24 @@ mod tests {
                 last_date: -2.0,
                 due: 0.0,
             },
+            Card {
+                difficulty: 5.0,
+                stability: 2.0,
+                last_date: -2.0,
+                due: 1.0,
+            },
+            Card {
+                difficulty: 5.0,
+                stability: 2.0,
+                last_date: -8.0,
+                due: -1.0,
+            },
         ];
-        let memorization = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
-        dbg!(memorization);
+        let (memorized_cnt_per_day, review_cnt_per_day, learn_cnt_per_day, _) =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(memorized_cnt_per_day[0], 63.9);
+        assert_eq!(review_cnt_per_day[0], 3);
+        assert_eq!(learn_cnt_per_day[0], 60);
         Ok(())
     }
 
@@ -1008,8 +1057,8 @@ mod tests {
         assert_eq!(
             results.1.to_vec(),
             vec![
-                0, 16, 25, 34, 60, 65, 76, 85, 91, 92, 100, 103, 119, 107, 103, 113, 122, 143, 149,
-                151, 148, 172, 154, 175, 156, 169, 155, 191, 185, 170
+                0, 15, 18, 38, 64, 64, 80, 89, 95, 95, 100, 96, 107, 118, 120, 114, 126, 123, 139,
+                167, 158, 156, 167, 161, 154, 178, 163, 151, 160, 151
             ]
         );
         assert_eq!(
@@ -1026,7 +1075,7 @@ mod tests {
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(results.0[results.0.len() - 1], 6559.517);
+        assert_eq!(results.0[results.0.len() - 1], 6487.4004);
         Ok(())
     }
 
@@ -1079,7 +1128,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.84458643);
+        assert_eq!(optimal_retention, 0.85450846);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1099,7 +1148,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.85450846);
+        assert_eq!(optimal_retention, 0.83750373);
         Ok(())
     }
 
