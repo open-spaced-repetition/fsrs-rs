@@ -184,8 +184,8 @@ pub(crate) fn smooth_and_fill(
         }
     }
 
-    let w1 = 3.0 / 5.0;
-    let w2 = 3.0 / 5.0;
+    let w1 = 0.41;
+    let w2 = 0.54;
 
     let mut init_s0 = vec![];
 
