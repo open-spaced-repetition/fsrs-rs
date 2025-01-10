@@ -89,7 +89,7 @@ impl<B: Backend> Model<B> {
             .powi_scalar(2)
             .div(params_stddev.powi_scalar(2))
             .sum()
-            .mul_scalar(batch_size as f64 / total_size as f64 * gamma)
+            .mul_scalar(gamma * batch_size as f64 / total_size as f64)
     }
 }
 
@@ -210,7 +210,7 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
     #[config(default = 64)]
     pub max_seq_len: usize,
-    #[config(default = 0.0)]
+    #[config(default = 2.0)]
     pub gamma: f64,
 }
 
@@ -608,7 +608,35 @@ mod tests {
 
         let penalty =
             model.l2_regularization(init_w.clone(), params_stddev.clone(), 512, 1000, 2.0);
-        assert_eq!(penalty.into_data().convert::<f32>().value[0], 0.64689976);
+        assert_eq!(
+            penalty.clone().into_data().convert::<f32>().value[0],
+            0.64689976
+        );
+
+        let gradients = penalty.backward();
+        let w_grad = model.w.grad(&gradients).unwrap();
+        Data::from([
+            0.0018749383,
+            0.00090389,
+            0.00026177685,
+            -0.00010645759,
+            0.27080965,
+            -1.0448978,
+            -0.18249036,
+            5.688889,
+            -0.5119995,
+            2.528395,
+            -0.7086509,
+            1.1237301,
+            -12.799997,
+            4.179591,
+            0.25213587,
+            1.3107198,
+            -0.07721739,
+            -1.1237309,
+            -0.5385926,
+        ])
+        .assert_approx_eq(&w_grad.clone().into_data(), 5);
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
