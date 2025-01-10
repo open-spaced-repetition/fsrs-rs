@@ -26,6 +26,11 @@ use log::info;
 
 use std::sync::{Arc, Mutex};
 
+pub static PARAMS_STDDEV: [f32; 19] = [
+    6.61, 9.52, 17.69, 27.74, 0.55, 0.28, 0.67, 0.12, 0.4, 0.18, 0.34, 0.27, 0.08, 0.14, 0.57,
+    0.25, 1.03, 0.27, 0.39,
+];
+
 pub struct BCELoss<B: Backend> {
     backend: PhantomData<B>,
 }
@@ -70,6 +75,21 @@ impl<B: Backend> Model<B> {
         let state = self.forward(t_historys, r_historys, None);
         let retention = self.power_forgetting_curve(delta_ts, state.stability);
         BCELoss::new().forward(retention, labels.float(), weights, reduce)
+    }
+
+    pub(crate) fn l2_regularization(
+        &self,
+        init_w: Tensor<B, 1>,
+        params_stddev: Tensor<B, 1>,
+        batch_size: usize,
+        total_size: usize,
+        gamma: f64,
+    ) -> Tensor<B, 1> {
+        (self.w.val() - init_w)
+            .powi_scalar(2)
+            .div(params_stddev.powi_scalar(2))
+            .sum()
+            .mul_scalar(batch_size as f64 / total_size as f64 * gamma)
     }
 }
 
@@ -190,6 +210,8 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
     #[config(default = 64)]
     pub max_seq_len: usize,
+    #[config(default = 2.0)]
+    pub gamma: f64,
 }
 
 pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -340,7 +362,8 @@ fn train<B: AutodiffBackend>(
     B::seed(config.seed);
 
     // Training data
-    let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
+    let total_size = train_set.len();
+    let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
     let batch_dataset = BatchTensorDataset::<B>::new(
         FSRSDataset::from(sort_items_by_review_length(recency_weighted_fsrs_items(
             train_set,
@@ -355,7 +378,7 @@ fn train<B: AutodiffBackend>(
             test_set.clone(),
         ))),
         config.batch_size,
-        device,
+        device.clone(),
     );
     let dataloader_valid = ShuffleDataLoader::new(batch_dataset, config.seed);
 
@@ -370,6 +393,8 @@ fn train<B: AutodiffBackend>(
     };
 
     let mut model: Model<B> = config.model.init();
+    let init_w = model.w.val();
+    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
     let mut best_loss = f64::INFINITY;
@@ -381,6 +406,13 @@ fn train<B: AutodiffBackend>(
             iteration += 1;
             let lr = LrScheduler::<B>::step(&mut lr_scheduler);
             let progress = iterator.progress();
+            let penalty = model.l2_regularization(
+                init_w.clone(),
+                params_stddev.clone(),
+                config.batch_size,
+                total_size,
+                config.gamma,
+            );
             let loss = model.forward_classification(
                 item.t_historys,
                 item.r_historys,
@@ -389,7 +421,7 @@ fn train<B: AutodiffBackend>(
                 item.weights,
                 Reduction::Sum,
             );
-            let mut gradients = loss.backward();
+            let mut gradients = (loss + penalty).backward();
             if model.config.freeze_initial_stability {
                 gradients = model.freeze_initial_stability(gradients);
             }
@@ -419,6 +451,13 @@ fn train<B: AutodiffBackend>(
         let model_valid = model.valid();
         let mut loss_valid = 0.0;
         for batch in dataloader_valid.iter() {
+            let penalty = model_valid.l2_regularization(
+                init_w.valid(),
+                params_stddev.valid(),
+                config.batch_size,
+                total_size,
+                config.gamma,
+            );
             let loss = model_valid.forward_classification(
                 batch.t_historys,
                 batch.r_historys,
@@ -428,7 +467,8 @@ fn train<B: AutodiffBackend>(
                 Reduction::Sum,
             );
             let loss = loss.into_data().convert::<f64>().value[0];
-            loss_valid += loss;
+            let penalty = penalty.into_data().convert::<f64>().value[0];
+            loss_valid += loss + penalty;
 
             if interrupter.should_stop() {
                 break;
