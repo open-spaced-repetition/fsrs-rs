@@ -26,7 +26,7 @@ use log::info;
 
 use std::sync::{Arc, Mutex};
 
-pub static PARAMS_STDDEV: [f32; 19] = [
+static PARAMS_STDDEV: [f32; 19] = [
     6.61, 9.52, 17.69, 27.74, 0.55, 0.28, 0.67, 0.12, 0.4, 0.18, 0.34, 0.27, 0.08, 0.14, 0.57,
     0.25, 1.03, 0.27, 0.39,
 ];
@@ -210,7 +210,7 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
     #[config(default = 64)]
     pub max_seq_len: usize,
-    #[config(default = 2.0)]
+    #[config(default = 0.0)]
     pub gamma: f64,
 }
 
@@ -533,6 +533,8 @@ mod tests {
         let device = NdArrayDevice::Cpu;
         type B = Autodiff<NdArray<f32>>;
         let mut model: Model<B> = config.init();
+        let init_w = model.w.val();
+        let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
@@ -601,6 +603,10 @@ mod tests {
                 0.47655, 0.62210006
             ])
         );
+
+        let penalty =
+            model.l2_regularization(init_w.clone(), params_stddev.clone(), 512, 1000, 2.0);
+        assert_eq!(penalty.into_data().convert::<f32>().value[0], 0.64689976);
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
