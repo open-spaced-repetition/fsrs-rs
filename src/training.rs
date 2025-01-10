@@ -404,12 +404,13 @@ fn train<B: AutodiffBackend>(
         let mut iteration = 0;
         while let Some(item) = iterator.next() {
             iteration += 1;
+            let real_batch_size = item.delta_ts.shape().dims[0];
             let lr = LrScheduler::<B>::step(&mut lr_scheduler);
             let progress = iterator.progress();
             let penalty = model.l2_regularization(
                 init_w.clone(),
                 params_stddev.clone(),
-                config.batch_size,
+                real_batch_size,
                 total_size,
                 config.gamma,
             );
@@ -451,10 +452,11 @@ fn train<B: AutodiffBackend>(
         let model_valid = model.valid();
         let mut loss_valid = 0.0;
         for batch in dataloader_valid.iter() {
+            let real_batch_size = batch.delta_ts.shape().dims[0];
             let penalty = model_valid.l2_regularization(
                 init_w.valid(),
                 params_stddev.valid(),
-                config.batch_size,
+                real_batch_size,
                 total_size,
                 config.gamma,
             );
