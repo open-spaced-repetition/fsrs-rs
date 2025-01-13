@@ -150,9 +150,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             lengths,
-            vec![
-                48, 6, 8, 5, 11, 5, 10, 19, 6, 13, 9, 6, 5, 3, 9, 6, 3, 13, 7, 5, 4, 4, 4, 6, 4, 3,
-            ]
+            vec![48, 3, 8, 5, 11, 5, 1, 19, 3, 2, 2, 6, 5, 3, 9, 6, 3, 13, 7, 5, 4, 4, 4, 3, 4, 4]
         );
 
         let mut iterator = dataloader.iter();
@@ -168,7 +166,7 @@ mod tests {
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: [9, batch_size]
+                dims: [2, batch_size]
             }
         );
 
@@ -177,7 +175,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             lengths,
-            vec![3, 11, 3, 6, 6, 6, 5, 5, 7, 6, 4, 9, 10, 4, 48, 3, 4, 5, 13, 13, 7, 5, 4, 8, 6, 6]
+            vec![4, 11, 3, 6, 3, 6, 5, 5, 7, 6, 4, 9, 1, 4, 48, 3, 4, 5, 2, 13, 7, 5, 4, 8, 3, 3]
         );
     }
 }

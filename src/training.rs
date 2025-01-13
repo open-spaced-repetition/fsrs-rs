@@ -1,8 +1,7 @@
 use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader};
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    prepare_training_data, recency_weighted_fsrs_items, sort_items_by_review_length, FSRSDataset,
-    FSRSItem,
+    prepare_training_data, recency_weighted_fsrs_items, FSRSDataset, FSRSItem, WeightedFSRSItem,
 };
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
@@ -225,7 +224,7 @@ impl<B: Backend> FSRS<B> {
         };
 
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, mut train_set) = prepare_training_data(train_set);
+        let (pre_train_set, train_set) = prepare_training_data(train_set);
         if train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
@@ -252,21 +251,21 @@ impl<B: Backend> FSRS<B> {
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
-        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
+        let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
 
         if let Some(progress) = &progress {
             let progress_state = ProgressState {
                 epoch_total: config.num_epochs,
-                items_total: train_set.len(),
+                items_total: weighted_train_set.len(),
                 epoch: 0,
                 items_processed: 0,
             };
             progress.lock().unwrap().splits = vec![progress_state];
         }
-
         let model = train::<Autodiff<B>>(
-            train_set.clone(),
-            train_set,
+            weighted_train_set.clone(),
+            weighted_train_set,
             &config,
             self.device(),
             progress.clone().map(|p| ProgressCollector::new(p, 0)),
@@ -307,7 +306,7 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, mut train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
+    pub fn benchmark(&self, train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -322,17 +321,23 @@ impl<B: Backend> FSRS<B> {
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
-        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
-        let model =
-            train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
+        let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+        let model = train::<Autodiff<B>>(
+            weighted_train_set.clone(),
+            weighted_train_set,
+            &config,
+            self.device(),
+            None,
+        );
         let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
         parameters
     }
 }
 
 fn train<B: AutodiffBackend>(
-    train_set: Vec<FSRSItem>,
-    test_set: Vec<FSRSItem>,
+    train_set: Vec<WeightedFSRSItem>,
+    test_set: Vec<WeightedFSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
     progress: Option<ProgressCollector>,
@@ -342,18 +347,14 @@ fn train<B: AutodiffBackend>(
     // Training data
     let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
     let batch_dataset = BatchTensorDataset::<B>::new(
-        FSRSDataset::from(sort_items_by_review_length(recency_weighted_fsrs_items(
-            train_set,
-        ))),
+        FSRSDataset::from(train_set),
         config.batch_size,
         device.clone(),
     );
     let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
 
     let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
-        FSRSDataset::from(sort_items_by_review_length(recency_weighted_fsrs_items(
-            test_set.clone(),
-        ))),
+        FSRSDataset::from(test_set.clone()),
         config.batch_size,
         device,
     );
