@@ -198,7 +198,9 @@ impl Dataset<WeightedFSRSItem> for FSRSDataset {
 
 impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     fn from(items: Vec<WeightedFSRSItem>) -> Self {
-        Self { items }
+        Self {
+            items: sort_items_by_review_length(items),
+        }
     }
 }
 
@@ -284,7 +286,7 @@ pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<Weighted
 
 /// The input items should be sorted by the review timestamp.
 pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
-    let length = items.len() as f32;
+    let length = items.len() as f32 - 1.0;
     items
         .into_iter()
         .enumerate()
@@ -304,9 +306,9 @@ mod tests {
     fn from_anki() {
         use burn::data::dataloader::Dataset;
 
-        let dataset = FSRSDataset::from(sort_items_by_review_length(constant_weighted_fsrs_items(
+        let dataset = FSRSDataset::from(constant_weighted_fsrs_items(
             anki21_sample_file_converted_to_fsrs(),
-        )));
+        ));
         assert_eq!(
             dataset.get(704).unwrap().item,
             FSRSItem {
