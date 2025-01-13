@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: [9, batch_size]
+                dims: [2, batch_size]
             }
         );
 
@@ -175,7 +175,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             lengths,
-            vec![3, 11, 3, 6, 6, 6, 5, 5, 7, 6, 4, 9, 10, 4, 48, 3, 4, 5, 13, 13, 7, 5, 4, 8, 6, 6]
+            vec![4, 11, 3, 6, 3, 6, 5, 5, 7, 6, 4, 9, 1, 4, 48, 3, 4, 5, 2, 13, 7, 5, 4, 8, 3, 3]
         );
     }
 }
