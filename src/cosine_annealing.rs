@@ -14,7 +14,7 @@ impl CosineAnnealingLR {
             t_max,
             eta_min: 0.0,
             init_lr,
-            step_count: 0.0,
+            step_count: -1.0,
             current_lr: init_lr,
         }
     }
@@ -33,12 +33,14 @@ impl<B: Backend> LrScheduler<B> for CosineAnnealingLR {
             t_max: f64,
             eta_min: f64,
         ) -> LearningRate {
-            let cosine_arg = PI * step_count / t_max;
-            if (step_count - 1.0 - t_max) % (2.0 * t_max) == 0.0 {
+            if step_count == 0.0 {
+                init_lr
+            } else if (step_count - 1.0 - t_max) % (2.0 * t_max) == 0.0 {
                 (init_lr - eta_min) * (1.0 - f64::cos(PI / t_max)) / 2.0
             } else {
-                ((1.0 + f64::cos(cosine_arg)) / (1.0 + f64::cos(PI * (step_count - 1.0) / t_max)))
-                    .mul_add(lr - eta_min, eta_min)
+                ((1.0 + f64::cos(PI * step_count / t_max))
+                    / (1.0 + f64::cos(PI * (step_count - 1.0) / t_max)))
+                .mul_add(lr - eta_min, eta_min)
             }
         }
         self.current_lr = cosine_annealing_lr(
@@ -70,29 +72,28 @@ mod tests {
 
     #[test]
     fn lr_scheduler() {
-        let mut lr_scheduler = CosineAnnealingLR::init(100000.0, 1.0e-1);
-
-        let lrs = (0..=200000)
+        let mut lr_scheduler = CosineAnnealingLR::init(5.0, 4e-2);
+        let lrs = (1..=11)
             .map(|_| {
                 LrScheduler::<Backend>::step(&mut lr_scheduler);
                 lr_scheduler.current_lr
             })
-            .step_by(20000)
+            .step_by(1)
             .collect::<Vec<_>>();
 
         Data::from(&lrs[..]).assert_approx_eq(
             &Data::from([
-                0.1,
-                0.09045084971874785,
-                0.06545084971874875,
-                0.034549150281253875,
-                0.009549150281252989,
+                0.04,
+                0.03618033988749895,
+                0.026180339887498946,
+                0.013819660112501051,
+                0.0038196601125010526,
                 0.0,
-                0.009549150281252692,
-                0.03454915028125239,
-                0.06545084971874746,
-                0.09045084971874952,
-                0.10000000000000353,
+                0.003819660112501051,
+                0.013819660112501048,
+                0.026180339887498943,
+                0.03618033988749895,
+                0.039999999999999994,
             ]),
             5,
         );
