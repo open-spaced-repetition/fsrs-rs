@@ -268,31 +268,31 @@ fn conversion_works() {
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22), (2, 56)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22), (2, 56), (3, 64)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             }
         ]
@@ -388,19 +388,19 @@ fn delta_t_is_correct() -> Result<()> {
             FSRSItem {
                 reviews: [(3, 0), (3, 2)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (3, 2), (3, 3)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (3, 2), (3, 3), (3, 5)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t }) 
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect()
             },
         ])

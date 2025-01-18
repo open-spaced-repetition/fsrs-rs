@@ -387,7 +387,8 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::{
-        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier, test_helpers::assert_approx_eq, FSRSReview
+        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
+        test_helpers::assert_approx_eq, FSRSReview,
     };
 
     static PARAMETERS: &[f32] = &[
