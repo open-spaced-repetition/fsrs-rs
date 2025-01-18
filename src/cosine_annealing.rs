@@ -66,6 +66,8 @@ impl<B: Backend> LrScheduler<B> for CosineAnnealingLR {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_helpers::assert_approx_eq;
+
     use super::*;
     use burn::{backend::NdArray, tensor::Data};
     type Backend = NdArray<f32>;
@@ -81,8 +83,9 @@ mod tests {
             .step_by(1)
             .collect::<Vec<_>>();
 
-        Data::from(&lrs[..]).assert_approx_eq(
-            &Data::from([
+        assert_approx_eq(
+            lrs.try_into().unwrap(),
+            [
                 0.04,
                 0.03618033988749895,
                 0.026180339887498946,
@@ -94,8 +97,7 @@ mod tests {
                 0.026180339887498943,
                 0.03618033988749895,
                 0.039999999999999994,
-            ]),
-            5,
+            ],
         );
     }
 }
