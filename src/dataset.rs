@@ -352,51 +352,51 @@ mod tests {
         type Backend = NdArray<f32>;
         let device = NdArrayDevice::Cpu;
         let batcher = FSRSBatcher::<Backend>::new(device);
-        let items = vec![
+        let items = [
             FSRSItem {
-                reviews: vec![(4, 0), (3, 5)]
+                reviews: [(4, 0), (3, 5)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
             },
             FSRSItem {
-                reviews: vec![(4, 0), (3, 5), (3, 11)]
+                reviews: [(4, 0), (3, 5), (3, 11)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
             },
             FSRSItem {
-                reviews: vec![(4, 0), (3, 2)]
+                reviews: [(4, 0), (3, 2)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
             },
             FSRSItem {
-                reviews: vec![(4, 0), (3, 2), (3, 6)]
+                reviews: [(4, 0), (3, 2), (3, 6)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
             },
             FSRSItem {
-                reviews: vec![(4, 0), (3, 2), (3, 6), (3, 16)]
+                reviews: [(4, 0), (3, 2), (3, 6), (3, 16)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
             },
             FSRSItem {
-                reviews: vec![(4, 0), (3, 2), (3, 6), (3, 16), (3, 39)]
+                reviews: [(4, 0), (3, 2), (3, 6), (3, 16), (3, 39)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
             },
             FSRSItem {
-                reviews: vec![(1, 0), (1, 1)]
+                reviews: [(1, 0), (1, 1)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
             },
             FSRSItem {
-                reviews: vec![(1, 0), (1, 1), (3, 1)]
+                reviews: [(1, 0), (1, 1), (3, 1)]
                     .into_iter()
                     .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
                     .collect(),
