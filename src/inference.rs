@@ -387,7 +387,8 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::{
-        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier, FSRSReview,
+        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
+        test_helpers::assert_approx_eq, FSRSReview,
     };
 
     static PARAMETERS: &[f32] = &[
@@ -411,9 +412,6 @@ mod tests {
         0.18046261,
         0.121442534,
     ];
-    fn assert_approx_eq(a: [f32; 2], b: [f32; 2]) {
-        Data::from(a).assert_approx_eq(&Data::from(b), 5);
-    }
     #[test]
     fn test_get_bin() {
         let pred = (0..=100).map(|i| i as f32 / 100.0).collect::<Vec<_>>();

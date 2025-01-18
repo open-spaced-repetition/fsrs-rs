@@ -517,6 +517,7 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::convertor_tests::data_from_csv;
     use crate::dataset::FSRSBatch;
+    use crate::test_helpers::assert_approx_eq;
     use burn::backend::NdArray;
     use log::LevelFilter;
 
@@ -584,12 +585,14 @@ mod tests {
 
         let w_grad = model.w.grad(&gradients).unwrap();
 
-        Data::from([
-            -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
-            0.534472, -2.89288, 0.514163, -0.01306, 0.041905, -0.11830, -0.00092, -0.14452,
-            0.202374, 0.214104, 0.032307,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
+                0.534472, -2.89288, 0.514163, -0.01306, 0.041905, -0.11830, -0.00092, -0.14452,
+                0.202374, 0.214104, 0.032307,
+            ],
+            w_grad.clone().into_data().value.try_into().unwrap(),
+        );
 
         let config =
             TrainingConfig::new(ModelConfig::default(), AdamConfig::new().with_epsilon(1e-8));
@@ -616,28 +619,30 @@ mod tests {
 
         let gradients = penalty.backward();
         let w_grad = model.w.grad(&gradients).unwrap();
-        Data::from([
-            0.0018749383,
-            0.00090389,
-            0.00026177685,
-            -0.00010645759,
-            0.27080965,
-            -1.0448978,
-            -0.18249036,
-            5.688889,
-            -0.5119995,
-            2.528395,
-            -0.7086509,
-            1.1237301,
-            -12.799997,
-            4.179591,
-            0.25213587,
-            1.3107198,
-            -0.07721739,
-            -1.1237309,
-            -0.5385926,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                0.0018749383,
+                0.00090389,
+                0.00026177685,
+                -0.00010645759,
+                0.27080965,
+                -1.0448978,
+                -0.18249036,
+                5.688889,
+                -0.5119995,
+                2.528395,
+                -0.7086509,
+                1.1237301,
+                -12.799997,
+                4.179591,
+                0.25213587,
+                1.3107198,
+                -0.07721739,
+                -1.1237309,
+                -0.5385926,
+            ],
+            w_grad.clone().into_data().value.try_into().unwrap(),
+        );
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
@@ -678,28 +683,30 @@ mod tests {
         assert_eq!(loss.clone().into_data().convert::<f32>().value[0], 4.176347);
         let gradients = loss.backward();
         let w_grad = model.w.grad(&gradients).unwrap();
-        Data::from([
-            -0.0401341,
-            -0.0061790533,
-            -0.00288913,
-            0.01216853,
-            -0.05624995,
-            1.147413,
-            0.068084724,
-            -0.6906936,
-            0.48760873,
-            -2.5428302,
-            0.49044546,
-            -0.011574259,
-            0.037729632,
-            -0.09633919,
-            -0.0009513022,
-            -0.12789416,
-            0.19088513,
-            0.2574597,
-            0.049311582,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                -0.0401341,
+                -0.0061790533,
+                -0.00288913,
+                0.01216853,
+                -0.05624995,
+                1.147413,
+                0.068084724,
+                -0.6906936,
+                0.48760873,
+                -2.5428302,
+                0.49044546,
+                -0.011574259,
+                0.037729632,
+                -0.09633919,
+                -0.0009513022,
+                -0.12789416,
+                0.19088513,
+                0.2574597,
+                0.049311582,
+            ],
+            w_grad.clone().into_data().value.try_into().unwrap(),
+        );
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(model.w);
