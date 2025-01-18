@@ -219,7 +219,7 @@ pub fn simulate(
 
     fn card_priority(card: &Card, learn: bool) -> Reverse<(i32, bool, i32)> {
         // high priority for early due, review, low difficulty card
-        Reverse((card.due as i32, learn, card.difficulty as i32 * 100))
+        Reverse((card.due as i32, learn, (card.difficulty * 100.0) as i32))
     }
 
     for (i, card) in cards.iter().enumerate() {
