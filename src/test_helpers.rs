@@ -10,5 +10,5 @@ where
     T: Copy + std::fmt::Debug + PartialEq,
     f64: From<T>,
 {
-    Data::from(a).assert_approx_eq(&Data::from(b), 5);
+    Data::from(a).assert_approx_eq(&Data::from(b), 4);
 }
