@@ -12,6 +12,7 @@ use rand::Rng;
 use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -216,9 +217,9 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn card_priority(card: &Card, learn: bool) -> (i32, bool, i32) {
+    fn card_priority(card: &Card, learn: bool) -> Reverse<(i32, bool, i32)> {
         // high priority for early due, review, low difficulty card
-        (-card.due as i32, !learn, -(card.difficulty * 100.0) as i32)
+        Reverse((card.due as i32, learn, (card.difficulty * 100.0) as i32))
     }
 
     for (i, card) in cards.iter().enumerate() {
