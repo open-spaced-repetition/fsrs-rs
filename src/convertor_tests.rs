@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::{constant_weighted_fsrs_items, FSRSBatcher};
 use crate::dataset::{FSRSItem, FSRSReview};
@@ -50,10 +48,9 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
     }
 }
 
-fn filter_out_cram(entries: Rc<[RevlogEntry]>) -> Rc<[RevlogEntry]> {
+fn filter_out_cram(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
     entries
-        .iter()
-        .cloned()
+        .into_iter()
         .filter(|entry| entry.review_kind != Filtered || entry.ease_factor != 0)
         .collect()
 }
@@ -413,7 +410,7 @@ fn delta_t_is_correct() -> Result<()> {
 }
 #[test]
 fn test_filter_out_cram() {
-    let revlog_vec = Rc::new([
+    let revlog_vec = vec![
         RevlogEntry {
             id: 1581372672843,
             cid: 1559078645460,
@@ -458,10 +455,10 @@ fn test_filter_out_cram() {
             taken_millis: 30443,
             review_kind: Review,
         },
-    ]);
+    ];
     let revlog_vec = filter_out_cram(revlog_vec);
     assert_eq!(
-        revlog_vec.as_ref(),
+        revlog_vec,
         [
             RevlogEntry {
                 id: 1581372672843,
