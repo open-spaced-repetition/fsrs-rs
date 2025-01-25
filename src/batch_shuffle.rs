@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderIterator, Progress};
@@ -10,7 +10,7 @@ use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 
 #[derive(Clone)]
 pub(crate) struct BatchTensorDataset<B: Backend> {
-    dataset: Vec<FSRSBatch<B>>,
+    dataset: Arc<[FSRSBatch<B>]>,
 }
 
 impl<B: Backend> BatchTensorDataset<B> {
