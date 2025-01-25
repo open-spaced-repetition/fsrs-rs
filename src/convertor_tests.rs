@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::{constant_weighted_fsrs_items, FSRSBatcher};
@@ -50,7 +50,7 @@ impl TryFrom<&Row<'_>> for RevlogEntry {
     }
 }
 
-fn filter_out_cram(entries: Arc<[RevlogEntry]>) -> Arc<[RevlogEntry]> {
+fn filter_out_cram(entries: Rc<[RevlogEntry]>) -> Rc<[RevlogEntry]> {
     entries
         .iter()
         .cloned()
@@ -413,7 +413,7 @@ fn delta_t_is_correct() -> Result<()> {
 }
 #[test]
 fn test_filter_out_cram() {
-    let revlog_vec = Arc::new([
+    let revlog_vec = Rc::new([
         RevlogEntry {
             id: 1581372672843,
             cid: 1559078645460,
