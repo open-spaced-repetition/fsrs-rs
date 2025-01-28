@@ -14,4 +14,4 @@ unzip *.zip
 RUSTDOCFLAGS="-D warnings" cargo doc --release
 
 cargo binstall --no-confirm cargo-llvm-cov@0.6.15 --locked || cargo install cargo-llvm-cov@0.6.15 --locked 
-SKIP_TRAINING=1 cargo llvm-cov --release
+SKIP_TRAINING=1 cargo --release
