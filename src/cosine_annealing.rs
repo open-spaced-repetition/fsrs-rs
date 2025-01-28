@@ -69,7 +69,7 @@ mod tests {
     use crate::test_helpers::assert_approx_eq;
 
     use super::*;
-    use burn::{backend::NdArray, tensor::Data};
+    use burn::backend::NdArray;
     type Backend = NdArray<f32>;
 
     #[test]
