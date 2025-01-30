@@ -1,5 +1,5 @@
 use crate::convertor_tests::RevlogReviewKind::*;
-use crate::dataset::FSRSBatcher;
+use crate::dataset::{constant_weighted_fsrs_items, FSRSBatcher};
 use crate::dataset::{FSRSItem, FSRSReview};
 use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
@@ -95,7 +95,7 @@ fn convert_to_fsrs_items(
     mut entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,
     timezone: Tz,
-) -> Option<Vec<FSRSItem>> {
+) -> Option<Vec<(i64, FSRSItem)>> {
     // entries = filter_out_cram(entries);
     // entries = filter_out_manual(entries);
     entries = remove_revlog_before_last_first_learn(entries);
@@ -111,7 +111,7 @@ fn convert_to_fsrs_items(
             .iter()
             .enumerate()
             .skip(1)
-            .map(|(idx, _)| {
+            .map(|(idx, entry)| {
                 let reviews = entries
                     .iter()
                     .take(idx + 1)
@@ -120,9 +120,9 @@ fn convert_to_fsrs_items(
                         delta_t: r.last_interval.max(0) as u32,
                     })
                     .collect();
-                FSRSItem { reviews }
+                (entry.id, FSRSItem { reviews })
             })
-            .filter(|item| item.current().delta_t > 0)
+            .filter(|(_, item)| item.current().delta_t > 0)
             .collect(),
     )
 }
@@ -138,8 +138,8 @@ pub(crate) fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
         })
         .flatten()
         .collect_vec();
-    revlogs.sort_by_cached_key(|r| r.reviews.len());
-    revlogs
+    revlogs.sort_by_cached_key(|(id, _)| *id);
+    revlogs.into_iter().map(|(_, item)| item).collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -156,7 +156,7 @@ pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     const CSV_FILE: &str = "tests/data/revlog.csv";
     let rdr = csv::ReaderBuilder::new();
     let dataset = InMemDataset::<RevlogCsv>::from_csv(CSV_FILE, &rdr).unwrap();
-    let revlogs: Vec<RevlogEntry> = dataset
+    let revlogs: Vec<_> = dataset
         .iter()
         .map(|r| RevlogEntry {
             id: r.review_time,
@@ -257,140 +257,53 @@ fn conversion_works() {
     );
 
     // convert a subset and check it matches expectations
-    let mut fsrs_items = single_card_revlog
+    let fsrs_items = single_card_revlog
         .into_iter()
         .filter_map(|entries| convert_to_fsrs_items(entries, 4, Tz::Asia__Shanghai))
         .flatten()
+        .map(|(_, item)| item)
         .collect_vec();
     assert_eq!(
         fsrs_items,
         [
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 4,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 5
-                    }
-                ]
+                reviews: [(3, 0), (4, 0), (3, 5)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
             },
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 4,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 5
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 10
-                    }
-                ]
+                reviews: [(3, 0), (4, 0), (3, 5), (3, 10)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
             },
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 4,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 5
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 10
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 22
-                    }
-                ]
+                reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
             },
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 4,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 5
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 10
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 22
-                    },
-                    FSRSReview {
-                        rating: 2,
-                        delta_t: 56
-                    }
-                ]
+                reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22), (2, 56)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
             },
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 4,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 5
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 10
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 22
-                    },
-                    FSRSReview {
-                        rating: 2,
-                        delta_t: 56
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 64
-                    }
-                ]
+                reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22), (2, 56), (3, 64)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
             }
         ]
     );
 
+    let mut weighted_fsrs_items = constant_weighted_fsrs_items(fsrs_items);
+
     let device = NdArrayDevice::Cpu;
     let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
-    let res = batcher.batch(vec![fsrs_items.pop().unwrap()]);
+    let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()]);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     res.r_historys
         .squeeze::<1>(1)
@@ -444,7 +357,8 @@ fn delta_t_is_correct() -> Result<()> {
             ],
             NEXT_DAY_AT,
             Tz::Asia__Shanghai
-        ),
+        )
+        .map(|items| items.into_iter().map(|(_, item)| item).collect_vec()),
         Some(vec![FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -469,56 +383,27 @@ fn delta_t_is_correct() -> Result<()> {
             ],
             NEXT_DAY_AT,
             Tz::Asia__Shanghai
-        ),
+        )
+        .map(|items| items.into_iter().map(|(_, item)| item).collect_vec()),
         Some(vec![
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 2
-                    }
-                ]
+                reviews: [(3, 0), (3, 2)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
             },
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 2
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 3
-                    }
-                ]
+                reviews: [(3, 0), (3, 2), (3, 3)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
             },
             FSRSItem {
-                reviews: vec![
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 0
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 2
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 3
-                    },
-                    FSRSReview {
-                        rating: 3,
-                        delta_t: 5
-                    }
-                ]
-            }
+                reviews: [(3, 0), (3, 2), (3, 3), (3, 5)]
+                    .into_iter()
+                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .collect()
+            },
         ])
     );
 

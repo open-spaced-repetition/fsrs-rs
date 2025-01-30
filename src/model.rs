@@ -28,12 +28,16 @@ impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
 impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
-        let initial_params = config
+        let mut initial_params: Vec<f32> = config
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
+        if config.freeze_short_term_stability {
+            initial_params[17] = 0.0;
+            initial_params[18] = 0.0;
+        }
 
         Self {
             w: Param::from_tensor(Tensor::from_floats(
@@ -80,9 +84,10 @@ impl<B: Backend> Model<B> {
             * last_d.powf(-self.w.get(12))
             * ((last_s.clone() + 1).powf(self.w.get(13)) - 1)
             * ((-r + 1) * self.w.get(14)).exp();
+        let new_s_min = last_s / (self.w.get(17) * self.w.get(18)).exp();
         new_s
             .clone()
-            .mask_where(last_s.clone().lower(new_s), last_s)
+            .mask_where(new_s_min.clone().lower(new_s), new_s_min)
     }
 
     fn stability_short_term(&self, last_s: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -184,8 +189,10 @@ pub(crate) struct MemoryStateTensors<B: Backend> {
 #[derive(Config, Debug, Default)]
 pub struct ModelConfig {
     #[config(default = false)]
-    pub freeze_stability: bool,
+    pub freeze_initial_stability: bool,
     pub initial_stability: Option<[f32; 4]>,
+    #[config(default = false)]
+    pub freeze_short_term_stability: bool,
 }
 
 impl ModelConfig {
@@ -271,7 +278,7 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Model, Tensor};
+    use crate::test_helpers::{assert_approx_eq, Model, Tensor};
     use burn::tensor::TensorData;
 
     #[test]
@@ -370,7 +377,16 @@ mod tests {
             &device,
         );
         let state = model.forward(delta_ts, ratings, None);
-        dbg!(&state);
+        let stability = state.stability.to_data();
+        let difficulty = state.difficulty.to_data();
+        assert_approx_eq(
+            stability.to_vec::<f32>().unwrap().try_into().unwrap(),
+            [0.2619, 1.7074, 5.8691, 25.0124, 0.2859, 2.1482],
+        );
+        assert_approx_eq(
+            difficulty.to_vec::<f32>().unwrap().try_into().unwrap(),
+            [8.0827, 7.0405, 5.2729, 2.1301, 8.0827, 7.0405],
+        );
     }
 
     #[test]

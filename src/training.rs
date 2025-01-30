@@ -1,6 +1,8 @@
 use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader};
 use crate::cosine_annealing::CosineAnnealingLR;
-use crate::dataset::{prepare_training_data, FSRSDataset, FSRSItem};
+use crate::dataset::{
+    prepare_training_data, recency_weighted_fsrs_items, FSRSDataset, FSRSItem, WeightedFSRSItem,
+};
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
@@ -24,6 +26,11 @@ use log::info;
 
 use std::sync::{Arc, Mutex};
 
+static PARAMS_STDDEV: [f32; 19] = [
+    6.61, 9.52, 17.69, 27.74, 0.55, 0.28, 0.67, 0.12, 0.4, 0.18, 0.34, 0.27, 0.08, 0.14, 0.57,
+    0.25, 1.03, 0.27, 0.39,
+];
+
 pub struct BCELoss<B: Backend> {
     backend: PhantomData<B>,
 }
@@ -38,15 +45,17 @@ impl<B: Backend> BCELoss<B> {
         &self,
         retentions: Tensor<B, 1>,
         labels: Tensor<B, 1>,
+        weights: Tensor<B, 1>,
         mean: Reduction,
     ) -> Tensor<B, 1> {
-        let loss =
-            labels.clone() * retentions.clone().log() + (-labels + 1) * (-retentions + 1).log();
+        let loss = (labels.clone() * retentions.clone().log()
+            + (-labels + 1) * (-retentions + 1).log())
+            * weights.clone();
         // info!("loss: {}", &loss);
         match mean {
             Reduction::Mean => loss.mean().neg(),
             Reduction::Sum => loss.sum().neg(),
-            Reduction::Auto => loss.neg(),
+            Reduction::Auto => (loss.sum() / weights.sum()).neg(),
         }
     }
 }
@@ -58,13 +67,29 @@ impl<B: Backend> Model<B> {
         r_historys: Tensor<B, 2>,
         delta_ts: Tensor<B, 1>,
         labels: Tensor<B, 1, Int>,
+        weights: Tensor<B, 1>,
         reduce: Reduction,
     ) -> Tensor<B, 1> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
         let retention = self.power_forgetting_curve(delta_ts, state.stability);
-        BCELoss::new().forward(retention, labels.float(), reduce)
+        BCELoss::new().forward(retention, labels.float(), weights, reduce)
+    }
+
+    pub(crate) fn l2_regularization(
+        &self,
+        init_w: Tensor<B, 1>,
+        params_stddev: Tensor<B, 1>,
+        batch_size: usize,
+        total_size: usize,
+        gamma: f64,
+    ) -> Tensor<B, 1> {
+        (self.w.val() - init_w)
+            .powi_scalar(2)
+            .div(params_stddev.powi_scalar(2))
+            .sum()
+            .mul_scalar(gamma * batch_size as f64 / total_size as f64)
     }
 }
 
@@ -73,6 +98,16 @@ impl<B: AutodiffBackend> Model<B> {
         let grad_tensor = self.w.grad(&grad).unwrap();
         let updated_grad_tensor =
             grad_tensor.slice_assign([0..4], Tensor::zeros([4], &B::Device::default()));
+
+        self.w.grad_remove(&mut grad);
+        self.w.grad_replace(&mut grad, updated_grad_tensor);
+        grad
+    }
+
+    fn free_short_term_stability(&self, mut grad: B::Gradients) -> B::Gradients {
+        let grad_tensor = self.w.grad(&grad).unwrap();
+        let updated_grad_tensor =
+            grad_tensor.slice_assign([17..19], Tensor::zeros([2], &B::Device::default()));
 
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
@@ -175,6 +210,8 @@ pub(crate) struct TrainingConfig {
     pub learning_rate: f64,
     #[config(default = 64)]
     pub max_seq_len: usize,
+    #[config(default = 1.0)]
+    pub gamma: f64,
 }
 
 pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -197,6 +234,7 @@ impl<B: Backend> FSRS<B> {
         &self,
         train_set: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
+        enable_short_term: bool,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
             if let Some(progress) = &progress {
@@ -209,7 +247,7 @@ impl<B: Backend> FSRS<B> {
         };
 
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, mut train_set) = prepare_training_data(train_set);
+        let (pre_train_set, train_set) = prepare_training_data(train_set);
         if train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
@@ -229,27 +267,27 @@ impl<B: Backend> FSRS<B> {
         }
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: false,
+                freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
+                freeze_short_term_stability: !enable_short_term,
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
-        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
-        train_set.sort_by_cached_key(|item| item.reviews.len());
+        let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
 
         if let Some(progress) = &progress {
             let progress_state = ProgressState {
                 epoch_total: config.num_epochs,
-                items_total: train_set.len(),
+                items_total: weighted_train_set.len(),
                 epoch: 0,
                 items_processed: 0,
             };
             progress.lock().unwrap().splits = vec![progress_state];
         }
-
         let model = train::<Autodiff<B>>(
-            train_set.clone(),
-            train_set,
+            weighted_train_set.clone(),
+            weighted_train_set,
             &config,
             self.device(),
             progress.clone().map(|p| ProgressCollector::new(p, 0)),
@@ -289,7 +327,7 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, mut train_set: Vec<FSRSItem>) -> Vec<f32> {
+    pub fn benchmark(&self, train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -298,23 +336,29 @@ impl<B: Backend> FSRS<B> {
         let initial_stability = pretrain(pre_train_set, average_recall).unwrap().0;
         let config = TrainingConfig::new(
             ModelConfig {
-                freeze_stability: false,
+                freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
+                freeze_short_term_stability: !enable_short_term,
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
-        train_set.retain(|item| item.reviews.len() <= config.max_seq_len);
-        train_set.sort_by_cached_key(|item| item.reviews.len());
-        let model =
-            train::<Autodiff<B>>(train_set.clone(), train_set, &config, self.device(), None);
-
-        model.unwrap().w.val().to_data().to_vec::<f32>().unwrap()
+        let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+        let model = train::<Autodiff<B>>(
+            weighted_train_set.clone(),
+            weighted_train_set,
+            &config,
+            self.device(),
+            None,
+        );
+        let parameters: Vec<f32> = model.unwrap().w.val().to_data().to_vec::<f32>().unwrap();
+        parameters
     }
 }
 
 fn train<B: AutodiffBackend>(
-    train_set: Vec<FSRSItem>,
-    test_set: Vec<FSRSItem>,
+    train_set: Vec<WeightedFSRSItem>,
+    test_set: Vec<WeightedFSRSItem>,
     config: &TrainingConfig,
     device: B::Device,
     progress: Option<ProgressCollector>,
@@ -322,7 +366,8 @@ fn train<B: AutodiffBackend>(
     B::seed(config.seed);
 
     // Training data
-    let iterations = (train_set.len() / config.batch_size + 1) * config.num_epochs;
+    let total_size = train_set.len();
+    let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
     let batch_dataset = BatchTensorDataset::<B>::new(
         FSRSDataset::from(train_set),
         config.batch_size,
@@ -333,7 +378,7 @@ fn train<B: AutodiffBackend>(
     let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
         FSRSDataset::from(test_set.clone()),
         config.batch_size,
-        device,
+        device.clone(),
     );
     let dataloader_valid = ShuffleDataLoader::new(batch_dataset, config.seed);
 
@@ -348,6 +393,8 @@ fn train<B: AutodiffBackend>(
     };
 
     let mut model: Model<B> = config.model.init();
+    let init_w = model.w.val();
+    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
     let mut best_loss = f64::INFINITY;
@@ -357,18 +404,30 @@ fn train<B: AutodiffBackend>(
         let mut iteration = 0;
         while let Some(item) = iterator.next() {
             iteration += 1;
+            let real_batch_size = item.delta_ts.shape().dims[0];
             let lr = LrScheduler::step(&mut lr_scheduler);
             let progress = iterator.progress();
+            let penalty = model.l2_regularization(
+                init_w.clone(),
+                params_stddev.clone(),
+                real_batch_size,
+                total_size,
+                config.gamma,
+            );
             let loss = model.forward_classification(
                 item.t_historys,
                 item.r_historys,
                 item.delta_ts,
                 item.labels,
+                item.weights,
                 Reduction::Sum,
             );
-            let mut gradients = loss.backward();
-            if config.model.freeze_stability {
+            let mut gradients = (loss + penalty).backward();
+            if config.model.freeze_initial_stability {
                 gradients = model.freeze_initial_stability(gradients);
+            }
+            if config.model.freeze_short_term_stability {
+                gradients = model.free_short_term_stability(gradients);
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
@@ -393,15 +452,25 @@ fn train<B: AutodiffBackend>(
         let model_valid = model.valid();
         let mut loss_valid = 0.0;
         for batch in dataloader_valid.iter() {
+            let real_batch_size = batch.delta_ts.shape().dims[0];
+            let penalty = model_valid.l2_regularization(
+                init_w.valid(),
+                params_stddev.valid(),
+                real_batch_size,
+                total_size,
+                config.gamma,
+            );
             let loss = model_valid.forward_classification(
                 batch.t_historys,
                 batch.r_historys,
                 batch.delta_ts,
                 batch.labels,
+                batch.weights,
                 Reduction::Sum,
             );
             let loss = loss.into_scalar().to_f64();
-            loss_valid += loss;
+            let penalty = penalty.into_scalar().to_f64();
+            loss_valid += loss + penalty;
 
             if interrupter.should_stop() {
                 break;
@@ -447,6 +516,7 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::convertor_tests::data_from_csv;
     use crate::dataset::FSRSBatch;
+    use crate::test_helpers::assert_approx_eq;
     use burn::backend::NdArray;
     use log::LevelFilter;
 
@@ -466,6 +536,8 @@ mod tests {
         let device = NdArrayDevice::Cpu;
         type B = Autodiff<NdArray<f32>>;
         let mut model: Model<B> = config.init();
+        let init_w = model.w.val();
+        let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
@@ -492,6 +564,7 @@ mod tests {
             ),
             delta_ts: Tensor::from_floats([4.0, 11.0, 12.0, 23.0], &device),
             labels: Tensor::from_ints([1, 1, 1, 0], &device),
+            weights: Tensor::from_floats([1.0, 1.0, 1.0, 1.0], &device),
         };
 
         let loss = model.forward_classification(
@@ -499,6 +572,7 @@ mod tests {
             item.r_historys,
             item.delta_ts,
             item.labels,
+            item.weights,
             Reduction::Sum,
         );
 
@@ -507,12 +581,19 @@ mod tests {
 
         let w_grad = model.w.grad(&gradients).unwrap();
 
-        TensorData::from([
-            -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
-            0.534472, -2.89288, 0.514163, -0.01306, 0.041905, -0.11830, -0.00092, -0.14452,
-            0.202374, 0.214104, 0.032307,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
+                0.534472, -2.89288, 0.514163, -0.01306, 0.041905, -0.11830, -0.00092, -0.14452,
+                0.202374, 0.214104, 0.032307,
+            ],
+            w_grad
+                .to_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
 
         let config =
             TrainingConfig::new(ModelConfig::default(), AdamConfig::new().with_epsilon(1e-8));
@@ -530,6 +611,43 @@ mod tests {
             ]
         );
 
+        let penalty =
+            model.l2_regularization(init_w.clone(), params_stddev.clone(), 512, 1000, 2.0);
+        assert_eq!(penalty.clone().into_scalar().to_f32(), 0.64689976);
+
+        let gradients = penalty.backward();
+        let w_grad = model.w.grad(&gradients).unwrap();
+        assert_approx_eq(
+            [
+                0.0018749383,
+                0.00090389,
+                0.00026177685,
+                -0.00010645759,
+                0.27080965,
+                -1.0448978,
+                -0.18249036,
+                5.688889,
+                -0.5119995,
+                2.528395,
+                -0.7086509,
+                1.1237301,
+                -12.799997,
+                4.179591,
+                0.25213587,
+                1.3107198,
+                -0.07721739,
+                -1.1237309,
+                -0.5385926,
+            ],
+            w_grad
+                .clone()
+                .into_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
                 TensorData::from([
@@ -555,6 +673,7 @@ mod tests {
             ),
             delta_ts: Tensor::from_floats([4.0, 11.0, 12.0, 23.0], &device),
             labels: Tensor::from_ints([1, 1, 1, 0], &device),
+            weights: Tensor::from_floats([1.0, 1.0, 1.0, 1.0], &device),
         };
 
         let loss = model.forward_classification(
@@ -562,33 +681,42 @@ mod tests {
             item.r_historys,
             item.delta_ts,
             item.labels,
+            item.weights,
             Reduction::Sum,
         );
         assert_eq!(loss.clone().into_scalar().to_f32(), 4.176347);
         let gradients = loss.backward();
         let w_grad = model.w.grad(&gradients).unwrap();
-        TensorData::from([
-            -0.0401341,
-            -0.0061790533,
-            -0.00288913,
-            0.01216853,
-            -0.05624995,
-            1.147413,
-            0.068084724,
-            -0.6906936,
-            0.48760873,
-            -2.5428302,
-            0.49044546,
-            -0.011574259,
-            0.037729632,
-            -0.09633919,
-            -0.0009513022,
-            -0.12789416,
-            0.19088513,
-            0.2574597,
-            0.049311582,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                -0.0401341,
+                -0.0061790533,
+                -0.00288913,
+                0.01216853,
+                -0.05624995,
+                1.147413,
+                0.068084724,
+                -0.6906936,
+                0.48760873,
+                -2.5428302,
+                0.49044546,
+                -0.011574259,
+                0.037729632,
+                -0.09633919,
+                -0.0009513022,
+                -0.12789416,
+                0.19088513,
+                0.2574597,
+                0.049311582,
+            ],
+            w_grad
+                .clone()
+                .into_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(model.w);
@@ -645,26 +773,30 @@ mod tests {
                 .unwrap();
         }
         for items in [anki21_sample_file_converted_to_fsrs(), data_from_csv()] {
-            let progress = CombinedProgressState::new_shared();
-            let progress2 = Some(progress.clone());
-            thread::spawn(move || {
-                let mut finished = false;
-                while !finished {
-                    thread::sleep(Duration::from_millis(500));
-                    let guard = progress.lock().unwrap();
-                    finished = guard.finished();
-                    println!("progress: {}/{}", guard.current(), guard.total());
-                }
-            });
+            for enable_short_term in [true, false] {
+                let progress = CombinedProgressState::new_shared();
+                let progress2 = Some(progress.clone());
+                thread::spawn(move || {
+                    let mut finished = false;
+                    while !finished {
+                        thread::sleep(Duration::from_millis(500));
+                        let guard = progress.lock().unwrap();
+                        finished = guard.finished();
+                        println!("progress: {}/{}", guard.current(), guard.total());
+                    }
+                });
 
-            let fsrs = FSRS::new(Some(&[])).unwrap();
-            let parameters = fsrs.compute_parameters(items.clone(), progress2).unwrap();
-            dbg!(&parameters);
+                let fsrs = FSRS::new(Some(&[])).unwrap();
+                let parameters = fsrs
+                    .compute_parameters(items.clone(), progress2, enable_short_term)
+                    .unwrap();
+                dbg!(&parameters);
 
-            // evaluate
-            let model = FSRS::new(Some(&parameters)).unwrap();
-            let metrics = model.evaluate(items, |_| true).unwrap();
-            dbg!(&metrics);
+                // evaluate
+                let model = FSRS::new(Some(&parameters)).unwrap();
+                let metrics = model.evaluate(items.clone(), |_| true).unwrap();
+                dbg!(&metrics);
+            }
         }
     }
 }
