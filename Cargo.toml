@@ -20,8 +20,7 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 # rev = "d2639682367f39d0d0ed049d0cf3a2077259e05d"
 path = "../burn/crates/burn"
 default-features = false
-features = ["std", "train", "ndarray", "autodiff", "wasm-sync", "browser"]
-features = ["std", "train", "ndarray", "metrics"]
+features = ["std", "train", "ndarray", "autodiff", "browser"]
 
 [dev-dependencies.burn]
 # version = "0.13.0"
