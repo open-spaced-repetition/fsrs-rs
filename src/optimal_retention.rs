@@ -12,6 +12,7 @@ use rand::Rng;
 use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -216,9 +217,9 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn card_priority(card: &Card, learn: bool) -> (i32, bool, i32) {
+    fn card_priority(card: &Card, learn: bool) -> Reverse<(i32, bool, i32)> {
         // high priority for early due, review, low difficulty card
-        (-card.due as i32, !learn, -(card.difficulty * 100.0) as i32)
+        Reverse((card.due as i32, learn, (card.difficulty * 100.0) as i32))
     }
 
     for (i, card) in cards.iter().enumerate() {
@@ -318,7 +319,8 @@ pub fn simulate(
             // Update difficulty for review cards
             card.difficulty = next_d(w, card.difficulty, rating);
             if rating == 1 {
-                card.difficulty -= (w[6] * forget_rating_offset).clamp(1.0, 10.0);
+                card.difficulty -= w[6] * forget_rating_offset;
+                card.difficulty = card.difficulty.clamp(1.0, 10.0);
             }
 
             let cost = if forget {
@@ -932,7 +934,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6781.493
+            5804.207
         );
         Ok(())
     }
@@ -1129,8 +1131,8 @@ mod tests {
         assert_eq!(
             review_cnt_per_day.to_vec(),
             vec![
-                0, 15, 18, 38, 64, 64, 80, 89, 95, 95, 100, 96, 107, 118, 120, 114, 126, 123, 139,
-                167, 158, 156, 167, 161, 154, 178, 163, 151, 160, 151
+                0, 15, 18, 39, 64, 67, 85, 94, 87, 97, 103, 99, 105, 128, 124, 132, 148, 123, 165,
+                184, 160, 175, 160, 159, 168, 195, 166, 190, 161, 174
             ]
         );
         assert_eq!(
@@ -1152,7 +1154,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6487.4004
+            5582.8286
         );
         Ok(())
     }
@@ -1206,7 +1208,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.85450846);
+        assert_eq!(optimal_retention, 0.8211557);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1226,7 +1228,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.83750373);
+        assert_eq!(optimal_retention, 0.83382076);
         Ok(())
     }
 

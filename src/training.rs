@@ -9,6 +9,7 @@ use crate::parameter_clipper::parameter_clipper;
 use crate::pre_training::{pretrain, smooth_and_fill};
 use crate::{FSRSError, DEFAULT_PARAMETERS, FSRS};
 use burn::backend::Autodiff;
+use burn::tensor::cast::ToElement;
 use wasm_bindgen::prelude::*;
 
 use burn::lr_scheduler::LrScheduler;
@@ -283,9 +284,8 @@ impl<B: Backend> FSRS<B> {
         }
 
         let (initial_stability, initial_rating_count) =
-            pretrain(pre_train_set.clone(), average_recall).map_err(|e| {
+            pretrain(pre_train_set.clone(), average_recall).inspect_err(|_e| {
                 finish_progress();
-                e
             })?;
         let pretrained_parameters: Vec<f32> = initial_stability
             .into_iter()
@@ -324,15 +324,14 @@ impl<B: Backend> FSRS<B> {
         );
 
         let optimized_parameters = model
-            .map_err(|e| {
+            .inspect_err(|_e| {
                 finish_progress();
-                e
             })?
             .w
             .val()
             .to_data()
-            .convert()
-            .value;
+            .to_vec()
+            .unwrap();
 
         finish_progress();
 
@@ -382,7 +381,7 @@ impl<B: Backend> FSRS<B> {
             self.device(),
             None,
         );
-        let parameters: Vec<f32> = model.unwrap().w.val().to_data().convert().value;
+        let parameters: Vec<f32> = model.unwrap().w.val().to_data().to_vec::<f32>().unwrap();
         parameters
     }
 }
@@ -436,7 +435,7 @@ fn train<B: AutodiffBackend>(
         while let Some(item) = iterator.next() {
             iteration += 1;
             let real_batch_size = item.delta_ts.shape().dims[0];
-            let lr = LrScheduler::<B>::step(&mut lr_scheduler);
+            let lr = LrScheduler::step(&mut lr_scheduler);
             let progress = iterator.progress();
             let penalty = model.l2_regularization(
                 init_w.clone(),
@@ -454,10 +453,10 @@ fn train<B: AutodiffBackend>(
                 Reduction::Sum,
             );
             let mut gradients = (loss + penalty).backward();
-            if model.config.freeze_initial_stability {
+            if config.model.freeze_initial_stability {
                 gradients = model.freeze_initial_stability(gradients);
             }
-            if model.config.freeze_short_term_stability {
+            if config.model.freeze_short_term_stability {
                 gradients = model.free_short_term_stability(gradients);
             }
             let grads = GradientsParams::from_grads(gradients, &model);
@@ -499,8 +498,8 @@ fn train<B: AutodiffBackend>(
                 batch.weights,
                 Reduction::Sum,
             );
-            let loss = loss.into_data().convert::<f64>().value[0];
-            let penalty = penalty.into_data().convert::<f64>().value[0];
+            let loss = loss.into_scalar().to_f64();
+            let penalty = penalty.into_scalar().to_f64();
             loss_valid += loss + penalty;
 
             if interrupter.should_stop() {
@@ -547,6 +546,7 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::convertor_tests::data_from_csv;
     use crate::dataset::FSRSBatch;
+    use crate::test_helpers::assert_approx_eq;
     use burn::backend::NdArray;
     use log::LevelFilter;
 
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn test_loss_and_grad() {
         use burn::backend::ndarray::NdArrayDevice;
-        use burn::tensor::Data;
+        use burn::tensor::TensorData;
 
         let config = ModelConfig::default();
         let device = NdArrayDevice::Cpu;
@@ -571,7 +571,7 @@ mod tests {
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
-                Data::from([
+                TensorData::from([
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 1.0],
@@ -582,7 +582,7 @@ mod tests {
                 &device,
             ),
             r_historys: Tensor::from_floats(
-                Data::from([
+                TensorData::from([
                     [1.0, 2.0, 3.0, 4.0],
                     [3.0, 4.0, 2.0, 4.0],
                     [1.0, 4.0, 4.0, 3.0],
@@ -592,9 +592,9 @@ mod tests {
                 ]),
                 &device,
             ),
-            delta_ts: Tensor::from_floats(Data::from([4.0, 11.0, 12.0, 23.0]), &device),
-            labels: Tensor::from_ints(Data::from([1, 1, 1, 0]), &device),
-            weights: Tensor::from_floats(Data::from([1.0, 1.0, 1.0, 1.0]), &device),
+            delta_ts: Tensor::from_floats([4.0, 11.0, 12.0, 23.0], &device),
+            labels: Tensor::from_ints([1, 1, 1, 0], &device),
+            weights: Tensor::from_floats([1.0, 1.0, 1.0, 1.0], &device),
         };
 
         let loss = model.forward_classification(
@@ -606,20 +606,24 @@ mod tests {
             Reduction::Sum,
         );
 
-        assert_eq!(
-            loss.clone().into_data().convert::<f32>().value[0],
-            4.4467363
-        );
+        assert_eq!(loss.clone().into_scalar().to_f32(), 4.4467363);
         let gradients = loss.backward();
 
         let w_grad = model.w.grad(&gradients).unwrap();
 
-        Data::from([
-            -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
-            0.534472, -2.89288, 0.514163, -0.01306, 0.041905, -0.11830, -0.00092, -0.14452,
-            0.202374, 0.214104, 0.032307,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                -0.05832, -0.00682, -0.00255, 0.010539, -0.05128, 1.364291, 0.083658, -0.95023,
+                0.534472, -2.89288, 0.514163, -0.01306, 0.041905, -0.11830, -0.00092, -0.14452,
+                0.202374, 0.214104, 0.032307,
+            ],
+            w_grad
+                .to_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
 
         let config =
             TrainingConfig::new(ModelConfig::default(), AdamConfig::new().with_epsilon(1e-8));
@@ -629,49 +633,54 @@ mod tests {
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(model.w);
         assert_eq!(
-            model.w.val().to_data(),
-            Data::from([
+            model.w.val().to_data().to_vec::<f32>().unwrap(),
+            [
                 0.44255, 1.22385, 3.2129998, 15.65105, 7.2349, 0.4945, 1.4204, 0.0446, 1.5057501,
                 0.1592, 0.97925, 1.9794999, 0.07000001, 0.33605, 2.3097994, 0.2715, 2.9498,
                 0.47655, 0.62210006
-            ])
+            ]
         );
 
         let penalty =
             model.l2_regularization(init_w.clone(), params_stddev.clone(), 512, 1000, 2.0);
-        assert_eq!(
-            penalty.clone().into_data().convert::<f32>().value[0],
-            0.64689976
-        );
+        assert_eq!(penalty.clone().into_scalar().to_f32(), 0.64689976);
 
         let gradients = penalty.backward();
         let w_grad = model.w.grad(&gradients).unwrap();
-        Data::from([
-            0.0018749383,
-            0.00090389,
-            0.00026177685,
-            -0.00010645759,
-            0.27080965,
-            -1.0448978,
-            -0.18249036,
-            5.688889,
-            -0.5119995,
-            2.528395,
-            -0.7086509,
-            1.1237301,
-            -12.799997,
-            4.179591,
-            0.25213587,
-            1.3107198,
-            -0.07721739,
-            -1.1237309,
-            -0.5385926,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                0.0018749383,
+                0.00090389,
+                0.00026177685,
+                -0.00010645759,
+                0.27080965,
+                -1.0448978,
+                -0.18249036,
+                5.688889,
+                -0.5119995,
+                2.528395,
+                -0.7086509,
+                1.1237301,
+                -12.799997,
+                4.179591,
+                0.25213587,
+                1.3107198,
+                -0.07721739,
+                -1.1237309,
+                -0.5385926,
+            ],
+            w_grad
+                .clone()
+                .into_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
-                Data::from([
+                TensorData::from([
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 1.0],
@@ -682,7 +691,7 @@ mod tests {
                 &device,
             ),
             r_historys: Tensor::from_floats(
-                Data::from([
+                TensorData::from([
                     [1.0, 2.0, 3.0, 4.0],
                     [3.0, 4.0, 2.0, 4.0],
                     [1.0, 4.0, 4.0, 3.0],
@@ -692,9 +701,9 @@ mod tests {
                 ]),
                 &device,
             ),
-            delta_ts: Tensor::from_floats(Data::from([4.0, 11.0, 12.0, 23.0]), &device),
-            labels: Tensor::from_ints(Data::from([1, 1, 1, 0]), &device),
-            weights: Tensor::from_floats(Data::from([1.0, 1.0, 1.0, 1.0]), &device),
+            delta_ts: Tensor::from_floats([4.0, 11.0, 12.0, 23.0], &device),
+            labels: Tensor::from_ints([1, 1, 1, 0], &device),
+            weights: Tensor::from_floats([1.0, 1.0, 1.0, 1.0], &device),
         };
 
         let loss = model.forward_classification(
@@ -705,37 +714,44 @@ mod tests {
             item.weights,
             Reduction::Sum,
         );
-        assert_eq!(loss.clone().into_data().convert::<f32>().value[0], 4.176347);
+        assert_eq!(loss.clone().into_scalar().to_f32(), 4.176347);
         let gradients = loss.backward();
         let w_grad = model.w.grad(&gradients).unwrap();
-        Data::from([
-            -0.0401341,
-            -0.0061790533,
-            -0.00288913,
-            0.01216853,
-            -0.05624995,
-            1.147413,
-            0.068084724,
-            -0.6906936,
-            0.48760873,
-            -2.5428302,
-            0.49044546,
-            -0.011574259,
-            0.037729632,
-            -0.09633919,
-            -0.0009513022,
-            -0.12789416,
-            0.19088513,
-            0.2574597,
-            0.049311582,
-        ])
-        .assert_approx_eq(&w_grad.clone().into_data(), 5);
+        assert_approx_eq(
+            [
+                -0.0401341,
+                -0.0061790533,
+                -0.00288913,
+                0.01216853,
+                -0.05624995,
+                1.147413,
+                0.068084724,
+                -0.6906936,
+                0.48760873,
+                -2.5428302,
+                0.49044546,
+                -0.011574259,
+                0.037729632,
+                -0.09633919,
+                -0.0009513022,
+                -0.12789416,
+                0.19088513,
+                0.2574597,
+                0.049311582,
+            ],
+            w_grad
+                .clone()
+                .into_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(model.w);
-        assert_eq!(
-            model.w.val().to_data(),
-            Data::from([
+        model.w.val().to_data().assert_approx_eq(
+            &TensorData::from([
                 0.48150504,
                 1.2636971,
                 3.2530522,
@@ -754,8 +770,9 @@ mod tests {
                 0.3112984,
                 2.909878,
                 0.43652722,
-                0.5825156
-            ])
+                0.5825156,
+            ]),
+            5,
         );
     }
 

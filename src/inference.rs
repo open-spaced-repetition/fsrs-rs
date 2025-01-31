@@ -4,7 +4,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::model::{Get, MemoryStateTensors, FSRS};
 use burn::nn::loss::Reduction;
-use burn::tensor::{Data, Shape, Tensor};
+use burn::tensor::cast::ToElement;
+use burn::tensor::{Shape, Tensor, TensorData};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
 use crate::dataset::{
@@ -48,8 +49,8 @@ pub struct MemoryState {
 impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
     fn from(m: MemoryStateTensors<B>) -> Self {
         Self {
-            stability: m.stability.to_data().value[0].elem(),
-            difficulty: m.difficulty.to_data().value[0].elem(),
+            stability: m.stability.into_scalar().elem(),
+            difficulty: m.difficulty.into_scalar().elem(),
         }
     }
 }
@@ -57,14 +58,8 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
 impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
     fn from(m: MemoryState) -> Self {
         Self {
-            stability: Tensor::from_data(
-                Data::new(vec![m.stability.elem()], Shape { dims: [1] }),
-                &B::Device::default(),
-            ),
-            difficulty: Tensor::from_data(
-                Data::new(vec![m.difficulty.elem()], Shape { dims: [1] }),
-                &B::Device::default(),
-            ),
+            stability: Tensor::from_floats([m.stability], &B::Device::default()),
+            difficulty: Tensor::from_floats([m.difficulty], &B::Device::default()),
         }
     }
 }
@@ -95,14 +90,14 @@ impl<B: Backend> FSRS<B> {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
-        let time_history = Tensor::from_data(
-            Data::new(time_history, Shape { dims: [size] }).convert(),
+        let time_history = Tensor::<B, 1>::from_data(
+            TensorData::new(time_history, Shape { dims: vec![size] }),
             &self.device(),
         )
         .unsqueeze()
         .transpose();
-        let rating_history = Tensor::from_data(
-            Data::new(rating_history, Shape { dims: [size] }).convert(),
+        let rating_history = Tensor::<B, 1>::from_data(
+            TensorData::new(rating_history, Shape { dims: vec![size] }),
             &self.device(),
         )
         .unsqueeze()
@@ -157,10 +152,7 @@ impl<B: Backend> FSRS<B> {
     ) -> f32 {
         let stability = stability.unwrap_or_else(|| {
             // get initial stability for new card
-            let rating = Tensor::from_data(
-                Data::new(vec![rating.elem()], Shape { dims: [1] }),
-                &self.device(),
-            );
+            let rating = Tensor::from_floats([rating], &self.device());
             let model = self.model();
             model.init_stability(rating).into_scalar().elem()
         });
@@ -176,7 +168,7 @@ impl<B: Backend> FSRS<B> {
         days_elapsed: u32,
     ) -> Result<NextStates> {
         let delta_t = Tensor::from_data(
-            Data::new(vec![days_elapsed.elem()], Shape { dims: [1] }),
+            TensorData::new(vec![days_elapsed], Shape { dims: vec![1] }),
             &self.device(),
         );
         let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
@@ -186,7 +178,7 @@ impl<B: Backend> FSRS<B> {
                 let state = MemoryState::from(model.step(
                     delta_t.clone(),
                     Tensor::from_data(
-                        Data::new(vec![rating.elem()], Shape { dims: [1] }),
+                        TensorData::new(vec![rating], Shape { dims: vec![1] }),
                         &self.device(),
                     ),
                     current_memory_state_tensors.clone(),
@@ -236,8 +228,8 @@ impl<B: Backend> FSRS<B> {
         for chunk in weighted_items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
             let (_state, retention) = infer::<B>(model, batch.clone());
-            let pred = retention.clone().to_data().convert::<f32>().value;
-            let true_val = batch.labels.clone().to_data().convert::<f32>().value;
+            let pred = retention.clone().to_data().to_vec::<f32>().unwrap();
+            let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
             all_retention.push(retention);
             all_labels.push(batch.labels);
             all_weights.push(batch.weights);
@@ -245,7 +237,7 @@ impl<B: Backend> FSRS<B> {
                 let bin = weighted_item.item.r_matrix_index();
                 let value = r_matrix.entry(bin).or_default();
                 value.predicted += p;
-                value.actual += y;
+                value.actual += y as f32;
                 value.count += 1.0;
                 value.weight += weighted_item.weight;
             });
@@ -269,7 +261,7 @@ impl<B: Backend> FSRS<B> {
         let all_weights = Tensor::cat(all_weights, 0);
         let loss = BCELoss::new().forward(all_retention, all_labels, all_weights, Reduction::Auto);
         Ok(ModelEvaluation {
-            log_loss: loss.to_data().value[0].elem(),
+            log_loss: loss.into_scalar().to_f32(),
             rmse_bins: rmse,
         })
     }
@@ -310,14 +302,20 @@ impl<B: Backend> FSRS<B> {
             let batch = batcher.batch(chunk.to_vec());
 
             let (_state, retention) = infer::<B>(model_self, batch.clone());
-            let pred = retention.clone().to_data().convert::<f32>().value;
+            let pred = retention.clone().to_data().to_vec::<f32>().unwrap();
             all_predictions_self.extend(pred);
 
             let (_state, retention) = infer::<B>(model_other, batch.clone());
-            let pred = retention.clone().to_data().convert::<f32>().value;
+            let pred = retention.clone().to_data().to_vec::<f32>().unwrap();
             all_predictions_other.extend(pred);
 
-            let true_val = batch.labels.clone().to_data().convert::<f32>().value;
+            let true_val: Vec<f32> = batch
+                .labels
+                .clone()
+                .to_data()
+                .convert::<f32>()
+                .to_vec()
+                .unwrap();
             all_true_val.extend(true_val);
             progress_info.current += chunk.len();
             if !progress(progress_info) {
@@ -391,7 +389,8 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::{
-        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier, FSRSReview,
+        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
+        test_helpers::assert_approx_eq, FSRSReview,
     };
 
     static PARAMETERS: &[f32] = &[
@@ -415,9 +414,7 @@ mod tests {
         0.18046261,
         0.121442534,
     ];
-    fn assert_approx_eq(a: [f32; 2], b: [f32; 2]) {
-        Data::from(a).assert_approx_eq(&Data::from(b), 5);
-    }
+
     #[test]
     fn test_get_bin() {
         let pred = (0..=100).map(|i| i as f32 / 100.0).collect::<Vec<_>>();
