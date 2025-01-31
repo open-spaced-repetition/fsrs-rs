@@ -134,14 +134,14 @@ mod tests {
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: [7, batch_size]
+                dims: vec![7, batch_size]
             }
         );
         let batch = iterator.next().unwrap();
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: [6, batch_size]
+                dims: vec![6, batch_size]
             }
         );
 
@@ -159,14 +159,14 @@ mod tests {
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: [19, batch_size]
+                dims: vec![19, batch_size]
             }
         );
         let batch = iterator.next().unwrap();
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: [2, batch_size]
+                dims: vec![2, batch_size]
             }
         );
 
