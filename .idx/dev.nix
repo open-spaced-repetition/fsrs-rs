@@ -24,7 +24,6 @@
     extensions = [
       # "vscodevim.vim"
       "rust-lang.rust-analyzer"
-      "tamasfe.even-better-toml"
     ];
 
     # Enable previews
