@@ -37,7 +37,11 @@ let day3 = day3_states.good;
 dbg!(day3);
 ```
 
-## Development
+## Online development
+
+go to <https://idx.google.com/import>
+
+## Local development
 
 add
 
