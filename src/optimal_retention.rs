@@ -5,7 +5,7 @@ use crate::parameter_clipper::clip_parameters;
 use crate::FSRS;
 use burn::tensor::backend::Backend;
 use itertools::{izip, Itertools};
-use ndarray::Array1;
+use ndarray::{s, Array1};
 use ndarray_rand::rand_distr::Distribution;
 use priority_queue::PriorityQueue;
 use rand::Rng;
@@ -128,6 +128,113 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
 
 fn power_forgetting_curve(t: f32, s: f32) -> f32 {
     (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
+}
+
+/// Describes a range of days for which a certain amount of fuzz is applied to
+/// the new interval.
+struct FuzzRange {
+    start: f32,
+    end: f32,
+    factor: f32,
+}
+
+static FUZZ_RANGES: [FuzzRange; 3] = [
+    FuzzRange {
+        start: 2.5,
+        end: 7.0,
+        factor: 0.15,
+    },
+    FuzzRange {
+        start: 7.0,
+        end: 20.0,
+        factor: 0.1,
+    },
+    FuzzRange {
+        start: 20.0,
+        end: f32::MAX,
+        factor: 0.05,
+    },
+];
+
+/// Return the amount of fuzz to apply to the interval in both directions.
+/// Short intervals do not get fuzzed. All other intervals get fuzzed by 1 day
+/// plus the number of its days in each defined fuzz range multiplied with the
+/// given factor.
+fn fuzz_delta(interval: f32) -> f32 {
+    if interval < 2.5 {
+        0.0
+    } else {
+        FUZZ_RANGES.iter().fold(1.0, |delta, range| {
+            delta + range.factor * (interval.min(range.end) - range.start).max(0.0)
+        })
+    }
+}
+
+fn fuzz_bounds(interval: f32) -> (u32, u32) {
+    let delta = fuzz_delta(interval);
+    (
+        (interval - delta).round() as u32,
+        (interval + delta).round() as u32,
+    )
+}
+
+/// Return the bounds of the fuzz range, respecting `minimum` and `maximum`.
+/// Ensure the upper bound is larger than the lower bound, if `maximum` allows
+/// it and it is larger than 1.
+fn constrained_fuzz_bounds(interval: f32, minimum: u32, maximum: u32) -> (u32, u32) {
+    let minimum = minimum.min(maximum);
+    let interval = interval.clamp(minimum as f32, maximum as f32);
+    let (mut lower, mut upper) = fuzz_bounds(interval);
+
+    // minimum <= maximum and lower <= upper are assumed
+    // now ensure minimum <= lower <= upper <= maximum
+    lower = lower.clamp(minimum, maximum);
+    upper = upper.clamp(minimum, maximum);
+
+    if upper == lower && upper > 2 && upper < maximum {
+        upper = lower + 1;
+    };
+
+    (lower, upper)
+}
+
+fn find_interval(
+    stability: f32,
+    desired_retention: f32,
+    max_ivl: f32,
+    day_index: usize,
+    review_cnt_per_day: &Array1<usize>,
+    rng: &mut StdRng,
+) -> f32 {
+    let ivl = next_interval(stability, desired_retention)
+        .round()
+        .clamp(1.0, max_ivl);
+    let (lower, upper) = constrained_fuzz_bounds(ivl, 1, max_ivl as u32);
+    let end = (day_index + upper as usize + 1).min(review_cnt_per_day.len());
+    let mut review_counts = Array1::zeros(upper as usize + 1);
+    review_counts
+        .slice_mut(s![..(end - day_index)])
+        .assign(&review_cnt_per_day.slice(s![day_index..end]));
+    let intervals_and_params = (lower..=upper)
+        .enumerate()
+        .map(|(interval_index, target_interval)| {
+            let weight = match review_counts[interval_index] {
+                0 => 1.0, // if theres no cards due on this day, give it the full 1.0 weight
+                card_count => {
+                    let card_count_weight = (1.0 / card_count as f32).powi(2);
+                    let card_interval_weight = 1.0 / target_interval as f32;
+
+                    card_count_weight * card_interval_weight
+                }
+            };
+
+            (target_interval, weight)
+        })
+        .collect::<Vec<_>>();
+    let weighted_intervals = WeightedIndex::new(intervals_and_params.iter().map(|k| k.1)).unwrap();
+
+    let selected_interval_index = weighted_intervals.sample(rng);
+    intervals_and_params[selected_interval_index].0 as f32
 }
 
 #[derive(Debug, Clone)]
@@ -279,9 +386,14 @@ pub fn simulate(
             card.stability =
                 stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
 
-            ivl = next_interval(card.stability, desired_retention)
-                .round()
-                .clamp(1.0, max_ivl);
+            ivl = find_interval(
+                card.stability,
+                desired_retention,
+                max_ivl,
+                day_index,
+                &review_cnt_per_day,
+                &mut rng,
+            );
 
             // Update days statistics
             learn_cnt_per_day[day_index] += 1;
@@ -329,10 +441,14 @@ pub fn simulate(
                 review_costs[rating - 1]
             };
 
-            ivl = next_interval(card.stability, desired_retention)
-                .round()
-                .clamp(1.0, max_ivl);
-
+            ivl = find_interval(
+                card.stability,
+                desired_retention,
+                max_ivl,
+                day_index,
+                &review_cnt_per_day,
+                &mut rng,
+            );
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
