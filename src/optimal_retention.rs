@@ -291,7 +291,7 @@ pub fn simulate(
     let mut learn_cnt_per_day = Array1::<usize>::zeros(learn_span);
     let mut memorized_cnt_per_day = Array1::zeros(learn_span);
     let mut cost_per_day = Array1::zeros(learn_span);
-    let mut due_cnt_per_day = Array1::zeros(learn_span);
+    let mut due_cnt_per_day = Array1::zeros(learn_span + learn_span / 2);
 
     let first_rating_choices = [1, 2, 3, 4];
     let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
@@ -479,7 +479,7 @@ pub fn simulate(
 
         card.last_date = day_index as f32;
         card.due = day_index as f32 + ivl;
-        if card.due < learn_span as f32 {
+        if card.due < due_cnt_per_day.len() as f32 {
             due_cnt_per_day[card.due as usize] += 1;
         }
 
@@ -1069,7 +1069,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5804.207
+            5918.3853
         );
         Ok(())
     }
@@ -1266,8 +1266,8 @@ mod tests {
         assert_eq!(
             review_cnt_per_day.to_vec(),
             vec![
-                0, 15, 18, 39, 64, 67, 85, 94, 87, 97, 103, 99, 105, 128, 124, 132, 148, 123, 165,
-                184, 160, 175, 160, 159, 168, 195, 166, 190, 161, 174
+                0, 10, 24, 39, 59, 70, 63, 82, 89, 94, 107, 117, 118, 132, 122, 129, 142, 140, 136,
+                151, 150, 161, 142, 170, 150, 185, 178, 186, 194, 190
             ]
         );
         assert_eq!(
@@ -1289,7 +1289,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5582.8286
+            5675.0625
         );
         Ok(())
     }
@@ -1343,7 +1343,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8211557);
+        assert_eq!(optimal_retention, 0.8213668);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1363,7 +1363,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.83382076);
+        assert_eq!(optimal_retention, 0.85450846);
         Ok(())
     }
 
