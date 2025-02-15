@@ -202,19 +202,30 @@ fn find_interval(
     stability: f32,
     desired_retention: f32,
     max_ivl: f32,
-    day_index: usize,
-    review_cnt_per_day: &Array1<usize>,
+    today: usize,
+    due_cnt_per_day: &Array1<usize>,
     rng: &mut StdRng,
 ) -> f32 {
     let ivl = next_interval(stability, desired_retention)
         .round()
         .clamp(1.0, max_ivl);
     let (lower, upper) = constrained_fuzz_bounds(ivl, 1, max_ivl as u32);
-    let end = (day_index + upper as usize + 1).min(review_cnt_per_day.len());
-    let mut review_counts = Array1::zeros(upper as usize + 1);
-    review_counts
-        .slice_mut(s![..(end - day_index)])
-        .assign(&review_cnt_per_day.slice(s![day_index..end]));
+    let mut review_counts = Array1::zeros(upper as usize - lower as usize + 1);
+
+    // Fill review_counts with due counts for each interval
+    let start = today + lower as usize;
+    let end = (today + upper as usize + 1).min(due_cnt_per_day.len());
+    if start < due_cnt_per_day.len() {
+        review_counts
+            .slice_mut(s![..(end - start)])
+            .assign(&due_cnt_per_day.slice(s![start..end]));
+        // Fill remaining slots with mean value
+        if end - start < review_counts.len() {
+            let mean = review_counts.slice(s![..(end - start)]).mean().unwrap();
+            review_counts.slice_mut(s![(end - start)..]).fill(mean);
+        }
+    }
+
     let intervals_and_params = (lower..=upper)
         .enumerate()
         .map(|(interval_index, target_interval)| {
@@ -280,6 +291,7 @@ pub fn simulate(
     let mut learn_cnt_per_day = Array1::<usize>::zeros(learn_span);
     let mut memorized_cnt_per_day = Array1::zeros(learn_span);
     let mut cost_per_day = Array1::zeros(learn_span);
+    let mut due_cnt_per_day = Array1::zeros(learn_span);
 
     let first_rating_choices = [1, 2, 3, 4];
     let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
@@ -368,7 +380,11 @@ pub fn simulate(
             (_, false) => todays_review + 1 > review_limit,
         } || (cost_per_day[day_index] + fail_cost > max_cost_perday)
         {
+            due_cnt_per_day[day_index] -= 1;
             card.due = day_index as f32 + 1.0;
+            if card.due < learn_span as f32 {
+                due_cnt_per_day[card.due as usize] += 1;
+            }
             card_priorities.change_priority(&card_index, card_priority(card, is_learn));
             continue;
         }
@@ -391,7 +407,7 @@ pub fn simulate(
                 desired_retention,
                 max_ivl,
                 day_index,
-                &review_cnt_per_day,
+                &due_cnt_per_day,
                 &mut rng,
             );
 
@@ -446,7 +462,7 @@ pub fn simulate(
                 desired_retention,
                 max_ivl,
                 day_index,
-                &review_cnt_per_day,
+                &due_cnt_per_day,
                 &mut rng,
             );
             // Update days statistics
@@ -463,6 +479,9 @@ pub fn simulate(
 
         card.last_date = day_index as f32;
         card.due = day_index as f32 + ivl;
+        if card.due < learn_span as f32 {
+            due_cnt_per_day[card.due as usize] += 1;
+        }
 
         card_priorities.change_priority(&card_index, card_priority(card, false));
     }
