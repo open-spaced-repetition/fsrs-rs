@@ -219,11 +219,6 @@ fn find_interval(
         review_counts
             .slice_mut(s![..(end - start)])
             .assign(&due_cnt_per_day.slice(s![start..end]));
-        // Fill remaining slots with mean value
-        if end - start < review_counts.len() {
-            let mean = review_counts.slice(s![..(end - start)]).mean().unwrap();
-            review_counts.slice_mut(s![(end - start)..]).fill(mean);
-        }
     }
 
     let intervals_and_params = (lower..=upper)
@@ -1069,7 +1064,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5918.3853
+            5918.385
         );
         Ok(())
     }
