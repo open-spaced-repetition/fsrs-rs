@@ -318,6 +318,12 @@ pub fn simulate(
         );
     }
 
+    for card in &cards {
+        if (card.due as usize) < due_cnt_per_day.len() {
+            due_cnt_per_day[card.due as usize] += 1;
+        }
+    }
+
     if learn_limit > 0 {
         let init_ratings = (0..(deck_size - cards.len())).map(|i| Card {
             difficulty: f32::NEG_INFINITY,
