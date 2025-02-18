@@ -38,8 +38,24 @@ const R_MAX: f32 = 0.95;
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
 /// and returns a new interval.
-pub type PostSchedulingFn = dyn Fn(f32, f32, usize, Vec<usize>, &mut StdRng) -> f32 + Send + Sync;
+pub type PostSchedulingFnInner =
+    dyn Fn(f32, f32, usize, Vec<usize>, &mut StdRng) -> f32 + Send + Sync;
 
+pub struct PostSchedulingFn(pub Box<PostSchedulingFnInner>);
+
+impl PartialEq for PostSchedulingFn {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for PostSchedulingFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub struct SimulatorConfig {
     pub deck_size: usize,
     pub learn_span: usize,
@@ -57,55 +73,7 @@ pub struct SimulatorConfig {
     pub learn_limit: usize,
     pub review_limit: usize,
     pub new_cards_ignore_review_limit: bool,
-    pub post_scheduling_fn: Option<Box<PostSchedulingFn>>,
-}
-
-impl PartialEq for SimulatorConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.deck_size == other.deck_size
-            && self.learn_span == other.learn_span
-            && self.max_cost_perday == other.max_cost_perday
-            && self.max_ivl == other.max_ivl
-            && self.learn_costs == other.learn_costs
-            && self.review_costs == other.review_costs
-            && self.first_rating_prob == other.first_rating_prob
-            && self.review_rating_prob == other.review_rating_prob
-            && self.first_rating_offsets == other.first_rating_offsets
-            && self.first_session_lens == other.first_session_lens
-            && self.forget_rating_offset == other.forget_rating_offset
-            && self.forget_session_len == other.forget_session_len
-            && self.loss_aversion == other.loss_aversion
-            && self.learn_limit == other.learn_limit
-            && self.review_limit == other.review_limit
-            && self.new_cards_ignore_review_limit == other.new_cards_ignore_review_limit
-    }
-}
-
-impl std::fmt::Debug for SimulatorConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SimulatorConfig")
-            .field("deck_size", &self.deck_size)
-            .field("learn_span", &self.learn_span)
-            .field("max_cost_perday", &self.max_cost_perday)
-            .field("max_ivl", &self.max_ivl)
-            .field("learn_costs", &self.learn_costs)
-            .field("review_costs", &self.review_costs)
-            .field("first_rating_prob", &self.first_rating_prob)
-            .field("review_rating_prob", &self.review_rating_prob)
-            .field("first_rating_offsets", &self.first_rating_offsets)
-            .field("first_session_lens", &self.first_session_lens)
-            .field("forget_rating_offset", &self.forget_rating_offset)
-            .field("forget_session_len", &self.forget_session_len)
-            .field("loss_aversion", &self.loss_aversion)
-            .field("learn_limit", &self.learn_limit)
-            .field("review_limit", &self.review_limit)
-            .field(
-                "new_cards_ignore_review_limit",
-                &self.new_cards_ignore_review_limit,
-            )
-            .field("post_scheduling_fn", &"<function>")
-            .finish()
-    }
+    pub post_scheduling_fn: Option<PostSchedulingFn>,
 }
 
 impl Default for SimulatorConfig {
@@ -395,7 +363,7 @@ pub fn simulate(
             .clamp(1.0, config.max_ivl);
 
         if let Some(ref post_scheduling_fn) = config.post_scheduling_fn {
-            ivl = post_scheduling_fn(
+            ivl = post_scheduling_fn.0(
                 ivl,
                 config.max_ivl,
                 day_index,
