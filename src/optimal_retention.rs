@@ -44,7 +44,7 @@ pub type PostSchedulingFnInner =
 pub struct PostSchedulingFn(pub Box<PostSchedulingFnInner>);
 
 impl PartialEq for PostSchedulingFn {
-    fn eq(&self, _other: &Self) -> bool {
+    fn eq(&self, _: &Self) -> bool {
         true
     }
 }
