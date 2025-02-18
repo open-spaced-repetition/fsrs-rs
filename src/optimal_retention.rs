@@ -35,6 +35,11 @@ impl Round for f32 {
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
 
+/// Function type for post scheduling operations that takes interval, maximum interval,
+/// current day index, due counts per day, and a random number generator,
+/// and returns a new interval.
+pub type PostSchedulingFn = dyn Fn(f32, f32, usize, Vec<usize>, &mut StdRng) -> f32 + Send + Sync;
+
 pub struct SimulatorConfig {
     pub deck_size: usize,
     pub learn_span: usize,
@@ -52,8 +57,7 @@ pub struct SimulatorConfig {
     pub learn_limit: usize,
     pub review_limit: usize,
     pub new_cards_ignore_review_limit: bool,
-    pub post_scheduling_fn:
-        Option<Box<dyn Fn(f32, f32, usize, Vec<usize>, &mut StdRng) -> f32 + Send + Sync>>,
+    pub post_scheduling_fn: Option<Box<PostSchedulingFn>>,
 }
 
 impl PartialEq for SimulatorConfig {
@@ -123,7 +127,7 @@ impl Default for SimulatorConfig {
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
             new_cards_ignore_review_limit: true,
-            post_scheduling_fn: Some(Box::new(find_interval)),
+            post_scheduling_fn: None,
         }
     }
 }
@@ -177,114 +181,6 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
 
 fn power_forgetting_curve(t: f32, s: f32) -> f32 {
     (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
-}
-
-/// Describes a range of days for which a certain amount of fuzz is applied to
-/// the new interval.
-struct FuzzRange {
-    start: f32,
-    end: f32,
-    factor: f32,
-}
-
-static FUZZ_RANGES: [FuzzRange; 3] = [
-    FuzzRange {
-        start: 2.5,
-        end: 7.0,
-        factor: 0.15,
-    },
-    FuzzRange {
-        start: 7.0,
-        end: 20.0,
-        factor: 0.1,
-    },
-    FuzzRange {
-        start: 20.0,
-        end: f32::MAX,
-        factor: 0.05,
-    },
-];
-
-/// Return the amount of fuzz to apply to the interval in both directions.
-/// Short intervals do not get fuzzed. All other intervals get fuzzed by 1 day
-/// plus the number of its days in each defined fuzz range multiplied with the
-/// given factor.
-fn fuzz_delta(interval: f32) -> f32 {
-    if interval < 2.5 {
-        0.0
-    } else {
-        FUZZ_RANGES.iter().fold(1.0, |delta, range| {
-            delta + range.factor * (interval.min(range.end) - range.start).max(0.0)
-        })
-    }
-}
-
-fn fuzz_bounds(interval: f32) -> (u32, u32) {
-    let delta = fuzz_delta(interval);
-    (
-        (interval - delta).round() as u32,
-        (interval + delta).round() as u32,
-    )
-}
-
-/// Return the bounds of the fuzz range, respecting `minimum` and `maximum`.
-/// Ensure the upper bound is larger than the lower bound, if `maximum` allows
-/// it and it is larger than 1.
-fn constrained_fuzz_bounds(interval: f32, minimum: u32, maximum: u32) -> (u32, u32) {
-    let minimum = minimum.min(maximum);
-    let interval = interval.clamp(minimum as f32, maximum as f32);
-    let (mut lower, mut upper) = fuzz_bounds(interval);
-
-    // minimum <= maximum and lower <= upper are assumed
-    // now ensure minimum <= lower <= upper <= maximum
-    lower = lower.clamp(minimum, maximum);
-    upper = upper.clamp(minimum, maximum);
-
-    if upper == lower && upper > 2 && upper < maximum {
-        upper = lower + 1;
-    };
-
-    (lower, upper)
-}
-
-fn find_interval(
-    interval: f32,
-    maximum: f32,
-    today: usize,
-    due_cnt_per_day: Vec<usize>,
-    rng: &mut StdRng,
-) -> f32 {
-    let (lower, upper) = constrained_fuzz_bounds(interval, 1, maximum as u32);
-    let mut review_counts = vec![0; upper as usize - lower as usize + 1];
-
-    // Fill review_counts with due counts for each interval
-    let start = today + lower as usize;
-    let end = (today + upper as usize + 1).min(due_cnt_per_day.len());
-    if start < due_cnt_per_day.len() {
-        let copy_len = (end - start).min(review_counts.len());
-        review_counts[..copy_len].copy_from_slice(&due_cnt_per_day[start..start + copy_len]);
-    }
-
-    let intervals_and_params = (lower..=upper)
-        .enumerate()
-        .map(|(interval_index, target_interval)| {
-            let weight = match review_counts[interval_index] {
-                0 => 1.0, // if theres no cards due on this day, give it the full 1.0 weight
-                card_count => {
-                    let card_count_weight = (1.0 / card_count as f32).powi(2);
-                    let card_interval_weight = 1.0 / target_interval as f32;
-
-                    card_count_weight * card_interval_weight
-                }
-            };
-
-            (target_interval, weight)
-        })
-        .collect::<Vec<_>>();
-    let weighted_intervals = WeightedIndex::new(intervals_and_params.iter().map(|k| k.1)).unwrap();
-
-    let selected_interval_index = weighted_intervals.sample(rng);
-    intervals_and_params[selected_interval_index].0 as f32
 }
 
 #[derive(Debug, Clone)]
@@ -1100,7 +996,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5918.385
+            5804.207
         );
         Ok(())
     }
@@ -1297,8 +1193,8 @@ mod tests {
         assert_eq!(
             review_cnt_per_day.to_vec(),
             vec![
-                0, 10, 24, 39, 59, 70, 63, 82, 89, 94, 107, 117, 118, 132, 122, 129, 142, 140, 136,
-                151, 150, 161, 142, 170, 150, 185, 178, 186, 194, 190
+                0, 15, 18, 39, 64, 67, 85, 94, 87, 97, 103, 99, 105, 128, 124, 132, 148, 123, 165,
+                184, 160, 175, 160, 159, 168, 195, 166, 190, 161, 174
             ]
         );
         assert_eq!(
@@ -1320,7 +1216,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5675.0625
+            5582.8286
         );
         Ok(())
     }
@@ -1374,7 +1270,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.82966405);
+        assert_eq!(optimal_retention, 0.82115597);
         assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
         Ok(())
     }
@@ -1394,7 +1290,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.85450846);
+        assert_eq!(optimal_retention, 0.84596336);
         Ok(())
     }
 
