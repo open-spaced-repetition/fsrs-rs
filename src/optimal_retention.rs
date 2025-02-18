@@ -421,7 +421,7 @@ pub fn simulate(
 
         card_priorities.change_priority(
             &card_index,
-            card_priority(card, is_learn, config.review_priority_fn.as_ref()),
+            card_priority(card, false, config.review_priority_fn.as_ref()),
         );
     }
 
