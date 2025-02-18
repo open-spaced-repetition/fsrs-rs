@@ -272,11 +272,13 @@ pub fn simulate(
             (_, false) => todays_review + 1 > config.review_limit,
         } || (cost_per_day[day_index] + fail_cost > config.max_cost_perday)
         {
-            due_cnt_per_day[day_index] -= 1;
-            card.due = day_index as f32 + 1.0;
-            if card.due < config.learn_span as f32 {
-                due_cnt_per_day[card.due as usize] += 1;
+            if !is_learn {
+                due_cnt_per_day[day_index] -= 1;
+                if day_index + 1 < due_cnt_per_day.len() {
+                    due_cnt_per_day[day_index + 1] += 1;
+                }
             }
+            card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(&card_index, card_priority(card, is_learn));
             continue;
         }
