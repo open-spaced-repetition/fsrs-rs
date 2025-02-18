@@ -55,6 +55,24 @@ impl std::fmt::Debug for PostSchedulingFn {
     }
 }
 
+/// Function type for review priority calculation that takes a card reference
+/// and returns a priority value (lower value means higher priority)
+pub type ReviewPriorityFnInner = dyn Fn(&Card) -> i32 + Send + Sync;
+
+pub struct ReviewPriorityFn(pub Box<ReviewPriorityFnInner>);
+
+impl PartialEq for ReviewPriorityFn {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for ReviewPriorityFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct SimulatorConfig {
     pub deck_size: usize,
@@ -74,6 +92,7 @@ pub struct SimulatorConfig {
     pub review_limit: usize,
     pub new_cards_ignore_review_limit: bool,
     pub post_scheduling_fn: Option<PostSchedulingFn>,
+    pub review_priority_fn: Option<ReviewPriorityFn>,
 }
 
 impl Default for SimulatorConfig {
@@ -96,6 +115,7 @@ impl Default for SimulatorConfig {
             review_limit: usize::MAX,
             new_cards_ignore_review_limit: true,
             post_scheduling_fn: None,
+            review_priority_fn: None,
         }
     }
 }
@@ -227,13 +247,29 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn card_priority(card: &Card, learn: bool) -> Reverse<(i32, bool, i32)> {
-        // high priority for early due, review, low difficulty card
-        Reverse((card.due as i32, learn, (card.difficulty * 100.0) as i32))
+    fn card_priority(
+        card: &Card,
+        learn: bool,
+        review_priority_fn: Option<&ReviewPriorityFn>,
+    ) -> Reverse<(i32, bool, i32)> {
+        let priority = if let Some(priority_fn) = review_priority_fn {
+            priority_fn.0(card)
+        } else {
+            (card.difficulty * 100.0) as i32
+        };
+        // high priority for early due, review, custom priority
+        Reverse((card.due as i32, learn, priority))
     }
 
     for (i, card) in cards.iter().enumerate() {
-        card_priorities.push(i, card_priority(card, card.last_date == f32::NEG_INFINITY));
+        card_priorities.push(
+            i,
+            card_priority(
+                card,
+                card.last_date == f32::NEG_INFINITY,
+                config.review_priority_fn.as_ref(),
+            ),
+        );
     }
 
     // Main simulation loop
@@ -277,7 +313,10 @@ pub fn simulate(
             if card.due < config.learn_span as f32 {
                 due_cnt_per_day[card.due as usize] += 1;
             }
-            card_priorities.change_priority(&card_index, card_priority(card, is_learn));
+            card_priorities.change_priority(
+                &card_index,
+                card_priority(card, is_learn, config.review_priority_fn.as_ref()),
+            );
             continue;
         }
 
@@ -378,7 +417,10 @@ pub fn simulate(
             due_cnt_per_day[card.due as usize] += 1;
         }
 
-        card_priorities.change_priority(&card_index, card_priority(card, false));
+        card_priorities.change_priority(
+            &card_index,
+            card_priority(card, is_learn, config.review_priority_fn.as_ref()),
+        );
     }
 
     /*dbg!((
