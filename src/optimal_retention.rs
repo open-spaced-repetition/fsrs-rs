@@ -35,12 +35,12 @@ impl Round for f32 {
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
 
-/// Function type for post scheduling operations that takes interval, maximum interval,
-/// current day index, due counts per day, and a random number generator,
-/// and returns a new interval.
 pub type PostSchedulingFnInner =
     dyn Fn(f32, f32, usize, Vec<usize>, &mut StdRng) -> f32 + Send + Sync;
 
+/// Function type for post scheduling operations that takes interval, maximum interval,
+/// current day index, due counts per day, and a random number generator,
+/// and returns a new interval.
 pub struct PostSchedulingFn(pub Box<PostSchedulingFnInner>);
 
 impl PartialEq for PostSchedulingFn {
@@ -55,10 +55,10 @@ impl std::fmt::Debug for PostSchedulingFn {
     }
 }
 
-/// Function type for review priority calculation that takes a card reference
-/// and returns a priority value (lower value means higher priority)
 pub type ReviewPriorityFnInner = dyn Fn(&Card) -> i32 + Send + Sync;
 
+/// Function type for review priority calculation that takes a card reference
+/// and returns a priority value (lower value means higher priority)
 pub struct ReviewPriorityFn(pub Box<ReviewPriorityFnInner>);
 
 impl PartialEq for ReviewPriorityFn {
@@ -1280,6 +1280,37 @@ mod tests {
             review_cnt_per_day, ..
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(&review_cnt_per_day, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9,]);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_review_priority_fn() -> Result<()> {
+        let mut config = SimulatorConfig {
+            deck_size: 1000,
+            learn_span: 100,
+            learn_limit: 10,
+            review_limit: 5,
+            ..Default::default()
+        };
+        let SimulationResult {
+            memorized_cnt_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(
+            memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
+            599.51904
+        );
+
+        let review_priority_fn = |card: &Card| -(card.difficulty * 100.0) as i32;
+        config.review_priority_fn = Some(ReviewPriorityFn(Box::new(review_priority_fn)));
+        let SimulationResult {
+            memorized_cnt_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(
+            memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
+            559.08417
+        );
         Ok(())
     }
 
