@@ -998,7 +998,7 @@ mod tests {
     use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
 
     #[test]
-    fn simulator() -> Result<()> {
+    fn simulator_memorization() -> Result<()> {
         let config = SimulatorConfig::default();
         let SimulationResult {
             memorized_cnt_per_day,
@@ -1008,6 +1008,40 @@ mod tests {
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             5804.207
         );
+        Ok(())
+    }
+
+    #[test]
+    fn simulator_learn_review_costs() -> Result<()> {
+        const LEARN_COST: f32 = 42.;
+        const REVIEW_COST: f32 = 43.;
+
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_costs: [LEARN_COST; 4],
+            review_costs: [REVIEW_COST; 4],
+            learn_span: 1,
+            ..Default::default()
+        };
+
+        let cards = vec![Card {
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 0.0,
+        }];
+
+        let SimulationResult {
+            cost_per_day: cost_per_day_learn,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(cost_per_day_learn[0], LEARN_COST);
+
+        let SimulationResult {
+            cost_per_day: cost_per_day_review,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(cost_per_day_review[0], REVIEW_COST);
         Ok(())
     }
 
@@ -1153,40 +1187,6 @@ mod tests {
     }
 
     #[test]
-    fn simulator_learn_review_costs() -> Result<()> {
-        const LEARN_COST: f32 = 42.;
-        const REVIEW_COST: f32 = 43.;
-
-        let config = SimulatorConfig {
-            deck_size: 1,
-            learn_costs: [LEARN_COST; 4],
-            review_costs: [REVIEW_COST; 4],
-            learn_span: 1,
-            ..Default::default()
-        };
-
-        let cards = vec![Card {
-            difficulty: 5.0,
-            stability: 5.0,
-            last_date: -5.0,
-            due: 0.0,
-        }];
-
-        let SimulationResult {
-            cost_per_day: cost_per_day_learn,
-            ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(cost_per_day_learn[0], LEARN_COST);
-
-        let SimulationResult {
-            cost_per_day: cost_per_day_review,
-            ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
-        assert_eq!(cost_per_day_review[0], REVIEW_COST);
-        Ok(())
-    }
-
-    #[test]
     fn simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
@@ -1264,6 +1264,22 @@ mod tests {
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_post_scheduling_fn() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 10,
+            learn_span: 10,
+            learn_limit: 1,
+            post_scheduling_fn: Some(PostSchedulingFn(Box::new(|_, _, _, _, _| 1.0))),
+            ..Default::default()
+        };
+        let SimulationResult {
+            review_cnt_per_day, ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(&review_cnt_per_day, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9,]);
         Ok(())
     }
 
