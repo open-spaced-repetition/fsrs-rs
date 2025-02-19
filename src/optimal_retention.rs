@@ -249,14 +249,21 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
+    fn default_review_priority(card: &Card) -> i32 {
+        (card.difficulty * 100.0) as i32
+    }
+    let default_review_priority = ReviewPriorityFn(Box::new(default_review_priority));
+    let review_priority_fn = config
+        .review_priority_fn
+        .as_ref()
+        .unwrap_or(&default_review_priority);
+
     fn card_priority(
         card: &Card,
         learn: bool,
-        review_priority_fn: Option<&ReviewPriorityFn>,
+        review_priority_fn: &ReviewPriorityFn,
     ) -> Reverse<(i32, bool, i32)> {
-        let priority = review_priority_fn.map_or((card.difficulty * 100.0) as i32, |priority_fn| {
-            priority_fn.0(card)
-        });
+        let priority = review_priority_fn.0(card);
         // high priority for early due, review, custom priority
         Reverse((card.due as i32, learn, priority))
     }
@@ -267,7 +274,7 @@ pub fn simulate(
             card_priority(
                 card,
                 card.last_date == f32::NEG_INFINITY,
-                config.review_priority_fn.as_ref(),
+                review_priority_fn,
             ),
         );
     }
@@ -317,7 +324,7 @@ pub fn simulate(
             card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(
                 &card_index,
-                card_priority(card, is_learn, config.review_priority_fn.as_ref()),
+                card_priority(card, is_learn, review_priority_fn),
             );
             continue;
         }
@@ -420,10 +427,8 @@ pub fn simulate(
             due_cnt_per_day[card.due as usize] += 1;
         }
 
-        card_priorities.change_priority(
-            &card_index,
-            card_priority(card, false, config.review_priority_fn.as_ref()),
-        );
+        card_priorities
+            .change_priority(&card_index, card_priority(card, false, review_priority_fn));
     }
 
     /*dbg!((
