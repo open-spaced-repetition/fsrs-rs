@@ -1285,6 +1285,11 @@ mod tests {
 
     #[test]
     fn simulate_with_review_priority_fn() -> Result<()> {
+        fn calc_cost_per_memorization(memorized_cnt_per_day: &[f32], cost_per_day: &[f32]) -> f32 {
+            let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
+            let total_cost = cost_per_day.iter().sum::<f32>();
+            total_cost / total_memorized
+        }
         let mut config = SimulatorConfig {
             deck_size: 1000,
             learn_span: 100,
@@ -1292,25 +1297,80 @@ mod tests {
             review_limit: 5,
             ..Default::default()
         };
+
+        // low difficulty cards should be reviewed first
         let SimulationResult {
             memorized_cnt_per_day,
+            cost_per_day,
             ..
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(
-            memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            599.51904
-        );
+        let cost_per_memorization =
+            calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+        assert_eq!(cost_per_memorization, 42.54725);
 
+        // high difficulty cards should be reviewed first
         let review_priority_fn = |card: &Card| -(card.difficulty * 100.0) as i32;
         config.review_priority_fn = Some(ReviewPriorityFn(Box::new(review_priority_fn)));
         let SimulationResult {
             memorized_cnt_per_day,
+            cost_per_day,
             ..
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(
-            memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            559.08417
-        );
+        let cost_per_memorization =
+            calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+        assert_eq!(cost_per_memorization, 47.343697);
+
+        // low retrievability cards should be reviewed first
+        let review_priority_fn = |card: &Card| {
+            (power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
+        };
+        config.review_priority_fn = Some(ReviewPriorityFn(Box::new(review_priority_fn)));
+        let SimulationResult {
+            memorized_cnt_per_day,
+            cost_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let cost_per_memorization =
+            calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+        assert_eq!(cost_per_memorization, 54.253536);
+
+        // high retrievability cards should be reviewed first
+        let review_priority_fn = |card: &Card| {
+            -(power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
+        };
+        config.review_priority_fn = Some(ReviewPriorityFn(Box::new(review_priority_fn)));
+        let SimulationResult {
+            memorized_cnt_per_day,
+            cost_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let cost_per_memorization =
+            calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+        assert_eq!(cost_per_memorization, 40.672714);
+
+        // high stability cards should be reviewed first
+        let review_priority_fn = |card: &Card| -(card.stability * 100.0) as i32;
+        config.review_priority_fn = Some(ReviewPriorityFn(Box::new(review_priority_fn)));
+        let SimulationResult {
+            memorized_cnt_per_day,
+            cost_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let cost_per_memorization =
+            calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+        assert_eq!(cost_per_memorization, 42.895016);
+
+        // low stability cards should be reviewed first
+        let review_priority_fn = |card: &Card| (card.stability * 100.0) as i32;
+        config.review_priority_fn = Some(ReviewPriorityFn(Box::new(review_priority_fn)));
+        let SimulationResult {
+            memorized_cnt_per_day,
+            cost_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let cost_per_memorization =
+            calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+        assert_eq!(cost_per_memorization, 47.135647);
         Ok(())
     }
 
