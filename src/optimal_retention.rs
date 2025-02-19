@@ -261,9 +261,9 @@ pub fn simulate(
     fn card_priority(
         card: &Card,
         learn: bool,
-        review_priority_fn: &ReviewPriorityFn,
+        ReviewPriorityFn(cb): &ReviewPriorityFn,
     ) -> Reverse<(i32, bool, i32)> {
-        let priority = review_priority_fn.0(card);
+        let priority = cb(card);
         // high priority for early due, review, custom priority
         Reverse((card.due as i32, learn, priority))
     }
@@ -410,8 +410,8 @@ pub fn simulate(
             .round()
             .clamp(1.0, config.max_ivl);
 
-        if let Some(ref post_scheduling_fn) = config.post_scheduling_fn {
-            ivl = post_scheduling_fn.0(
+        if let Some(PostSchedulingFn(ref cb)) = config.post_scheduling_fn {
+            ivl = cb(
                 ivl,
                 config.max_ivl,
                 day_index,
