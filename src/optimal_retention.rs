@@ -13,6 +13,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct SimulationResult {
@@ -54,12 +55,12 @@ impl std::fmt::Debug for PostSchedulingFn {
         write!(f, "Wrap(<function>)")
     }
 }
-
 pub type ReviewPriorityFnInner = dyn Fn(&Card) -> i32 + Send + Sync;
 
 /// Function type for review priority calculation that takes a card reference
 /// and returns a priority value (lower value means higher priority)
-pub struct ReviewPriorityFn(pub Box<ReviewPriorityFnInner>);
+#[derive(Clone)]
+pub struct ReviewPriorityFn(pub Arc<ReviewPriorityFnInner>);
 
 impl PartialEq for ReviewPriorityFn {
     fn eq(&self, _: &Self) -> bool {
@@ -70,6 +71,12 @@ impl PartialEq for ReviewPriorityFn {
 impl std::fmt::Debug for ReviewPriorityFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Wrap(<function>)")
+    }
+}
+
+impl Default for ReviewPriorityFn {
+    fn default() -> Self {
+        Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
     }
 }
 
@@ -249,14 +256,7 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn default_review_priority(card: &Card) -> i32 {
-        (card.difficulty * 100.0) as i32
-    }
-    let default_review_priority = ReviewPriorityFn(Box::new(default_review_priority));
-    let review_priority_fn = config
-        .review_priority_fn
-        .as_ref()
-        .unwrap_or(&default_review_priority);
+    let review_priority_fn = config.review_priority_fn.clone().unwrap_or_default();
 
     fn card_priority(
         card: &Card,
@@ -274,7 +274,7 @@ pub fn simulate(
             card_priority(
                 card,
                 card.last_date == f32::NEG_INFINITY,
-                review_priority_fn,
+                &review_priority_fn,
             ),
         );
     }
@@ -324,7 +324,7 @@ pub fn simulate(
             card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(
                 &card_index,
-                card_priority(card, is_learn, review_priority_fn),
+                card_priority(card, is_learn, &review_priority_fn),
             );
             continue;
         }
@@ -428,7 +428,7 @@ pub fn simulate(
         }
 
         card_priorities
-            .change_priority(&card_index, card_priority(card, false, review_priority_fn));
+            .change_priority(&card_index, card_priority(card, false, &review_priority_fn));
     }
 
     /*dbg!((
@@ -1335,49 +1335,49 @@ mod tests {
         run_test(None, 43.632114)?;
         println!("High difficulty cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
                 -(card.difficulty * 100.0) as i32
             }))),
             48.88666,
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
                 (power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
             }))),
             56.962875,
         )?;
         println!("High retrievability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
                 -(power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
             }))),
             44.702374,
         )?;
         println!("High stability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
                 -(card.stability * 100.0) as i32
             }))),
             45.77435,
         )?;
         println!("Low stability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
                 (card.stability * 100.0) as i32
             }))),
             48.288563,
         )?;
         println!("Long interval cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
                 -card.interval as i32
             }))),
             46.02946,
         )?;
         println!("Short interval cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
                 card.interval as i32
             }))),
             45.916748,
