@@ -167,7 +167,7 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
-fn power_forgetting_curve(t: f32, s: f32) -> f32 {
+pub fn power_forgetting_curve(t: f32, s: f32) -> f32 {
     (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
 }
 
@@ -177,6 +177,7 @@ pub struct Card {
     pub stability: f32,
     pub last_date: f32,
     pub due: f32,
+    pub interval: f32,
 }
 
 pub fn simulate(
@@ -240,6 +241,7 @@ pub fn simulate(
             stability: f32::NEG_INFINITY,
             last_date: f32::NEG_INFINITY,
             due: (i / config.learn_limit) as f32,
+            interval: f32::NEG_INFINITY,
         });
 
         cards.extend(init_ratings);
@@ -413,6 +415,7 @@ pub fn simulate(
 
         card.last_date = day_index as f32;
         card.due = day_index as f32 + ivl;
+        card.interval = ivl;
         if card.due < due_cnt_per_day.len() as f32 {
             due_cnt_per_day[card.due as usize] += 1;
         }
@@ -1029,6 +1032,7 @@ mod tests {
             stability: 5.0,
             last_date: -5.0,
             due: 0.0,
+            interval: 5.0,
         }];
 
         let SimulationResult {
@@ -1096,24 +1100,28 @@ mod tests {
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
             },
             Card {
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 0.0,
+                interval: 2.0,
             },
             Card {
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 1.0,
+                interval: 3.0,
             },
             Card {
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -8.0,
                 due: -1.0,
+                interval: 7.0,
             },
         ];
         let SimulationResult {
@@ -1143,6 +1151,7 @@ mod tests {
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
             };
             9
         ];
@@ -1173,6 +1182,7 @@ mod tests {
                 stability: 500.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
             };
             9
         ];
@@ -1254,12 +1264,14 @@ mod tests {
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
             },
             Card {
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 0.0,
+                interval: 2.0,
             },
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
@@ -1351,7 +1363,20 @@ mod tests {
             }))),
             48.288563,
         )?;
-
+        println!("Long interval cards reviewed first.");
+        run_test(
+            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+                -card.interval as i32
+            }))),
+            46.02946,
+        )?;
+        println!("Short interval cards reviewed first.");
+        run_test(
+            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+                card.interval as i32
+            }))),
+            45.916748,
+        )?;
         Ok(())
     }
 
