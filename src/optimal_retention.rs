@@ -167,7 +167,7 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
-fn power_forgetting_curve(t: f32, s: f32) -> f32 {
+pub fn power_forgetting_curve(t: f32, s: f32) -> f32 {
     (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
 }
 

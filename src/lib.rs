@@ -22,7 +22,7 @@ pub use inference::{
 };
 pub use model::FSRS;
 pub use optimal_retention::{
-    extract_simulator_config, simulate, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry,
+    extract_simulator_config, simulate, power_forgetting_curve, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry,
     RevlogReviewKind, SimulatorConfig,
 };
 pub use training::CombinedProgressState;
