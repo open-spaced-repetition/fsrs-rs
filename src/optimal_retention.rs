@@ -252,11 +252,7 @@ pub fn simulate(
         learn: bool,
         review_priority_fn: Option<&ReviewPriorityFn>,
     ) -> Reverse<(i32, bool, i32)> {
-        let priority = if let Some(priority_fn) = review_priority_fn {
-            priority_fn.0(card)
-        } else {
-            (card.difficulty * 100.0) as i32
-        };
+        let priority = review_priority_fn.map_or((card.difficulty * 100.0) as i32, |priority_fn| priority_fn.0(card));
         // high priority for early due, review, custom priority
         Reverse((card.due as i32, learn, priority))
     }
