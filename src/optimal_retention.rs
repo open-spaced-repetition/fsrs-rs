@@ -35,12 +35,12 @@ impl Round for f32 {
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
 
-/// Function type for post scheduling operations that takes interval, maximum interval,
-/// current day index, due counts per day, and a random number generator,
-/// and returns a new interval.
 pub type PostSchedulingFnInner =
     dyn Fn(f32, f32, usize, Vec<usize>, &mut StdRng) -> f32 + Send + Sync;
 
+/// Function type for post scheduling operations that takes interval, maximum interval,
+/// current day index, due counts per day, and a random number generator,
+/// and returns a new interval.
 pub struct PostSchedulingFn(pub Box<PostSchedulingFnInner>);
 
 impl PartialEq for PostSchedulingFn {
@@ -50,6 +50,24 @@ impl PartialEq for PostSchedulingFn {
 }
 
 impl std::fmt::Debug for PostSchedulingFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
+    }
+}
+
+pub type ReviewPriorityFnInner = dyn Fn(&Card) -> i32 + Send + Sync;
+
+/// Function type for review priority calculation that takes a card reference
+/// and returns a priority value (lower value means higher priority)
+pub struct ReviewPriorityFn(pub Box<ReviewPriorityFnInner>);
+
+impl PartialEq for ReviewPriorityFn {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for ReviewPriorityFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Wrap(<function>)")
     }
@@ -74,6 +92,7 @@ pub struct SimulatorConfig {
     pub review_limit: usize,
     pub new_cards_ignore_review_limit: bool,
     pub post_scheduling_fn: Option<PostSchedulingFn>,
+    pub review_priority_fn: Option<ReviewPriorityFn>,
 }
 
 impl Default for SimulatorConfig {
@@ -96,6 +115,7 @@ impl Default for SimulatorConfig {
             review_limit: usize::MAX,
             new_cards_ignore_review_limit: true,
             post_scheduling_fn: None,
+            review_priority_fn: None,
         }
     }
 }
@@ -227,13 +247,27 @@ pub fn simulate(
 
     let mut card_priorities = PriorityQueue::new();
 
-    fn card_priority(card: &Card, learn: bool) -> Reverse<(i32, bool, i32)> {
-        // high priority for early due, review, low difficulty card
-        Reverse((card.due as i32, learn, (card.difficulty * 100.0) as i32))
+    fn card_priority(
+        card: &Card,
+        learn: bool,
+        review_priority_fn: Option<&ReviewPriorityFn>,
+    ) -> Reverse<(i32, bool, i32)> {
+        let priority = review_priority_fn.map_or((card.difficulty * 100.0) as i32, |priority_fn| {
+            priority_fn.0(card)
+        });
+        // high priority for early due, review, custom priority
+        Reverse((card.due as i32, learn, priority))
     }
 
     for (i, card) in cards.iter().enumerate() {
-        card_priorities.push(i, card_priority(card, card.last_date == f32::NEG_INFINITY));
+        card_priorities.push(
+            i,
+            card_priority(
+                card,
+                card.last_date == f32::NEG_INFINITY,
+                config.review_priority_fn.as_ref(),
+            ),
+        );
     }
 
     // Main simulation loop
@@ -279,7 +313,10 @@ pub fn simulate(
                 }
             }
             card.due = day_index as f32 + 1.0;
-            card_priorities.change_priority(&card_index, card_priority(card, is_learn));
+            card_priorities.change_priority(
+                &card_index,
+                card_priority(card, is_learn, config.review_priority_fn.as_ref()),
+            );
             continue;
         }
 
@@ -380,7 +417,10 @@ pub fn simulate(
             due_cnt_per_day[card.due as usize] += 1;
         }
 
-        card_priorities.change_priority(&card_index, card_priority(card, false));
+        card_priorities.change_priority(
+            &card_index,
+            card_priority(card, false, config.review_priority_fn.as_ref()),
+        );
     }
 
     /*dbg!((
@@ -958,7 +998,7 @@ mod tests {
     use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
 
     #[test]
-    fn simulator() -> Result<()> {
+    fn simulator_memorization() -> Result<()> {
         let config = SimulatorConfig::default();
         let SimulationResult {
             memorized_cnt_per_day,
@@ -968,6 +1008,40 @@ mod tests {
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             5804.207
         );
+        Ok(())
+    }
+
+    #[test]
+    fn simulator_learn_review_costs() -> Result<()> {
+        const LEARN_COST: f32 = 42.;
+        const REVIEW_COST: f32 = 43.;
+
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_costs: [LEARN_COST; 4],
+            review_costs: [REVIEW_COST; 4],
+            learn_span: 1,
+            ..Default::default()
+        };
+
+        let cards = vec![Card {
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 0.0,
+        }];
+
+        let SimulationResult {
+            cost_per_day: cost_per_day_learn,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(cost_per_day_learn[0], LEARN_COST);
+
+        let SimulationResult {
+            cost_per_day: cost_per_day_review,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(cost_per_day_review[0], REVIEW_COST);
         Ok(())
     }
 
@@ -1113,40 +1187,6 @@ mod tests {
     }
 
     #[test]
-    fn simulator_learn_review_costs() -> Result<()> {
-        const LEARN_COST: f32 = 42.;
-        const REVIEW_COST: f32 = 43.;
-
-        let config = SimulatorConfig {
-            deck_size: 1,
-            learn_costs: [LEARN_COST; 4],
-            review_costs: [REVIEW_COST; 4],
-            learn_span: 1,
-            ..Default::default()
-        };
-
-        let cards = vec![Card {
-            difficulty: 5.0,
-            stability: 5.0,
-            last_date: -5.0,
-            due: 0.0,
-        }];
-
-        let SimulationResult {
-            cost_per_day: cost_per_day_learn,
-            ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(cost_per_day_learn[0], LEARN_COST);
-
-        let SimulationResult {
-            cost_per_day: cost_per_day_review,
-            ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
-        assert_eq!(cost_per_day_review[0], REVIEW_COST);
-        Ok(())
-    }
-
-    #[test]
     fn simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
@@ -1224,6 +1264,94 @@ mod tests {
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_post_scheduling_fn() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 10,
+            learn_span: 10,
+            learn_limit: 1,
+            post_scheduling_fn: Some(PostSchedulingFn(Box::new(|_, _, _, _, _| 1.0))),
+            ..Default::default()
+        };
+        let SimulationResult {
+            review_cnt_per_day, ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(&review_cnt_per_day, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9,]);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_review_priority_fn() -> Result<()> {
+        fn calc_cost_per_memorization(memorized_cnt_per_day: &[f32], cost_per_day: &[f32]) -> f32 {
+            let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
+            let total_cost = cost_per_day.iter().sum::<f32>();
+            total_cost / total_memorized
+        }
+        let mut config = SimulatorConfig {
+            deck_size: 1000,
+            learn_span: 100,
+            learn_limit: 10,
+            review_limit: 5,
+            ..Default::default()
+        };
+
+        // Helper function to set the review priority fn, run simulation and assert the expected cost.
+        let mut run_test =
+            |review_priority: Option<ReviewPriorityFn>, expected: f32| -> Result<()> {
+                config.review_priority_fn = review_priority;
+                let SimulationResult {
+                    memorized_cnt_per_day,
+                    cost_per_day,
+                    ..
+                } = simulate(&config, &DEFAULT_PARAMETERS, 0.8, None, None)?;
+                let cost_per_memorization =
+                    calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+                println!("cost_per_memorization: {}", cost_per_memorization);
+                assert_eq!(cost_per_memorization, expected);
+                Ok(())
+            };
+
+        println!("Default behavior: low difficulty cards reviewed first.");
+        run_test(None, 43.632114)?;
+        println!("High difficulty cards reviewed first.");
+        run_test(
+            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+                -(card.difficulty * 100.0) as i32
+            }))),
+            48.88666,
+        )?;
+        println!("Low retrievability cards reviewed first.");
+        run_test(
+            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+                (power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
+            }))),
+            56.962875,
+        )?;
+        println!("High retrievability cards reviewed first.");
+        run_test(
+            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+                -(power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
+            }))),
+            44.702374,
+        )?;
+        println!("High stability cards reviewed first.");
+        run_test(
+            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+                -(card.stability * 100.0) as i32
+            }))),
+            45.77435,
+        )?;
+        println!("Low stability cards reviewed first.");
+        run_test(
+            Some(ReviewPriorityFn(Box::new(|card: &Card| {
+                (card.stability * 100.0) as i32
+            }))),
+            48.288563,
+        )?;
+
         Ok(())
     }
 
