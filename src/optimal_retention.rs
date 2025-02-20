@@ -1343,11 +1343,17 @@ mod tests {
             (dyn for<'a> Fn(&'a Card) -> i32 + std::marker::Send + std::marker::Sync + 'static),
         >| Some(ReviewPriorityFn(f));
 
+        macro_rules! wrap {
+            ($f:expr) => {
+                Some(ReviewPriorityFn(std::sync::Arc::new($f)))
+            };
+        }
+
         println!("Default behavior: low difficulty cards reviewed first.");
         run_test(None, 43.632114)?;
         println!("High difficulty cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| -(card.difficulty * 100.0) as i32)),
+            wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
             48.88666,
         )?;
         println!("Low retrievability cards reviewed first.");
