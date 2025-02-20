@@ -1347,7 +1347,7 @@ mod tests {
         run_test(None, 43.632114)?;
         println!("High difficulty cards reviewed first.");
         run_test(
-            wrap(Box::new(|card: &Card| -(card.difficulty * 100.0) as i32)),
+            wrap(Arc::new(|card: &Card| -(card.difficulty * 100.0) as i32)),
             48.88666,
         )?;
         println!("Low retrievability cards reviewed first.");
