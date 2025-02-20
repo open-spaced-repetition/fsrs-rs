@@ -1376,7 +1376,7 @@ mod tests {
         )?;
         println!("Long interval cards reviewed first.");
         run_test(
-            wrap(Box::new(|card: &Card| -card.interval as i32)),
+            wrap(Arc::new(|card: &Card| -card.interval as i32)),
             46.02946,
         )?;
         println!("Short interval cards reviewed first.");
