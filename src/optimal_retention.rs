@@ -1371,7 +1371,7 @@ mod tests {
         )?;
         println!("Low stability cards reviewed first.");
         run_test(
-            wrap(Box::new(|card: &Card| (card.stability * 100.0) as i32)),
+            wrap(Arc::new(|card: &Card| (card.stability * 100.0) as i32)),
             48.288563,
         )?;
         println!("Long interval cards reviewed first.");
