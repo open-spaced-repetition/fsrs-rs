@@ -1339,7 +1339,6 @@ mod tests {
                 Ok(())
             };
 
-
         macro_rules! wrap {
             ($f:expr) => {
                 Some(ReviewPriorityFn(std::sync::Arc::new($f)))
@@ -1355,12 +1354,12 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test(
-            wrap!(|card: &Card| {(card.retrievability() * 1000.0) as i32}),
+            wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
             57.13894,
         )?;
         println!("High retrievability cards reviewed first.");
         run_test(
-            wrap!(|card: &Card| {-(card.retrievability() * 1000.0) as i32}),
+            wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
             44.15335,
         )?;
         println!("High stability cards reviewed first.");
@@ -1374,25 +1373,13 @@ mod tests {
             48.288563,
         )?;
         println!("Long interval cards reviewed first.");
-        run_test(
-            wrap!(|card: &Card| -card.interval as i32),
-            46.02946,
-        )?;
+        run_test(wrap!(|card: &Card| -card.interval as i32), 46.02946)?;
         println!("Short interval cards reviewed first.");
-        run_test(
-            wrap!(|card: &Card| card.interval as i32),
-            45.916748,
-        )?;
+        run_test(wrap!(|card: &Card| card.interval as i32), 45.916748)?;
         println!("Early scheduled due cards reviewed first.");
-        run_test(
-            wrap!(|card: &Card| card.scheduled_due() as i32),
-            52.364307,
-        )?;
+        run_test(wrap!(|card: &Card| card.scheduled_due() as i32), 52.364307)?;
         println!("Late scheduled due cards reviewed first.");
-        run_test(
-            wrap!(|card: &Card| -card.scheduled_due() as i32),
-            43.113968,
-        )?;
+        run_test(wrap!(|card: &Card| -card.scheduled_due() as i32), 43.113968)?;
         Ok(())
     }
 
@@ -1408,9 +1395,9 @@ mod tests {
             learn_limit,
             ..Default::default()
         };
-        let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
+        let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
         assert_eq!(optimal_retention, 0.82115597);
-        assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
+        assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
         Ok(())
     }
 
