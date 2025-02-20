@@ -1339,9 +1339,6 @@ mod tests {
                 Ok(())
             };
 
-        let wrap = |f: Arc<
-            (dyn for<'a> Fn(&'a Card) -> i32 + std::marker::Send + std::marker::Sync + 'static),
-        >| Some(ReviewPriorityFn(f));
 
         macro_rules! wrap {
             ($f:expr) => {
@@ -1358,46 +1355,42 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| {
-                (card.retrievability() * 1000.0) as i32
-            })),
+            wrap!(|card: &Card| {(card.retrievability() * 1000.0) as i32}),
             57.13894,
         )?;
         println!("High retrievability cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| {
-                -(card.retrievability() * 1000.0) as i32
-            })),
+            wrap!(|card: &Card| {-(card.retrievability() * 1000.0) as i32}),
             44.15335,
         )?;
         println!("High stability cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| -(card.stability * 100.0) as i32)),
+            wrap!(|card: &Card| -(card.stability * 100.0) as i32),
             45.77435,
         )?;
         println!("Low stability cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| (card.stability * 100.0) as i32)),
+            wrap!(|card: &Card| (card.stability * 100.0) as i32),
             48.288563,
         )?;
         println!("Long interval cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| -card.interval as i32)),
+            wrap!(|card: &Card| -card.interval as i32),
             46.02946,
         )?;
         println!("Short interval cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| card.interval as i32)),
+            wrap!(|card: &Card| card.interval as i32),
             45.916748,
         )?;
         println!("Early scheduled due cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| card.scheduled_due() as i32)),
+            wrap!(|card: &Card| card.scheduled_due() as i32),
             52.364307,
         )?;
         println!("Late scheduled due cards reviewed first.");
         run_test(
-            wrap(Arc::new(|card: &Card| -card.scheduled_due() as i32)),
+            wrap!(|card: &Card| -card.scheduled_due() as i32),
             43.113968,
         )?;
         Ok(())
