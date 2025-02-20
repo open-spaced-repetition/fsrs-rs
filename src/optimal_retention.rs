@@ -1339,9 +1339,9 @@ mod tests {
                 Ok(())
             };
 
-        let wrap = |f: Box<
+        let wrap = |f: Arc<
             (dyn for<'a> Fn(&'a Card) -> i32 + std::marker::Send + std::marker::Sync + 'static),
-        >| Some(ReviewPriorityFn(Arc::new(f)));
+        >| Some(ReviewPriorityFn(f));
 
         println!("Default behavior: low difficulty cards reviewed first.");
         run_test(None, 43.632114)?;
