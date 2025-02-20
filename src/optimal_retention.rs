@@ -1353,16 +1353,16 @@ mod tests {
         println!("Low retrievability cards reviewed first.");
         run_test(
             wrap(Box::new(|card: &Card| {
-                (card.retrievability() * 100.0) as i32
+                (card.retrievability() * 1000.0) as i32
             })),
-            56.962875,
+            57.13894,
         )?;
         println!("High retrievability cards reviewed first.");
         run_test(
             wrap(Box::new(|card: &Card| {
-                -(card.retrievability() * 100.0) as i32
+                -(card.retrievability() * 1000.0) as i32
             })),
-            44.702374,
+            44.15335,
         )?;
         println!("High stability cards reviewed first.");
         run_test(
