@@ -1352,7 +1352,7 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test(
-            wrap(Box::new(|card: &Card| {
+            wrap(Arc::new(|card: &Card| {
                 (card.retrievability() * 1000.0) as i32
             })),
             57.13894,
