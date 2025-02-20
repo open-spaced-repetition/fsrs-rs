@@ -1391,7 +1391,7 @@ mod tests {
         )?;
         println!("Late scheduled due cards reviewed first.");
         run_test(
-            wrap(Box::new(|card: &Card| -card.scheduled_due() as i32)),
+            wrap(Arc::new(|card: &Card| -card.scheduled_due() as i32)),
             43.113968,
         )?;
         Ok(())
