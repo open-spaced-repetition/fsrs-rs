@@ -187,6 +187,16 @@ pub struct Card {
     pub interval: f32,
 }
 
+impl Card {
+    pub fn retrievability(&self) -> f32 {
+        power_forgetting_curve(self.due - self.last_date, self.stability)
+    }
+
+    pub fn scheduled_due(&self) -> f32 {
+        self.last_date + self.interval
+    }
+}
+
 pub fn simulate(
     config: &SimulatorConfig,
     w: &Parameters,
@@ -349,12 +359,10 @@ pub fn simulate(
             cost_per_day[day_index] += config.learn_costs[rating - 1];
         } else {
             // For review cards
-            // Updating delta_t for 'has_learned' cards
-            let elapsed_days = card.due - card.last_date;
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = power_forgetting_curve(elapsed_days, card.stability);
+            let retrievability = card.retrievability();
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
@@ -1331,57 +1339,47 @@ mod tests {
                 Ok(())
             };
 
+        macro_rules! wrap {
+            ($f:expr) => {
+                Some(ReviewPriorityFn(std::sync::Arc::new($f)))
+            };
+        }
+
         println!("Default behavior: low difficulty cards reviewed first.");
         run_test(None, 43.632114)?;
         println!("High difficulty cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
-                -(card.difficulty * 100.0) as i32
-            }))),
+            wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
             48.88666,
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
-                (power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
-            }))),
-            56.962875,
+            wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
+            57.13894,
         )?;
         println!("High retrievability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
-                -(power_forgetting_curve(card.due - card.last_date, card.stability) * 100.0) as i32
-            }))),
-            44.702374,
+            wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
+            44.15335,
         )?;
         println!("High stability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
-                -(card.stability * 100.0) as i32
-            }))),
+            wrap!(|card: &Card| -(card.stability * 100.0) as i32),
             45.77435,
         )?;
         println!("Low stability cards reviewed first.");
         run_test(
-            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
-                (card.stability * 100.0) as i32
-            }))),
+            wrap!(|card: &Card| (card.stability * 100.0) as i32),
             48.288563,
         )?;
         println!("Long interval cards reviewed first.");
-        run_test(
-            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
-                -card.interval as i32
-            }))),
-            46.02946,
-        )?;
+        run_test(wrap!(|card: &Card| -card.interval as i32), 46.02946)?;
         println!("Short interval cards reviewed first.");
-        run_test(
-            Some(ReviewPriorityFn(Arc::new(|card: &Card| {
-                card.interval as i32
-            }))),
-            45.916748,
-        )?;
+        run_test(wrap!(|card: &Card| card.interval as i32), 45.916748)?;
+        println!("Early scheduled due cards reviewed first.");
+        run_test(wrap!(|card: &Card| card.scheduled_due() as i32), 52.364307)?;
+        println!("Late scheduled due cards reviewed first.");
+        run_test(wrap!(|card: &Card| -card.scheduled_due() as i32), 43.113968)?;
         Ok(())
     }
 
@@ -1397,9 +1395,9 @@ mod tests {
             learn_limit,
             ..Default::default()
         };
-        let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
+        let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
         assert_eq!(optimal_retention, 0.82115597);
-        assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
+        assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
         Ok(())
     }
 
