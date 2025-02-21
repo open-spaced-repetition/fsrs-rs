@@ -39,7 +39,10 @@ const R_MAX: f32 = 0.95;
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
 /// and returns a new interval.
-pub struct PostSchedulingFn(pub Arc<Fn(f32, f32, usize, &[usize], &mut StdRng) -> f32>);
+#[allow(clippy::type_complexity)]
+pub struct PostSchedulingFn(
+    pub Arc<dyn Fn(f32, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
+);
 
 impl PartialEq for PostSchedulingFn {
     fn eq(&self, _: &Self) -> bool {
@@ -56,7 +59,7 @@ impl std::fmt::Debug for PostSchedulingFn {
 /// Function type for review priority calculation that takes a card reference
 /// and returns a priority value (lower value means higher priority)
 #[derive(Clone)]
-pub struct ReviewPriorityFn(pub Arc<Fn(&Card) -> i32>);
+pub struct ReviewPriorityFn(pub Arc<dyn Fn(&Card) -> i32 + Sync + Send>);
 
 impl PartialEq for ReviewPriorityFn {
     fn eq(&self, _: &Self) -> bool {
@@ -414,14 +417,8 @@ pub fn simulate(
             .round()
             .clamp(1.0, config.max_ivl);
 
-        if let Some(PostSchedulingFn(ref cb)) = config.post_scheduling_fn {
-            ivl = cb(
-                ivl,
-                config.max_ivl,
-                day_index,
-                due_cnt_per_day.clone(),
-                &mut rng,
-            );
+        if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
+            ivl = cb(ivl, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
         }
 
         card.last_date = day_index as f32;
