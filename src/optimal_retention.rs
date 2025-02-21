@@ -418,13 +418,7 @@ pub fn simulate(
             .clamp(1.0, config.max_ivl);
 
         if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
-            ivl = cb(
-                ivl,
-                config.max_ivl,
-                day_index,
-                &due_cnt_per_day,
-                &mut rng,
-            );
+            ivl = cb(ivl, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
         }
 
         card.last_date = day_index as f32;
