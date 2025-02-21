@@ -36,13 +36,10 @@ impl Round for f32 {
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
 
-pub type PostSchedulingFnInner =
-    dyn Fn(f32, f32, usize, Vec<usize>, &mut StdRng) -> f32 + Send + Sync;
-
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
 /// and returns a new interval.
-pub struct PostSchedulingFn(pub Box<PostSchedulingFnInner>);
+pub struct PostSchedulingFn(pub Arc<Fn(f32, f32, usize, &[usize], &mut StdRng) -> f32>);
 
 impl PartialEq for PostSchedulingFn {
     fn eq(&self, _: &Self) -> bool {
@@ -55,12 +52,11 @@ impl std::fmt::Debug for PostSchedulingFn {
         write!(f, "Wrap(<function>)")
     }
 }
-pub type ReviewPriorityFnInner = dyn Fn(&Card) -> i32 + Send + Sync;
 
 /// Function type for review priority calculation that takes a card reference
 /// and returns a priority value (lower value means higher priority)
 #[derive(Clone)]
-pub struct ReviewPriorityFn(pub Arc<ReviewPriorityFnInner>);
+pub struct ReviewPriorityFn(pub Arc<Fn(&Card) -> i32>);
 
 impl PartialEq for ReviewPriorityFn {
     fn eq(&self, _: &Self) -> bool {
@@ -1298,7 +1294,7 @@ mod tests {
             deck_size: 10,
             learn_span: 10,
             learn_limit: 1,
-            post_scheduling_fn: Some(PostSchedulingFn(Box::new(|_, _, _, _, _| 1.0))),
+            post_scheduling_fn: Some(PostSchedulingFn(Arc::new(|_, _, _, _, _| 1.0))),
             ..Default::default()
         };
         let SimulationResult {
