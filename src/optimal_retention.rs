@@ -421,7 +421,7 @@ pub fn simulate(
                 ivl,
                 config.max_ivl,
                 day_index,
-                &due_cnt_per_day.clone(),
+                &due_cnt_per_day,
                 &mut rng,
             );
         }
