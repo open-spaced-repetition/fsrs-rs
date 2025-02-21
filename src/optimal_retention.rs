@@ -39,6 +39,7 @@ const R_MAX: f32 = 0.95;
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
 /// and returns a new interval.
+#[allow(clippy::type_complexity)]
 pub struct PostSchedulingFn(
     pub Arc<dyn Fn(f32, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
 );
