@@ -3,8 +3,8 @@ use std::sync::Mutex;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderIterator, Progress};
 use burn::prelude::Backend;
-use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use rand::seq::SliceRandom;
 
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 
@@ -102,7 +102,7 @@ impl<B: Backend> ShuffleDataLoader<B> {
 #[cfg(test)]
 mod tests {
     use burn::{
-        backend::{ndarray::NdArrayDevice, NdArray},
+        backend::{NdArray, ndarray::NdArrayDevice},
         tensor::Shape,
     };
     use itertools::Itertools;
@@ -150,7 +150,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             lengths,
-            [48, 3, 8, 5, 11, 5, 1, 19, 3, 2, 2, 6, 5, 3, 9, 6, 3, 13, 7, 5, 4, 4, 4, 3, 4, 4]
+            [
+                48, 3, 8, 5, 11, 5, 1, 19, 3, 2, 2, 6, 5, 3, 9, 6, 3, 13, 7, 5, 4, 4, 4, 3, 4, 4
+            ]
         );
 
         let mut iterator = dataloader.iter();
@@ -175,7 +177,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             lengths,
-            [4, 11, 3, 6, 3, 6, 5, 5, 7, 6, 4, 9, 1, 4, 48, 3, 4, 5, 2, 13, 7, 5, 4, 8, 3, 3]
+            [
+                4, 11, 3, 6, 3, 6, 5, 5, 7, 6, 4, 9, 1, 4, 48, 3, 4, 5, 2, 13, 7, 5, 4, 8, 3, 3
+            ]
         );
     }
 }

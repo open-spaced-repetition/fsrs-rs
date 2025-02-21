@@ -4,7 +4,7 @@ use crate::{
 };
 use burn::{
     module::Param,
-    tensor::{backend::Backend, Tensor, TensorData},
+    tensor::{Tensor, TensorData, backend::Backend},
 };
 
 pub(crate) fn parameter_clipper<B: Backend>(
