@@ -1,13 +1,13 @@
-use crate::error::{FSRSError, Result};
-use crate::inference::{Parameters, DECAY, FACTOR, S_MAX, S_MIN};
-use crate::parameter_clipper::clip_parameters;
 use crate::DEFAULT_PARAMETERS;
-use burn::backend::ndarray::NdArrayDevice;
+use crate::error::{FSRSError, Result};
+use crate::inference::{DECAY, FACTOR, Parameters, S_MAX, S_MIN};
+use crate::parameter_clipper::clip_parameters;
 use burn::backend::NdArray;
+use burn::backend::ndarray::NdArrayDevice;
 use burn::{
     config::Config,
     module::{Module, Param},
-    tensor::{backend::Backend, Shape, Tensor, TensorData},
+    tensor::{Shape, Tensor, TensorData, backend::Backend},
 };
 
 #[derive(Module, Debug)]
@@ -278,7 +278,7 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{assert_approx_eq, Model, Tensor};
+    use crate::test_helpers::{Model, Tensor, assert_approx_eq};
     use burn::tensor::TensorData;
 
     #[test]

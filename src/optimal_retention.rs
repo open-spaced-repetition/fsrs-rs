@@ -1,14 +1,14 @@
+use crate::FSRS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MAX, S_MIN};
+use crate::inference::{DECAY, FACTOR, ItemProgress, Parameters, S_MAX, S_MIN, next_interval};
 use crate::model::check_and_fill_parameters;
 use crate::parameter_clipper::clip_parameters;
-use crate::FSRS;
 use burn::tensor::backend::Backend;
-use itertools::{izip, Itertools};
+use itertools::{Itertools, izip};
 use ndarray_rand::rand_distr::Distribution;
 use priority_queue::PriorityQueue;
 use rand::Rng;
-use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, distributions::WeightedIndex, rngs::StdRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
@@ -1011,7 +1011,7 @@ pub fn extract_simulator_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
+    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
 
     #[test]
     fn simulator_memorization() -> Result<()> {

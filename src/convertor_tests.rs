@@ -1,14 +1,14 @@
 use crate::convertor_tests::RevlogReviewKind::*;
-use crate::dataset::{constant_weighted_fsrs_items, FSRSBatcher};
+use crate::dataset::{FSRSBatcher, constant_weighted_fsrs_items};
 use crate::dataset::{FSRSItem, FSRSReview};
 use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
 use burn::backend::ndarray::NdArrayDevice;
-use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::Dataset;
+use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataset::InMemDataset;
-use burn::tensor::cast::ToElement;
 use burn::tensor::TensorData;
+use burn::tensor::cast::ToElement;
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
@@ -240,11 +240,13 @@ pub(crate) fn read_collection() -> Result<Vec<RevlogEntry>> {
 #[test]
 fn conversion_works() {
     let revlogs = read_collection().unwrap();
-    let single_card_revlog = vec![revlogs
-        .iter()
-        .filter(|r| r.cid == 1528947214762)
-        .cloned()
-        .collect_vec()];
+    let single_card_revlog = vec![
+        revlogs
+            .iter()
+            .filter(|r| r.cid == 1528947214762)
+            .cloned()
+            .collect_vec(),
+    ];
     assert_eq!(revlogs.len(), 24394);
     let fsrs_items = anki_to_fsrs(revlogs);
     assert_eq!(fsrs_items.len(), 14290);

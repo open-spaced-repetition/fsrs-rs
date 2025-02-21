@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::model::{Get, MemoryStateTensors, FSRS};
+use crate::model::{FSRS, Get, MemoryStateTensors};
 use burn::nn::loss::Reduction;
 use burn::tensor::cast::ToElement;
 use burn::tensor::{Shape, Tensor, TensorData};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
 use crate::dataset::{
-    constant_weighted_fsrs_items, recency_weighted_fsrs_items, FSRSBatch, FSRSBatcher,
+    FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items, recency_weighted_fsrs_items,
 };
 use crate::error::Result;
 use crate::model::Model;
@@ -385,8 +385,8 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::{
-        convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
-        test_helpers::assert_approx_eq, FSRSReview,
+        FSRSReview, convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
+        test_helpers::assert_approx_eq,
     };
 
     static PARAMETERS: &[f32] = &[

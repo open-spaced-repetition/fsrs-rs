@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
     data::dataset::Dataset,
-    tensor::{backend::Backend, Float, Int, Shape, Tensor, TensorData},
+    tensor::{Float, Int, Shape, Tensor, TensorData, backend::Backend},
 };
 
 use itertools::Itertools;
@@ -344,8 +344,8 @@ mod tests {
 
     #[test]
     fn batcher() {
-        use burn::backend::ndarray::NdArrayDevice;
         use burn::backend::NdArray;
+        use burn::backend::ndarray::NdArrayDevice;
         type Backend = NdArray<f32>;
         let device = NdArrayDevice::Cpu;
         let batcher = FSRSBatcher::<Backend>::new(device);
