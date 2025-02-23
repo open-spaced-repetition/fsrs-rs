@@ -304,7 +304,7 @@ pub fn simulate(
         let last_date_index = card.last_date as usize;
 
         // Guards
-        if card.due >= config.learn_span as f32 || card.lapses > max_lapses {
+        if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
             if !is_learn {
                 let delta_t = config.learn_span.max(last_date_index) - last_date_index;
                 let pre_sim_days = (-card.last_date) as usize;
@@ -1151,6 +1151,35 @@ mod tests {
         assert_eq!(memorized_cnt_per_day[0], 63.9);
         assert_eq!(review_cnt_per_day[0], 3);
         assert_eq!(learn_cnt_per_day[0], 60);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_suspend_on_lapse_count() -> Result<()> {
+        let cards = vec![Card {
+            difficulty: 10.0,
+            stability: f32::EPSILON,
+            last_date: -5.0,
+            due: 0.0,
+            interval: 5.0,
+            lapses: 0,
+        }];
+
+        let config = SimulatorConfig {
+            learn_limit: 1,
+            review_limit: 100,
+            learn_span: 200,
+            deck_size: cards.len(),
+            suspend_after_lapses: Some(1),
+            ..Default::default()
+        };
+
+        let SimulationResult {
+            review_cnt_per_day, ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        assert_eq!(1, review_cnt_per_day.iter().sum::<usize>());
+
         Ok(())
     }
 
