@@ -371,7 +371,7 @@ pub fn simulate(
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
 
-            card.lapses += if forget { 1 } else { 0 };
+            card.lapses += forget as u32;
 
             // Sample 'rating' for 'need_review' entries
             let rating = if forget {
