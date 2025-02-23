@@ -97,6 +97,7 @@ pub struct SimulatorConfig {
     pub learn_limit: usize,
     pub review_limit: usize,
     pub new_cards_ignore_review_limit: bool,
+    pub suspend_after_lapses: Option<u32>,
     pub post_scheduling_fn: Option<PostSchedulingFn>,
     pub review_priority_fn: Option<ReviewPriorityFn>,
 }
@@ -120,6 +121,7 @@ impl Default for SimulatorConfig {
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
             new_cards_ignore_review_limit: true,
+            suspend_after_lapses: None,
             post_scheduling_fn: None,
             review_priority_fn: None,
         }
@@ -184,6 +186,7 @@ pub struct Card {
     pub last_date: f32,
     pub due: f32,
     pub interval: f32,
+    pub lapses: u32,
 }
 
 impl Card {
@@ -258,12 +261,14 @@ pub fn simulate(
             last_date: f32::NEG_INFINITY,
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
+            lapses: 0,
         });
 
         cards.extend(init_ratings);
     }
 
     let mut card_priorities = PriorityQueue::new();
+    let max_lapses = config.suspend_after_lapses.unwrap_or(u32::MAX);
 
     let review_priority_fn = config.review_priority_fn.clone().unwrap_or_default();
 
@@ -299,7 +304,7 @@ pub fn simulate(
         let last_date_index = card.last_date as usize;
 
         // Guards
-        if card.due >= config.learn_span as f32 {
+        if card.due >= config.learn_span as f32 || card.lapses > max_lapses {
             if !is_learn {
                 let delta_t = config.learn_span.max(last_date_index) - last_date_index;
                 let pre_sim_days = (-card.last_date) as usize;
@@ -365,6 +370,8 @@ pub fn simulate(
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
+
+            card.lapses += if forget { 1 } else { 0 };
 
             // Sample 'rating' for 'need_review' entries
             let rating = if forget {
@@ -1039,6 +1046,7 @@ mod tests {
             last_date: -5.0,
             due: 0.0,
             interval: 5.0,
+            lapses: 0,
         }];
 
         let SimulationResult {
@@ -1107,6 +1115,7 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
+                lapses: 0,
             },
             Card {
                 difficulty: 5.0,
@@ -1114,6 +1123,7 @@ mod tests {
                 last_date: -2.0,
                 due: 0.0,
                 interval: 2.0,
+                lapses: 0,
             },
             Card {
                 difficulty: 5.0,
@@ -1121,6 +1131,7 @@ mod tests {
                 last_date: -2.0,
                 due: 1.0,
                 interval: 3.0,
+                lapses: 0,
             },
             Card {
                 difficulty: 5.0,
@@ -1128,6 +1139,7 @@ mod tests {
                 last_date: -8.0,
                 due: -1.0,
                 interval: 7.0,
+                lapses: 0,
             },
         ];
         let SimulationResult {
@@ -1158,6 +1170,7 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
+                lapses: 0
             };
             9
         ];
@@ -1189,6 +1202,7 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
+                lapses: 0
             };
             9
         ];
@@ -1271,6 +1285,7 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
+                lapses: 0,
             },
             Card {
                 difficulty: 5.0,
@@ -1278,6 +1293,7 @@ mod tests {
                 last_date: -2.0,
                 due: 0.0,
                 interval: 2.0,
+                lapses: 0,
             },
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
