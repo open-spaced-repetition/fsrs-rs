@@ -1,0 +1,23 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: FSRS-rs
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - name: Open Spaced Repetition
+repository-code: 'https://github.com/open-spaced-repetition/fsrs-rs'
+abstract: >-
+  FSRS-rs is a Rust implementation of FSRS for training FSRS
+  parameters, and for using them to schedule cards.
+keywords:
+  - algorithm
+  - machine learning
+  - spaced repetition
+license: BSD-3-Clause
+commit: 222a93e954ff912abaf36878b96ebeeb9666e16b
+version: 3.0.0
+date-released: '2025-03-03'
