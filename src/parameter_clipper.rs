@@ -70,7 +70,10 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_PARAMETERS, test_helpers::Tensor};
+    use crate::{
+        DEFAULT_PARAMETERS,
+        test_helpers::{Tensor, assert_approx_eq},
+    };
     use burn::backend::ndarray::NdArrayDevice;
 
     #[test]
@@ -98,7 +101,6 @@ mod tests {
         let param = parameter_clipper(Param::from_tensor(tensor), 2);
         let values = &param.to_data().to_vec::<f32>().unwrap();
 
-        assert_eq!(values[17], 0.26078036);
-        assert_eq!(values[18], 0.26078036);
+        assert_approx_eq([values[17], values[18]], [0.26078036, 0.26078036]);
     }
 }
