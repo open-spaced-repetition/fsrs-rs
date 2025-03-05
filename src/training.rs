@@ -235,6 +235,7 @@ impl<B: Backend> FSRS<B> {
         train_set: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
         enable_short_term: bool,
+        num_relearning_steps: usize,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
             if let Some(progress) = &progress {
@@ -270,6 +271,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
                 freeze_short_term_stability: !enable_short_term,
+                num_relearning_steps,
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -327,7 +329,12 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
+    pub fn benchmark(
+        &self,
+        train_set: Vec<FSRSItem>,
+        enable_short_term: bool,
+        num_relearning_steps: usize,
+    ) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -339,6 +346,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
                 freeze_short_term_stability: !enable_short_term,
+                num_relearning_steps,
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -431,7 +439,7 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            model.w = parameter_clipper(model.w);
+            model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
@@ -601,7 +609,7 @@ mod tests {
         let lr = 0.04;
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = parameter_clipper(model.w);
+        model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
         assert_eq!(
             model.w.val().to_data().to_vec::<f32>().unwrap(),
             [
@@ -719,7 +727,7 @@ mod tests {
         );
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = parameter_clipper(model.w);
+        model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
         model.w.val().to_data().assert_approx_eq(
             &TensorData::from([
                 0.48150504,
@@ -788,7 +796,7 @@ mod tests {
 
                 let fsrs = FSRS::new(Some(&[])).unwrap();
                 let parameters = fsrs
-                    .compute_parameters(items.clone(), progress2, enable_short_term)
+                    .compute_parameters(items.clone(), progress2, enable_short_term, 1)
                     .unwrap();
                 dbg!(&parameters);
 
