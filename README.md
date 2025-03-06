@@ -39,7 +39,7 @@ dbg!(day3);
 
 ## Online development
 
-go to <https://idx.google.com/import>
+You can use <https://idx.google.com/import>.
 
 ## Local development
 
