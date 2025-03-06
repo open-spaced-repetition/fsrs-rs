@@ -66,7 +66,7 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 
 - What is the difference between `fsrs-rs` and [`rs-fsrs`](https://github.com/open-spaced-repetition/rs-fsrs)
 
-  If you only want to schedule cards, use \[lang\]-fsrs or the [bindings](https://github.com/open-spaced-repetition/rs-fsrs?tab=readme-ov-file#bindings),
+  If you only want to schedule cards, use \[lang\]-fsrs or the [bindings](https://github.com/open-spaced-repetition/rs-fsrs?tab=readme-ov-file#bindings).
 
   If you need to optimize, use this crate or its bindings.
 
@@ -80,4 +80,4 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 
   Before this crate was made, `go-fsrs` and other libraries already existed, so the name `rs-fsrs` was chosen.
 
-  Then we wanted to port the torch version to Rust so that everyone could optimize on their own devices (tch-rs use libtorch which is too heavy). Since the algorithm is called `fsrs`, we add an `-rs` on the end.
+  Then we wanted to port the torch version to Rust so that everyone could optimize on their own devices (tch-rs uses libtorch which is too heavy). Since the algorithm is called `fsrs`, we add an `-rs` on the end.
