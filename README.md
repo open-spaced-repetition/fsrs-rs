@@ -72,7 +72,7 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 
 - Why use two crates instead of one?
 
-  Calculating the weights involves tensor operations so the data types are different (Tensor vs Vec/Slice). In one crate, this would mean using `cfg` to change the variable type, which would be tedious. Because of this, instead we publish two seperate crates.
+  Calculating the weights involves tensor operations so the data types are different (Tensor vs Vec/Slice). If we were to use one crate, this would mean using `cfg` to change the variable type, which would be tedious. Because of this, instead we publish two separate crates.
 
   Another reason is, it would be hard to port to other languages while using `Tensor`s.
 
