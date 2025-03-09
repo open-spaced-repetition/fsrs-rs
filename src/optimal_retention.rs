@@ -429,7 +429,7 @@ pub fn simulate(
         card.due = day_index as f32 + ivl;
 
         if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
-            ivl = cb(&card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
+            ivl = cb(card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
             card.interval = ivl;
             card.due = day_index as f32 + ivl;
         }
