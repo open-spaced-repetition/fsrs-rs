@@ -41,7 +41,7 @@ const R_MAX: f32 = 0.95;
 /// and returns a new interval.
 #[allow(clippy::type_complexity)]
 pub struct PostSchedulingFn(
-    pub Arc<dyn Fn(f32, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
+    pub Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
 );
 
 impl PartialEq for PostSchedulingFn {
@@ -424,13 +424,16 @@ pub fn simulate(
             .round()
             .clamp(1.0, config.max_ivl);
 
+        card.last_date = day_index as f32;
+        card.interval = ivl;
+        card.due = day_index as f32 + ivl;
+
         if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
-            ivl = cb(ivl, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
+            ivl = cb(&card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
+            card.interval = ivl;
+            card.due = day_index as f32 + ivl;
         }
 
-        card.last_date = day_index as f32;
-        card.due = day_index as f32 + ivl;
-        card.interval = ivl;
         if card.due < due_cnt_per_day.len() as f32 {
             due_cnt_per_day[card.due as usize] += 1;
         }
