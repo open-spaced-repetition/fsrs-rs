@@ -19,6 +19,7 @@ pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
 pub use inference::{
     DEFAULT_PARAMETERS, ItemProgress, ItemState, MemoryState, ModelEvaluation, NextStates,
+    next_interval,
 };
 pub use model::FSRS;
 pub use optimal_retention::{
