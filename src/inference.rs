@@ -113,7 +113,7 @@ impl<B: Backend> FSRS<B> {
 
     pub fn historical_memory_states(
         &self,
-        item: &FSRSItem,
+        item: FSRSItem,
         starting_state: Option<MemoryState>,
     ) -> Result<Vec<MemoryState>> {
         let (time_history, rating_history) = item_to_tensors(&item);
