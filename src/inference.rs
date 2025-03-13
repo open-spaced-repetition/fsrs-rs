@@ -34,8 +34,8 @@ fn infer<B: Backend>(
     batch: FSRSBatch<B>,
 ) -> (MemoryStateTensors<B>, Tensor<B, 1>) {
     let state = model.forward(batch.t_historys, batch.r_historys, None);
-    let retention = model.power_forgetting_curve(batch.delta_ts, state.stability.clone());
-    (state, retention)
+    let retrievability = model.power_forgetting_curve(batch.delta_ts, state.stability.clone());
+    (state, retrievability)
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -213,7 +213,7 @@ impl<B: Backend> FSRS<B> {
         }
         let weighted_items = recency_weighted_fsrs_items(items);
         let batcher = FSRSBatcher::new(self.device());
-        let mut all_retention = vec![];
+        let mut all_retrievability = vec![];
         let mut all_labels = vec![];
         let mut all_weights = vec![];
         let mut progress_info = ItemProgress {
@@ -225,10 +225,10 @@ impl<B: Backend> FSRS<B> {
 
         for chunk in weighted_items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
-            let (_state, retention) = infer::<B>(model, batch.clone());
-            let pred = retention.clone().to_data().to_vec::<f32>().unwrap();
+            let (_state, retrievability) = infer::<B>(model, batch.clone());
+            let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
             let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
-            all_retention.push(retention);
+            all_retrievability.push(retrievability);
             all_labels.push(batch.labels);
             all_weights.push(batch.weights);
             izip!(chunk, pred, true_val).for_each(|(weighted_item, p, y)| {
@@ -254,10 +254,11 @@ impl<B: Backend> FSRS<B> {
             .sum::<f32>()
             / r_matrix.values().map(|v| v.weight).sum::<f32>())
         .sqrt();
-        let all_retention = Tensor::cat(all_retention, 0);
+        let all_retrievability = Tensor::cat(all_retrievability, 0);
         let all_labels = Tensor::cat(all_labels, 0).float();
         let all_weights = Tensor::cat(all_weights, 0);
-        let loss = BCELoss::new().forward(all_retention, all_labels, all_weights, Reduction::Auto);
+        let loss =
+            BCELoss::new().forward(all_retrievability, all_labels, all_weights, Reduction::Auto);
         Ok(ModelEvaluation {
             log_loss: loss.into_scalar().to_f32(),
             rmse_bins: rmse,
@@ -299,12 +300,12 @@ impl<B: Backend> FSRS<B> {
         for chunk in weighted_items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec());
 
-            let (_state, retention) = infer::<B>(model_self, batch.clone());
-            let pred = retention.clone().to_data().to_vec::<f32>().unwrap();
+            let (_state, retrievability) = infer::<B>(model_self, batch.clone());
+            let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
             all_predictions_self.extend(pred);
 
-            let (_state, retention) = infer::<B>(model_other, batch.clone());
-            let pred = retention.clone().to_data().to_vec::<f32>().unwrap();
+            let (_state, retrievability) = infer::<B>(model_other, batch.clone());
+            let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
             all_predictions_other.extend(pred);
 
             let true_val: Vec<f32> = batch
