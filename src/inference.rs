@@ -38,6 +38,20 @@ fn infer<B: Backend>(
     (state, retention)
 }
 
+fn item_to_tensors<B: Backend>(item: &FSRSItem) -> (Tensor<B, 2>, Tensor<B, 2>) {
+    let (time_history, rating_history) = item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
+    let size = item.reviews.len();
+    let time_history = Tensor::<B, 2>::from_data(
+        TensorData::new(time_history, Shape { dims: vec![size] }),
+        &B::Device::default(),
+    );
+    let rating_history = Tensor::<B, 2>::from_data(
+        TensorData::new(rating_history, Shape { dims: vec![size] }),
+        &B::Device::default(),
+    );
+    (time_history, rating_history)
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemoryState {
     pub stability: f32,
@@ -85,21 +99,7 @@ impl<B: Backend> FSRS<B> {
         item: FSRSItem,
         starting_state: Option<MemoryState>,
     ) -> Result<MemoryState> {
-        let (time_history, rating_history) =
-            item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
-        let size = item.reviews.len();
-        let time_history = Tensor::<B, 1>::from_data(
-            TensorData::new(time_history, Shape { dims: vec![size] }),
-            &self.device(),
-        )
-        .unsqueeze()
-        .transpose();
-        let rating_history = Tensor::<B, 1>::from_data(
-            TensorData::new(rating_history, Shape { dims: vec![size] }),
-            &self.device(),
-        )
-        .unsqueeze()
-        .transpose();
+        let (time_history, rating_history) = item_to_tensors(&item);
         let state: MemoryState = self
             .model()
             .forward(time_history, rating_history, starting_state.map(Into::into))
@@ -109,6 +109,32 @@ impl<B: Backend> FSRS<B> {
         } else {
             Ok(state)
         }
+    }
+
+    pub fn historical_memory_states(
+        &self,
+        item: &FSRSItem,
+        starting_state: Option<MemoryState>,
+    ) -> Result<Vec<MemoryState>> {
+        let (time_history, rating_history) = item_to_tensors(&item);
+        let mut states = vec![];
+        let [seq_len, _batch_size] = time_history.dims();
+        let mut inner_state = starting_state.map(Into::into);
+        for i in 0..seq_len {
+            let delta_t = time_history.get(i).squeeze(0);
+            // [batch_size]
+            let rating = rating_history.get(i).squeeze(0);
+            // [batch_size]
+            inner_state = Some(self.model().step(delta_t, rating, inner_state.clone()));
+            if let Some(state) = inner_state.clone() {
+                let state: MemoryState = state.into();
+                if !state.stability.is_finite() || !state.difficulty.is_finite() {
+                    return Err(FSRSError::InvalidInput);
+                }
+                states.push(state);
+            }
+        }
+        Ok(states)
     }
 
     /// If a card has incomplete learning history, memory state can be approximated from
