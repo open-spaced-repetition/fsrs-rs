@@ -38,20 +38,6 @@ fn infer<B: Backend>(
     (state, retention)
 }
 
-fn item_to_tensors<B: Backend>(item: &FSRSItem) -> (Tensor<B, 2>, Tensor<B, 2>) {
-    let (time_history, rating_history) = item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
-    let size = item.reviews.len();
-    let time_history = Tensor::<B, 2>::from_data(
-        TensorData::new(time_history, Shape { dims: vec![size] }),
-        &B::Device::default(),
-    );
-    let rating_history = Tensor::<B, 2>::from_data(
-        TensorData::new(rating_history, Shape { dims: vec![size] }),
-        &B::Device::default(),
-    );
-    (time_history, rating_history)
-}
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemoryState {
     pub stability: f32,
@@ -89,6 +75,25 @@ struct RMatrixValue {
 }
 
 impl<B: Backend> FSRS<B> {
+    fn item_to_tensors(&self, item: &FSRSItem) -> (Tensor<B, 2>, Tensor<B, 2>) {
+        let (time_history, rating_history) =
+            item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
+        let size = item.reviews.len();
+        let time_history = Tensor::<B, 1>::from_data(
+            TensorData::new(time_history, Shape { dims: vec![size] }),
+            &self.device(),
+        )
+        .unsqueeze()
+        .transpose();
+        let rating_history = Tensor::<B, 1>::from_data(
+            TensorData::new(rating_history, Shape { dims: vec![size] }),
+            &self.device(),
+        )
+        .unsqueeze()
+        .transpose();
+        (time_history, rating_history)
+    }
+
     /// Calculate the current memory state for a given card's history of reviews.
     /// In the case of truncated reviews, `starting_state` can be set to the value of
     /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
@@ -99,7 +104,7 @@ impl<B: Backend> FSRS<B> {
         item: FSRSItem,
         starting_state: Option<MemoryState>,
     ) -> Result<MemoryState> {
-        let (time_history, rating_history) = item_to_tensors(&item);
+        let (time_history, rating_history) = self.item_to_tensors(&item);
         let state: MemoryState = self
             .model()
             .forward(time_history, rating_history, starting_state.map(Into::into))
@@ -116,7 +121,7 @@ impl<B: Backend> FSRS<B> {
         item: FSRSItem,
         starting_state: Option<MemoryState>,
     ) -> Result<Vec<MemoryState>> {
-        let (time_history, rating_history) = item_to_tensors(&item);
+        let (time_history, rating_history) = self.item_to_tensors(&item);
         let mut states = vec![];
         let [seq_len, _batch_size] = time_history.dims();
         let mut inner_state = starting_state.map(Into::into);
