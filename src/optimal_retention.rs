@@ -183,7 +183,7 @@ pub fn power_forgetting_curve(t: f32, s: f32) -> f32 {
 pub struct Card {
     // "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
     // new cards created by the simulation have negative id's so use positive ones.
-    pub id: i32,
+    pub id: i64,
     pub difficulty: f32,
     pub stability: f32,
     pub last_date: f32,
@@ -259,7 +259,7 @@ pub fn simulate(
 
     if config.learn_limit > 0 {
         let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
-            id: -(i as i32),
+            id: -(i as i64),
             difficulty: f32::NEG_INFINITY,
             stability: f32::NEG_INFINITY,
             last_date: f32::NEG_INFINITY,
