@@ -194,6 +194,8 @@ pub struct ModelConfig {
     pub initial_stability: Option<[f32; 4]>,
     #[config(default = false)]
     pub freeze_short_term_stability: bool,
+    #[config(default = 1)]
+    pub num_relearning_steps: usize,
 }
 
 impl ModelConfig {
@@ -248,9 +250,12 @@ impl<B: Backend> FSRS<B> {
 
 pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
-    let mut model = Model::new(config);
+    let mut model = Model::new(config.clone());
     model.w = Param::from_tensor(Tensor::from_floats(
-        TensorData::new(clip_parameters(parameters), Shape { dims: vec![19] }),
+        TensorData::new(
+            clip_parameters(parameters, config.num_relearning_steps),
+            Shape { dims: vec![19] },
+        ),
         &B::Device::default(),
     ));
     model
