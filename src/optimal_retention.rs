@@ -1306,7 +1306,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_zero_card() -> Result<()> {
+    fn simulate_with_zero_cards() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 0,
             ..Default::default()
