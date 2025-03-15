@@ -21,7 +21,7 @@ pub struct SimulationResult {
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
     pub cost_per_day: Vec<f32>,
-    pub cards: Vec<Card>
+    pub cards: Vec<Card>,
 }
 
 trait Round {
@@ -459,7 +459,7 @@ pub fn simulate(
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
-        cards
+        cards,
     })
 }
 
@@ -1331,7 +1331,8 @@ mod tests {
             ..Default::default()
         };
 
-        let SimulationResult {cards, ..} = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let SimulationResult { cards, .. } =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
 
         assert_eq!(cards.len(), 1);
         let card = &cards[0];
