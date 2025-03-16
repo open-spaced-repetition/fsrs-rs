@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Default parameters: {:?}", DEFAULT_PARAMETERS);
 
     // Optimize the FSRS model using the created items
-    let optimized_parameters = fsrs.compute_parameters(fsrs_items, None, false, 1)?;
+    let optimized_parameters = fsrs.compute_parameters(fsrs_items, None, false, None)?;
 
     println!("Optimized parameters: {:?}", optimized_parameters);
 

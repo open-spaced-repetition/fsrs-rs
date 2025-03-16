@@ -235,7 +235,7 @@ impl<B: Backend> FSRS<B> {
         train_set: Vec<FSRSItem>,
         progress: Option<Arc<Mutex<CombinedProgressState>>>,
         enable_short_term: bool,
-        num_relearning_steps: usize,
+        num_relearning_steps: Option<usize>,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
             if let Some(progress) = &progress {
@@ -271,7 +271,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
                 freeze_short_term_stability: !enable_short_term,
-                num_relearning_steps,
+                num_relearning_steps: num_relearning_steps.unwrap_or(1),
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -333,7 +333,7 @@ impl<B: Backend> FSRS<B> {
         &self,
         train_set: Vec<FSRSItem>,
         enable_short_term: bool,
-        num_relearning_steps: usize,
+        num_relearning_steps: Option<usize>,
     ) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
@@ -346,7 +346,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
                 freeze_short_term_stability: !enable_short_term,
-                num_relearning_steps,
+                num_relearning_steps: num_relearning_steps.unwrap_or(1),
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -796,7 +796,7 @@ mod tests {
 
                 let fsrs = FSRS::new(Some(&[])).unwrap();
                 let parameters = fsrs
-                    .compute_parameters(items.clone(), progress2, enable_short_term, 1)
+                    .compute_parameters(items.clone(), progress2, enable_short_term, None)
                     .unwrap();
                 dbg!(&parameters);
 
