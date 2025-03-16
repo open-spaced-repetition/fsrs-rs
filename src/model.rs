@@ -123,17 +123,18 @@ impl<B: Backend> Model<B> {
         state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let (new_s, new_d) = if let Some(state) = state {
-            let retention = self.power_forgetting_curve(delta_t.clone(), state.stability.clone());
+            let retrievability =
+                self.power_forgetting_curve(delta_t.clone(), state.stability.clone());
             let stability_after_success = self.stability_after_success(
                 state.stability.clone(),
                 state.difficulty.clone(),
-                retention.clone(),
+                retrievability.clone(),
                 rating.clone(),
             );
             let stability_after_failure = self.stability_after_failure(
                 state.stability.clone(),
                 state.difficulty.clone(),
-                retention,
+                retrievability,
             );
             let stability_short_term =
                 self.stability_short_term(state.stability.clone(), rating.clone());
@@ -317,9 +318,9 @@ mod tests {
         let model = Model::new(ModelConfig::default());
         let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
         let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &device);
-        let retention = model.power_forgetting_curve(delta_t, stability);
+        let retrievability = model.power_forgetting_curve(delta_t, stability);
 
-        retention.to_data().assert_approx_eq(
+        retrievability.to_data().assert_approx_eq(
             &TensorData::from([1.0, 0.946059, 0.9299294, 0.9221679, 0.90000004, 0.79394597]),
             5,
         );
@@ -419,12 +420,12 @@ mod tests {
         let model = Model::new(ModelConfig::default());
         let stability = Tensor::from_floats([5.0; 4], &device);
         let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
-        let retention = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &device);
+        let retrievability = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &device);
         let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),
-            retention.clone(),
+            retrievability.clone(),
             rating.clone(),
         );
         s_recall.clone().backward();
@@ -432,7 +433,7 @@ mod tests {
             &TensorData::from([25.77614, 14.121894, 60.40441, 208.97597]),
             5,
         );
-        let s_forget = model.stability_after_failure(stability.clone(), difficulty, retention);
+        let s_forget = model.stability_after_failure(stability.clone(), difficulty, retrievability);
         s_forget.clone().backward();
         s_forget.to_data().assert_approx_eq(
             &TensorData::from([1.7028502, 1.9798818, 2.3759942, 2.8885393]),

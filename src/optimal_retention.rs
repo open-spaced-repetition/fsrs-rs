@@ -20,6 +20,7 @@ pub struct SimulationResult {
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
     pub cost_per_day: Vec<f32>,
+    pub cards: Vec<Card>,
 }
 
 trait Round {
@@ -40,7 +41,7 @@ const R_MAX: f32 = 0.95;
 /// and returns a new interval.
 #[allow(clippy::type_complexity)]
 pub struct PostSchedulingFn(
-    pub Arc<dyn Fn(f32, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
+    pub Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
 );
 
 impl PartialEq for PostSchedulingFn {
@@ -180,6 +181,9 @@ pub fn power_forgetting_curve(t: f32, s: f32) -> f32 {
 
 #[derive(Debug, Clone)]
 pub struct Card {
+    // "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
+    // new cards created by the simulation have negative id's so use positive ones.
+    pub id: i64,
     pub difficulty: f32,
     pub stability: f32,
     pub last_date: f32,
@@ -254,6 +258,7 @@ pub fn simulate(
 
     if config.learn_limit > 0 {
         let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
+            id: -(i as i64),
             difficulty: f32::NEG_INFINITY,
             stability: f32::NEG_INFINITY,
             last_date: f32::NEG_INFINITY,
@@ -422,13 +427,16 @@ pub fn simulate(
             .round()
             .clamp(1.0, config.max_ivl);
 
+        card.last_date = day_index as f32;
+        card.interval = ivl;
+        card.due = day_index as f32 + ivl;
+
         if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
-            ivl = cb(ivl, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
+            ivl = cb(card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
+            card.interval = ivl;
+            card.due = day_index as f32 + ivl;
         }
 
-        card.last_date = day_index as f32;
-        card.due = day_index as f32 + ivl;
-        card.interval = ivl;
         if card.due < due_cnt_per_day.len() as f32 {
             due_cnt_per_day[card.due as usize] += 1;
         }
@@ -449,6 +457,7 @@ pub fn simulate(
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
+        cards,
     })
 }
 
@@ -1039,6 +1048,7 @@ mod tests {
         };
 
         let cards = vec![Card {
+            id: 0,
             difficulty: 5.0,
             stability: 5.0,
             last_date: -5.0,
@@ -1108,6 +1118,7 @@ mod tests {
         };
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
@@ -1116,6 +1127,7 @@ mod tests {
                 lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
@@ -1124,6 +1136,7 @@ mod tests {
                 lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
@@ -1132,6 +1145,7 @@ mod tests {
                 lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -8.0,
@@ -1155,6 +1169,7 @@ mod tests {
     #[test]
     fn simulate_suspend_on_lapse_count() -> Result<()> {
         let cards = vec![Card {
+            id: 0,
             difficulty: 10.0,
             stability: f32::EPSILON,
             last_date: -5.0,
@@ -1192,6 +1207,7 @@ mod tests {
 
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
@@ -1224,6 +1240,7 @@ mod tests {
 
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 500.0,
                 last_date: -5.0,
@@ -1289,13 +1306,39 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_zero_card() -> Result<()> {
+    fn simulate_with_zero_cards() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 0,
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_returns_cards() -> Result<()> {
+        let w = DEFAULT_PARAMETERS.clone();
+
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_span: 1,
+            first_rating_prob: [0., 0., 1., 0.],
+            first_rating_offsets: [0., 0., 0., 0.],
+            first_session_lens: [0., 0., 0., 0.],
+            ..Default::default()
+        };
+
+        let SimulationResult { cards, .. } =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+
+        assert_eq!(cards.len(), 1);
+        let card = &cards[0];
+        let rating = 3;
+        assert_eq!(card.lapses, 0);
+        assert_eq!(card.stability, w[rating - 1]);
+        assert_eq!(card.difficulty, init_d(&w, rating));
+
         Ok(())
     }
 
@@ -1307,6 +1350,7 @@ mod tests {
         };
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
@@ -1315,6 +1359,7 @@ mod tests {
                 lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
