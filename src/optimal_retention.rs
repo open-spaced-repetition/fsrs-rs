@@ -218,7 +218,7 @@ pub fn simulate(
     let mut memorized_cnt_per_day = vec![0.0; config.learn_span];
     let mut cost_per_day = vec![0.0; config.learn_span];
     let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
-    let mut correct_per_day = vec![0; config.learn_span];
+    let mut correct_cnt_per_day = vec![0; config.learn_span];
 
     let first_rating_choices = [1, 2, 3, 4];
     let first_rating_dist = WeightedIndex::new(config.first_rating_prob).unwrap();
@@ -352,7 +352,7 @@ pub fn simulate(
             let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
             let offset = config.first_rating_offsets[rating - 1];
 
-            correct_per_day[day_index] += (rating > 1) as usize;
+            correct_cnt_per_day[day_index] += (rating > 1) as usize;
 
             card.difficulty = init_d_with_short_term(w, rating, offset);
             card.stability = stability_short_term(
@@ -376,7 +376,7 @@ pub fn simulate(
             let forget = !rng.gen_bool(retrievability as f64);
 
             card.lapses += forget as u32;
-            correct_per_day[day_index] += !forget as usize;
+            correct_cnt_per_day[day_index] += !forget as usize;
 
             // Sample 'rating' for 'need_review' entries
             let rating = if forget {
@@ -459,7 +459,7 @@ pub fn simulate(
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
-        correct_per_day,
+        correct_cnt_per_day,
     })
 }
 
