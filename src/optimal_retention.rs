@@ -20,8 +20,8 @@ pub struct SimulationResult {
     pub memorized_cnt_per_day: Vec<f32>,
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
-    pub correct_cnt_per_day: Vec<usize>,
     pub cost_per_day: Vec<f32>,
+    pub correct_cnt_per_day: Vec<usize>,
 }
 
 trait Round {
