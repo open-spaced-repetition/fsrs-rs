@@ -43,13 +43,13 @@ impl<B: Backend> BCELoss<B> {
     }
     pub fn forward(
         &self,
-        retentions: Tensor<B, 1>,
+        retrievability: Tensor<B, 1>,
         labels: Tensor<B, 1>,
         weights: Tensor<B, 1>,
         mean: Reduction,
     ) -> Tensor<B, 1> {
-        let loss = (labels.clone() * retentions.clone().log()
-            + (-labels + 1) * (-retentions + 1).log())
+        let loss = (labels.clone() * retrievability.clone().log()
+            + (-labels + 1) * (-retrievability + 1).log())
             * weights.clone();
         // info!("loss: {}", &loss);
         match mean {
@@ -73,8 +73,8 @@ impl<B: Backend> Model<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
-        let retention = self.power_forgetting_curve(delta_ts, state.stability);
-        BCELoss::new().forward(retention, labels.float(), weights, reduce)
+        let retrievability = self.power_forgetting_curve(delta_ts, state.stability);
+        BCELoss::new().forward(retrievability, labels.float(), weights, reduce)
     }
 
     pub(crate) fn l2_regularization(
