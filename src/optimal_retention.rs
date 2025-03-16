@@ -21,6 +21,7 @@ pub struct SimulationResult {
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
     pub cost_per_day: Vec<f32>,
+    pub cards: Vec<Card>,
 }
 
 trait Round {
@@ -458,6 +459,7 @@ pub fn simulate(
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
+        cards,
     })
 }
 
@@ -1306,13 +1308,39 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_zero_card() -> Result<()> {
+    fn simulate_with_zero_cards() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 0,
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_returns_cards() -> Result<()> {
+        let w = DEFAULT_PARAMETERS.clone();
+
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_span: 1,
+            first_rating_prob: [0., 0., 1., 0.],
+            first_rating_offsets: [0., 0., 0., 0.],
+            first_session_lens: [0., 0., 0., 0.],
+            ..Default::default()
+        };
+
+        let SimulationResult { cards, .. } =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+
+        assert_eq!(cards.len(), 1);
+        let card = &cards[0];
+        let rating = 3;
+        assert_eq!(card.lapses, 0);
+        assert_eq!(card.stability, w[rating - 1]);
+        assert_eq!(card.difficulty, init_d(&w, rating));
+
         Ok(())
     }
 
