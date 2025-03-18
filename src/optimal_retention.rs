@@ -21,6 +21,7 @@ pub struct SimulationResult {
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
     pub cost_per_day: Vec<f32>,
+    // The amount of review cards you got correct on a given day (not including learn cards).
     pub correct_cnt_per_day: Vec<usize>,
     pub cards: Vec<Card>,
 }
@@ -356,8 +357,6 @@ pub fn simulate(
             // Initialize stability and difficulty for new cards
             let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
             let offset = config.first_rating_offsets[rating - 1];
-
-            correct_cnt_per_day[day_index] += (rating > 1) as usize;
 
             card.difficulty = init_d_with_short_term(w, rating, offset);
             card.stability = stability_short_term(
