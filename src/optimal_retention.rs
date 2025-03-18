@@ -1024,8 +1024,6 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
-    use core::f32;
-
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
 
