@@ -1383,10 +1383,11 @@ mod tests {
     #[test]
     fn learn_does_not_affect_correct_count() -> Result<()> {
         let mut w = DEFAULT_PARAMETERS.clone();
-        w[3] = f32::INFINITY;
+        w[3] = 10000.;
 
         let config = SimulatorConfig {
             first_rating_prob: [0., 0., 0., 1.],
+            first_rating_offsets: [100., 100., 100., 100.],
             deck_size: 5000,
             learn_limit: 10,
             ..Default::default()
@@ -1407,10 +1408,12 @@ mod tests {
 
         let SimulationResult {
             correct_cnt_per_day,
+            review_cnt_per_day,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        } = simulate(&config, &w, 0.9, None, Some(cards))?;
 
         assert_eq!(correct_cnt_per_day[0], 0);
+        assert_eq!(review_cnt_per_day[1], 1);
         assert_eq!(correct_cnt_per_day[1], 1);
 
         Ok(())
