@@ -1024,6 +1024,8 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+    use core::f32;
+
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
 
@@ -1377,6 +1379,42 @@ mod tests {
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn learn_does_not_affect_correct_count() -> Result<()> {
+        let mut w = DEFAULT_PARAMETERS.clone();
+        w[3] = f32::INFINITY;
+
+        let config = SimulatorConfig {
+            first_rating_prob: [0., 0., 0., 1.],
+            deck_size: 5000,
+            learn_limit: 10,
+            ..Default::default()
+        };
+
+        let cards = vec![
+            Card {
+                id: 0,
+                difficulty: 5.0,
+                stability: f32::INFINITY,
+                last_date: -5.0,
+                due: 1.0,
+                interval: 5.0,
+                lapses: 0,
+            };
+            5
+        ];
+
+        let SimulationResult {
+            correct_cnt_per_day,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        assert_eq!(correct_cnt_per_day[0], 0);
+        assert_eq!(correct_cnt_per_day[1], 1);
+
         Ok(())
     }
 
