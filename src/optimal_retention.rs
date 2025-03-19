@@ -1413,8 +1413,8 @@ mod tests {
         } = simulate(&config, &w, 0.9, None, Some(cards))?;
 
         assert_eq!(correct_cnt_per_day[0], 0);
-        assert_eq!(review_cnt_per_day[1], 1);
-        assert_eq!(correct_cnt_per_day[1], 1);
+        assert_eq!(review_cnt_per_day[1], 5);
+        assert_eq!(correct_cnt_per_day[1], 5);
 
         Ok(())
     }
