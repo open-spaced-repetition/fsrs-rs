@@ -21,6 +21,8 @@ pub struct SimulationResult {
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
     pub cost_per_day: Vec<f32>,
+    // The amount of review cards you got correct on a given day (not including learn cards).
+    pub correct_cnt_per_day: Vec<usize>,
     pub cards: Vec<Card>,
 }
 
@@ -221,6 +223,7 @@ pub fn simulate(
     let mut memorized_cnt_per_day = vec![0.0; config.learn_span];
     let mut cost_per_day = vec![0.0; config.learn_span];
     let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
+    let mut correct_cnt_per_day = vec![0; config.learn_span];
 
     let first_rating_choices = [1, 2, 3, 4];
     let first_rating_dist = WeightedIndex::new(config.first_rating_prob).unwrap();
@@ -377,6 +380,7 @@ pub fn simulate(
             let forget = !rng.gen_bool(retrievability as f64);
 
             card.lapses += forget as u32;
+            correct_cnt_per_day[day_index] += !forget as usize;
 
             // Sample 'rating' for 'need_review' entries
             let rating = if forget {
@@ -459,6 +463,7 @@ pub fn simulate(
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
+        correct_cnt_per_day,
         cards,
     })
 }
@@ -1372,6 +1377,45 @@ mod tests {
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn learn_does_not_affect_correct_count() -> Result<()> {
+        let mut w = DEFAULT_PARAMETERS.clone();
+        w[3] = 10000.;
+
+        let config = SimulatorConfig {
+            first_rating_prob: [0., 0., 0., 1.],
+            first_rating_offsets: [100., 100., 100., 100.],
+            deck_size: 5000,
+            learn_limit: 10,
+            ..Default::default()
+        };
+
+        let cards = vec![
+            Card {
+                id: 0,
+                difficulty: 5.0,
+                stability: f32::INFINITY,
+                last_date: -5.0,
+                due: 1.0,
+                interval: 5.0,
+                lapses: 0,
+            };
+            5
+        ];
+
+        let SimulationResult {
+            correct_cnt_per_day,
+            review_cnt_per_day,
+            ..
+        } = simulate(&config, &w, 0.9, None, Some(cards))?;
+
+        assert_eq!(correct_cnt_per_day[0], 0);
+        assert_eq!(review_cnt_per_day[1], 5);
+        assert_eq!(correct_cnt_per_day[1], 5);
+
         Ok(())
     }
 
