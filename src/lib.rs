@@ -26,4 +26,4 @@ pub use optimal_retention::{
     Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind, SimulationResult,
     SimulatorConfig, extract_simulator_config, simulate,
 };
-pub use training::CombinedProgressState;
+pub use training::{CombinedProgressState, ComputeParametersInput};

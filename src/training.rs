@@ -123,7 +123,7 @@ pub struct ProgressState {
     pub items_total: usize,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CombinedProgressState {
     pub want_abort: bool,
     pub splits: Vec<ProgressState>,
@@ -228,15 +228,40 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     total_recall as f32 / total_reviews as f32
 }
 
+/// Input parameters for computing FSRS parameters
+#[derive(Clone, Debug)]
+pub struct ComputeParametersInput {
+    /// The training set containing review history
+    pub train_set: Vec<FSRSItem>,
+    /// Optional progress tracking
+    pub progress: Option<Arc<Mutex<CombinedProgressState>>>,
+    /// Whether to enable short-term memory parameters
+    pub enable_short_term: bool,
+    /// Number of relearning steps
+    pub num_relearning_steps: Option<usize>,
+}
+
+impl Default for ComputeParametersInput {
+    fn default() -> Self {
+        Self {
+            train_set: Vec::new(),
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        }
+    }
+}
+
 impl<B: Backend> FSRS<B> {
     /// Calculate appropriate parameters for the provided review history.
-    pub fn compute_parameters(
-        &self,
-        train_set: Vec<FSRSItem>,
-        progress: Option<Arc<Mutex<CombinedProgressState>>>,
-        enable_short_term: bool,
-        num_relearning_steps: Option<usize>,
-    ) -> Result<Vec<f32>> {
+    pub fn compute_parameters(&self, input: ComputeParametersInput) -> Result<Vec<f32>> {
+        let ComputeParametersInput {
+            train_set,
+            progress,
+            enable_short_term,
+            num_relearning_steps,
+        } = input;
+
         let finish_progress = || {
             if let Some(progress) = &progress {
                 // The progress state at completion time may not indicate completion, because:
@@ -329,12 +354,14 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(
-        &self,
-        train_set: Vec<FSRSItem>,
-        enable_short_term: bool,
-        num_relearning_steps: Option<usize>,
-    ) -> Vec<f32> {
+    pub fn benchmark(&self, input: ComputeParametersInput) -> Vec<f32> {
+        let ComputeParametersInput {
+            train_set,
+            enable_short_term,
+            num_relearning_steps,
+            ..
+        } = input;
+
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -796,7 +823,12 @@ mod tests {
 
                 let fsrs = FSRS::new(Some(&[])).unwrap();
                 let parameters = fsrs
-                    .compute_parameters(items.clone(), progress2, enable_short_term, None)
+                    .compute_parameters(ComputeParametersInput {
+                        train_set: items.clone(),
+                        progress: progress2,
+                        enable_short_term,
+                        num_relearning_steps: None,
+                    })
                     .unwrap();
                 dbg!(&parameters);
 
