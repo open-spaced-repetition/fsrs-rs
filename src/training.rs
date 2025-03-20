@@ -254,14 +254,16 @@ impl Default for ComputeParametersInput {
 
 impl<B: Backend> FSRS<B> {
     /// Calculate appropriate parameters for the provided review history.
-    pub fn compute_parameters(&self, input: ComputeParametersInput) -> Result<Vec<f32>> {
-        let ComputeParametersInput {
+    pub fn compute_parameters(
+        &self,
+        ComputeParametersInput {
             train_set,
             progress,
             enable_short_term,
             num_relearning_steps,
-        } = input;
-
+            ..
+        }: ComputeParametersInput,
+    ) -> Result<Vec<f32>> {
         let finish_progress = || {
             if let Some(progress) = &progress {
                 // The progress state at completion time may not indicate completion, because:
@@ -354,12 +356,15 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, ComputeParametersInput {
+    pub fn benchmark(
+        &self,
+        ComputeParametersInput {
             train_set,
             enable_short_term,
             num_relearning_steps,
             ..
-        } : ComputeParametersInput) -> Vec<f32> {
+        }: ComputeParametersInput,
+    ) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
