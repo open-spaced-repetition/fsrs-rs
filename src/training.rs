@@ -123,7 +123,7 @@ pub struct ProgressState {
     pub items_total: usize,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CombinedProgressState {
     pub want_abort: bool,
     pub splits: Vec<ProgressState>,
@@ -228,13 +228,41 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     total_recall as f32 / total_reviews as f32
 }
 
+/// Input parameters for computing FSRS parameters
+#[derive(Clone, Debug)]
+pub struct ComputeParametersInput {
+    /// The training set containing review history
+    pub train_set: Vec<FSRSItem>,
+    /// Optional progress tracking
+    pub progress: Option<Arc<Mutex<CombinedProgressState>>>,
+    /// Whether to enable short-term memory parameters
+    pub enable_short_term: bool,
+    /// Number of relearning steps
+    pub num_relearning_steps: Option<usize>,
+}
+
+impl Default for ComputeParametersInput {
+    fn default() -> Self {
+        Self {
+            train_set: Vec::new(),
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        }
+    }
+}
+
 impl<B: Backend> FSRS<B> {
     /// Calculate appropriate parameters for the provided review history.
     pub fn compute_parameters(
         &self,
-        train_set: Vec<FSRSItem>,
-        progress: Option<Arc<Mutex<CombinedProgressState>>>,
-        enable_short_term: bool,
+        ComputeParametersInput {
+            train_set,
+            progress,
+            enable_short_term,
+            num_relearning_steps,
+            ..
+        }: ComputeParametersInput,
     ) -> Result<Vec<f32>> {
         let finish_progress = || {
             if let Some(progress) = &progress {
@@ -270,6 +298,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
                 freeze_short_term_stability: !enable_short_term,
+                num_relearning_steps: num_relearning_steps.unwrap_or(1),
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -327,7 +356,15 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, train_set: Vec<FSRSItem>, enable_short_term: bool) -> Vec<f32> {
+    pub fn benchmark(
+        &self,
+        ComputeParametersInput {
+            train_set,
+            enable_short_term,
+            num_relearning_steps,
+            ..
+        }: ComputeParametersInput,
+    ) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -339,6 +376,7 @@ impl<B: Backend> FSRS<B> {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
                 freeze_short_term_stability: !enable_short_term,
+                num_relearning_steps: num_relearning_steps.unwrap_or(1),
             },
             AdamConfig::new().with_epsilon(1e-8),
         );
@@ -431,7 +469,7 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            model.w = parameter_clipper(model.w);
+            model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
@@ -601,7 +639,7 @@ mod tests {
         let lr = 0.04;
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = parameter_clipper(model.w);
+        model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
         assert_eq!(
             model.w.val().to_data().to_vec::<f32>().unwrap(),
             [
@@ -719,7 +757,7 @@ mod tests {
         );
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = parameter_clipper(model.w);
+        model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
         model.w.val().to_data().assert_approx_eq(
             &TensorData::from([
                 0.48150504,
@@ -788,7 +826,12 @@ mod tests {
 
                 let fsrs = FSRS::new(Some(&[])).unwrap();
                 let parameters = fsrs
-                    .compute_parameters(items.clone(), progress2, enable_short_term)
+                    .compute_parameters(ComputeParametersInput {
+                        train_set: items.clone(),
+                        progress: progress2,
+                        enable_short_term,
+                        num_relearning_steps: None,
+                    })
                     .unwrap();
                 dbg!(&parameters);
 

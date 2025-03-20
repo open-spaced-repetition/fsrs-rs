@@ -2,7 +2,6 @@ use crate::FSRS;
 use crate::error::{FSRSError, Result};
 use crate::inference::{DECAY, FACTOR, ItemProgress, Parameters, S_MAX, S_MIN, next_interval};
 use crate::model::check_and_fill_parameters;
-use crate::parameter_clipper::clip_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
 use ndarray_rand::rand_distr::Distribution;
@@ -213,7 +212,6 @@ pub fn simulate(
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
     let w = &check_and_fill_parameters(w)?;
-    let w = &clip_parameters(w);
     if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
