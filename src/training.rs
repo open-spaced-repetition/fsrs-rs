@@ -354,14 +354,12 @@ impl<B: Backend> FSRS<B> {
         Ok(optimized_parameters)
     }
 
-    pub fn benchmark(&self, input: ComputeParametersInput) -> Vec<f32> {
-        let ComputeParametersInput {
+    pub fn benchmark(&self, ComputeParametersInput {
             train_set,
             enable_short_term,
             num_relearning_steps,
             ..
-        } = input;
-
+        } : ComputeParametersInput) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
