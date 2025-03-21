@@ -622,6 +622,69 @@ mod tests {
     }
 
     #[test]
+    fn short_term_vs_long_term() -> Result<()> {
+        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let state = MemoryState {
+            stability: 10.0,
+            difficulty: 5.0,
+        };
+
+        let next_state = fsrs.next_states(Some(state), 0.9, 0)?.good.memory;
+        dbg!(next_state);
+        // let next_state = fsrs.next_states(Some(next_state), 0.9, 0)?.good.memory;
+        // dbg!(next_state);
+        let next_state = fsrs.next_states(Some(state), 0.9, 1)?.good.memory;
+        dbg!(next_state);
+        Ok(())
+    }
+
+    #[test]
+    fn hard_vs_good_vs_easy() -> Result<()> {
+        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let item = FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 2,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+            ],
+        };
+        let state = fsrs.memory_state(item, None).unwrap();
+        dbg!(state);
+        let item = FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+            ],
+        };
+        let state = fsrs.memory_state(item, None).unwrap();
+        dbg!(state);
+        let item = FSRSItem {
+            reviews: vec![FSRSReview {
+                rating: 4,
+                delta_t: 0,
+            }],
+        };
+        let state = fsrs.memory_state(item, None).unwrap();
+        dbg!(state);
+        Ok(())
+    }
+
+    #[test]
     fn current_retrievability() {
         let fsrs = FSRS::new(None).unwrap();
         let state = MemoryState {
