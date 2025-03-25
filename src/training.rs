@@ -26,9 +26,9 @@ use log::info;
 
 use std::sync::{Arc, Mutex};
 
-static PARAMS_STDDEV: [f32; 19] = [
+static PARAMS_STDDEV: [f32; 20] = [
     6.61, 9.52, 17.69, 27.74, 0.55, 0.28, 0.67, 0.12, 0.4, 0.18, 0.34, 0.27, 0.08, 0.14, 0.57,
-    0.25, 1.03, 0.27, 0.39,
+    0.25, 1.03, 0.27, 0.39, 0.18,
 ];
 
 pub struct BCELoss<B: Backend> {
@@ -107,7 +107,7 @@ impl<B: AutodiffBackend> Model<B> {
     fn free_short_term_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
         let updated_grad_tensor =
-            grad_tensor.slice_assign([17..19], Tensor::zeros([2], &B::Device::default()));
+            grad_tensor.slice_assign([17..20], Tensor::zeros([3], &B::Device::default()));
 
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
