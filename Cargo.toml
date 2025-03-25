@@ -54,6 +54,10 @@ rusqlite = { version = "0.32.0" }
 name = "benchmark"
 harness = false
 
+[[bench]]
+name = "simulation"
+harness = false
+
 [[example]]
 name = "schedule"
 path = "examples/schedule.rs"
