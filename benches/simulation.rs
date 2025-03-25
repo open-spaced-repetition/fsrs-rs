@@ -5,8 +5,8 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::hint::black_box;
 
-pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> f32 {
-    let results: Result<Vec<f32>, FSRSError> = (70..=99)
+pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f32>, FSRSError> {
+    (70..=99)
         .into_par_iter()
         .map(|i| {
             let SimulationResult {
@@ -24,8 +24,7 @@ pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> f32 {
             let total_cost = cost_per_day.iter().sum::<f32>();
             Ok(total_cost / total_memorized)
         })
-        .collect();
-    results.map(|v| v.iter().sum::<f32>() / 30.0).unwrap()
+        .collect()
 }
 
 pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f32 {

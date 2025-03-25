@@ -10,7 +10,6 @@ use criterion::criterion_main;
 use fsrs::FSRS;
 use fsrs::FSRSReview;
 use fsrs::NextStates;
-use fsrs::SimulatorConfig;
 use fsrs::{FSRSItem, MemoryState};
 use itertools::Itertools;
 
