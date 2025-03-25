@@ -622,6 +622,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "just for exploration"]
     fn short_term_vs_long_term() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let state = MemoryState {
@@ -639,6 +640,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "just for exploration"]
     fn hard_vs_good_vs_easy() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let item = FSRSItem {
