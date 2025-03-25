@@ -643,7 +643,7 @@ impl<B: Backend> FSRS<B> {
         }
         let xmin = x;
         let success = iter < maxiter && (R_MIN..=R_MAX).contains(&xmin);
-        dbg!(iter);
+        // dbg!(iter);
 
         if success {
             Ok(xmin)
