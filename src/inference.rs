@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     #[ignore = "just for exploration"]
-    fn short_term_vs_long_term() -> Result<()> {
+    fn stability_after_same_day_review_less_than_next_day_review() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let state = MemoryState {
             stability: 10.0,
@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     #[ignore = "just for exploration"]
-    fn hard_vs_good_vs_easy() -> Result<()> {
+    fn init_stability_after_same_day_review_hard_vs_good_vs_easy() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let item = FSRSItem {
             reviews: vec![
