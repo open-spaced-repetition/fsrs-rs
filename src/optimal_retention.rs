@@ -4,10 +4,11 @@ use crate::inference::{DECAY, FACTOR, ItemProgress, Parameters, S_MAX, S_MIN, ne
 use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
+use ndarray_rand::rand::distributions::WeightedIndex;
 use ndarray_rand::rand_distr::Distribution;
 use priority_queue::PriorityQueue;
 use rand::Rng;
-use rand::{SeedableRng, distributions::WeightedIndex, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
@@ -375,7 +376,7 @@ pub fn simulate(
             let retrievability = card.retrievability();
 
             // Create 'forget' mask
-            let forget = !rng.gen_bool(retrievability as f64);
+            let forget = !rng.random_bool(retrievability as f64);
 
             card.lapses += forget as u32;
             correct_cnt_per_day[day_index] += !forget as usize;
