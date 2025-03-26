@@ -376,7 +376,7 @@ pub fn simulate(
             let retrievability = card.retrievability();
 
             // Create 'forget' mask
-            let forget = !rng.random_bool(retrievability as f64);
+            let forget = !rng.gen_bool(retrievability as f64);
 
             card.lapses += forget as u32;
             correct_cnt_per_day[day_index] += !forget as usize;
