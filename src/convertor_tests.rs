@@ -131,7 +131,7 @@ fn convert_to_fsrs_items(
 pub(crate) fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
     let mut revlogs = revlogs
         .into_iter()
-        .group_by(|r| r.cid)
+        .chunk_by(|r| r.cid)
         .into_iter()
         .filter_map(|(_cid, entries)| {
             convert_to_fsrs_items(entries.collect(), 4, Tz::Asia__Shanghai)

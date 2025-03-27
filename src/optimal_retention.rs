@@ -4,10 +4,11 @@ use crate::inference::{DECAY, FACTOR, ItemProgress, Parameters, S_MAX, S_MIN, ne
 use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
+use ndarray_rand::rand::distributions::WeightedIndex;
 use ndarray_rand::rand_distr::Distribution;
 use priority_queue::PriorityQueue;
 use rand::Rng;
-use rand::{SeedableRng, distributions::WeightedIndex, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
@@ -643,7 +644,7 @@ impl<B: Backend> FSRS<B> {
         }
         let xmin = x;
         let success = iter < maxiter && (R_MIN..=R_MAX).contains(&xmin);
-        dbg!(iter);
+        // dbg!(iter);
 
         if success {
             Ok(xmin)
