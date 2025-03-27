@@ -642,6 +642,26 @@ mod tests {
 
     #[test]
     #[ignore = "just for exploration"]
+    fn good_again_loop_during_the_same_day() -> Result<()> {
+        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let mut state = MemoryState {
+            stability: 1.0,
+            difficulty: 5.0,
+        };
+
+        let mut stability = Vec::new();
+        for _ in 0..10 {
+            state = fsrs.next_states(Some(state), 0.9, 0).unwrap().good.memory;
+            state = fsrs.next_states(Some(state), 0.9, 0).unwrap().again.memory;
+            stability.push(state.stability);
+        }
+
+        dbg!(stability);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "just for exploration"]
     fn stability_after_same_day_review_less_than_next_day_review() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let state = MemoryState {
