@@ -649,7 +649,7 @@ mod tests {
             difficulty: 5.0,
         };
 
-        let mut stability = Vec::new();
+        let mut stability = Vec::with_capacity(10);
         for _ in 0..10 {
             state = fsrs.next_states(Some(state), 0.9, 0).unwrap().good.memory;
             state = fsrs.next_states(Some(state), 0.9, 0).unwrap().again.memory;
