@@ -103,6 +103,11 @@ pub struct SimulatorConfig {
     pub suspend_after_lapses: Option<u32>,
     pub post_scheduling_fn: Option<PostSchedulingFn>,
     pub review_priority_fn: Option<ReviewPriorityFn>,
+    pub learning_step_transitions: [[f32; 4]; 3],
+    pub relearning_step_transitions: [[f32; 4]; 3],
+    pub state_rating_costs: [[f32; 4]; 3],
+    pub learning_steps_len: usize,
+    pub relearning_steps_len: usize,
 }
 
 impl Default for SimulatorConfig {
@@ -127,6 +132,23 @@ impl Default for SimulatorConfig {
             suspend_after_lapses: None,
             post_scheduling_fn: None,
             review_priority_fn: None,
+            learning_step_transitions: [
+                [0.3687, 0.0628, 0.5108, 0.0577],
+                [0.0441, 0.4553, 0.4457, 0.0549],
+                [0.0518, 0.0470, 0.8462, 0.0550],
+            ],
+            relearning_step_transitions: [
+                [0.2157, 0.0643, 0.6595, 0.0605],
+                [0.0500, 0.4638, 0.4475, 0.0387],
+                [0.1056, 0.1434, 0.7266, 0.0244],
+            ],
+            state_rating_costs: [
+                [19.58, 18.79, 13.78, 10.71],
+                [19.38, 17.59, 12.38, 8.94],
+                [16.44, 15.25, 12.32, 8.03],
+            ],
+            learning_steps_len: 2,
+            relearning_steps_len: 1,
         }
     }
 }
@@ -151,17 +173,46 @@ fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
     new_s.clamp(S_MIN, S_MAX)
 }
 
-fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32) -> f32 {
-    (s * (w[17] * (rating_offset + session_len * w[18])).exp()).clamp(S_MIN, S_MAX)
+fn stability_short_term(w: &[f32], s: f32, rating: usize) -> f32 {
+    (s * (w[17] * (rating as f32 - 3.0 + w[18])).exp() * s.powf(-w[19])).clamp(S_MIN, S_MAX)
+}
+
+fn memory_state_short_term(
+    w: &[f32],
+    s: f32,
+    d: f32,
+    init_rating: Option<usize>,
+    costs: &[f32; 4],
+    step_transitions: &[[f32; 4]; 3],
+    steps_len: usize,
+    rng: &mut StdRng,
+) -> (f32, f32, f32) {
+    let ratings = [1, 2, 3, 4];
+    let mut i = 0;
+    let mut consecutive = 0;
+    let mut rating = init_rating.unwrap_or(1);
+    let consecutive_max = if rating > 2 { steps_len - 1 } else { steps_len };
+    let mut new_s = s;
+    let mut new_d = d;
+    let mut cost = 0.0;
+    while i < 5 && consecutive < consecutive_max && rating < 4 {
+        let next_rating_dist = WeightedIndex::new(step_transitions[rating - 1]).unwrap();
+        rating = ratings[next_rating_dist.sample(rng)];
+        new_s = stability_short_term(w, s, rating);
+        new_d = next_d(w, d, rating);
+        cost += costs[rating - 1];
+        if rating > 2 {
+            consecutive += 1;
+        } else {
+            consecutive = 0;
+        }
+        i += 1;
+    }
+    (new_s, new_d, cost)
 }
 
 fn init_d(w: &[f32], rating: usize) -> f32 {
     w[4] - (w[5] * (rating - 1) as f32).exp() + 1.0
-}
-
-fn init_d_with_short_term(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
-    let new_d = init_d(w, rating) - w[6] * rating_offset;
-    new_d.clamp(1.0, 10.0)
 }
 
 fn linear_damping(delta_d: f32, old_d: f32) -> f32 {
@@ -354,20 +405,25 @@ pub fn simulate(
         if is_learn {
             // For learning cards
             // Initialize stability and difficulty for new cards
-            let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
-            let offset = config.first_rating_offsets[rating - 1];
-
-            card.difficulty = init_d_with_short_term(w, rating, offset);
-            card.stability = stability_short_term(
+            let init_rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
+            let init_stability = w[init_rating - 1];
+            let init_difficulty = init_d(w, init_rating);
+            let (new_s, new_d, cost) = memory_state_short_term(
                 w,
-                w[rating - 1],
-                offset,
-                config.first_session_lens[rating - 1],
+                init_stability,
+                init_difficulty,
+                Some(init_rating),
+                &config.state_rating_costs[0],
+                &config.learning_step_transitions,
+                config.learning_steps_len,
+                &mut rng,
             );
+            card.stability = new_s;
+            card.difficulty = new_d;
 
             // Update days statistics
             learn_cnt_per_day[day_index] += 1;
-            cost_per_day[day_index] += config.learn_costs[rating - 1];
+            cost_per_day[day_index] += cost;
         } else {
             // For review cards
             let last_stability = card.stability;
@@ -390,32 +446,40 @@ pub fn simulate(
 
             //dbg!(&card, &rating);
 
-            // Update stability
-            card.stability = if forget {
+            let (new_s, new_d, cost) = if forget {
                 let post_lapse_stab =
                     stability_after_failure(w, last_stability, retrievability, card.difficulty);
-                stability_short_term(
+                let (new_s, new_d, cost) = memory_state_short_term(
                     w,
                     post_lapse_stab,
-                    config.forget_rating_offset,
-                    config.forget_session_len,
+                    card.difficulty,
+                    None,
+                    &config.state_rating_costs[2],
+                    &config.relearning_step_transitions,
+                    config.relearning_steps_len,
+                    &mut rng,
+                );
+                (
+                    new_s,
+                    new_d,
+                    config.state_rating_costs[1][rating - 1] + cost,
                 )
             } else {
-                stability_after_success(w, last_stability, retrievability, card.difficulty, rating)
+                (
+                    stability_after_success(
+                        w,
+                        last_stability,
+                        retrievability,
+                        card.difficulty,
+                        rating,
+                    ),
+                    next_d(w, card.difficulty, rating),
+                    config.state_rating_costs[1][rating - 1],
+                )
             };
+            card.stability = new_s;
+            card.difficulty = new_d;
 
-            // Update difficulty for review cards
-            card.difficulty = next_d(w, card.difficulty, rating);
-            if rating == 1 {
-                card.difficulty -= w[6] * config.forget_rating_offset;
-                card.difficulty = card.difficulty.clamp(1.0, 10.0);
-            }
-
-            let cost = if forget {
-                fail_cost
-            } else {
-                config.review_costs[rating - 1]
-            };
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
