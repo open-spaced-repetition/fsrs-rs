@@ -37,11 +37,12 @@ impl<B: Backend> Model<B> {
         if config.freeze_short_term_stability {
             initial_params[17] = 0.0;
             initial_params[18] = 0.0;
+            initial_params[19] = 0.0;
         }
 
         Self {
             w: Param::from_tensor(Tensor::from_floats(
-                TensorData::new(initial_params, Shape { dims: vec![19] }),
+                TensorData::new(initial_params, Shape { dims: vec![20] }),
                 &B::Device::default(),
             )),
         }
@@ -91,7 +92,7 @@ impl<B: Backend> Model<B> {
     }
 
     fn stability_short_term(&self, last_s: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        last_s * (self.w.get(17) * (rating - 3 + self.w.get(18))).exp()
+        last_s.powf(-self.w.get(19) + 1) * (self.w.get(17) * (rating - 3 + self.w.get(18))).exp()
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -254,7 +255,7 @@ pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<
     model.w = Param::from_tensor(Tensor::from_floats(
         TensorData::new(
             clip_parameters(parameters, config.num_relearning_steps),
-            Shape { dims: vec![19] },
+            Shape { dims: vec![20] },
         ),
         &B::Device::default(),
     ));
@@ -269,10 +270,15 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
             parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
             parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
             parameters[6] += 0.5;
-            parameters.extend_from_slice(&[0.0, 0.0]);
+            parameters.extend_from_slice(&[0.0, 0.0, 0.0]);
             parameters
         }
-        19 => parameters.to_vec(),
+        19 => {
+            let mut parameters = parameters.to_vec();
+            parameters.push(0.0);
+            parameters
+        }
+        20 => parameters.to_vec(),
         _ => return Err(FSRSError::InvalidParameters),
     };
     if parameters.iter().any(|&w| !w.is_finite()) {
