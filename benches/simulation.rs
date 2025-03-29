@@ -14,7 +14,7 @@ pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f32>, FS
                 cost_per_day,
                 ..
             } = simulate(
-                &config,
+                config,
                 &DEFAULT_PARAMETERS,
                 i as f32 / 100.0,
                 Some((i + 42).try_into().unwrap()),
