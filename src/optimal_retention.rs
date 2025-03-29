@@ -203,7 +203,7 @@ fn memory_state_short_term(
         cost += costs[rating - 1];
         if rating > 2 {
             consecutive += 1;
-        } else {
+        } else if rating == 1 {
             consecutive = 0;
         }
         i += 1;
