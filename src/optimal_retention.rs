@@ -1324,7 +1324,7 @@ mod tests {
 
     #[test]
     fn simulate_returns_cards() -> Result<()> {
-        let w = DEFAULT_PARAMETERS.clone();
+        let w = DEFAULT_PARAMETERS;
 
         let config = SimulatorConfig {
             deck_size: 1,
@@ -1381,7 +1381,7 @@ mod tests {
 
     #[test]
     fn learn_does_not_affect_correct_count() -> Result<()> {
-        let mut w = DEFAULT_PARAMETERS.clone();
+        let mut w = DEFAULT_PARAMETERS;
         w[3] = 10000.;
 
         let config = SimulatorConfig {
