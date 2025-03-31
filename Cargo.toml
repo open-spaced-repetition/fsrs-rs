@@ -35,7 +35,7 @@ log = "0.4"
 ndarray = "0.16.1"
 ndarray-rand = "0.15.0"
 priority-queue = "=2.3.1"
-rand = "0.8.5"
+rand = "0.9.0"
 rayon = "1.8.0"
 serde = "1.0.219"
 snafu = "0.8.5"
@@ -43,7 +43,7 @@ strum = { version = "0.27.1", features = ["derive"] }
 
 [dev-dependencies]
 chrono = { version = "0.4.40", default-features = false, features = ["std", "clock"] }
-chrono-tz = "0.8.6"
+chrono-tz = "0.10.3"
 criterion = { version = "0.5.1" }
 csv = "1.3.0"
 fern = "0.7.1"
