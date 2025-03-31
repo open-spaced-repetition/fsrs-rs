@@ -415,10 +415,11 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_abs_diff_eq;
+
     use super::*;
     use crate::{
         FSRSReview, convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
-        test_helpers::assert_approx_eq,
     };
 
     static PARAMETERS: &[f32] = &[
@@ -539,23 +540,35 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.206160, 0.025809]);
+        assert_abs_diff_eq!(
+            [metrics.log_loss, metrics.rmse_bins].as_slice(),
+            [0.2061607, 0.025809951].as_slice(),
+        );
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.223601, 0.042738]);
+        assert_abs_diff_eq!(
+            [metrics.log_loss, metrics.rmse_bins].as_slice(),
+            [0.2183694690465927, 0.0407077893614769].as_slice(),
+        );
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.208656, 0.030946]);
+        assert_abs_diff_eq!(
+            [metrics.log_loss, metrics.rmse_bins].as_slice(),
+            [0.20865743, 0.030946612].as_slice(),
+        );
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        assert_approx_eq([self_by_other, other_by_self], [0.016570, 0.031037]);
+        assert_abs_diff_eq!(
+            [self_by_other, other_by_self].as_slice(),
+            [0.014222600497305393, 0.030416708439588547].as_slice(),
+        );
 
         Ok(())
     }
@@ -742,24 +755,24 @@ mod tests {
     fn memory_from_sm2() -> Result<()> {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [9.999996, 7.079161],
+        assert_abs_diff_eq!(
+            [memory_state.stability, memory_state.difficulty].as_slice(),
+            [9.999996, 7.031947].as_slice(),
         );
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [4.170096, 9.323614],
+        assert_abs_diff_eq!(
+            [memory_state.stability, memory_state.difficulty].as_slice(),
+            [4.170096, 9.284191].as_slice(),
         );
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [21.712555, 2.174237],
+        assert_abs_diff_eq!(
+            [memory_state.stability, memory_state.difficulty].as_slice(),
+            [21.712555, 2.1534157].as_slice(),
         );
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [19.999992, 10.0],
+        assert_abs_diff_eq!(
+            [memory_state.stability, memory_state.difficulty].as_slice(),
+            [19.999992, 10.0].as_slice(),
         );
         let interval = 15;
         let ease_factor = 2.0;

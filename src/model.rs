@@ -296,7 +296,8 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Model, Tensor, assert_approx_eq};
+    use crate::test_helpers::{Model, Tensor};
+    use approx::assert_abs_diff_eq;
     use burn::tensor::TensorData;
 
     #[test]
@@ -319,7 +320,7 @@ mod tests {
             fsrs5_param,
             vec![
                 0.4, 0.6, 2.4, 5.8, 6.81, 0.44675013, 1.36, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05,
-                0.34, 1.26, 0.29, 2.61, 0.0, 0.0,
+                0.34, 1.26, 0.29, 2.61, 0.0, 0.0, 0.0
             ]
         )
     }
@@ -397,13 +398,16 @@ mod tests {
         let state = model.forward(delta_ts, ratings, None);
         let stability = state.stability.to_data();
         let difficulty = state.difficulty.to_data();
-        assert_approx_eq(
-            stability.to_vec::<f32>().unwrap().try_into().unwrap(),
-            [0.2619, 1.7074, 5.8691, 25.0124, 0.2859, 2.1482],
+        assert_abs_diff_eq!(
+            stability.to_vec::<f32>().unwrap().as_slice(),
+            [
+                0.23664382, 1.9285083, 6.27545, 26.054081, 0.23664382, 2.3679762
+            ]
+            .as_slice(),
         );
-        assert_approx_eq(
-            difficulty.to_vec::<f32>().unwrap().try_into().unwrap(),
-            [8.0827, 7.0405, 5.2729, 2.1301, 8.0827, 7.0405],
+        assert_abs_diff_eq!(
+            difficulty.to_vec::<f32>().unwrap().as_slice(),
+            [8.301044, 7.0668244, 4.9201818, 1.0, 8.301044, 7.0668244].as_slice(),
         );
     }
 
@@ -415,14 +419,23 @@ mod tests {
         let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
-        next_difficulty
-            .to_data()
-            .assert_approx_eq(&TensorData::from([6.622667, 5.811333, 5.0, 4.188667]), 5);
+        assert_abs_diff_eq!(
+            next_difficulty
+                .to_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .as_slice(),
+            [7.204, 6.102, 5.0, 3.898].as_slice(),
+        );
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
-        next_difficulty.to_data().assert_approx_eq(
-            &TensorData::from([6.607035, 5.7994337, 4.9918327, 4.1842318]),
-            5,
+        assert_abs_diff_eq!(
+            next_difficulty
+                .to_data()
+                .to_vec::<f32>()
+                .unwrap()
+                .as_slice(),
+            [7.1631646, 6.0708623, 4.9785595, 3.8862574].as_slice(),
         );
     }
 
@@ -441,26 +454,26 @@ mod tests {
             rating.clone(),
         );
         s_recall.clone().backward();
-        s_recall.to_data().assert_approx_eq(
-            &TensorData::from([25.77614, 14.121894, 60.40441, 208.97597]),
-            5,
+        assert_abs_diff_eq!(
+            s_recall.to_data().to_vec::<f32>().unwrap().as_slice(),
+            [25.361727, 13.676782, 59.194153, 205.02472].as_slice(),
         );
         let s_forget = model.stability_after_failure(stability.clone(), difficulty, retrievability);
         s_forget.clone().backward();
-        s_forget.to_data().assert_approx_eq(
-            &TensorData::from([1.7028502, 1.9798818, 2.3759942, 2.8885393]),
-            5,
+        assert_abs_diff_eq!(
+            s_forget.to_data().to_vec::<f32>().unwrap().as_slice(),
+            [1.929576, 2.2484288, 2.705061, 3.2972968].as_slice(),
         );
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
-        next_stability.to_data().assert_approx_eq(
-            &TensorData::from([1.7028502, 14.121894, 60.40441, 208.97597]),
-            5,
+        assert_abs_diff_eq!(
+            next_stability.to_data().to_vec::<f32>().unwrap().as_slice(),
+            [1.929576, 13.676782, 59.194153, 205.02472].as_slice(),
         );
         let next_stability = model.stability_short_term(stability, rating);
-        next_stability.to_data().assert_approx_eq(
-            &TensorData::from([2.5051427, 4.199207, 7.038856, 11.798775]),
-            5,
+        assert_abs_diff_eq!(
+            next_stability.to_data().to_vec::<f32>().unwrap().as_slice(),
+            [1.2750568, 2.4917638, 5.0, 9.516155].as_slice(),
         );
     }
 

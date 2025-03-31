@@ -66,7 +66,7 @@ impl LrScheduler for CosineAnnealingLR {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_helpers::assert_approx_eq;
+    use approx::assert_abs_diff_eq;
 
     use super::*;
 
@@ -80,9 +80,8 @@ mod tests {
             })
             .step_by(1)
             .collect::<Vec<_>>();
-
-        assert_approx_eq(
-            lrs.try_into().unwrap(),
+        assert_abs_diff_eq!(
+            *lrs.as_slice(),
             [
                 0.04,
                 0.03618033988749895,
