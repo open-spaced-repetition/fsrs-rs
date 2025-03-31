@@ -179,7 +179,9 @@ fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
 }
 
 fn stability_short_term(w: &[f32], s: f32, rating: usize) -> f32 {
-    (s * (w[17] * (rating as f32 - 3.0 + w[18])).exp() * s.powf(-w[19])).clamp(S_MIN, S_MAX)
+    let sinc = (w[17] * (rating as f32 - 3.0 + w[18])).exp() * s.powf(-w[19]);
+    let new_s = s * if rating >= 3 { sinc.max(1.0) } else { sinc };
+    new_s.clamp(S_MIN, S_MAX)
 }
 
 fn memory_state_short_term(

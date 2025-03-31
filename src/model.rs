@@ -92,7 +92,13 @@ impl<B: Backend> Model<B> {
     }
 
     fn stability_short_term(&self, last_s: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        last_s.powf(-self.w.get(19) + 1) * (self.w.get(17) * (rating - 3 + self.w.get(18))).exp()
+        let sinc = (self.w.get(17) * (rating.clone() - 3 + self.w.get(18))).exp()
+            * last_s.clone().powf(-self.w.get(19));
+        let new_s = last_s
+            * sinc
+                .clone()
+                .mask_where(rating.greater_equal_elem(3), sinc.clamp_min(1.0));
+        new_s
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
