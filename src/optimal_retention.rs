@@ -301,8 +301,6 @@ pub fn simulate(
 
     let mut cards = Vec::with_capacity(config.deck_size);
 
-    let fail_cost = config.review_costs[0] * config.loss_aversion;
-
     let existing_count = if let Some(existing_cards) = &existing_cards {
         existing_cards.len()
     } else {
@@ -401,7 +399,7 @@ pub fn simulate(
                     || todays_learn + 1 > config.learn_limit
             }
             (_, false) => todays_review + 1 > config.review_limit,
-        } || (cost_per_day[day_index] + fail_cost > config.max_cost_perday)
+        } || (cost_per_day[day_index] > config.max_cost_perday)
         {
             if !is_learn {
                 due_cnt_per_day[day_index] -= 1;
