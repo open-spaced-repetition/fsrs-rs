@@ -39,6 +39,10 @@ impl Round for f32 {
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
 const RATINGS: [usize; 4] = [1, 2, 3, 4];
+const LEARNING: usize = 0;
+const REVIEW: usize = 1;
+const RELEARNING: usize = 2;
+const MAX_STEPS: usize = 5;
 
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
@@ -183,34 +187,39 @@ fn memory_state_short_term(
     s: f32,
     d: f32,
     init_rating: Option<usize>,
-    costs: &[f32; 4],
+    rating_costs: &[f32; 4],
     step_transitions: &[[f32; 4]; 3],
-    steps_len: usize,
+    step_count: usize,
     rng: &mut StdRng,
 ) -> (f32, f32, f32) {
-    let mut i = 0;
     let mut consecutive = 0;
     let mut rating = init_rating.unwrap_or(1);
     let mut cost = if init_rating.is_none() {
         0.0
     } else {
-        costs[rating - 1]
+        rating_costs[rating - 1]
     };
     let mut new_s = s;
     let mut new_d = d;
-    let consecutive_max = if rating > 2 { steps_len - 1 } else { steps_len };
-    while i < 5 && consecutive < consecutive_max && rating < 4 {
+    let consecutive_max = if rating > 2 {
+        step_count - 1
+    } else {
+        step_count
+    };
+    for _ in 0..MAX_STEPS {
+        if consecutive >= consecutive_max || rating >= 4 {
+            break;
+        }
         let next_rating_dist = WeightedIndex::new(step_transitions[rating - 1]).unwrap();
         rating = RATINGS[next_rating_dist.sample(rng)];
         new_s = stability_short_term(w, new_s, rating);
         new_d = next_d(w, new_d, rating);
-        cost += costs[rating - 1];
+        cost += rating_costs[rating - 1];
         if rating > 2 {
             consecutive += 1;
         } else if rating == 1 {
             consecutive = 0;
         }
-        i += 1;
     }
     (new_s, new_d, cost)
 }
@@ -417,7 +426,7 @@ pub fn simulate(
                 init_stability,
                 init_difficulty,
                 Some(init_rating),
-                &config.state_rating_costs[0],
+                &config.state_rating_costs[LEARNING],
                 &config.learning_step_transitions,
                 config.learning_step_count,
                 &mut rng,
@@ -451,14 +460,15 @@ pub fn simulate(
             //dbg!(&card, &rating);
 
             let (new_s, new_d, cost) = if forget {
-                let post_lapse_stab =
+                let post_lapse_stability =
                     stability_after_failure(w, last_stability, retrievability, card.difficulty);
+                let post_lapse_difficulty = next_d(w, card.difficulty, rating);
                 let (new_s, new_d, cost) = memory_state_short_term(
                     w,
-                    post_lapse_stab,
-                    card.difficulty,
+                    post_lapse_stability,
+                    post_lapse_difficulty,
                     None,
-                    &config.state_rating_costs[2],
+                    &config.state_rating_costs[RELEARNING],
                     &config.relearning_step_transitions,
                     config.relearning_step_count,
                     &mut rng,
@@ -466,7 +476,7 @@ pub fn simulate(
                 (
                     new_s,
                     new_d,
-                    config.state_rating_costs[1][rating - 1] + cost,
+                    config.state_rating_costs[REVIEW][rating - 1] + cost,
                 )
             } else {
                 (
@@ -478,7 +488,7 @@ pub fn simulate(
                         rating,
                     ),
                     next_d(w, card.difficulty, rating),
-                    config.state_rating_costs[1][rating - 1],
+                    config.state_rating_costs[REVIEW][rating - 1],
                 )
             };
             card.stability = new_s;
@@ -1120,7 +1130,7 @@ mod tests {
                 s,
                 d,
                 Some(init_rating),
-                &config.state_rating_costs[0],
+                &config.state_rating_costs[LEARNING],
                 &config.learning_step_transitions,
                 config.learning_step_count,
                 &mut rng,
@@ -1129,6 +1139,25 @@ mod tests {
             // Check against expected result for this init_rating
             assert_eq!(result, expected_results[init_rating - 1]);
         }
+
+        let s = 10.0;
+        let d = 5.0;
+        let post_lapse_s = stability_after_failure(&w, s, 0.9, d);
+        let post_lapse_d = next_d(&w, d, 1);
+        let cost = config.state_rating_costs[REVIEW][0];
+        dbg!(post_lapse_s, post_lapse_d, cost);
+        let mut rng = StdRng::seed_from_u64(2024);
+        let result = memory_state_short_term(
+            &w,
+            post_lapse_s,
+            post_lapse_d,
+            None,
+            &config.state_rating_costs[RELEARNING],
+            &config.relearning_step_transitions,
+            config.relearning_step_count,
+            &mut rng,
+        );
+        assert_eq!(result, (2.6892803, 7.1226883, 12.32));
     }
 
     #[test]
