@@ -38,6 +38,7 @@ impl Round for f32 {
 
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
+const RATINGS: [usize; 4] = [1, 2, 3, 4];
 
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
@@ -187,17 +188,20 @@ fn memory_state_short_term(
     steps_len: usize,
     rng: &mut StdRng,
 ) -> (f32, f32, f32) {
-    let ratings = [1, 2, 3, 4];
     let mut i = 0;
     let mut consecutive = 0;
     let mut rating = init_rating.unwrap_or(1);
-    let consecutive_max = if rating > 2 { steps_len - 1 } else { steps_len };
+    let mut cost = if init_rating.is_none() {
+        0.0
+    } else {
+        costs[rating - 1]
+    };
     let mut new_s = s;
     let mut new_d = d;
-    let mut cost = costs[rating - 1];
+    let consecutive_max = if rating > 2 { steps_len - 1 } else { steps_len };
     while i < 5 && consecutive < consecutive_max && rating < 4 {
         let next_rating_dist = WeightedIndex::new(step_transitions[rating - 1]).unwrap();
-        rating = ratings[next_rating_dist.sample(rng)];
+        rating = RATINGS[next_rating_dist.sample(rng)];
         new_s = stability_short_term(w, new_s, rating);
         new_d = next_d(w, new_d, rating);
         cost += costs[rating - 1];
@@ -275,10 +279,10 @@ pub fn simulate(
     let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
     let mut correct_cnt_per_day = vec![0; config.learn_span];
 
-    let first_rating_choices = [1, 2, 3, 4];
+    let first_rating_choices = RATINGS;
     let first_rating_dist = WeightedIndex::new(config.first_rating_prob).unwrap();
 
-    let review_rating_choices = [2, 3, 4];
+    let review_rating_choices = &RATINGS[1..];
     let review_rating_dist = WeightedIndex::new(config.review_rating_prob).unwrap();
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
@@ -1097,73 +1101,34 @@ mod tests {
         let config = SimulatorConfig::default();
         let mut rng = StdRng::seed_from_u64(42);
 
-        // Test for init_rating = 1
-        let init_rating = 1;
-        let s = w[init_rating - 1];
-        let d = init_d(&w, init_rating);
-        dbg!(s, d);
-        let result = memory_state_short_term(
-            &w,
-            s,
-            d,
-            Some(init_rating),
-            &config.state_rating_costs[0],
-            &config.learning_step_transitions,
-            config.learning_step_count,
-            &mut rng,
-        );
-        assert_eq!(result, (0.42046294, 8.20051, 66.72));
+        // Expected results for each init_rating
+        let expected_results = [
+            (0.42046294, 8.20051, 66.72), // init_rating = 1
+            (2.0569036, 6.223595, 46.35), // init_rating = 2
+            (3.646713, 4.9201818, 27.56), // init_rating = 3
+            (15.9819, 2.5636039, 10.71),  // init_rating = 4
+        ];
 
-        // Test for init_rating = 2
-        let init_rating = 2;
-        let s = w[init_rating - 1];
-        let d = init_d(&w, init_rating);
-        dbg!(s, d);
-        let result = memory_state_short_term(
-            &w,
-            s,
-            d,
-            Some(init_rating),
-            &config.state_rating_costs[0],
-            &config.learning_step_transitions,
-            config.learning_step_count,
-            &mut rng,
-        );
-        assert_eq!(result, (2.0569036, 6.223595, 46.35));
+        // Test for each init_rating from 1 to 4
+        for init_rating in 1..=4 {
+            let s = w[init_rating - 1];
+            let d = init_d(&w, init_rating);
+            dbg!(s, d);
 
-        // Test for init_rating = 3
-        let init_rating = 3;
-        let s = w[init_rating - 1];
-        let d = init_d(&w, init_rating);
-        dbg!(s, d);
-        let result = memory_state_short_term(
-            &w,
-            s,
-            d,
-            Some(init_rating),
-            &config.state_rating_costs[0],
-            &config.learning_step_transitions,
-            config.learning_step_count,
-            &mut rng,
-        );
-        assert_eq!(result, (3.646713, 4.9201818, 27.56));
+            let result = memory_state_short_term(
+                &w,
+                s,
+                d,
+                Some(init_rating),
+                &config.state_rating_costs[0],
+                &config.learning_step_transitions,
+                config.learning_step_count,
+                &mut rng,
+            );
 
-        // Test for init_rating = 4
-        let init_rating = 4;
-        let s = w[init_rating - 1];
-        let d = init_d(&w, init_rating);
-        dbg!(s, d);
-        let result = memory_state_short_term(
-            &w,
-            s,
-            d,
-            Some(init_rating),
-            &config.state_rating_costs[0],
-            &config.learning_step_transitions,
-            config.learning_step_count,
-            &mut rng,
-        );
-        assert_eq!(result, (15.9819, 2.5636039, 10.71));
+            // Check against expected result for this init_rating
+            assert_eq!(result, expected_results[init_rating - 1]);
+        }
     }
 
     #[test]
