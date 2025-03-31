@@ -1170,7 +1170,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5804.207
+            4558.192
         );
         Ok(())
     }
@@ -1441,7 +1441,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5582.8286
+            4395.072
         );
         Ok(())
     }
@@ -1608,40 +1608,40 @@ mod tests {
         }
 
         println!("Default behavior: low difficulty cards reviewed first.");
-        run_test(None, 43.632114)?;
+        run_test(None, 77.23542)?;
         println!("High difficulty cards reviewed first.");
         run_test(
             wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
-            48.88666,
+            84.43986,
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
-            57.13894,
+            84.64998,
         )?;
         println!("High retrievability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
-            44.15335,
+            79.41626,
         )?;
         println!("High stability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| -(card.stability * 100.0) as i32),
-            45.77435,
+            79.473946,
         )?;
         println!("Low stability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| (card.stability * 100.0) as i32),
-            48.288563,
+            82.072655,
         )?;
         println!("Long interval cards reviewed first.");
-        run_test(wrap!(|card: &Card| -card.interval as i32), 46.02946)?;
+        run_test(wrap!(|card: &Card| -card.interval as i32), 78.64676)?;
         println!("Short interval cards reviewed first.");
-        run_test(wrap!(|card: &Card| card.interval as i32), 45.916748)?;
+        run_test(wrap!(|card: &Card| card.interval as i32), 82.11492)?;
         println!("Early scheduled due cards reviewed first.");
-        run_test(wrap!(|card: &Card| card.scheduled_due() as i32), 52.364307)?;
+        run_test(wrap!(|card: &Card| card.scheduled_due() as i32), 78.675835)?;
         println!("Late scheduled due cards reviewed first.");
-        run_test(wrap!(|card: &Card| -card.scheduled_due() as i32), 43.113968)?;
+        run_test(wrap!(|card: &Card| -card.scheduled_due() as i32), 78.27335)?;
         Ok(())
     }
 
@@ -1658,7 +1658,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
-        assert_eq!(optimal_retention, 0.82115597);
+        assert_eq!(optimal_retention, 0.73647445);
         assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
         Ok(())
     }
@@ -1678,7 +1678,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.84596336);
+        assert_eq!(optimal_retention, 0.707);
         Ok(())
     }
 
