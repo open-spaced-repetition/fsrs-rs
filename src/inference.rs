@@ -550,7 +550,7 @@ mod tests {
 
         assert_abs_diff_eq!(
             [metrics.log_loss, metrics.rmse_bins].as_slice(),
-            [0.2183694690465927, 0.0407077893614769].as_slice(),
+            [0.218_369_47, 0.040_707_79].as_slice(),
         );
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
@@ -567,7 +567,7 @@ mod tests {
 
         assert_abs_diff_eq!(
             [self_by_other, other_by_self].as_slice(),
-            [0.014222600497305393, 0.030416708439588547].as_slice(),
+            [0.014_222_600_5, 0.030_416_708].as_slice(),
         );
 
         Ok(())
