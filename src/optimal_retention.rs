@@ -198,8 +198,8 @@ fn memory_state_short_term(
     while i < 5 && consecutive < consecutive_max && rating < 4 {
         let next_rating_dist = WeightedIndex::new(step_transitions[rating - 1]).unwrap();
         rating = ratings[next_rating_dist.sample(rng)];
-        new_s = stability_short_term(w, s, rating);
-        new_d = next_d(w, d, rating);
+        new_s = stability_short_term(w, new_s, rating);
+        new_d = next_d(w, new_d, rating);
         cost += costs[rating - 1];
         if rating > 2 {
             consecutive += 1;
@@ -1087,8 +1087,32 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
+
+    #[test]
+    fn test_memory_state_short_term() {
+        let w = DEFAULT_PARAMETERS;
+        let init_rating = 1;
+        let s = w[init_rating - 1];
+        let d = init_d(&w, init_rating);
+        assert_eq!(s, 0.3095);
+        assert_eq!(d, 7.0529);
+        let config = SimulatorConfig::default();
+        let mut rng = StdRng::seed_from_u64(42);
+        let result = memory_state_short_term(
+            &w,
+            s,
+            d,
+            Some(init_rating),
+            &config.state_rating_costs[0],
+            &config.learning_step_transitions,
+            config.learning_steps_len,
+            &mut rng,
+        );
+        assert_eq!(result, (0.42046294, 8.20051, 47.14));
+    }
 
     #[test]
     fn simulator_memorization() -> Result<()> {
