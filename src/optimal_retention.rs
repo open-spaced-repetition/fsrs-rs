@@ -106,8 +106,8 @@ pub struct SimulatorConfig {
     pub learning_step_transitions: [[f32; 4]; 3],
     pub relearning_step_transitions: [[f32; 4]; 3],
     pub state_rating_costs: [[f32; 4]; 3],
-    pub learning_steps_len: usize,
-    pub relearning_steps_len: usize,
+    pub learning_step_count: usize,
+    pub relearning_step_count: usize,
 }
 
 impl Default for SimulatorConfig {
@@ -147,8 +147,8 @@ impl Default for SimulatorConfig {
                 [19.38, 17.59, 12.38, 8.94],
                 [16.44, 15.25, 12.32, 8.03],
             ],
-            learning_steps_len: 2,
-            relearning_steps_len: 1,
+            learning_step_count: 2,
+            relearning_step_count: 1,
         }
     }
 }
@@ -194,7 +194,7 @@ fn memory_state_short_term(
     let consecutive_max = if rating > 2 { steps_len - 1 } else { steps_len };
     let mut new_s = s;
     let mut new_d = d;
-    let mut cost = 0.0;
+    let mut cost = costs[rating - 1];
     while i < 5 && consecutive < consecutive_max && rating < 4 {
         let next_rating_dist = WeightedIndex::new(step_transitions[rating - 1]).unwrap();
         rating = ratings[next_rating_dist.sample(rng)];
@@ -415,7 +415,7 @@ pub fn simulate(
                 Some(init_rating),
                 &config.state_rating_costs[0],
                 &config.learning_step_transitions,
-                config.learning_steps_len,
+                config.learning_step_count,
                 &mut rng,
             );
             card.stability = new_s;
@@ -456,7 +456,7 @@ pub fn simulate(
                     None,
                     &config.state_rating_costs[2],
                     &config.relearning_step_transitions,
-                    config.relearning_steps_len,
+                    config.relearning_step_count,
                     &mut rng,
                 );
                 (
@@ -1094,13 +1094,14 @@ mod tests {
     #[test]
     fn test_memory_state_short_term() {
         let w = DEFAULT_PARAMETERS;
+        let config = SimulatorConfig::default();
+        let mut rng = StdRng::seed_from_u64(42);
+
+        // Test for init_rating = 1
         let init_rating = 1;
         let s = w[init_rating - 1];
         let d = init_d(&w, init_rating);
-        assert_eq!(s, 0.3095);
-        assert_eq!(d, 7.0529);
-        let config = SimulatorConfig::default();
-        let mut rng = StdRng::seed_from_u64(42);
+        dbg!(s, d);
         let result = memory_state_short_term(
             &w,
             s,
@@ -1108,10 +1109,61 @@ mod tests {
             Some(init_rating),
             &config.state_rating_costs[0],
             &config.learning_step_transitions,
-            config.learning_steps_len,
+            config.learning_step_count,
             &mut rng,
         );
-        assert_eq!(result, (0.42046294, 8.20051, 47.14));
+        assert_eq!(result, (0.42046294, 8.20051, 66.72));
+
+        // Test for init_rating = 2
+        let init_rating = 2;
+        let s = w[init_rating - 1];
+        let d = init_d(&w, init_rating);
+        dbg!(s, d);
+        let result = memory_state_short_term(
+            &w,
+            s,
+            d,
+            Some(init_rating),
+            &config.state_rating_costs[0],
+            &config.learning_step_transitions,
+            config.learning_step_count,
+            &mut rng,
+        );
+        assert_eq!(result, (2.0569036, 6.223595, 46.35));
+
+        // Test for init_rating = 3
+        let init_rating = 3;
+        let s = w[init_rating - 1];
+        let d = init_d(&w, init_rating);
+        dbg!(s, d);
+        let result = memory_state_short_term(
+            &w,
+            s,
+            d,
+            Some(init_rating),
+            &config.state_rating_costs[0],
+            &config.learning_step_transitions,
+            config.learning_step_count,
+            &mut rng,
+        );
+        assert_eq!(result, (3.646713, 4.9201818, 27.56));
+
+        // Test for init_rating = 4
+        let init_rating = 4;
+        let s = w[init_rating - 1];
+        let d = init_d(&w, init_rating);
+        dbg!(s, d);
+        let result = memory_state_short_term(
+            &w,
+            s,
+            d,
+            Some(init_rating),
+            &config.state_rating_costs[0],
+            &config.learning_step_transitions,
+            config.learning_step_count,
+            &mut rng,
+        );
+        assert_eq!(result, (15.9819, 2.5636039, 10.71));
     }
 
     #[test]
