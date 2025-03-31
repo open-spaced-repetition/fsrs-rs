@@ -184,6 +184,7 @@ fn stability_short_term(w: &[f32], s: f32, rating: usize) -> f32 {
     new_s.clamp(S_MIN, S_MAX)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn memory_state_short_term(
     w: &[f32],
     s: f32,
