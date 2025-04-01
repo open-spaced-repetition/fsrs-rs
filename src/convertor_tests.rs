@@ -312,7 +312,7 @@ fn conversion_works() {
             .to_data()
             .to_vec::<f32>()
             .unwrap(),
-        vec![3.0, 4.0, 3.0, 3.0, 3.0, 2.0],
+        [3.0, 4.0, 3.0, 3.0, 3.0, 2.0],
     );
     assert_eq!(
         res.t_historys
@@ -320,7 +320,7 @@ fn conversion_works() {
             .to_data()
             .to_vec::<f32>()
             .unwrap(),
-        vec![0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
+        [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
     );
     assert_eq!(res.labels.into_scalar().to_i32(), 1);
 }
