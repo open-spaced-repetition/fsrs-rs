@@ -1584,10 +1584,10 @@ mod tests {
             ..Default::default()
         };
 
-        // Helper function to set the review priority fn, run simulation and assert the expected cost.
-        let mut run_test =
-            |review_priority: Option<ReviewPriorityFn>, expected: f32| -> Result<()> {
-                config.review_priority_fn = review_priority;
+        // Define a macro to set the review priority fn, run simulation and assert the expected cost.
+        macro_rules! run_test {
+            ($review_priority:expr, $expected:expr) => {{
+                config.review_priority_fn = $review_priority;
                 let SimulationResult {
                     memorized_cnt_per_day,
                     cost_per_day,
@@ -1596,9 +1596,10 @@ mod tests {
                 let cost_per_memorization =
                     calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
                 println!("cost_per_memorization: {}", cost_per_memorization);
-                assert_eq!(cost_per_memorization, expected);
+                assert_eq!(cost_per_memorization, $expected);
                 Ok(())
-            };
+            }};
+        }
 
         macro_rules! wrap {
             ($f:expr) => {
@@ -1607,40 +1608,40 @@ mod tests {
         }
 
         println!("Default behavior: low difficulty cards reviewed first.");
-        run_test(None, 50.473866)?;
+        run_test!(None, 50.473866)?;
         println!("High difficulty cards reviewed first.");
-        run_test(
+        run_test!(
             wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
-            56.180927,
+            56.180927
         )?;
         println!("Low retrievability cards reviewed first.");
-        run_test(
+        run_test!(
             wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
-            60.415882,
+            60.415882
         )?;
         println!("High retrievability cards reviewed first.");
-        run_test(
+        run_test!(
             wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
-            51.68312,
+            51.68312
         )?;
         println!("High stability cards reviewed first.");
-        run_test(
+        run_test!(
             wrap!(|card: &Card| -(card.stability * 100.0) as i32),
-            52.22912,
+            52.22912
         )?;
         println!("Low stability cards reviewed first.");
-        run_test(
+        run_test!(
             wrap!(|card: &Card| (card.stability * 100.0) as i32),
-            54.532246,
+            54.532246
         )?;
         println!("Long interval cards reviewed first.");
-        run_test(wrap!(|card: &Card| -card.interval as i32), 51.518085)?;
+        run_test!(wrap!(|card: &Card| -card.interval as i32), 51.518085)?;
         println!("Short interval cards reviewed first.");
-        run_test(wrap!(|card: &Card| card.interval as i32), 54.562065)?;
+        run_test!(wrap!(|card: &Card| card.interval as i32), 54.562065)?;
         println!("Early scheduled due cards reviewed first.");
-        run_test(wrap!(|card: &Card| card.scheduled_due() as i32), 55.410393)?;
+        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 55.410393)?;
         println!("Late scheduled due cards reviewed first.");
-        run_test(wrap!(|card: &Card| -card.scheduled_due() as i32), 50.902344)?;
+        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 50.902344)?;
         Ok(())
     }
 
