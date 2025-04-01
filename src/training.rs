@@ -554,7 +554,7 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::convertor_tests::data_from_csv;
     use crate::dataset::FSRSBatch;
-    use approx::assert_abs_diff_eq;
+    use crate::test_helpers::TestHelper;
     use burn::backend::NdArray;
     use log::LevelFilter;
 
@@ -619,32 +619,28 @@ mod tests {
 
         let w_grad = model.w.grad(&gradients).unwrap();
 
-        assert_abs_diff_eq!(
-            w_grad.to_data().to_vec::<f32>().unwrap().as_slice(),
-            [
-                -0.04798106,
-                -0.0040113665,
-                -0.0011027358,
-                0.005099956,
-                0.04079412,
-                -0.057942636,
-                0.030063614,
-                -1.0625131,
-                0.60149425,
-                -3.0468569,
-                0.5935735,
-                -0.013909986,
-                0.038726028,
-                -0.11341163,
-                -0.00089108385,
-                -0.15296058,
-                0.22184022,
-                0.10291521,
-                0.004057862,
-                -0.33532578
-            ]
-            .as_slice(),
-        );
+        w_grad.to_data().to_vec::<f32>().unwrap().assert_approx_eq([
+            -0.04798106,
+            -0.0040113665,
+            -0.0011027358,
+            0.005099956,
+            0.04079412,
+            -0.057942636,
+            0.030063614,
+            -1.0625131,
+            0.60149425,
+            -3.0468569,
+            0.5935735,
+            -0.013909986,
+            0.038726028,
+            -0.11341163,
+            -0.00089108385,
+            -0.15296058,
+            0.22184022,
+            0.10291521,
+            0.004057862,
+            -0.33532578,
+        ]);
 
         let config =
             TrainingConfig::new(ModelConfig::default(), AdamConfig::new().with_epsilon(1e-8));
@@ -653,15 +649,17 @@ mod tests {
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
-        assert_abs_diff_eq!(
-            model.w.val().to_data().to_vec::<f32>().unwrap().as_slice(),
-            [
+        model
+            .w
+            .val()
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([
                 0.3495, 1.4591999, 3.5492997, 15.9419, 7.0129, 0.6076, 1.9436, 0.0488, 1.4855001,
                 0.14739999, 0.9610999, 1.9166, 0.07110001, 0.3733, 2.3393996, 0.2649, 2.9604, 0.63,
-                0.36060008, 0.2232
-            ]
-            .as_slice(),
-        );
+                0.36060008, 0.2232,
+            ]);
 
         let penalty =
             model.l2_regularization(init_w.clone(), params_stddev.clone(), 512, 1000, 2.0);
@@ -669,32 +667,28 @@ mod tests {
 
         let gradients = penalty.backward();
         let w_grad = model.w.grad(&gradients).unwrap();
-        assert_abs_diff_eq!(
-            w_grad.to_data().to_vec::<f32>().unwrap().as_slice(),
-            [
-                0.0019813809,
-                0.00087788026,
-                0.00026506305,
-                -0.000105618295,
-                -0.25213888,
-                1.044897,
-                -0.22755535,
-                5.688889,
-                -0.5385926,
-                2.5283945,
-                -0.75225013,
-                0.9102214,
-                -10.113578,
-                3.1999993,
-                0.25213587,
-                1.3107198,
-                -0.07721739,
-                -0.85244584,
-                -0.79999804,
-                4.179591
-            ]
-            .as_slice(),
-        );
+        w_grad.to_data().to_vec::<f32>().unwrap().assert_approx_eq([
+            0.0019813809,
+            0.00087788026,
+            0.00026506305,
+            -0.000105618295,
+            -0.25213888,
+            1.044897,
+            -0.22755535,
+            5.688889,
+            -0.5385926,
+            2.5283945,
+            -0.75225013,
+            0.9102214,
+            -10.113578,
+            3.1999993,
+            0.25213587,
+            1.3107198,
+            -0.07721739,
+            -0.85244584,
+            -0.79999804,
+            4.179591,
+        ]);
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
@@ -735,14 +729,12 @@ mod tests {
         assert_eq!(loss.clone().into_scalar().to_f32(), 4.259659);
         let gradients = loss.backward();
         let w_grad = model.w.grad(&gradients).unwrap();
-        assert_abs_diff_eq!(
-            w_grad
-                .clone()
-                .into_data()
-                .to_vec::<f32>()
-                .unwrap()
-                .as_slice(),
-            [
+        w_grad
+            .clone()
+            .into_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([
                 -0.025341026,
                 -0.0030165915,
                 -0.00084971637,
@@ -762,16 +754,18 @@ mod tests {
                 0.22048862,
                 0.096262515,
                 0.015309425,
-                -0.28274217
-            ]
-            .as_slice(),
-        );
+                -0.28274217,
+            ]);
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
-        assert_abs_diff_eq!(
-            model.w.val().to_data().to_vec::<f32>().unwrap().as_slice(),
-            [
+        model
+            .w
+            .val()
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([
                 0.38710356,
                 1.4985125,
                 3.5886993,
@@ -791,10 +785,8 @@ mod tests {
                 2.9204068,
                 0.59009206,
                 0.32496357,
-                0.26287907
-            ]
-            .as_slice(),
-        );
+                0.26287907,
+            ]);
     }
 
     #[test]

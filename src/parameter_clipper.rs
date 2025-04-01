@@ -72,7 +72,6 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
 mod tests {
     use super::*;
     use crate::{DEFAULT_PARAMETERS, test_helpers::Tensor};
-    use approx::assert_abs_diff_eq;
     use burn::backend::ndarray::NdArrayDevice;
 
     #[test]
@@ -94,12 +93,13 @@ mod tests {
 
     #[test]
     fn parameter_clipper_works_with_num_relearning_steps() {
+        use crate::test_helpers::TestHelper;
         let device = NdArrayDevice::Cpu;
         let tensor = Tensor::from_floats(DEFAULT_PARAMETERS, &device);
 
         let param = parameter_clipper(Param::from_tensor(tensor), 2);
         let values = &param.to_data().to_vec::<f32>().unwrap();
 
-        assert_abs_diff_eq!(values[17..=19], [0.11875904, 0.11875904, 0.1832]);
+        values[17..=19].assert_approx_eq([0.11875904, 0.11875904, 0.1832]);
     }
 }

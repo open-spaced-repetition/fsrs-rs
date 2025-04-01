@@ -1044,11 +1044,8 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
-
-    use approx::assert_abs_diff_eq;
-
     use super::*;
-    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
+    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
     const LEARN_COST: f32 = 42.;
     const REVIEW_COST: f32 = 43.;
 
@@ -1621,7 +1618,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_abs_diff_eq!(optimal_retention, 0.82870495, epsilon = 0.001);
+        assert_eq!(optimal_retention, 0.8287);
         Ok(())
     }
 

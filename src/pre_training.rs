@@ -279,10 +279,9 @@ pub(crate) fn smooth_and_fill(
 
 #[cfg(test)]
 mod tests {
-    use approx::assert_abs_diff_eq;
-
     use super::*;
     use crate::dataset::filter_outlier;
+    use crate::test_helpers::TestHelper;
     use crate::training::calculate_average_recall;
 
     #[test]
@@ -342,7 +341,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.943_028_57);
-        assert_abs_diff_eq!(*actual.get(&first_rating).unwrap(), 0.9086886,);
+        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.9086886]);
     }
 
     #[test]
@@ -356,10 +355,10 @@ mod tests {
         let items = [pretrainset.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
 
-        assert_abs_diff_eq!(
-            pretrain(pretrainset, average_recall).unwrap().0.as_slice(),
-            [0.9086886, 2.2474625, 4.216838, 9.615905].as_slice(),
-        );
+        pretrain(pretrainset, average_recall)
+            .unwrap()
+            .0
+            .assert_approx_eq([0.9086886, 2.2474625, 4.216838, 9.615905])
     }
 
     #[test]
