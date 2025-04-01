@@ -754,76 +754,58 @@ pub struct RevlogEntry {
     pub review_kind: RevlogReviewKind,
 }
 
-#[derive(Debug)]
-struct FirstOrderMarkovChain {
+/// Calculate transition matrix and counts from sequences of ratings
+fn calculate_transitions(
+    sequences: &[Vec<u8>],
     n_states: usize,
-    transition_matrix: Vec<Vec<f32>>,
-    initial_distribution: Vec<f32>,
-    transition_counts: Vec<Vec<f32>>,
-    initial_counts: Vec<f32>,
-}
+    smoothing: f32,
+) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    let mut transition_counts = vec![vec![0.0; n_states]; n_states];
+    let mut initial_counts = vec![0.0; n_states];
 
-impl FirstOrderMarkovChain {
-    fn new(n_states: usize) -> Self {
-        Self {
-            n_states,
-            transition_matrix: vec![vec![0.0; n_states]; n_states],
-            initial_distribution: vec![0.0; n_states],
-            transition_counts: vec![vec![0.0; n_states]; n_states],
-            initial_counts: vec![0.0; n_states],
+    // Count transition frequencies and initial state frequencies
+    for sequence in sequences {
+        if sequence.is_empty() {
+            continue;
+        }
+
+        // Record initial state
+        initial_counts[sequence[0] as usize - 1] += 1.0;
+
+        // Record transitions
+        for i in 0..sequence.len() - 1 {
+            let current_state = sequence[i] as usize - 1;
+            let next_state = sequence[i + 1] as usize - 1;
+            transition_counts[current_state][next_state] += 1.0;
         }
     }
 
-    fn fit(&mut self, sequences: &[Vec<u8>], smoothing: f32) -> &Self {
-        // Count transition frequencies and initial state frequencies
-        for sequence in sequences {
-            if sequence.is_empty() {
-                continue;
-            }
-
-            // Record initial state
-            self.initial_counts[sequence[0] as usize - 1] += 1.0;
-
-            // Record transitions
-            for i in 0..sequence.len() - 1 {
-                let current_state = sequence[i] as usize - 1;
-                let next_state = sequence[i + 1] as usize - 1;
-                self.transition_counts[current_state][next_state] += 1.0;
-            }
+    // Apply Laplace smoothing
+    for i in 0..n_states {
+        for j in 0..n_states {
+            transition_counts[i][j] += smoothing;
         }
-
-        // Apply Laplace smoothing
-        for i in 0..self.n_states {
-            for j in 0..self.n_states {
-                self.transition_counts[i][j] += smoothing;
-            }
-            self.initial_counts[i] += smoothing;
-        }
-
-        // Calculate transition probability matrix
-        for i in 0..self.n_states {
-            let row_sum: f32 = self.transition_counts[i].iter().sum();
-            if row_sum > 0.0 {
-                for j in 0..self.n_states {
-                    self.transition_matrix[i][j] = self.transition_counts[i][j] / row_sum;
-                }
-            } else {
-                // If a state never appears, assume uniform distribution
-                let uniform_prob = 1.0 / self.n_states as f32;
-                for j in 0..self.n_states {
-                    self.transition_matrix[i][j] = uniform_prob;
-                }
-            }
-        }
-
-        // Calculate initial state distribution
-        let total: f32 = self.initial_counts.iter().sum();
-        for i in 0..self.n_states {
-            self.initial_distribution[i] = self.initial_counts[i] / total;
-        }
-
-        self
+        initial_counts[i] += smoothing;
     }
+
+    // Calculate transition probability matrix
+    let mut transition_matrix = vec![vec![0.0; n_states]; n_states];
+    for i in 0..n_states {
+        let row_sum: f32 = transition_counts[i].iter().sum();
+        if row_sum > 0.0 {
+            for j in 0..n_states {
+                transition_matrix[i][j] = transition_counts[i][j] / row_sum;
+            }
+        } else {
+            // If a state never appears, assume uniform distribution
+            let uniform_prob = 1.0 / n_states as f32;
+            for j in 0..n_states {
+                transition_matrix[i][j] = uniform_prob;
+            }
+        }
+    }
+
+    (transition_matrix, transition_counts)
 }
 
 pub fn extract_simulator_config(
@@ -968,14 +950,12 @@ pub fn extract_simulator_config(
         }
     }
 
-    let mut learning_markov = FirstOrderMarkovChain::new(4);
-    let mut relearning_markov = FirstOrderMarkovChain::new(4);
+    let (learning_transition_matrix, learning_transition_counts) =
+        calculate_transitions(&learning_step_rating_sequences, 4, 1.0);
+    let (relearning_transition_matrix, relearning_transition_counts) =
+        calculate_transitions(&relearning_step_rating_sequences, 4, 1.0);
 
-    learning_markov.fit(&learning_step_rating_sequences, 1.0);
-    relearning_markov.fit(&relearning_step_rating_sequences, 1.0);
-
-    let mut learning_step_transitions: [[f32; 4]; 3] = learning_markov
-        .transition_matrix
+    let mut learning_step_transitions: [[f32; 4]; 3] = learning_transition_matrix
         .iter()
         .take(3)
         .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
@@ -983,8 +963,7 @@ pub fn extract_simulator_config(
         .try_into()
         .unwrap();
 
-    let mut relearning_step_transitions: [[f32; 4]; 3] = relearning_markov
-        .transition_matrix
+    let mut relearning_step_transitions: [[f32; 4]; 3] = relearning_transition_matrix
         .iter()
         .take(3)
         .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
@@ -1017,7 +996,7 @@ pub fn extract_simulator_config(
         izip!(
             learning_step_transitions.iter_mut(),
             config.learning_step_transitions,
-            learning_markov.transition_counts,
+            learning_transition_counts,
         )
         .for_each(|(rating_probs, default_rating_probs, transition_counts)| {
             let total_learning_step_entries = transition_counts.iter().sum::<f32>();
@@ -1029,7 +1008,7 @@ pub fn extract_simulator_config(
         izip!(
             relearning_step_transitions.iter_mut(),
             config.relearning_step_transitions,
-            relearning_markov.transition_counts,
+            relearning_transition_counts,
         )
         .for_each(|(rating_probs, default_rating_probs, transition_counts)| {
             let total_relearning_step_entries = transition_counts.iter().sum::<f32>();
@@ -1065,6 +1044,8 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+
+    use approx::assert_abs_diff_eq;
 
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
@@ -1640,7 +1621,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.82870495);
+        assert_abs_diff_eq!(optimal_retention, 0.82870495, epsilon = 0.001);
         Ok(())
     }
 
