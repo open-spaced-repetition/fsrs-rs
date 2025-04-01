@@ -148,9 +148,9 @@ impl Default for SimulatorConfig {
                 [0.1056, 0.1434, 0.7266, 0.0244],
             ],
             state_rating_costs: [
-                [19.58, 18.79, 13.78, 10.71],
-                [19.38, 17.59, 12.38, 8.94],
-                [16.44, 15.25, 12.32, 8.03],
+                [12.75, 12.26, 8.0, 6.38],
+                [13.05, 11.74, 7.42, 5.6],
+                [10.56, 10.0, 7.37, 5.4],
             ],
             learning_step_count: 2,
             relearning_step_count: 1,
@@ -477,7 +477,7 @@ pub fn simulate(
                 (
                     new_s,
                     new_d,
-                    config.state_rating_costs[REVIEW][rating - 1] + cost,
+                    config.state_rating_costs[REVIEW][rating - 1] * config.loss_aversion + cost,
                 )
             } else {
                 (
@@ -1116,10 +1116,10 @@ mod tests {
 
         // Expected results for each init_rating
         let expected_results = [
-            (0.42046294, 8.20051, 66.72), // init_rating = 1
-            (2.0569036, 6.223595, 46.35), // init_rating = 2
-            (3.646713, 4.9201818, 27.56), // init_rating = 3
-            (15.9819, 2.5636039, 10.71),  // init_rating = 4
+            (0.42046294, 8.20051, 41.5),  // init_rating = 1
+            (2.0569036, 6.223595, 28.26), // init_rating = 2
+            (3.646713, 4.9201818, 16.0),  // init_rating = 3
+            (15.9819, 2.5636039, 6.38),   // init_rating = 4
         ];
 
         // Test for each init_rating from 1 to 4
@@ -1160,7 +1160,7 @@ mod tests {
             config.relearning_step_count,
             &mut rng,
         );
-        assert_eq!(result, (2.6892803, 7.1226883, 12.32));
+        assert_eq!(result, (2.6892803, 7.1226883, 7.37));
     }
 
     #[test]
@@ -1172,7 +1172,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            4558.192
+            6235.0234
         );
         Ok(())
     }
@@ -1181,9 +1181,10 @@ mod tests {
     fn simulator_learn_review_costs() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 1,
-            learn_costs: [LEARN_COST; 4],
-            review_costs: [REVIEW_COST; 4],
             learn_span: 1,
+            first_rating_prob: [0., 0., 1., 0.],
+            state_rating_costs: [[LEARN_COST; 4], [REVIEW_COST; 4], [0.; 4]],
+            learning_step_count: 1,
             ..Default::default()
         };
 
@@ -1440,7 +1441,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            4395.072
+            5967.635
         );
         Ok(())
     }
@@ -1606,40 +1607,40 @@ mod tests {
         }
 
         println!("Default behavior: low difficulty cards reviewed first.");
-        run_test(None, 77.23542)?;
+        run_test(None, 50.473866)?;
         println!("High difficulty cards reviewed first.");
         run_test(
             wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
-            84.43986,
+            56.180927,
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
-            84.64998,
+            60.415882,
         )?;
         println!("High retrievability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
-            79.41626,
+            51.68312,
         )?;
         println!("High stability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| -(card.stability * 100.0) as i32),
-            79.473946,
+            52.22912,
         )?;
         println!("Low stability cards reviewed first.");
         run_test(
             wrap!(|card: &Card| (card.stability * 100.0) as i32),
-            82.072655,
+            54.532246,
         )?;
         println!("Long interval cards reviewed first.");
-        run_test(wrap!(|card: &Card| -card.interval as i32), 78.64676)?;
+        run_test(wrap!(|card: &Card| -card.interval as i32), 51.518085)?;
         println!("Short interval cards reviewed first.");
-        run_test(wrap!(|card: &Card| card.interval as i32), 82.11492)?;
+        run_test(wrap!(|card: &Card| card.interval as i32), 54.562065)?;
         println!("Early scheduled due cards reviewed first.");
-        run_test(wrap!(|card: &Card| card.scheduled_due() as i32), 78.675835)?;
+        run_test(wrap!(|card: &Card| card.scheduled_due() as i32), 55.410393)?;
         println!("Late scheduled due cards reviewed first.");
-        run_test(wrap!(|card: &Card| -card.scheduled_due() as i32), 78.27335)?;
+        run_test(wrap!(|card: &Card| -card.scheduled_due() as i32), 50.902344)?;
         Ok(())
     }
 
@@ -1656,7 +1657,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
-        assert_eq!(optimal_retention, 0.73647445);
+        assert_eq!(optimal_retention, 0.83002186);
         assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
         Ok(())
     }
@@ -1676,7 +1677,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.707);
+        assert_eq!(optimal_retention, 0.82870495);
         Ok(())
     }
 
