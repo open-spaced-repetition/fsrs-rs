@@ -847,7 +847,7 @@ pub fn extract_simulator_config(
             if state < 3 && rating < 4 {
                 state_rating_durations
                     .entry((state, rating))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(entry.taken_millis);
                 state_rating_counts[state][rating] += 1;
             }
@@ -978,13 +978,7 @@ pub fn extract_simulator_config(
         .transition_matrix
         .iter()
         .take(3)
-        .map(|row| {
-            row.iter()
-                .map(|&x| x as f32)
-                .collect_vec()
-                .try_into()
-                .unwrap()
-        })
+        .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
         .collect_vec()
         .try_into()
         .unwrap();
@@ -993,13 +987,7 @@ pub fn extract_simulator_config(
         .transition_matrix
         .iter()
         .take(3)
-        .map(|row| {
-            row.iter()
-                .map(|&x| x as f32)
-                .collect_vec()
-                .try_into()
-                .unwrap()
-        })
+        .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
         .collect_vec()
         .try_into()
         .unwrap();
