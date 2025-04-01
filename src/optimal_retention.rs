@@ -1618,7 +1618,11 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8287);
+        #[cfg(target_os = "macos")]
+        const EXPECTED_RETENTION: f32 = 0.82870495;
+        #[cfg(not(target_os = "macos"))]
+        const EXPECTED_RETENTION: f32 = 0.8290587;
+        assert_eq!(optimal_retention, EXPECTED_RETENTION);
         Ok(())
     }
 

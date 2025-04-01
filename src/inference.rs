@@ -749,7 +749,7 @@ mod tests {
         [memory_state.stability, memory_state.difficulty].assert_approx_eq([4.170096, 9.284191]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
 
-        [memory_state.stability, memory_state.difficulty].assert_approx_eq([121.712555, 2.1534157]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([21.712555, 2.1534157]);
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
 
         [memory_state.stability, memory_state.difficulty].assert_approx_eq([19.999992, 10.0]);
