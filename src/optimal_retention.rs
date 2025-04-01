@@ -1045,7 +1045,7 @@ pub fn extract_simulator_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
+    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
     const LEARN_COST: f32 = 42.;
     const REVIEW_COST: f32 = 43.;
 
