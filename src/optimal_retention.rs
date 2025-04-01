@@ -205,7 +205,7 @@ fn memory_state_short_term(
     let mut new_s = s;
     let mut new_d = d;
     let consecutive_max = if rating > 2 {
-        step_count - 1
+        step_count.saturating_sub(1)
     } else {
         step_count
     };
@@ -1105,6 +1105,8 @@ mod tests {
 
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
+    const LEARN_COST: f32 = 42.;
+    const REVIEW_COST: f32 = 43.;
 
     #[test]
     fn test_memory_state_short_term() {
@@ -1177,9 +1179,6 @@ mod tests {
 
     #[test]
     fn simulator_learn_review_costs() -> Result<()> {
-        const LEARN_COST: f32 = 42.;
-        const REVIEW_COST: f32 = 43.;
-
         let config = SimulatorConfig {
             deck_size: 1,
             learn_costs: [LEARN_COST; 4],
@@ -1465,8 +1464,7 @@ mod tests {
             deck_size: 1,
             learn_span: 1,
             first_rating_prob: [0., 0., 1., 0.],
-            first_rating_offsets: [0., 0., 0., 0.],
-            first_session_lens: [0., 0., 0., 0.],
+            state_rating_costs: [[LEARN_COST; 4], [REVIEW_COST; 4], [0.; 4]],
             learning_step_count: 1,
             ..Default::default()
         };
