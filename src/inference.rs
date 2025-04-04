@@ -24,9 +24,9 @@ pub(crate) const S_MAX: f32 = 36500.0;
 pub type Parameters = [f32];
 use itertools::izip;
 
-pub static DEFAULT_PARAMETERS: [f32; 19] = [
-    0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925,
-    1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621,
+pub static DEFAULT_PARAMETERS: [f32; 20] = [
+    0.3095, 1.4192, 3.5093, 15.9819, 7.0529, 0.5676, 1.9836, 0.0088, 1.5255, 0.1074, 1.0011,
+    1.8766, 0.1111, 0.3333, 2.2994, 0.2249, 3.0004, 0.67, 0.4006, 0.1832,
 ];
 
 fn infer<B: Backend>(
@@ -418,7 +418,7 @@ mod tests {
     use super::*;
     use crate::{
         FSRSReview, convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
-        test_helpers::assert_approx_eq,
+        test_helpers::TestHelper,
     };
 
     static PARAMETERS: &[f32] = &[
@@ -539,23 +539,23 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.206160, 0.025809]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.2061607, 0.025809951]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.223601, 0.042738]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.218_369_47, 0.040_707_79]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        assert_approx_eq([metrics.log_loss, metrics.rmse_bins], [0.208656, 0.030946]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20865743, 0.030946612]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        assert_approx_eq([self_by_other, other_by_self], [0.016570, 0.031037]);
+        [self_by_other, other_by_self].assert_approx_eq([0.014_222_600_5, 0.030_416_708]);
 
         Ok(())
     }
@@ -742,25 +742,17 @@ mod tests {
     fn memory_from_sm2() -> Result<()> {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [9.999996, 7.079161],
-        );
+
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([9.999996, 7.031947]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [4.170096, 9.323614],
-        );
+
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([4.170096, 9.284191]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [21.712555, 2.174237],
-        );
+
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([21.712555, 2.1534157]);
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
-        assert_approx_eq(
-            [memory_state.stability, memory_state.difficulty],
-            [19.999992, 10.0],
-        );
+
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([19.999992, 10.0]);
         let interval = 15;
         let ease_factor = 2.0;
         let fsrs_factor = fsrs

@@ -38,7 +38,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
         2.0
     };
     // https://regex101.com/r/21mXNI/1
-    let clamps: [(f32, f32); 19] = [
+    let clamps: [(f32, f32); 20] = [
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
@@ -58,6 +58,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
         (1.0, 6.0),
         (0.0, w17_w18_ceiling),
         (0.0, w17_w18_ceiling),
+        (0.0, 0.8),
     ];
 
     parameters
@@ -70,10 +71,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        DEFAULT_PARAMETERS,
-        test_helpers::{Tensor, assert_approx_eq},
-    };
+    use crate::{DEFAULT_PARAMETERS, test_helpers::Tensor};
     use burn::backend::ndarray::NdArrayDevice;
 
     #[test]
@@ -95,12 +93,13 @@ mod tests {
 
     #[test]
     fn parameter_clipper_works_with_num_relearning_steps() {
+        use crate::test_helpers::TestHelper;
         let device = NdArrayDevice::Cpu;
         let tensor = Tensor::from_floats(DEFAULT_PARAMETERS, &device);
 
         let param = parameter_clipper(Param::from_tensor(tensor), 2);
         let values = &param.to_data().to_vec::<f32>().unwrap();
 
-        assert_approx_eq([values[17], values[18]], [0.26078036, 0.26078036]);
+        values[17..=19].assert_approx_eq([0.11875904, 0.11875904, 0.1832]);
     }
 }

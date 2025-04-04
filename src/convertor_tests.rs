@@ -7,7 +7,6 @@ use burn::backend::ndarray::NdArrayDevice;
 use burn::data::dataloader::Dataset;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataset::InMemDataset;
-use burn::tensor::TensorData;
 use burn::tensor::cast::ToElement;
 use chrono::prelude::*;
 use chrono_tz::Tz;
@@ -307,14 +306,22 @@ fn conversion_works() {
     let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
     let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()]);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
-    res.r_historys
-        .squeeze::<1>(1)
-        .to_data()
-        .assert_approx_eq(&TensorData::from([3.0, 4.0, 3.0, 3.0, 3.0, 2.0]), 5);
-    res.t_historys
-        .squeeze::<1>(1)
-        .to_data()
-        .assert_approx_eq(&TensorData::from([0.0, 0.0, 5.0, 10.0, 22.0, 56.0]), 5);
+    assert_eq!(
+        res.r_historys
+            .squeeze::<1>(1)
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap(),
+        [3.0, 4.0, 3.0, 3.0, 3.0, 2.0],
+    );
+    assert_eq!(
+        res.t_historys
+            .squeeze::<1>(1)
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap(),
+        [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
+    );
     assert_eq!(res.labels.into_scalar().to_i32(), 1);
 }
 

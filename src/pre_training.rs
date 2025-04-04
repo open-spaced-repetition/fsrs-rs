@@ -281,7 +281,7 @@ pub(crate) fn smooth_and_fill(
 mod tests {
     use super::*;
     use crate::dataset::filter_outlier;
-    use crate::test_helpers::assert_approx_eq;
+    use crate::test_helpers::TestHelper;
     use crate::training::calculate_average_recall;
 
     #[test]
@@ -302,9 +302,9 @@ mod tests {
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 1.017056, default_s0);
-        assert_eq!(actual, 280.75007086903867);
+        assert_eq!(actual, 280.7558864942294);
         let actual = loss(&delta_t, &recall, &count, 1.017011, default_s0);
-        assert_eq!(actual, 280.74973684868695);
+        assert_eq!(actual, 280.7555524738777);
     }
 
     #[test]
@@ -341,7 +341,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.943_028_57);
-        assert_approx_eq([*actual.get(&first_rating).unwrap()], [0.908_688]);
+        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.9086886]);
     }
 
     #[test]
@@ -355,10 +355,10 @@ mod tests {
         let items = [pretrainset.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
 
-        assert_approx_eq(
-            pretrain(pretrainset, average_recall).unwrap().0,
-            [0.908_688, 2.247_462, 4.216_837, 9.615_904],
-        );
+        pretrain(pretrainset, average_recall)
+            .unwrap()
+            .0
+            .assert_approx_eq([0.9086886, 2.2474625, 4.216838, 9.615905])
     }
 
     #[test]
@@ -371,6 +371,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.11901211, 0.35, 0.9380833, 4.638989]);
+        assert_eq!(actual, [0.07632822, 0.35, 0.8654559, 3.9414215]);
     }
 }
