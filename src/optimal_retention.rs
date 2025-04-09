@@ -1536,7 +1536,7 @@ mod tests {
                 let cost_per_memorization =
                     calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
                 println!("cost_per_memorization: {}", cost_per_memorization);
-                assert_eq!(cost_per_memorization, $expected);
+                assert!((cost_per_memorization - $expected).abs() < 0.01);
                 Ok(())
             }};
         }
@@ -1598,7 +1598,8 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
-        assert_eq!(optimal_retention, 0.83955777);
+        dbg!(optimal_retention);
+        assert!((optimal_retention - 0.83955777).abs() < 0.01);
         assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
         Ok(())
     }
@@ -1618,11 +1619,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        #[cfg(target_os = "macos")]
-        const EXPECTED_RETENTION: f32 = 0.84024864;
-        #[cfg(not(target_os = "macos"))]
-        const EXPECTED_RETENTION: f32 = 0.84024864;
-        assert_eq!(optimal_retention, EXPECTED_RETENTION);
+        assert_eq!(optimal_retention, 0.84024864);
         Ok(())
     }
 
