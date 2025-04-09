@@ -334,7 +334,14 @@ mod tests {
         let retrievability = model.power_forgetting_curve(delta_t, stability);
 
         retrievability.to_data().assert_approx_eq(
-            &TensorData::from([1.0, 0.946059, 0.9299294, 0.9221679, 0.90000004, 0.79394597]),
+            &TensorData::from([
+                1.0,
+                0.9421982765197754,
+                0.9268093109130859,
+                0.91965252161026,
+                0.9,
+                0.8178008198738098,
+            ]),
             5,
         );
     }
@@ -400,13 +407,22 @@ mod tests {
         let difficulty = state.difficulty.to_data();
 
         stability.to_vec::<f32>().unwrap().assert_approx_eq([
-            0.23664382, 1.9285083, 6.27545, 26.054081, 0.23664382, 2.3679762,
+            0.16648849844932556,
+            1.6992956399917603,
+            6.414825439453125,
+            28.05109977722168,
+            0.16896963119506836,
+            2.0530757904052734,
         ]);
 
-        difficulty
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([8.301044, 7.0668244, 4.9201818, 1.0, 8.301044, 7.0668244]);
+        difficulty.to_vec::<f32>().unwrap().assert_approx_eq([
+            8.362964630126953,
+            7.086328506469727,
+            4.868056774139404,
+            1.0,
+            8.362964630126953,
+            7.086328506469727,
+        ]);
     }
 
     #[test]
@@ -422,7 +438,12 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([7.204, 6.102, 5.0, 3.898]);
+            .assert_approx_eq([
+                7.329555511474609,
+                6.164777755737305,
+                5.0,
+                3.8352222442626953,
+            ]);
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
 
@@ -430,7 +451,12 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([7.1631646, 6.0708623, 4.9785595, 3.8862574]);
+            .assert_approx_eq([
+                7.2961106300354,
+                6.139369487762451,
+                4.98262882232666,
+                3.82588791847229,
+            ]);
     }
 
     #[test]
@@ -453,7 +479,12 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([25.361727, 13.676782, 59.194153, 205.02472]);
+            .assert_approx_eq([
+                25.578495025634766,
+                13.550500869750977,
+                59.86878967285156,
+                207.70382690429688,
+            ]);
         let s_forget = model.stability_after_failure(stability.clone(), difficulty, retrievability);
         s_forget.clone().backward();
 
@@ -461,7 +492,12 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.929576, 2.2484288, 2.705061, 3.2972968]);
+            .assert_approx_eq([
+                1.7469292879104614,
+                2.0312795639038086,
+                2.4401676654815674,
+                2.9707436561584473,
+            ]);
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
 
@@ -469,14 +505,24 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.929576, 13.676782, 59.194153, 205.02472]);
+            .assert_approx_eq([
+                1.7469292879104614,
+                13.550500869750977,
+                59.86878967285156,
+                207.70382690429688,
+            ]);
         let next_stability = model.stability_short_term(stability, rating);
 
         next_stability
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.2750568, 2.4917638, 5.0, 9.516155]);
+            .assert_approx_eq([
+                1.1298232078552246,
+                2.4004619121551514,
+                5.100105285644531,
+                10.835862159729004,
+            ]);
     }
 
     #[test]

@@ -87,7 +87,7 @@ mod tests {
 
         assert_eq!(
             values,
-            &[0.01, 0.01, 100.0, 0.01, 10.0, 0.001, 1.0, 0.25, 0.0]
+            &[0.001, 0.001, 100.0, 0.001, 10.0, 0.001, 1.0, 0.25, 0.0]
         );
     }
 
@@ -100,6 +100,10 @@ mod tests {
         let param = parameter_clipper(Param::from_tensor(tensor), 2);
         let values = &param.to_data().to_vec::<f32>().unwrap();
 
-        values[17..=19].assert_approx_eq([0.11875904, 0.11875904, 0.1832]);
+        values[17..=19].assert_approx_eq([
+            0.24086152017116547,
+            0.24086152017116547,
+            0.1437000036239624,
+        ]);
     }
 }

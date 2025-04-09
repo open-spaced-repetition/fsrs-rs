@@ -485,7 +485,7 @@ pub fn simulate(
 
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
-            cost_per_day[day_index] += cost;
+            cost_per_day[day_index] += cost * (1.9 - retrievability);
 
             let delta_t = day_index - last_date_index;
             let pre_sim_days = (-card.last_date) as usize;
@@ -1057,10 +1057,10 @@ mod tests {
 
         // Expected results for each init_rating
         let expected_results = [
-            (0.42046294, 8.20051, 41.5),  // init_rating = 1
-            (2.0569036, 6.223595, 28.26), // init_rating = 2
-            (3.646713, 4.9201818, 16.0),  // init_rating = 3
-            (15.9819, 2.5636039, 6.38),   // init_rating = 4
+            (0.24325262, 8.282093, 41.5), // init_rating = 1
+            (1.7962034, 6.191415, 28.26), // init_rating = 2
+            (3.5362437, 4.8680573, 16.0), // init_rating = 3
+            (16.1507, 2.4824386, 6.38),   // init_rating = 4
         ];
 
         // Test for each init_rating from 1 to 4
@@ -1101,7 +1101,7 @@ mod tests {
             config.relearning_step_count,
             &mut rng,
         );
-        assert_eq!(result, (2.6892803, 7.1226883, 7.37));
+        assert_eq!(result, (2.4895842, 7.2628965, 7.37));
     }
 
     #[test]
@@ -1113,7 +1113,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6235.0234
+            5742.5576
         );
         Ok(())
     }
@@ -1359,8 +1359,8 @@ mod tests {
         assert_eq!(
             review_cnt_per_day.to_vec(),
             vec![
-                0, 19, 30, 38, 71, 59, 84, 93, 91, 104, 107, 111, 125, 128, 124, 121, 147, 136,
-                161, 144, 168, 168, 174, 179, 169, 166, 200, 192, 198, 183
+                0, 19, 34, 49, 68, 69, 90, 87, 109, 129, 106, 112, 135, 139, 144, 157, 124, 152,
+                179, 172, 188, 188, 173, 200, 181, 200, 199, 200, 200, 200
             ]
         );
         assert_eq!(
@@ -1382,7 +1382,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5967.635
+            5455.21
         );
         Ok(())
     }
@@ -1548,40 +1548,40 @@ mod tests {
         }
 
         println!("Default behavior: low difficulty cards reviewed first.");
-        run_test!(None, 50.473866)?;
+        run_test!(None, 46.403362)?;
         println!("High difficulty cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
-            56.180927
+            49.46388
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
-            60.415882
+            53.519653
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
-            51.68312
+            44.306305
         )?;
         println!("High stability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| -(card.stability * 100.0) as i32),
-            52.22912
+            44.59879
         )?;
         println!("Low stability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| (card.stability * 100.0) as i32),
-            54.532246
+            48.353275
         )?;
         println!("Long interval cards reviewed first.");
-        run_test!(wrap!(|card: &Card| -card.interval as i32), 51.518085)?;
+        run_test!(wrap!(|card: &Card| -card.interval as i32), 44.57659)?;
         println!("Short interval cards reviewed first.");
-        run_test!(wrap!(|card: &Card| card.interval as i32), 54.562065)?;
+        run_test!(wrap!(|card: &Card| card.interval as i32), 49.19044)?;
         println!("Early scheduled due cards reviewed first.");
-        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 55.410393)?;
+        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 54.307724)?;
         println!("Late scheduled due cards reviewed first.");
-        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 50.902344)?;
+        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 47.166664)?;
         Ok(())
     }
 
@@ -1598,7 +1598,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
-        assert_eq!(optimal_retention, 0.83002186);
+        assert_eq!(optimal_retention, 0.83955777);
         assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
         Ok(())
     }
@@ -1619,9 +1619,9 @@ mod tests {
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
         #[cfg(target_os = "macos")]
-        const EXPECTED_RETENTION: f32 = 0.82870495;
+        const EXPECTED_RETENTION: f32 = 0.84024864;
         #[cfg(not(target_os = "macos"))]
-        const EXPECTED_RETENTION: f32 = 0.8290587;
+        const EXPECTED_RETENTION: f32 = 0.84024864;
         assert_eq!(optimal_retention, EXPECTED_RETENTION);
         Ok(())
     }

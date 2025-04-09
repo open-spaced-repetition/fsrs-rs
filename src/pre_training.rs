@@ -289,7 +289,7 @@ mod tests {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
         let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8250286473253902, 0.7661308776828737]);
+        let expected = Array1::from(vec![1.0, 0.9, 0.8402893846730102, 0.7985001730858255]);
         assert_eq!(y, expected);
     }
 
@@ -302,9 +302,9 @@ mod tests {
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 1.017056, default_s0);
-        assert_eq!(actual, 280.7558864942294);
+        assert_eq!(actual, 280.58170723278715);
         let actual = loss(&delta_t, &recall, &count, 1.017011, default_s0);
-        assert_eq!(actual, 280.7555524738777);
+        assert_eq!(actual, 280.58119884188363);
     }
 
     #[test]
@@ -341,7 +341,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.943_028_57);
-        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.9086886]);
+        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.7840585708618164]);
     }
 
     #[test]
@@ -358,7 +358,12 @@ mod tests {
         pretrain(pretrainset, average_recall)
             .unwrap()
             .0
-            .assert_approx_eq([0.9086886, 2.2474625, 4.216838, 9.615905])
+            .assert_approx_eq([
+                0.7840585708618164,
+                2.159816026687622,
+                4.367439270019531,
+                10.768475532531738,
+            ])
     }
 
     #[test]
@@ -371,6 +376,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.07632822, 0.35, 0.8654559, 3.9414215]);
+        assert_eq!(actual, [0.06458245, 0.35, 0.9693909, 4.802264]);
     }
 }
