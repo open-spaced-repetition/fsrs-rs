@@ -341,7 +341,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.943_028_57);
-        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.7840585708618164]);
+        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.784_058_6]);
     }
 
     #[test]
@@ -358,12 +358,7 @@ mod tests {
         pretrain(pretrainset, average_recall)
             .unwrap()
             .0
-            .assert_approx_eq([
-                0.7840585708618164,
-                2.159816026687622,
-                4.367439270019531,
-                10.768475532531738,
-            ])
+            .assert_approx_eq([0.784_058_6, 2.159_816, 4.367_439_3, 10.768_476])
     }
 
     #[test]

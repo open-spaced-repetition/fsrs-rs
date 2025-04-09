@@ -100,10 +100,6 @@ mod tests {
         let param = parameter_clipper(Param::from_tensor(tensor), 2);
         let values = &param.to_data().to_vec::<f32>().unwrap();
 
-        values[17..=19].assert_approx_eq([
-            0.24086152017116547,
-            0.24086152017116547,
-            0.1437000036239624,
-        ]);
+        values[17..=19].assert_approx_eq([0.240_861_52, 0.240_861_52, 0.143_7]);
     }
 }

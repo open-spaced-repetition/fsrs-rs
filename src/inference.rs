@@ -539,27 +539,23 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins]
-            .assert_approx_eq([0.2058359533548355, 0.026072025299072266]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.205_835_95, 0.026_072_025]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins]
-            .assert_approx_eq([0.21792447566986084, 0.03993704169988632]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.217_924_48, 0.039_937_04]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins]
-            .assert_approx_eq([0.20853082835674286, 0.03130955994129181]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.208_530_83, 0.031_309_56]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        [self_by_other, other_by_self]
-            .assert_approx_eq([0.016628971323370934, 0.02810811996459961]);
+        [self_by_other, other_by_self].assert_approx_eq([0.016_628_971, 0.028_108_12]);
 
         Ok(())
     }
@@ -747,16 +743,15 @@ mod tests {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
 
-        [memory_state.stability, memory_state.difficulty]
-            .assert_approx_eq([10.0, 7.061205863952637]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([10.0, 7.061_206]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
 
         [memory_state.stability, memory_state.difficulty]
-            .assert_approx_eq([3.3800718784332275, 9.344573974609375]);
+            .assert_approx_eq([3.380_071_9, 9.344_574]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
 
         [memory_state.stability, memory_state.difficulty]
-            .assert_approx_eq([23.721418380737305, 2.095691680908203]);
+            .assert_approx_eq([23.721_418, 2.095_691_7]);
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
 
         [memory_state.stability, memory_state.difficulty].assert_approx_eq([20.0, 10.0]);
