@@ -39,7 +39,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         max_cost_perday: f32::INFINITY,
         learn_limit: 100,
         review_limit: 600,
-        loss_aversion: 1.0,
         ..Default::default()
     };
     c.bench_function("parallel_simulate", |b| {
