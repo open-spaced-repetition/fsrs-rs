@@ -288,12 +288,12 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
             parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
             parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
             parameters[6] += 0.5;
-            parameters.extend_from_slice(&[0.0, 0.0, 0.0, 0.2]);
+            parameters.extend_from_slice(&[0.0, 0.0, 0.0, 0.5]);
             parameters
         }
         19 => {
             let mut parameters = parameters.to_vec();
-            parameters.extend_from_slice(&[0.0, 0.2]);
+            parameters.extend_from_slice(&[0.0, 0.5]);
             parameters
         }
         21 => parameters.to_vec(),
