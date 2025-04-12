@@ -1,6 +1,6 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{DECAY, FACTOR, Parameters, S_MAX, S_MIN};
+use crate::inference::{Parameters, S_MAX, S_MIN};
 use crate::parameter_clipper::clip_parameters;
 use burn::backend::NdArray;
 use burn::backend::ndarray::NdArrayDevice;
@@ -42,14 +42,26 @@ impl<B: Backend> Model<B> {
 
         Self {
             w: Param::from_tensor(Tensor::from_floats(
-                TensorData::new(initial_params, Shape { dims: vec![20] }),
+                TensorData::new(initial_params, Shape { dims: vec![21] }),
                 &B::Device::default(),
             )),
         }
     }
 
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
-        (t / s * FACTOR + 1).powf_scalar(DECAY as f32)
+        let decay = -self.w.get(20);
+        let factor = decay.clone().powi_scalar(-1).mul_scalar(0.9f32.ln()).exp() - 1.0;
+        (t / s * factor + 1.0).powf(decay)
+    }
+
+    pub fn next_interval(
+        &self,
+        stability: Tensor<B, 1>,
+        desired_retention: Tensor<B, 1>,
+    ) -> Tensor<B, 1> {
+        let decay = -self.w.get(20);
+        let factor = decay.clone().powi_scalar(-1).mul_scalar(0.9f32.ln()).exp() - 1.0;
+        stability / factor * (desired_retention.powf(decay.powi_scalar(-1)) - 1.0)
     }
 
     fn stability_after_success(
@@ -261,7 +273,7 @@ pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<
     model.w = Param::from_tensor(Tensor::from_floats(
         TensorData::new(
             clip_parameters(parameters, config.num_relearning_steps),
-            Shape { dims: vec![20] },
+            Shape { dims: vec![21] },
         ),
         &B::Device::default(),
     ));
@@ -276,15 +288,15 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
             parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
             parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
             parameters[6] += 0.5;
-            parameters.extend_from_slice(&[0.0, 0.0, 0.0]);
+            parameters.extend_from_slice(&[0.0, 0.0, 0.0, 0.2]);
             parameters
         }
         19 => {
             let mut parameters = parameters.to_vec();
-            parameters.push(0.0);
+            parameters.extend_from_slice(&[0.0, 0.2]);
             parameters
         }
-        20 => parameters.to_vec(),
+        21 => parameters.to_vec(),
         _ => return Err(FSRSError::InvalidParameters),
     };
     if parameters.iter().any(|&w| !w.is_finite()) {
@@ -320,7 +332,7 @@ mod tests {
             fsrs5_param,
             vec![
                 0.4, 0.6, 2.4, 5.8, 6.81, 0.44675013, 1.36, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05,
-                0.34, 1.26, 0.29, 2.61, 0.0, 0.0, 0.0
+                0.34, 1.26, 0.29, 2.61, 0.0, 0.0, 0.0, 0.2
             ]
         )
     }

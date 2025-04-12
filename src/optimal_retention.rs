@@ -1,6 +1,6 @@
 use crate::FSRS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{DECAY, FACTOR, ItemProgress, Parameters, S_MAX, S_MIN, next_interval};
+use crate::inference::{ItemProgress, Parameters, S_MAX, S_MIN};
 use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
@@ -231,8 +231,16 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
-pub fn power_forgetting_curve(t: f32, s: f32) -> f32 {
-    (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
+fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
+    let decay = -w[20];
+    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    (t / s).mul_add(factor, 1.0).powf(decay)
+}
+
+fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
+    let decay = -w[20];
+    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
 #[derive(Debug, Clone)]
@@ -249,8 +257,8 @@ pub struct Card {
 }
 
 impl Card {
-    pub fn retrievability(&self) -> f32 {
-        power_forgetting_curve(self.due - self.last_date, self.stability)
+    pub fn retrievability(&self, w: &[f32]) -> f32 {
+        power_forgetting_curve(w, self.due - self.last_date, self.stability)
     }
 
     pub fn scheduled_due(&self) -> f32 {
@@ -368,7 +376,7 @@ pub fn simulate(
                 let pre_sim_days = (-card.last_date) as usize;
                 for i in 0..delta_t {
                     memorized_cnt_per_day[last_date_index + i] +=
-                        power_forgetting_curve((pre_sim_days + i) as f32, card.stability);
+                        power_forgetting_curve(w, (pre_sim_days + i) as f32, card.stability);
                 }
             }
             card_priorities.pop();
@@ -429,7 +437,7 @@ pub fn simulate(
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = card.retrievability();
+            let retrievability = card.retrievability(w);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
@@ -489,11 +497,11 @@ pub fn simulate(
             let pre_sim_days = (-card.last_date) as usize;
             for i in 0..delta_t {
                 memorized_cnt_per_day[last_date_index + i] +=
-                    power_forgetting_curve((pre_sim_days + i) as f32, last_stability);
+                    power_forgetting_curve(w, (pre_sim_days + i) as f32, last_stability);
             }
         }
 
-        let mut ivl = next_interval(card.stability, desired_retention)
+        let mut ivl = next_interval(w, card.stability, desired_retention)
             .round()
             .clamp(1.0, config.max_ivl);
 
@@ -1111,7 +1119,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            6752.645
+            6757.842
         );
         Ok(())
     }
@@ -1509,7 +1517,10 @@ mod tests {
 
     #[test]
     fn simulate_with_review_priority_fn() -> Result<()> {
-        fn calc_cost_per_memorization(memorized_cnt_per_day: &[f32], cost_per_day: &[f32]) -> f32 {
+        fn calc_cost_per_memorization(
+            memorized_cnt_per_day: &Parameters,
+            cost_per_day: &Parameters,
+        ) -> f32 {
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
             let total_cost = cost_per_day.iter().sum::<f32>();
             total_cost / total_memorized
@@ -1553,12 +1564,12 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
+            wrap!(|card: &Card| (card.retrievability(&DEFAULT_PARAMETERS) * 1000.0) as i32),
             43.482998
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
+            wrap!(|card: &Card| -(card.retrievability(&DEFAULT_PARAMETERS) * 1000.0) as i32),
             41.110588
         )?;
         println!("High stability cards reviewed first.");

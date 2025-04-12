@@ -38,7 +38,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
         2.0
     };
     // https://regex101.com/r/21mXNI/1
-    let clamps: [(f32, f32); 20] = [
+    let clamps: [(f32, f32); 21] = [
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
@@ -59,6 +59,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
         (0.0, w17_w18_ceiling),
         (0.0, w17_w18_ceiling),
         (0.0, 0.8),
+        (0.01, 1.0),
     ];
 
     parameters

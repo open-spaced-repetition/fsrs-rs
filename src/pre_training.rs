@@ -1,7 +1,7 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::FSRSItem;
 use crate::error::{FSRSError, Result};
-use crate::inference::{DECAY, FACTOR, S_MIN};
+use crate::inference::S_MIN;
 use ndarray::Array1;
 use std::collections::HashMap;
 
@@ -96,7 +96,9 @@ fn total_rating_count(
 }
 
 fn power_forgetting_curve(t: &Array1<f64>, s: f64) -> Array1<f64> {
-    (t / s * FACTOR + 1.0).mapv(|v| v.powf(DECAY))
+    let decay = -DEFAULT_PARAMETERS[20] as f64;
+    let factor = 0.9f64.powf(1.0 / decay) - 1.0;
+    (t / s * factor + 1.0).mapv(|v| v.powf(decay))
 }
 
 fn loss(
@@ -289,7 +291,7 @@ mod tests {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
         let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8402893846730102, 0.7985001730858255]);
+        let expected = Array1::from(vec![1.0, 0.9, 0.8402893843661203, 0.7985001724759597]);
         assert_eq!(y, expected);
     }
 
@@ -302,9 +304,9 @@ mod tests {
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 1.017056, default_s0);
-        assert_eq!(actual, 280.58170723278715);
+        assert_eq!(actual, 280.5817072230255);
         let actual = loss(&delta_t, &recall, &count, 1.017011, default_s0);
-        assert_eq!(actual, 280.58119884188363);
+        assert_eq!(actual, 280.58119883212385);
     }
 
     #[test]
