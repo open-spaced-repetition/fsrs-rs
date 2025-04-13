@@ -576,15 +576,13 @@ mod tests {
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins]
-            .assert_approx_eq([0.2086573988199234, 0.03094661235809326]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.208_657_4, 0.030_946_612]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        [self_by_other, other_by_self]
-            .assert_approx_eq([0.015672437846660614, 0.02842262014746666]);
+        [self_by_other, other_by_self].assert_approx_eq([0.015_672_438, 0.028_422_62]);
 
         Ok(())
     }
