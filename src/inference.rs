@@ -496,7 +496,7 @@ mod tests {
         assert_eq!(
             fsrs.memory_state(item, None).unwrap(),
             MemoryState {
-                stability: 29.848536,
+                stability: 31.722992,
                 difficulty: 7.382128
             }
         );
@@ -514,7 +514,7 @@ mod tests {
             .good
             .memory,
             MemoryState {
-                stability: 40.865814,
+                stability: 40.87456,
                 difficulty: 6.9913807
             }
         );
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_next_interval() {
-        let fsrs = FSRS::new(Some(PARAMETERS)).unwrap();
+        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
         let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
         let intervals = desired_retentions
             .iter()
@@ -542,27 +542,27 @@ mod tests {
         let items = [pretrainset, trainset].concat();
 
         let fsrs = FSRS::new(Some(&[
-            0.33532247,
-            1.684204,
-            5.1699104,
-            11.662013,
-            7.466128,
-            0.7203541,
-            2.6228878,
+            0.335561,
+            1.6840581,
+            5.166598,
+            11.659035,
+            7.466705,
+            0.7205129,
+            2.622295,
             0.001,
-            1.315331,
-            0.105367236,
-            0.8349373,
-            1.822538,
-            0.124510534,
-            0.26122984,
-            2.303814,
-            0.13250735,
-            3.0264373,
-            0.41529608,
-            0.09717424,
-            0.108584486,
-            0.21213692,
+            1.315015,
+            0.10468433,
+            0.8349206,
+            1.822305,
+            0.12473127,
+            0.26111007,
+            2.3030033,
+            0.13117497,
+            3.0265594,
+            0.41468078,
+            0.09714265,
+            0.106824234,
+            0.20447432,
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
@@ -576,13 +576,15 @@ mod tests {
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.208_530_83, 0.031_309_56]);
+        [metrics.log_loss, metrics.rmse_bins]
+            .assert_approx_eq([0.2086573988199234, 0.03094661235809326]);
 
         let (self_by_other, other_by_self) = fsrs
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        [self_by_other, other_by_self].assert_approx_eq([0.016_628_971, 0.028_108_12]);
+        [self_by_other, other_by_self]
+            .assert_approx_eq([0.015672437846660614, 0.02842262014746666]);
 
         Ok(())
     }
@@ -616,35 +618,35 @@ mod tests {
             NextStates {
                 again: ItemState {
                     memory: MemoryState {
-                        stability: 2.8694878,
+                        stability: 2.9691455,
                         difficulty: 8.000659
                     },
-                    interval: 2.8694878
+                    interval: 2.9691455
                 },
                 hard: ItemState {
                     memory: MemoryState {
-                        stability: 16.169975,
+                        stability: 17.091452,
                         difficulty: 7.6913934
                     },
-                    interval: 16.169975
+                    interval: 17.091452
                 },
                 good: ItemState {
                     memory: MemoryState {
-                        stability: 29.848536,
+                        stability: 31.722992,
                         difficulty: 7.382128
                     },
-                    interval: 29.848536
+                    interval: 31.722992
                 },
                 easy: ItemState {
                     memory: MemoryState {
-                        stability: 67.268684,
+                        stability: 71.7502,
                         difficulty: 7.0728626
                     },
-                    interval: 67.268684
+                    interval: 71.7502
                 }
             }
         );
-        assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121.01552);
+        assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121.01551);
         Ok(())
     }
 

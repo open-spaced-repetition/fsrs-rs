@@ -59,7 +59,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
         (0.0, w17_w18_ceiling),
         (0.0, w17_w18_ceiling),
         (0.0, 0.8),
-        (0.01, 1.0),
+        (0.1, 0.8),
     ];
 
     parameters
