@@ -415,7 +415,7 @@ pub fn simulate(
             // Initialize stability and difficulty for new cards
             let init_rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
             let init_stability = w[init_rating - 1];
-            let init_difficulty = init_d(w, init_rating);
+            let init_difficulty = init_d(w, init_rating).clamp(1.0, 10.0);
             let (new_s, new_d, cost) = memory_state_short_term(
                 w,
                 init_stability,
