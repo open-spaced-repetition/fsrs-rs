@@ -303,10 +303,10 @@ mod tests {
         ]);
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
-        let actual = loss(&delta_t, &recall, &count, 1.017056, default_s0);
-        assert_eq!(actual, 280.5817072230255);
-        let actual = loss(&delta_t, &recall, &count, 1.017011, default_s0);
-        assert_eq!(actual, 280.58119883212385);
+        let actual = loss(&delta_t, &recall, &count, 0.7840586, default_s0);
+        assert_eq!(actual, 279.0853744625948);
+        let actual = loss(&delta_t, &recall, &count, 0.7840590622451964, default_s0);
+        assert_eq!(actual, 279.0853744626048);
     }
 
     #[test]
@@ -342,7 +342,7 @@ mod tests {
                 },
             ],
         )]);
-        let actual = search_parameters(pretrainset, 0.943_028_57);
+        let actual = search_parameters(pretrainset, 0.9430285915990116);
         [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.784_058_6]);
     }
 
