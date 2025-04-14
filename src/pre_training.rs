@@ -342,7 +342,7 @@ mod tests {
                 },
             ],
         )]);
-        let actual = search_parameters(pretrainset, 0.9430285915990116);
+        let actual = search_parameters(pretrainset, 0.943_028_57);
         [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.784_058_6]);
     }
 
