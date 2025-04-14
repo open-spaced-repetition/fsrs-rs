@@ -274,8 +274,8 @@ impl<B: Backend> FSRS<B> {
             }
         };
 
-        let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, train_set) = prepare_training_data(train_set);
+        let average_recall = calculate_average_recall(&train_set);
         if train_set.len() < 8 {
             finish_progress();
             return Ok(DEFAULT_PARAMETERS.to_vec());
