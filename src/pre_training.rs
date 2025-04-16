@@ -2,6 +2,9 @@ use crate::DEFAULT_PARAMETERS;
 use crate::FSRSItem;
 use crate::error::{FSRSError, Result};
 use crate::inference::S_MIN;
+use argmin::core::State;
+use argmin::core::{CostFunction, Error, Executor};
+use argmin::solver::neldermead::NelderMead;
 use ndarray::Array1;
 use std::collections::HashMap;
 
@@ -15,12 +18,38 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
 pub fn pretrain(
     fsrs_items: Vec<FSRSItem>,
     average_recall: f32,
-) -> Result<([f32; 4], HashMap<u32, u32>)> {
+) -> Result<([f32; 4], f32, HashMap<u32, u32>)> {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(&pretrainset);
-    let mut rating_stability = search_parameters(pretrainset, average_recall);
+    let rating_stability_decay = search_parameters(pretrainset, average_recall);
+    let mut stability_map = HashMap::new();
+    let mut decay_map = HashMap::new();
+    for (rating, (stability, decay)) in rating_stability_decay {
+        stability_map.insert(rating, stability);
+        decay_map.insert(rating, decay);
+    }
+    dbg!(&stability_map);
+    dbg!(&decay_map);
+    // Calculate weighted average of decay values based on rating_count
+    let mut weighted_sum = 0.0;
+    let mut total_count = 0;
+
+    for (rating, count) in &rating_count {
+        if let Some(decay) = decay_map.get(rating) {
+            weighted_sum += decay * (*count as f32);
+            total_count += *count;
+        }
+    }
+
+    let weighted_avg_decay = if total_count > 0 {
+        weighted_sum / (total_count as f32)
+    } else {
+        DEFAULT_PARAMETERS[20] // Use default decay if no ratings
+    };
+
     Ok((
-        smooth_and_fill(&mut rating_stability, &rating_count)?,
+        smooth_and_fill(&mut stability_map, &rating_count)?,
+        weighted_avg_decay,
         rating_count,
     ))
 }
@@ -95,36 +124,48 @@ fn total_rating_count(
         .collect()
 }
 
-fn power_forgetting_curve(t: &Array1<f64>, s: f64) -> Array1<f64> {
-    let decay = -DEFAULT_PARAMETERS[20] as f64;
+fn power_forgetting_curve(t: &Array1<f64>, s: f64, decay: f64) -> Array1<f64> {
     let factor = 0.9f64.powf(1.0 / decay) - 1.0;
     (t / s * factor + 1.0).mapv(|v| v.powf(decay))
 }
 
-fn loss(
-    delta_t: &Array1<f64>,
-    recall: &Array1<f64>,
-    count: &Array1<f64>,
-    init_s0: f64,
+pub(crate) const INIT_S_MAX: f32 = 100.0;
+
+struct OptimizationProblem {
+    delta_t: Array1<f64>,
+    recall: Array1<f64>,
+    count: Array1<f64>,
     default_s0: f64,
-) -> f64 {
-    let y_pred = power_forgetting_curve(delta_t, init_s0);
-    let logloss = (-(recall * y_pred.clone().mapv_into(|v| v.ln())
-        + (1.0 - recall) * (1.0 - &y_pred).mapv_into(|v| v.ln()))
-        * count)
-        .sum();
-    let l1 = (init_s0 - default_s0).abs() / 16.0;
-    logloss + l1
+    default_decay: f64,
 }
 
-pub(crate) const INIT_S_MAX: f32 = 100.0;
+impl CostFunction for OptimizationProblem {
+    type Param = Vec<f64>;
+    type Output = f64;
+
+    fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
+        let s = param[0];
+        let decay = param[1];
+        let y_pred = power_forgetting_curve(&self.delta_t, s, -decay);
+        let logloss = (-(self.recall.clone() * y_pred.clone().mapv_into(|v| v.ln())
+            + (1.0 - self.recall.clone()) * (1.0 - y_pred).mapv_into(|v| v.ln()))
+            * self.count.clone())
+        .sum();
+        let l1 = ((s - self.default_s0).abs() + (decay - self.default_decay).abs()) / 16.0;
+        let mut total = logloss + l1;
+        if decay < 0.1 || decay > 0.8 || s < S_MIN.into() || s > INIT_S_MAX.into() {
+            total *= 1000.0;
+        }
+        Ok(total)
+    }
+}
 
 fn search_parameters(
     mut pretrainset: HashMap<FirstRating, Vec<AverageRecall>>,
     average_recall: f32,
-) -> HashMap<u32, f32> {
-    let mut optimal_stabilities = HashMap::new();
-    let epsilon = f64::EPSILON;
+) -> HashMap<u32, (f32, f32)> {
+    let mut optimal_params = HashMap::new();
+    let default_decay = 0.2; // 默认 decay 值
 
     for (first_rating, data) in &mut pretrainset {
         let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
@@ -132,38 +173,41 @@ fn search_parameters(
         let delta_t = Array1::from_iter(data.iter().map(|d| d.delta_t));
         let count = Array1::from_iter(data.iter().map(|d| d.count));
         let recall = {
-            // Laplace smoothing
-            // (real_recall * n + average_recall * 1) / (n + 1)
-            // https://github.com/open-spaced-repetition/fsrs4anki/pull/358/files#diff-35b13c8e3466e8bd1231a51c71524fc31a945a8f332290726214d3a6fa7f442aR491
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
             (real_recall * count.clone() + average_recall as f64) / (count.clone() + 1.0)
         };
-        let mut low = S_MIN as f64;
-        let mut high = INIT_S_MAX as f64;
-        let mut optimal_s = default_s0;
+        dbg!(&delta_t);
+        dbg!(&recall);
+        dbg!(&count);
 
-        let mut iter = 0;
-        while high - low > epsilon && iter < 1000 {
-            iter += 1;
-            let mid1 = low + (high - low) / 3.0;
-            let mid2 = high - (high - low) / 3.0;
+        let problem = OptimizationProblem {
+            delta_t,
+            recall,
+            count,
+            default_s0,
+            default_decay,
+        };
 
-            let loss1 = loss(&delta_t, &recall, &count, mid1, default_s0);
-            let loss2 = loss(&delta_t, &recall, &count, mid2, default_s0);
 
-            if loss1 < loss2 {
-                high = mid2;
-            } else {
-                low = mid1;
-            }
+        let solver = NelderMead::new(vec![
+            vec![default_s0 * 1.05, default_decay],
+            vec![default_s0, default_decay * 1.05],
+            vec![default_s0, default_decay],
+        ]);
 
-            optimal_s = (high + low) / 2.0;
-        }
+        let res = Executor::new(problem, solver)
+            .configure(|state| state.max_iters(1000))
+            .run()
+            .unwrap();
 
-        optimal_stabilities.insert(*first_rating, optimal_s as f32);
+        let best_params = res.state().get_best_param().unwrap();
+        optimal_params.insert(
+            *first_rating,
+            (best_params[0] as f32, best_params[1] as f32),
+        );
     }
 
-    optimal_stabilities
+    optimal_params
 }
 
 pub(crate) fn smooth_and_fill(
@@ -290,8 +334,8 @@ mod tests {
     fn test_power_forgetting_curve() {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
-        let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8402893843661203, 0.7985001724759597]);
+        let y = power_forgetting_curve(&t, s, -0.2);
+        let expected = Array1::from(vec![1.0, 0.9, 0.8402893846730101, 0.7985001730858255]);
         assert_eq!(y, expected);
     }
 
@@ -303,10 +347,18 @@ mod tests {
         ]);
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
-        let actual = loss(&delta_t, &recall, &count, 0.7840586, default_s0);
-        assert_eq!(actual, 279.0853744625948);
-        let actual = loss(&delta_t, &recall, &count, 0.7840590622451964, default_s0);
-        assert_eq!(actual, 279.0853744626048);
+        let default_decay = DEFAULT_PARAMETERS[20] as f64;
+        let problem = OptimizationProblem {
+            delta_t,
+            recall,
+            count,
+            default_s0,
+            default_decay,
+        };
+        let actual = problem.cost(&vec![0.7840586, 0.2]).unwrap();
+        assert_eq!(actual, 279.08537444877663);
+        let actual = problem.cost(&vec![0.7840590622451964, 0.2]).unwrap();
+        assert_eq!(actual, 279.08537444878664);
     }
 
     #[test]
@@ -343,7 +395,8 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.943_028_57);
-        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.784_058_6]);
+        let (stability, decay) = actual.get(&first_rating).unwrap();
+        [*stability, *decay].assert_approx_eq([0.6919513940811157, 0.12588396668434143]);
     }
 
     #[test]
@@ -357,10 +410,15 @@ mod tests {
         let items = [pretrainset.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
 
-        pretrain(pretrainset, average_recall)
-            .unwrap()
-            .0
-            .assert_approx_eq([0.784_058_6, 2.159_816, 4.367_439_3, 10.768_476])
+        let (stability, decay, rating_count) = pretrain(pretrainset, average_recall).unwrap();
+        stability.assert_approx_eq([
+            0.6919512748718262,
+            2.171159505844116,
+            4.806155681610107,
+            13.29844856262207,
+        ]);
+        assert_eq!(decay, 0.10524022);
+        assert_eq!(rating_count, HashMap::from([(1, 661), (3, 461), (4, 2143)]));
     }
 
     #[test]

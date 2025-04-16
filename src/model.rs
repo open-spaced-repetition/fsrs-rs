@@ -28,12 +28,13 @@ impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
 impl<B: Backend> Model<B> {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
-        let mut initial_params: Vec<f32> = config
-            .initial_stability
-            .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
-            .into_iter()
-            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-            .collect();
+        let mut initial_params: Vec<f32> = DEFAULT_PARAMETERS.to_vec();
+        if let Some(initial_stability) = config.initial_stability {
+            initial_params[0..4].copy_from_slice(&initial_stability);
+        }
+        if let Some(initial_decay) = config.initial_decay {
+            initial_params[20] = initial_decay;
+        }
         if config.freeze_short_term_stability {
             initial_params[17] = 0.0;
             initial_params[18] = 0.0;
@@ -211,6 +212,7 @@ pub struct ModelConfig {
     #[config(default = false)]
     pub freeze_initial_stability: bool,
     pub initial_stability: Option<[f32; 4]>,
+    pub initial_decay: Option<f32>,
     #[config(default = false)]
     pub freeze_short_term_stability: bool,
     #[config(default = 1)]

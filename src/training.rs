@@ -281,7 +281,7 @@ impl<B: Backend> FSRS<B> {
             return Ok(DEFAULT_PARAMETERS.to_vec());
         }
 
-        let (initial_stability, initial_rating_count) =
+        let (initial_stability, initial_decay, initial_rating_count) =
             pretrain(pre_train_set.clone(), average_recall).inspect_err(|_e| {
                 finish_progress();
             })?;
@@ -297,6 +297,7 @@ impl<B: Backend> FSRS<B> {
             ModelConfig {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
+                initial_decay: Some(initial_decay),
                 freeze_short_term_stability: !enable_short_term,
                 num_relearning_steps: num_relearning_steps.unwrap_or(1),
             },
@@ -370,11 +371,13 @@ impl<B: Backend> FSRS<B> {
             .clone()
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        let initial_stability = pretrain(pre_train_set, average_recall).unwrap().0;
+        let (initial_stability, initial_decay, _initial_rating_count) =
+            pretrain(pre_train_set, average_recall).unwrap();
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_initial_stability: !enable_short_term,
                 initial_stability: Some(initial_stability),
+                initial_decay: Some(initial_decay),
                 freeze_short_term_stability: !enable_short_term,
                 num_relearning_steps: num_relearning_steps.unwrap_or(1),
             },
