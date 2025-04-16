@@ -28,8 +28,6 @@ pub fn pretrain(
         stability_map.insert(rating, stability);
         decay_map.insert(rating, decay);
     }
-    dbg!(&stability_map);
-    dbg!(&decay_map);
     // Calculate weighted average of decay values based on rating_count
     let mut weighted_sum = 0.0;
     let mut total_count = 0;
@@ -146,17 +144,16 @@ impl CostFunction for OptimizationProblem {
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
         let s = param[0];
         let decay = param[1];
+        if decay < 0.1 || decay > 0.8 || s < S_MIN.into() || s > INIT_S_MAX.into() {
+            return Ok(f64::MAX);
+        }
         let y_pred = power_forgetting_curve(&self.delta_t, s, -decay);
         let logloss = (-(self.recall.clone() * y_pred.clone().mapv_into(|v| v.ln())
             + (1.0 - self.recall.clone()) * (1.0 - y_pred).mapv_into(|v| v.ln()))
             * self.count.clone())
         .sum();
         let l1 = ((s - self.default_s0).abs() + (decay - self.default_decay).abs()) / 16.0;
-        let mut total = logloss + l1;
-        if decay < 0.1 || decay > 0.8 || s < S_MIN.into() || s > INIT_S_MAX.into() {
-            total *= 1000.0;
-        }
-        Ok(total)
+        Ok(logloss + l1)
     }
 }
 
@@ -176,9 +173,6 @@ fn search_parameters(
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
             (real_recall * count.clone() + average_recall as f64) / (count.clone() + 1.0)
         };
-        dbg!(&delta_t);
-        dbg!(&recall);
-        dbg!(&count);
 
         let problem = OptimizationProblem {
             delta_t,
@@ -187,7 +181,6 @@ fn search_parameters(
             default_s0,
             default_decay,
         };
-
 
         let solver = NelderMead::new(vec![
             vec![default_s0 * 1.05, default_decay],
