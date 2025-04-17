@@ -304,10 +304,9 @@ impl<B: Backend> FSRS<B> {
 
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
     /// review.
-    pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32) -> f32 {
-        let decay = self.model().w.get(20).neg().into_scalar().elem();
-        let factor = 0.9f32.powf(1.0 / decay) - 1.0;
-        (days_elapsed as f32 / state.stability * factor + 1.0).powf(decay)
+    pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f32) -> f32 {
+        let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
+        (days_elapsed as f32 / state.stability * factor + 1.0).powf(-decay)
     }
 
     /// Returns the universal metrics for the existing and provided parameters. If the first value
@@ -754,15 +753,15 @@ mod tests {
 
     #[test]
     fn current_retrievability() {
-        let fsrs = FSRS::new(Some(&[])).unwrap();
+        let fsrs = FSRS::new(None).unwrap();
         let state = MemoryState {
             stability: 1.0,
             difficulty: 5.0,
         };
-        assert_eq!(fsrs.current_retrievability(state, 0), 1.0);
-        assert_eq!(fsrs.current_retrievability(state, 1), 0.9);
-        assert_eq!(fsrs.current_retrievability(state, 2), 0.84028935);
-        assert_eq!(fsrs.current_retrievability(state, 3), 0.7985001);
+        assert_eq!(fsrs.current_retrievability(state, 0, 0.2), 1.0);
+        assert_eq!(fsrs.current_retrievability(state, 1, 0.2), 0.9);
+        assert_eq!(fsrs.current_retrievability(state, 2, 0.2), 0.84028935);
+        assert_eq!(fsrs.current_retrievability(state, 3, 0.2), 0.7985001);
     }
 
     #[test]
