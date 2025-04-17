@@ -284,7 +284,7 @@ pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<Weighted
 
 /// The input items should be sorted by the review timestamp.
 pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
-    let length = items.len() as f32 - 1.0;
+    let length = (items.len() as f32 - 1.0).max(1.0);
     items
         .into_iter()
         .enumerate()
