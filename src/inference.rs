@@ -123,6 +123,9 @@ impl<B: Backend> FSRS<B> {
     ) -> Result<Vec<MemoryState>> {
         let (time_history, rating_history) = self.item_to_tensors(&item);
         let mut states = vec![];
+        if let Some(starting_state) = starting_state {
+            states.push(starting_state);
+        }
         let [seq_len, _batch_size] = time_history.dims();
         let mut inner_state = starting_state.map(Into::into);
         for i in 0..seq_len {
