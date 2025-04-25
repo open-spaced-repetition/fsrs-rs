@@ -259,12 +259,13 @@ pub fn filter_outlier(
 
 pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
     let (mut pretrainset, mut trainset) = items
+        .clone()
         .into_iter()
         .partition(|item| item.long_term_review_cnt() == 1);
     if std::env::var("FSRS_NO_OUTLIER").is_err() {
-        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+        (pretrainset, trainset) = filter_outlier(pretrainset, items);
     }
-    (pretrainset.clone(), [pretrainset, trainset].concat())
+    (pretrainset, trainset)
 }
 
 pub(crate) fn sort_items_by_review_length(
@@ -283,7 +284,7 @@ pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<Weighted
 
 /// The input items should be sorted by the review timestamp.
 pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
-    let length = items.len() as f32 - 1.0;
+    let length = (items.len() as f32 - 1.0).max(1.0);
     items
         .into_iter()
         .enumerate()

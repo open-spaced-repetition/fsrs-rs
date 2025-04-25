@@ -18,8 +18,8 @@ mod training;
 pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
 pub use inference::{
-    DEFAULT_PARAMETERS, ItemProgress, ItemState, MemoryState, ModelEvaluation, NextStates,
-    next_interval,
+    DEFAULT_PARAMETERS, FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, ItemProgress, ItemState,
+    MemoryState, ModelEvaluation, NextStates,
 };
 pub use model::FSRS;
 pub use optimal_retention::{
