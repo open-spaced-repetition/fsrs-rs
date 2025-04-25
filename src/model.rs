@@ -1,6 +1,6 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{Parameters, S_MAX, S_MIN};
+use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters, S_MAX, S_MIN};
 use crate::parameter_clipper::clip_parameters;
 use burn::backend::NdArray;
 use burn::backend::ndarray::NdArrayDevice;
@@ -288,12 +288,12 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
             parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
             parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
             parameters[6] += 0.5;
-            parameters.extend_from_slice(&[0.0, 0.0, 0.0, 0.5]);
+            parameters.extend_from_slice(&[0.0, 0.0, 0.0, FSRS5_DEFAULT_DECAY]);
             parameters
         }
         19 => {
             let mut parameters = parameters.to_vec();
-            parameters.extend_from_slice(&[0.0, 0.5]);
+            parameters.extend_from_slice(&[0.0, FSRS5_DEFAULT_DECAY]);
             parameters
         }
         21 => parameters.to_vec(),
