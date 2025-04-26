@@ -1,7 +1,7 @@
-use crate::{FSRS, FSRS5_DEFAULT_DECAY};
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters, S_MAX, S_MIN};
 use crate::model::check_and_fill_parameters;
+use crate::{FSRS, FSRS5_DEFAULT_DECAY};
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
 use ndarray_rand::rand::distributions::WeightedIndex;
