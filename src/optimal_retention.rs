@@ -1,4 +1,4 @@
-use crate::FSRS;
+use crate::{FSRS, FSRS5_DEFAULT_DECAY};
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters, S_MAX, S_MIN};
 use crate::model::check_and_fill_parameters;
@@ -232,13 +232,13 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
 }
 
 fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
-    let decay = -w[20];
+    let decay = -w.get(20).unwrap_or(&FSRS5_DEFAULT_DECAY);
     let factor = 0.9f32.powf(1.0 / decay) - 1.0;
     (t / s).mul_add(factor, 1.0).powf(decay)
 }
 
 fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
-    let decay = -w[20];
+    let decay = -w.get(20).unwrap_or(&FSRS5_DEFAULT_DECAY);
     let factor = 0.9f32.powf(1.0 / decay) - 1.0;
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
