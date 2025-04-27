@@ -550,6 +550,7 @@ fn sample<F>(
     desired_retention: f32,
     n: usize,
     progress: &mut F,
+    cards: &Option<Vec<Card>>,
 ) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
@@ -569,7 +570,7 @@ where
                 parameters,
                 desired_retention,
                 Some((i + 42).try_into().unwrap()),
-                None,
+                cards.clone(),
             )?;
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
             let total_cost = cost_per_day.iter().sum::<f32>();
@@ -587,6 +588,7 @@ impl<B: Backend> FSRS<B> {
         config: &SimulatorConfig,
         parameters: &Parameters,
         mut progress: F,
+        cards: Option<Vec<Card>>,
     ) -> Result<f32>
     where
         F: FnMut(ItemProgress) -> bool + Send,
@@ -601,13 +603,14 @@ impl<B: Backend> FSRS<B> {
             progress(progress_info)
         };
 
-        Self::brent(config, parameters, inc_progress)
+        Self::brent(config, parameters, cards, inc_progress)
     }
     /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
     /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
     fn brent<F>(
         config: &SimulatorConfig,
         parameters: &Parameters,
+        cards: Option<Vec<Card>>,
         mut progress: F,
     ) -> Result<f32, FSRSError>
     where
@@ -633,7 +636,14 @@ impl<B: Backend> FSRS<B> {
 
         let (xb, fb) = (
             R_MIN,
-            sample(config, parameters, R_MIN, sample_size, &mut progress)?,
+            sample(
+                config,
+                parameters,
+                R_MIN,
+                sample_size,
+                &mut progress,
+                &cards,
+            )?,
         );
         let (mut x, mut v, mut w) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
@@ -691,7 +701,7 @@ impl<B: Backend> FSRS<B> {
                 rat
             };
             // calculate new output value
-            let fu = sample(config, parameters, u, sample_size, &mut progress)?;
+            let fu = sample(config, parameters, u, sample_size, &mut progress, &cards)?;
 
             // if it's bigger than current
             if fu > fx {
@@ -1614,17 +1624,35 @@ mod tests {
         let learn_span = 1000;
         let learn_limit = 10;
         let fsrs = FSRS::new(None)?;
+        let deck_size = learn_span * learn_limit;
         let config = SimulatorConfig {
-            deck_size: learn_span * learn_limit,
+            deck_size,
             learn_span,
             max_cost_perday: f32::INFINITY,
             learn_limit,
             ..Default::default()
         };
-        let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
+        let optimal_retention = fsrs
+            .optimal_retention(&config, &[], |_| true, None)
+            .unwrap();
         dbg!(optimal_retention);
+        let card = Card {
+            id: 0,
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 1.0,
+            interval: 5.0,
+            lapses: 0,
+        };
         assert!((optimal_retention - 0.7).abs() < 0.01);
-        assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
+        fsrs.optimal_retention(&config, &[1.], |_| true, None)
+            .unwrap_err();
+        // Check that the cards are passed correctly to simulate
+        fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card.clone(); deck_size]))
+            .unwrap();
+        fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card; deck_size + 1]))
+            .unwrap_err();
         Ok(())
     }
 
@@ -1642,7 +1670,9 @@ mod tests {
         };
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
-        let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
+        let optimal_retention = fsrs
+            .optimal_retention(&config, &param, |_v| true, None)
+            .unwrap();
         assert_eq!(optimal_retention, 0.7);
         Ok(())
     }
