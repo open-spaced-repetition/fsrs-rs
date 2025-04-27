@@ -28,7 +28,7 @@ pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f32>, FS
 }
 
 pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f32 {
-    inf.optimal_retention(config, &[], |_v| true).unwrap()
+    inf.optimal_retention(config, &[], |_v| true, None).unwrap()
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {

@@ -549,8 +549,8 @@ fn sample<F>(
     parameters: &Parameters,
     desired_retention: f32,
     n: usize,
-    cards: &Option<Vec<Card>>,
     progress: &mut F,
+    cards: &Option<Vec<Card>>,
 ) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
@@ -587,8 +587,8 @@ impl<B: Backend> FSRS<B> {
         &self,
         config: &SimulatorConfig,
         parameters: &Parameters,
-        cards: Option<Vec<Card>>,
         mut progress: F,
+        cards: Option<Vec<Card>>,
     ) -> Result<f32>
     where
         F: FnMut(ItemProgress) -> bool + Send,
@@ -641,8 +641,8 @@ impl<B: Backend> FSRS<B> {
                 parameters,
                 R_MIN,
                 sample_size,
-                &cards,
                 &mut progress,
+                &cards,
             )?,
         );
         let (mut x, mut v, mut w) = (xb, xb, xb);
@@ -701,7 +701,7 @@ impl<B: Backend> FSRS<B> {
                 rat
             };
             // calculate new output value
-            let fu = sample(config, parameters, u, sample_size, &cards, &mut progress)?;
+            let fu = sample(config, parameters, u, sample_size, &mut progress, &cards)?;
 
             // if it's bigger than current
             if fu > fx {
@@ -1624,17 +1624,39 @@ mod tests {
         let learn_span = 1000;
         let learn_limit = 10;
         let fsrs = FSRS::new(None)?;
+        let deck_size = learn_span * learn_limit;
         let config = SimulatorConfig {
-            deck_size: learn_span * learn_limit,
+            deck_size,
             learn_span,
             max_cost_perday: f32::INFINITY,
             learn_limit,
             ..Default::default()
         };
-        let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
+        let optimal_retention = fsrs
+            .optimal_retention(&config, &[], |_| true, None)
+            .unwrap();
         dbg!(optimal_retention);
+        let card = Card {
+            id: 0,
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 1.0,
+            interval: 5.0,
+            lapses: 0,
+        };
         assert!((optimal_retention - 0.7).abs() < 0.01);
-        assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
+        assert!(
+            fsrs.optimal_retention(&config, &[1.], |_| true, None)
+                .is_err()
+        );
+        // Check that the cards are passed correctly to simulate
+        fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card.clone(); deck_size]))
+            .unwrap();
+        assert!(
+            fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card; deck_size + 1]))
+                .is_err()
+        );
         Ok(())
     }
 
@@ -1652,7 +1674,9 @@ mod tests {
         };
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
-        let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
+        let optimal_retention = fsrs
+            .optimal_retention(&config, &param, |_v| true, None)
+            .unwrap();
         assert_eq!(optimal_retention, 0.7);
         Ok(())
     }
