@@ -1646,17 +1646,13 @@ mod tests {
             lapses: 0,
         };
         assert!((optimal_retention - 0.7).abs() < 0.01);
-        assert!(
-            fsrs.optimal_retention(&config, &[1.], |_| true, None)
-                .is_err()
-        );
+        fsrs.optimal_retention(&config, &[1.], |_| true, None)
+            .unwrap_err();
         // Check that the cards are passed correctly to simulate
         fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card.clone(); deck_size]))
             .unwrap();
-        assert!(
-            fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card; deck_size + 1]))
-                .is_err()
-        );
+        fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card; deck_size + 1]))
+            .unwrap_err();
         Ok(())
     }
 
