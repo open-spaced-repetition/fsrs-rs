@@ -310,7 +310,7 @@ mod tests {
     use super::*;
     use crate::test_helpers::TestHelper;
     use crate::test_helpers::{Model, Tensor};
-    use burn::tensor::TensorData;
+    use burn::tensor::{TensorData, Tolerance};
 
     #[test]
     fn w() {
@@ -345,7 +345,7 @@ mod tests {
         let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &device);
         let retrievability = model.power_forgetting_curve(delta_t, stability);
 
-        retrievability.to_data().assert_approx_eq(
+        retrievability.to_data().assert_approx_eq::<f32>(
             &TensorData::from([
                 1.0,
                 0.9421982765197754,
@@ -354,7 +354,7 @@ mod tests {
                 0.9,
                 0.8178008198738098,
             ]),
-            5,
+            Tolerance::absolute(1e-5),
         );
     }
 
