@@ -67,7 +67,8 @@ impl std::fmt::Debug for PostSchedulingFn {
 /// Function type for review priority calculation that takes a card reference
 /// and returns a priority value (lower value means higher priority)
 #[derive(Clone)]
-pub struct ReviewPriorityFn(pub Arc<dyn Fn(&Card) -> i32 + Sync + Send>);
+#[allow(clippy::type_complexity)]
+pub struct ReviewPriorityFn(pub Arc<dyn Fn(&Card, &Parameters) -> i32 + Sync + Send>);
 
 impl PartialEq for ReviewPriorityFn {
     fn eq(&self, _: &Self) -> bool {
@@ -83,10 +84,9 @@ impl std::fmt::Debug for ReviewPriorityFn {
 
 impl Default for ReviewPriorityFn {
     fn default() -> Self {
-        Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
+        Self(Arc::new(|card, _w| (card.difficulty * 100.0) as i32))
     }
 }
-
 #[derive(Debug, PartialEq)]
 pub struct SimulatorConfig {
     pub deck_size: usize,
@@ -341,9 +341,10 @@ pub fn simulate(
     fn card_priority(
         card: &Card,
         learn: bool,
+        w: &Parameters,
         ReviewPriorityFn(cb): &ReviewPriorityFn,
     ) -> Reverse<(i32, bool, i32)> {
-        let priority = cb(card);
+        let priority = cb(card, w);
         // high priority for early due, review, custom priority
         Reverse((card.due as i32, learn, priority))
     }
@@ -354,6 +355,7 @@ pub fn simulate(
             card_priority(
                 card,
                 card.last_date == f32::NEG_INFINITY,
+                w,
                 &review_priority_fn,
             ),
         );
@@ -404,7 +406,7 @@ pub fn simulate(
             card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(
                 &card_index,
-                card_priority(card, is_learn, &review_priority_fn),
+                card_priority(card, is_learn, w, &review_priority_fn),
             );
             continue;
         }
@@ -519,8 +521,10 @@ pub fn simulate(
             due_cnt_per_day[card.due as usize] += 1;
         }
 
-        card_priorities
-            .change_priority(&card_index, card_priority(card, false, &review_priority_fn));
+        card_priorities.change_priority(
+            &card_index,
+            card_priority(card, false, w, &review_priority_fn),
+        );
     }
 
     /*dbg!((
@@ -1559,37 +1563,49 @@ mod tests {
         run_test!(None, 42.339848)?;
         println!("High difficulty cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
+            wrap!(|card: &Card, _w: &Parameters| -(card.difficulty * 100.0) as i32),
             43.859474
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card| (card.retrievability(&DEFAULT_PARAMETERS) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| (card.retrievability(w) * 1000.0) as i32),
             43.482998
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card| -(card.retrievability(&DEFAULT_PARAMETERS) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| -(card.retrievability(w) * 1000.0) as i32),
             41.110588
         )?;
         println!("High stability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card| -(card.stability * 100.0) as i32),
+            wrap!(|card: &Card, _w: &Parameters| -(card.stability * 100.0) as i32),
             41.006256
         )?;
         println!("Low stability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card| (card.stability * 100.0) as i32),
+            wrap!(|card: &Card, _w: &Parameters| (card.stability * 100.0) as i32),
             43.077534
         )?;
         println!("Long interval cards reviewed first.");
-        run_test!(wrap!(|card: &Card| -card.interval as i32), 40.92563)?;
+        run_test!(
+            wrap!(|card: &Card, _w: &Parameters| -card.interval as i32),
+            40.92563
+        )?;
         println!("Short interval cards reviewed first.");
-        run_test!(wrap!(|card: &Card| card.interval as i32), 43.282585)?;
+        run_test!(
+            wrap!(|card: &Card, _w: &Parameters| card.interval as i32),
+            43.282585
+        )?;
         println!("Early scheduled due cards reviewed first.");
-        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 43.309185)?;
+        run_test!(
+            wrap!(|card: &Card, _w: &Parameters| card.scheduled_due() as i32),
+            43.309185
+        )?;
         println!("Late scheduled due cards reviewed first.");
-        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 42.79738)?;
+        run_test!(
+            wrap!(|card: &Card, _w: &Parameters| -card.scheduled_due() as i32),
+            42.79738
+        )?;
         Ok(())
     }
 
