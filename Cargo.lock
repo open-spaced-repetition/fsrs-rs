@@ -1516,7 +1516,6 @@ dependencies = [
  "ndarray",
  "ndarray-rand",
  "priority-queue",
- "rand 0.8.5",
  "rayon",
  "rusqlite",
  "serde",

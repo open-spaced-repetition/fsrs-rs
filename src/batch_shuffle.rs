@@ -3,8 +3,9 @@ use std::sync::Mutex;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderIterator, Progress};
 use burn::prelude::Backend;
-use rand::SeedableRng;
-use rand::seq::SliceRandom;
+use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::rngs::StdRng;
+use ndarray_rand::rand::seq::SliceRandom;
 
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 
@@ -38,14 +39,14 @@ impl<B: Backend> BatchTensorDataset<B> {
 
 pub struct ShuffleDataLoader<B: Backend> {
     dataset: BatchTensorDataset<B>,
-    rng: Mutex<rand::rngs::StdRng>,
+    rng: Mutex<StdRng>,
 }
 
 impl<B: Backend> ShuffleDataLoader<B> {
     pub fn new(dataset: BatchTensorDataset<B>, seed: u64) -> Self {
         Self {
             dataset,
-            rng: Mutex::new(rand::rngs::StdRng::seed_from_u64(seed)),
+            rng: Mutex::new(StdRng::seed_from_u64(seed)),
         }
     }
 }
