@@ -1568,12 +1568,12 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| (card.retrievability(&w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| (card.retrievability(w) * 1000.0) as i32),
             43.482998
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| -(card.retrievability(&w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| -(card.retrievability(w) * 1000.0) as i32),
             41.110588
         )?;
         println!("High stability cards reviewed first.");
