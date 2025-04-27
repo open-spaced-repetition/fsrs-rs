@@ -1,14 +1,13 @@
 use crate::convertor_tests::RevlogReviewKind::*;
-use crate::dataset::{constant_weighted_fsrs_items, FSRSBatcher};
+use crate::dataset::{FSRSBatcher, constant_weighted_fsrs_items};
 use crate::dataset::{FSRSItem, FSRSReview};
 // use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
 use burn::backend::ndarray::NdArrayDevice;
-use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::Dataset;
+use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataset::InMemDataset;
 use burn::tensor::cast::ToElement;
-use burn::tensor::TensorData;
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
@@ -184,7 +183,7 @@ impl Into<RevlogReviewKind> for u8 {
 pub fn anki_to_fsrs(revlogs: Vec<RevlogEntry>, minute_offset: i32) -> Vec<FSRSItem> {
     let mut revlogs = revlogs
         .into_iter()
-        .group_by(|r| r.cid)
+        .chunk_by(|r| r.cid)
         .into_iter()
         .filter_map(|(_cid, entries)| convert_to_fsrs_items(entries.collect(), minute_offset))
         .flatten()
@@ -294,11 +293,13 @@ pub(crate) fn read_collection() -> Result<Vec<RevlogEntry>> {
 #[test]
 fn conversion_works() {
     let revlogs = read_collection().unwrap();
-    let single_card_revlog = vec![revlogs
-        .iter()
-        .filter(|r| r.cid == 1528947214762)
-        .cloned()
-        .collect_vec()];
+    let single_card_revlog = vec![
+        revlogs
+            .iter()
+            .filter(|r| r.cid == 1528947214762)
+            .cloned()
+            .collect_vec(),
+    ];
     assert_eq!(revlogs.len(), 24394);
     let fsrs_items = anki_to_fsrs(revlogs);
     assert_eq!(fsrs_items.len(), 14290);
@@ -359,14 +360,22 @@ fn conversion_works() {
     let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
     let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()]);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
-    res.r_historys
-        .squeeze::<1>(1)
-        .to_data()
-        .assert_approx_eq(&TensorData::from([3.0, 4.0, 3.0, 3.0, 3.0, 2.0]), 5);
-    res.t_historys
-        .squeeze::<1>(1)
-        .to_data()
-        .assert_approx_eq(&TensorData::from([0.0, 0.0, 5.0, 10.0, 22.0, 56.0]), 5);
+    assert_eq!(
+        res.r_historys
+            .squeeze::<1>(1)
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap(),
+        [3.0, 4.0, 3.0, 3.0, 3.0, 2.0],
+    );
+    assert_eq!(
+        res.t_historys
+            .squeeze::<1>(1)
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap(),
+        [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
+    );
     assert_eq!(res.labels.into_scalar().to_i32(), 1);
 }
 

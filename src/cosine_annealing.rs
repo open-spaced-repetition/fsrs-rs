@@ -1,4 +1,4 @@
-use burn::{lr_scheduler::LrScheduler, tensor::backend::Backend, LearningRate};
+use burn::{LearningRate, lr_scheduler::LrScheduler, tensor::backend::Backend};
 #[derive(Clone, Debug)]
 pub(crate) struct CosineAnnealingLR {
     t_max: f64,
@@ -66,9 +66,8 @@ impl LrScheduler for CosineAnnealingLR {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_helpers::assert_approx_eq;
-
     use super::*;
+    use crate::test_helpers::TestHelper;
 
     #[test]
     fn lr_scheduler() {
@@ -80,22 +79,18 @@ mod tests {
             })
             .step_by(1)
             .collect::<Vec<_>>();
-
-        assert_approx_eq(
-            lrs.try_into().unwrap(),
-            [
-                0.04,
-                0.03618033988749895,
-                0.026180339887498946,
-                0.013819660112501051,
-                0.0038196601125010526,
-                0.0,
-                0.003819660112501051,
-                0.013819660112501048,
-                0.026180339887498943,
-                0.03618033988749895,
-                0.039999999999999994,
-            ],
-        );
+        lrs.assert_approx_eq([
+            0.04,
+            0.03618033988749895,
+            0.026180339887498946,
+            0.013819660112501051,
+            0.0038196601125010526,
+            0.0,
+            0.003819660112501051,
+            0.013819660112501048,
+            0.026180339887498943,
+            0.03618033988749895,
+            0.039999999999999994,
+        ]);
     }
 }

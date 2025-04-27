@@ -1,13 +1,13 @@
-use crate::error::{FSRSError, Result};
-use crate::inference::{Parameters, DECAY, FACTOR, S_MAX, S_MIN};
-use crate::parameter_clipper::clip_parameters;
 use crate::DEFAULT_PARAMETERS;
-use burn::backend::ndarray::NdArrayDevice;
+use crate::error::{FSRSError, Result};
+use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters, S_MAX, S_MIN};
+use crate::parameter_clipper::clip_parameters;
 use burn::backend::NdArray;
+use burn::backend::ndarray::NdArrayDevice;
 use burn::{
     config::Config,
     module::{Module, Param},
-    tensor::{backend::Backend, Shape, Tensor, TensorData},
+    tensor::{Shape, Tensor, TensorData, backend::Backend},
 };
 
 #[derive(Module, Debug)]
@@ -37,18 +37,31 @@ impl<B: Backend> Model<B> {
         if config.freeze_short_term_stability {
             initial_params[17] = 0.0;
             initial_params[18] = 0.0;
+            initial_params[19] = 0.0;
         }
 
         Self {
             w: Param::from_tensor(Tensor::from_floats(
-                TensorData::new(initial_params, Shape { dims: vec![19] }),
+                TensorData::new(initial_params, Shape { dims: vec![21] }),
                 &B::Device::default(),
             )),
         }
     }
 
     pub fn power_forgetting_curve(&self, t: Tensor<B, 1>, s: Tensor<B, 1>) -> Tensor<B, 1> {
-        (t / s * FACTOR + 1).powf_scalar(DECAY as f32)
+        let decay = -self.w.get(20);
+        let factor = decay.clone().powi_scalar(-1).mul_scalar(0.9f32.ln()).exp() - 1.0;
+        (t / s * factor + 1.0).powf(decay)
+    }
+
+    pub fn next_interval(
+        &self,
+        stability: Tensor<B, 1>,
+        desired_retention: Tensor<B, 1>,
+    ) -> Tensor<B, 1> {
+        let decay = -self.w.get(20);
+        let factor = decay.clone().powi_scalar(-1).mul_scalar(0.9f32.ln()).exp() - 1.0;
+        stability / factor * (desired_retention.powf(decay.powi_scalar(-1)) - 1.0)
     }
 
     fn stability_after_success(
@@ -91,7 +104,13 @@ impl<B: Backend> Model<B> {
     }
 
     fn stability_short_term(&self, last_s: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        last_s * (self.w.get(17) * (rating - 3 + self.w.get(18))).exp()
+        let sinc = (self.w.get(17) * (rating.clone() - 3 + self.w.get(18))).exp()
+            * last_s.clone().powf(-self.w.get(19));
+
+        last_s
+            * sinc
+                .clone()
+                .mask_where(rating.greater_equal_elem(3), sinc.clamp_min(1.0))
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -123,17 +142,18 @@ impl<B: Backend> Model<B> {
         state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let (new_s, new_d) = if let Some(state) = state {
-            let retention = self.power_forgetting_curve(delta_t.clone(), state.stability.clone());
+            let retrievability =
+                self.power_forgetting_curve(delta_t.clone(), state.stability.clone());
             let stability_after_success = self.stability_after_success(
                 state.stability.clone(),
                 state.difficulty.clone(),
-                retention.clone(),
+                retrievability.clone(),
                 rating.clone(),
             );
             let stability_after_failure = self.stability_after_failure(
                 state.stability.clone(),
                 state.difficulty.clone(),
-                retention,
+                retrievability,
             );
             let stability_short_term =
                 self.stability_short_term(state.stability.clone(), rating.clone());
@@ -193,6 +213,8 @@ pub struct ModelConfig {
     pub initial_stability: Option<[f32; 4]>,
     #[config(default = false)]
     pub freeze_short_term_stability: bool,
+    #[config(default = 1)]
+    pub num_relearning_steps: usize,
 }
 
 impl ModelConfig {
@@ -247,9 +269,12 @@ impl<B: Backend> FSRS<B> {
 
 pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
     let config = ModelConfig::default();
-    let mut model = Model::new(config);
+    let mut model = Model::new(config.clone());
     model.w = Param::from_tensor(Tensor::from_floats(
-        TensorData::new(clip_parameters(parameters), Shape { dims: vec![19] }),
+        TensorData::new(
+            clip_parameters(parameters, config.num_relearning_steps),
+            Shape { dims: vec![21] },
+        ),
         &B::Device::default(),
     ));
     model
@@ -263,10 +288,15 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
             parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
             parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
             parameters[6] += 0.5;
-            parameters.extend_from_slice(&[0.0, 0.0]);
+            parameters.extend_from_slice(&[0.0, 0.0, 0.0, FSRS5_DEFAULT_DECAY]);
             parameters
         }
-        19 => parameters.to_vec(),
+        19 => {
+            let mut parameters = parameters.to_vec();
+            parameters.extend_from_slice(&[0.0, FSRS5_DEFAULT_DECAY]);
+            parameters
+        }
+        21 => parameters.to_vec(),
         _ => return Err(FSRSError::InvalidParameters),
     };
     if parameters.iter().any(|&w| !w.is_finite()) {
@@ -278,7 +308,8 @@ pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{assert_approx_eq, Model, Tensor};
+    use crate::test_helpers::TestHelper;
+    use crate::test_helpers::{Model, Tensor};
     use burn::tensor::TensorData;
 
     #[test]
@@ -301,7 +332,7 @@ mod tests {
             fsrs5_param,
             vec![
                 0.4, 0.6, 2.4, 5.8, 6.81, 0.44675013, 1.36, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05,
-                0.34, 1.26, 0.29, 2.61, 0.0, 0.0,
+                0.34, 1.26, 0.29, 2.61, 0.0, 0.0, 0.0, 0.5
             ]
         )
     }
@@ -312,10 +343,17 @@ mod tests {
         let model = Model::new(ModelConfig::default());
         let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
         let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &device);
-        let retention = model.power_forgetting_curve(delta_t, stability);
+        let retrievability = model.power_forgetting_curve(delta_t, stability);
 
-        retention.to_data().assert_approx_eq(
-            &TensorData::from([1.0, 0.946059, 0.9299294, 0.9221679, 0.90000004, 0.79394597]),
+        retrievability.to_data().assert_approx_eq(
+            &TensorData::from([
+                1.0,
+                0.9421982765197754,
+                0.9268093109130859,
+                0.91965252161026,
+                0.9,
+                0.8178008198738098,
+            ]),
             5,
         );
     }
@@ -379,14 +417,24 @@ mod tests {
         let state = model.forward(delta_ts, ratings, None);
         let stability = state.stability.to_data();
         let difficulty = state.difficulty.to_data();
-        assert_approx_eq(
-            stability.to_vec::<f32>().unwrap().try_into().unwrap(),
-            [0.2619, 1.7074, 5.8691, 25.0124, 0.2859, 2.1482],
-        );
-        assert_approx_eq(
-            difficulty.to_vec::<f32>().unwrap().try_into().unwrap(),
-            [8.0827, 7.0405, 5.2729, 2.1301, 8.0827, 7.0405],
-        );
+
+        stability.to_vec::<f32>().unwrap().assert_approx_eq([
+            0.166_488_5,
+            1.699_295_6,
+            6.414_825_4,
+            28.051_1,
+            0.168_969_63,
+            2.053_075_8,
+        ]);
+
+        difficulty.to_vec::<f32>().unwrap().assert_approx_eq([
+            8.362_965,
+            7.086_328_5,
+            4.868_057,
+            1.0,
+            8.362_965,
+            7.086_328_5,
+        ]);
     }
 
     #[test]
@@ -397,15 +445,20 @@ mod tests {
         let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
+
         next_difficulty
             .to_data()
-            .assert_approx_eq(&TensorData::from([6.622667, 5.811333, 5.0, 4.188667]), 5);
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([7.329_555_5, 6.164_777_8, 5.0, 3.835_222_2]);
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
-        next_difficulty.to_data().assert_approx_eq(
-            &TensorData::from([6.607035, 5.7994337, 4.9918327, 4.1842318]),
-            5,
-        );
+
+        next_difficulty
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([7.296_110_6, 6.139_369_5, 4.982_629, 3.825_888]);
     }
 
     #[test]
@@ -414,36 +467,44 @@ mod tests {
         let model = Model::new(ModelConfig::default());
         let stability = Tensor::from_floats([5.0; 4], &device);
         let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
-        let retention = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &device);
+        let retrievability = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &device);
         let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),
-            retention.clone(),
+            retrievability.clone(),
             rating.clone(),
         );
         s_recall.clone().backward();
-        s_recall.to_data().assert_approx_eq(
-            &TensorData::from([25.77614, 14.121894, 60.40441, 208.97597]),
-            5,
-        );
-        let s_forget = model.stability_after_failure(stability.clone(), difficulty, retention);
+
+        s_recall
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([25.578_495, 13.550_501, 59.868_79, 207.703_83]);
+        let s_forget = model.stability_after_failure(stability.clone(), difficulty, retrievability);
         s_forget.clone().backward();
-        s_forget.to_data().assert_approx_eq(
-            &TensorData::from([1.7028502, 1.9798818, 2.3759942, 2.8885393]),
-            5,
-        );
+
+        s_forget
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([1.746_929_3, 2.031_279_6, 2.440_167_7, 2.970_743_7]);
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
-        next_stability.to_data().assert_approx_eq(
-            &TensorData::from([1.7028502, 14.121894, 60.40441, 208.97597]),
-            5,
-        );
+
+        next_stability
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([1.746_929_3, 13.550_501, 59.868_79, 207.703_83]);
         let next_stability = model.stability_short_term(stability, rating);
-        next_stability.to_data().assert_approx_eq(
-            &TensorData::from([2.5051427, 4.199207, 7.038856, 11.798775]),
-            5,
-        );
+
+        next_stability
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([1.129_823_2, 2.400_462, 5.100_105_3, 10.835_862]);
     }
 
     #[test]

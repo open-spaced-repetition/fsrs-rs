@@ -1,26 +1,29 @@
-use crate::error::{FSRSError, Result};
-use crate::inference::{next_interval, ItemProgress, Parameters, DECAY, FACTOR, S_MAX, S_MIN};
-use crate::model::check_and_fill_parameters;
-use crate::parameter_clipper::clip_parameters;
 use crate::FSRS;
+use crate::error::{FSRSError, Result};
+use crate::inference::{ItemProgress, Parameters, S_MAX, S_MIN};
+use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
-use itertools::{izip, Itertools};
-use ndarray::{s, Array1};
+use itertools::{Itertools, izip};
+use ndarray_rand::rand::distributions::WeightedIndex;
 use ndarray_rand::rand_distr::Distribution;
 use priority_queue::PriorityQueue;
 use rand::Rng;
-use rand::{distributions::WeightedIndex, rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct SimulationResult {
-    pub memorized_cnt_per_day: Array1<f32>,
-    pub review_cnt_per_day: Array1<usize>,
-    pub learn_cnt_per_day: Array1<usize>,
-    pub cost_per_day: Array1<f32>,
+    pub memorized_cnt_per_day: Vec<f32>,
+    pub review_cnt_per_day: Vec<usize>,
+    pub learn_cnt_per_day: Vec<usize>,
+    pub cost_per_day: Vec<f32>,
+    // The amount of review cards you got correct on a given day (not including learn cards).
+    pub correct_cnt_per_day: Vec<usize>,
+    pub cards: Vec<Card>,
 }
 
 trait Round {
@@ -35,25 +38,74 @@ impl Round for f32 {
 
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
+const RATINGS: [usize; 4] = [1, 2, 3, 4];
+const LEARNING: usize = 0;
+const REVIEW: usize = 1;
+const RELEARNING: usize = 2;
+const MAX_STEPS: usize = 5;
 
-#[derive(Debug, Clone, PartialEq)]
+/// Function type for post scheduling operations that takes interval, maximum interval,
+/// current day index, due counts per day, and a random number generator,
+/// and returns a new interval.
+#[allow(clippy::type_complexity)]
+pub struct PostSchedulingFn(
+    pub Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
+);
+
+impl PartialEq for PostSchedulingFn {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for PostSchedulingFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
+    }
+}
+
+/// Function type for review priority calculation that takes a card reference
+/// and returns a priority value (lower value means higher priority)
+#[derive(Clone)]
+pub struct ReviewPriorityFn(pub Arc<dyn Fn(&Card) -> i32 + Sync + Send>);
+
+impl PartialEq for ReviewPriorityFn {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for ReviewPriorityFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
+    }
+}
+
+impl Default for ReviewPriorityFn {
+    fn default() -> Self {
+        Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub struct SimulatorConfig {
     pub deck_size: usize,
     pub learn_span: usize,
     pub max_cost_perday: f32,
     pub max_ivl: f32,
-    pub learn_costs: [f32; 4],
-    pub review_costs: [f32; 4],
     pub first_rating_prob: [f32; 4],
     pub review_rating_prob: [f32; 3],
-    pub first_rating_offsets: [f32; 4],
-    pub first_session_lens: [f32; 4],
-    pub forget_rating_offset: f32,
-    pub forget_session_len: f32,
-    pub loss_aversion: f32,
     pub learn_limit: usize,
     pub review_limit: usize,
     pub new_cards_ignore_review_limit: bool,
+    pub suspend_after_lapses: Option<u32>,
+    pub post_scheduling_fn: Option<PostSchedulingFn>,
+    pub review_priority_fn: Option<ReviewPriorityFn>,
+    pub learning_step_transitions: [[f32; 4]; 3],
+    pub relearning_step_transitions: [[f32; 4]; 3],
+    pub state_rating_costs: [[f32; 4]; 3],
+    pub learning_step_count: usize,
+    pub relearning_step_count: usize,
 }
 
 impl Default for SimulatorConfig {
@@ -63,18 +115,31 @@ impl Default for SimulatorConfig {
             learn_span: 365,
             max_cost_perday: 1800.0,
             max_ivl: 36500.0,
-            learn_costs: [33.79, 24.3, 13.68, 6.5],
-            review_costs: [23.0, 11.68, 7.33, 5.6],
             first_rating_prob: [0.24, 0.094, 0.495, 0.171],
             review_rating_prob: [0.224, 0.631, 0.145],
-            first_rating_offsets: [-0.72, -0.15, -0.01, 0.0],
-            first_session_lens: [2.02, 1.28, 0.81, 0.0],
-            forget_rating_offset: -0.28,
-            forget_session_len: 1.05,
-            loss_aversion: 2.5,
             learn_limit: usize::MAX,
             review_limit: usize::MAX,
             new_cards_ignore_review_limit: true,
+            suspend_after_lapses: None,
+            post_scheduling_fn: None,
+            review_priority_fn: None,
+            learning_step_transitions: [
+                [0.3687, 0.0628, 0.5108, 0.0577],
+                [0.0441, 0.4553, 0.4457, 0.0549],
+                [0.0518, 0.0470, 0.8462, 0.0550],
+            ],
+            relearning_step_transitions: [
+                [0.2157, 0.0643, 0.6595, 0.0605],
+                [0.0500, 0.4638, 0.4475, 0.0387],
+                [0.1056, 0.1434, 0.7266, 0.0244],
+            ],
+            state_rating_costs: [
+                [12.75, 12.26, 8.0, 6.38],
+                [13.05, 11.74, 7.42, 5.6],
+                [10.56, 10.0, 7.37, 5.4],
+            ],
+            learning_step_count: 2,
+            relearning_step_count: 1,
         }
     }
 }
@@ -99,17 +164,57 @@ fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
     new_s.clamp(S_MIN, S_MAX)
 }
 
-fn stability_short_term(w: &[f32], s: f32, rating_offset: f32, session_len: f32) -> f32 {
-    (s * (w[17] * (rating_offset + session_len * w[18])).exp()).clamp(S_MIN, S_MAX)
+fn stability_short_term(w: &[f32], s: f32, rating: usize) -> f32 {
+    let sinc = (w[17] * (rating as f32 - 3.0 + w[18])).exp() * s.powf(-w[19]);
+    let new_s = s * if rating >= 3 { sinc.max(1.0) } else { sinc };
+    new_s.clamp(S_MIN, S_MAX)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn memory_state_short_term(
+    w: &[f32],
+    s: f32,
+    d: f32,
+    init_rating: Option<usize>,
+    rating_costs: &[f32; 4],
+    step_transitions: &[[f32; 4]; 3],
+    step_count: usize,
+    rng: &mut StdRng,
+) -> (f32, f32, f32) {
+    let mut consecutive = 0;
+    let mut rating = init_rating.unwrap_or(1);
+    let mut cost = if init_rating.is_none() {
+        0.0
+    } else {
+        rating_costs[rating - 1]
+    };
+    let mut new_s = s;
+    let mut new_d = d;
+    let consecutive_max = if rating > 2 {
+        step_count.saturating_sub(1)
+    } else {
+        step_count
+    };
+    for _ in 0..MAX_STEPS {
+        if consecutive >= consecutive_max || rating >= 4 {
+            break;
+        }
+        let next_rating_dist = WeightedIndex::new(step_transitions[rating - 1]).unwrap();
+        rating = RATINGS[next_rating_dist.sample(rng)];
+        new_s = stability_short_term(w, new_s, rating);
+        new_d = next_d(w, new_d, rating);
+        cost += rating_costs[rating - 1];
+        if rating > 2 {
+            consecutive += 1;
+        } else if rating == 1 {
+            consecutive = 0;
+        }
+    }
+    (new_s, new_d, cost)
 }
 
 fn init_d(w: &[f32], rating: usize) -> f32 {
     w[4] - (w[5] * (rating - 1) as f32).exp() + 1.0
-}
-
-fn init_d_with_short_term(w: &[f32], rating: usize, rating_offset: f32) -> f32 {
-    let new_d = init_d(w, rating) - w[6] * rating_offset;
-    new_d.clamp(1.0, 10.0)
 }
 
 fn linear_damping(delta_d: f32, old_d: f32) -> f32 {
@@ -126,129 +231,39 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
-fn power_forgetting_curve(t: f32, s: f32) -> f32 {
-    (t / s).mul_add(FACTOR as f32, 1.0).powf(DECAY as f32)
+fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
+    let decay = -w[20];
+    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    (t / s).mul_add(factor, 1.0).powf(decay)
 }
 
-/// Describes a range of days for which a certain amount of fuzz is applied to
-/// the new interval.
-struct FuzzRange {
-    start: f32,
-    end: f32,
-    factor: f32,
-}
-
-static FUZZ_RANGES: [FuzzRange; 3] = [
-    FuzzRange {
-        start: 2.5,
-        end: 7.0,
-        factor: 0.15,
-    },
-    FuzzRange {
-        start: 7.0,
-        end: 20.0,
-        factor: 0.1,
-    },
-    FuzzRange {
-        start: 20.0,
-        end: f32::MAX,
-        factor: 0.05,
-    },
-];
-
-/// Return the amount of fuzz to apply to the interval in both directions.
-/// Short intervals do not get fuzzed. All other intervals get fuzzed by 1 day
-/// plus the number of its days in each defined fuzz range multiplied with the
-/// given factor.
-fn fuzz_delta(interval: f32) -> f32 {
-    if interval < 2.5 {
-        0.0
-    } else {
-        FUZZ_RANGES.iter().fold(1.0, |delta, range| {
-            delta + range.factor * (interval.min(range.end) - range.start).max(0.0)
-        })
-    }
-}
-
-fn fuzz_bounds(interval: f32) -> (u32, u32) {
-    let delta = fuzz_delta(interval);
-    (
-        (interval - delta).round() as u32,
-        (interval + delta).round() as u32,
-    )
-}
-
-/// Return the bounds of the fuzz range, respecting `minimum` and `maximum`.
-/// Ensure the upper bound is larger than the lower bound, if `maximum` allows
-/// it and it is larger than 1.
-fn constrained_fuzz_bounds(interval: f32, minimum: u32, maximum: u32) -> (u32, u32) {
-    let minimum = minimum.min(maximum);
-    let interval = interval.clamp(minimum as f32, maximum as f32);
-    let (mut lower, mut upper) = fuzz_bounds(interval);
-
-    // minimum <= maximum and lower <= upper are assumed
-    // now ensure minimum <= lower <= upper <= maximum
-    lower = lower.clamp(minimum, maximum);
-    upper = upper.clamp(minimum, maximum);
-
-    if upper == lower && upper > 2 && upper < maximum {
-        upper = lower + 1;
-    };
-
-    (lower, upper)
-}
-
-fn find_interval(
-    stability: f32,
-    desired_retention: f32,
-    max_ivl: f32,
-    today: usize,
-    due_cnt_per_day: &Array1<usize>,
-    rng: &mut StdRng,
-) -> f32 {
-    let ivl = next_interval(stability, desired_retention)
-        .round()
-        .clamp(1.0, max_ivl);
-    let (lower, upper) = constrained_fuzz_bounds(ivl, 1, max_ivl as u32);
-    let mut review_counts = Array1::zeros(upper as usize - lower as usize + 1);
-
-    // Fill review_counts with due counts for each interval
-    let start = today + lower as usize;
-    let end = (today + upper as usize + 1).min(due_cnt_per_day.len());
-    if start < due_cnt_per_day.len() {
-        review_counts
-            .slice_mut(s![..(end - start)])
-            .assign(&due_cnt_per_day.slice(s![start..end]));
-    }
-
-    let intervals_and_params = (lower..=upper)
-        .enumerate()
-        .map(|(interval_index, target_interval)| {
-            let weight = match review_counts[interval_index] {
-                0 => 1.0, // if theres no cards due on this day, give it the full 1.0 weight
-                card_count => {
-                    let card_count_weight = (1.0 / card_count as f32).powi(2);
-                    let card_interval_weight = 1.0 / target_interval as f32;
-
-                    card_count_weight * card_interval_weight
-                }
-            };
-
-            (target_interval, weight)
-        })
-        .collect::<Vec<_>>();
-    let weighted_intervals = WeightedIndex::new(intervals_and_params.iter().map(|k| k.1)).unwrap();
-
-    let selected_interval_index = weighted_intervals.sample(rng);
-    intervals_and_params[selected_interval_index].0 as f32
+fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
+    let decay = -w[20];
+    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
 #[derive(Debug, Clone)]
 pub struct Card {
+    // "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
+    // new cards created by the simulation have negative id's so use positive ones.
+    pub id: i64,
     pub difficulty: f32,
     pub stability: f32,
     pub last_date: f32,
     pub due: f32,
+    pub interval: f32,
+    pub lapses: u32,
+}
+
+impl Card {
+    pub fn retrievability(&self, w: &[f32]) -> f32 {
+        power_forgetting_curve(w, self.due - self.last_date, self.stability)
+    }
+
+    pub fn scheduled_due(&self) -> f32 {
+        self.last_date + self.interval
+    }
 }
 
 pub fn simulate(
@@ -259,46 +274,26 @@ pub fn simulate(
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
     let w = &check_and_fill_parameters(w)?;
-    let w = &clip_parameters(w);
-    let SimulatorConfig {
-        deck_size,
-        learn_span,
-        max_cost_perday,
-        max_ivl,
-        learn_costs,
-        review_costs,
-        first_rating_prob,
-        review_rating_prob,
-        first_rating_offsets,
-        first_session_lens,
-        forget_rating_offset,
-        forget_session_len,
-        loss_aversion,
-        learn_limit,
-        review_limit,
-        new_cards_ignore_review_limit,
-    } = config.clone();
-    if deck_size == 0 {
+    if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
 
-    let mut review_cnt_per_day = Array1::<usize>::zeros(learn_span);
-    let mut learn_cnt_per_day = Array1::<usize>::zeros(learn_span);
-    let mut memorized_cnt_per_day = Array1::zeros(learn_span);
-    let mut cost_per_day = Array1::zeros(learn_span);
-    let mut due_cnt_per_day = Array1::zeros(learn_span + learn_span / 2);
+    let mut review_cnt_per_day = vec![0; config.learn_span];
+    let mut learn_cnt_per_day = vec![0; config.learn_span];
+    let mut memorized_cnt_per_day = vec![0.0; config.learn_span];
+    let mut cost_per_day = vec![0.0; config.learn_span];
+    let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
+    let mut correct_cnt_per_day = vec![0; config.learn_span];
 
-    let first_rating_choices = [1, 2, 3, 4];
-    let first_rating_dist = WeightedIndex::new(first_rating_prob).unwrap();
+    let first_rating_choices = RATINGS;
+    let first_rating_dist = WeightedIndex::new(config.first_rating_prob).unwrap();
 
-    let review_rating_choices = [2, 3, 4];
-    let review_rating_dist = WeightedIndex::new(review_rating_prob).unwrap();
+    let review_rating_choices = &RATINGS[1..];
+    let review_rating_dist = WeightedIndex::new(config.review_rating_prob).unwrap();
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
-    let mut cards = Vec::with_capacity(deck_size);
-
-    let fail_cost = review_costs[0] * loss_aversion;
+    let mut cards = Vec::with_capacity(config.deck_size);
 
     let existing_count = if let Some(existing_cards) = &existing_cards {
         existing_cards.len()
@@ -306,7 +301,7 @@ pub fn simulate(
         0
     };
 
-    if existing_count > deck_size {
+    if existing_count > config.deck_size {
         return Err(FSRSError::InvalidDeckSize);
     }
 
@@ -324,26 +319,44 @@ pub fn simulate(
         }
     }
 
-    if learn_limit > 0 {
-        let init_ratings = (0..(deck_size - cards.len())).map(|i| Card {
+    if config.learn_limit > 0 {
+        let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
+            id: -(i as i64),
             difficulty: f32::NEG_INFINITY,
             stability: f32::NEG_INFINITY,
             last_date: f32::NEG_INFINITY,
-            due: (i / learn_limit) as f32,
+            due: (i / config.learn_limit) as f32,
+            interval: f32::NEG_INFINITY,
+            lapses: 0,
         });
 
         cards.extend(init_ratings);
     }
 
     let mut card_priorities = PriorityQueue::new();
+    let max_lapses = config.suspend_after_lapses.unwrap_or(u32::MAX);
 
-    fn card_priority(card: &Card, learn: bool) -> Reverse<(i32, bool, i32)> {
-        // high priority for early due, review, low difficulty card
-        Reverse((card.due as i32, learn, (card.difficulty * 100.0) as i32))
+    let review_priority_fn = config.review_priority_fn.clone().unwrap_or_default();
+
+    fn card_priority(
+        card: &Card,
+        learn: bool,
+        ReviewPriorityFn(cb): &ReviewPriorityFn,
+    ) -> Reverse<(i32, bool, i32)> {
+        let priority = cb(card);
+        // high priority for early due, review, custom priority
+        Reverse((card.due as i32, learn, priority))
     }
 
     for (i, card) in cards.iter().enumerate() {
-        card_priorities.push(i, card_priority(card, card.last_date == f32::NEG_INFINITY));
+        card_priorities.push(
+            i,
+            card_priority(
+                card,
+                card.last_date == f32::NEG_INFINITY,
+                &review_priority_fn,
+            ),
+        );
     }
 
     // Main simulation loop
@@ -357,13 +370,13 @@ pub fn simulate(
         let last_date_index = card.last_date as usize;
 
         // Guards
-        if card.due >= learn_span as f32 {
+        if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
             if !is_learn {
-                let delta_t = learn_span.max(last_date_index) - last_date_index;
+                let delta_t = config.learn_span.max(last_date_index) - last_date_index;
                 let pre_sim_days = (-card.last_date) as usize;
                 for i in 0..delta_t {
                     memorized_cnt_per_day[last_date_index + i] +=
-                        power_forgetting_curve((pre_sim_days + i) as f32, card.stability);
+                        power_forgetting_curve(w, (pre_sim_days + i) as f32, card.stability);
                 }
             }
             card_priorities.pop();
@@ -373,59 +386,64 @@ pub fn simulate(
         let todays_learn = learn_cnt_per_day[day_index];
         let todays_review = review_cnt_per_day[day_index];
 
-        if match (new_cards_ignore_review_limit, is_learn) {
-            (true, true) => todays_learn + 1 > learn_limit,
+        if match (config.new_cards_ignore_review_limit, is_learn) {
+            (true, true) => todays_learn + 1 > config.learn_limit,
             (false, true) => {
-                todays_learn + todays_review + 1 > review_limit || todays_learn + 1 > learn_limit
+                todays_learn + todays_review + 1 > config.review_limit
+                    || todays_learn + 1 > config.learn_limit
             }
-            (_, false) => todays_review + 1 > review_limit,
-        } || (cost_per_day[day_index] + fail_cost > max_cost_perday)
+            (_, false) => todays_review + 1 > config.review_limit,
+        } || (cost_per_day[day_index] > config.max_cost_perday)
         {
-            due_cnt_per_day[day_index] -= 1;
-            card.due = day_index as f32 + 1.0;
-            if card.due < learn_span as f32 {
-                due_cnt_per_day[card.due as usize] += 1;
+            if !is_learn {
+                due_cnt_per_day[day_index] -= 1;
+                if day_index + 1 < due_cnt_per_day.len() {
+                    due_cnt_per_day[day_index + 1] += 1;
+                }
             }
-            card_priorities.change_priority(&card_index, card_priority(card, is_learn));
+            card.due = day_index as f32 + 1.0;
+            card_priorities.change_priority(
+                &card_index,
+                card_priority(card, is_learn, &review_priority_fn),
+            );
             continue;
         }
-
-        let ivl;
 
         // dbg!(&day_index);
         if is_learn {
             // For learning cards
             // Initialize stability and difficulty for new cards
-            let rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
-            let offset = first_rating_offsets[rating - 1];
-
-            card.difficulty = init_d_with_short_term(w, rating, offset);
-            card.stability =
-                stability_short_term(w, w[rating - 1], offset, first_session_lens[rating - 1]);
-
-            ivl = find_interval(
-                card.stability,
-                desired_retention,
-                max_ivl,
-                day_index,
-                &due_cnt_per_day,
+            let init_rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
+            let init_stability = w[init_rating - 1];
+            let init_difficulty = init_d(w, init_rating).clamp(1.0, 10.0);
+            let (new_s, new_d, cost) = memory_state_short_term(
+                w,
+                init_stability,
+                init_difficulty,
+                Some(init_rating),
+                &config.state_rating_costs[LEARNING],
+                &config.learning_step_transitions,
+                config.learning_step_count,
                 &mut rng,
             );
+            card.stability = new_s;
+            card.difficulty = new_d;
 
             // Update days statistics
             learn_cnt_per_day[day_index] += 1;
-            cost_per_day[day_index] += learn_costs[rating - 1];
+            cost_per_day[day_index] += cost;
         } else {
             // For review cards
-            // Updating delta_t for 'has_learned' cards
-            let elapsed_days = card.due - card.last_date;
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = power_forgetting_curve(elapsed_days, card.stability);
+            let retrievability = card.retrievability(w);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
+
+            card.lapses += forget as u32;
+            correct_cnt_per_day[day_index] += !forget as usize;
 
             // Sample 'rating' for 'need_review' entries
             let rating = if forget {
@@ -436,36 +454,41 @@ pub fn simulate(
 
             //dbg!(&card, &rating);
 
-            // Update stability
-            card.stability = if forget {
-                let post_lapse_stab =
+            let (new_s, new_d, cost) = if forget {
+                let post_lapse_stability =
                     stability_after_failure(w, last_stability, retrievability, card.difficulty);
-                stability_short_term(w, post_lapse_stab, forget_rating_offset, forget_session_len)
+                let post_lapse_difficulty = next_d(w, card.difficulty, rating);
+                let (new_s, new_d, cost) = memory_state_short_term(
+                    w,
+                    post_lapse_stability,
+                    post_lapse_difficulty,
+                    None,
+                    &config.state_rating_costs[RELEARNING],
+                    &config.relearning_step_transitions,
+                    config.relearning_step_count,
+                    &mut rng,
+                );
+                (
+                    new_s,
+                    new_d,
+                    config.state_rating_costs[REVIEW][rating - 1] + cost,
+                )
             } else {
-                stability_after_success(w, last_stability, retrievability, card.difficulty, rating)
+                (
+                    stability_after_success(
+                        w,
+                        last_stability,
+                        retrievability,
+                        card.difficulty,
+                        rating,
+                    ),
+                    next_d(w, card.difficulty, rating),
+                    config.state_rating_costs[REVIEW][rating - 1],
+                )
             };
+            card.stability = new_s;
+            card.difficulty = new_d;
 
-            // Update difficulty for review cards
-            card.difficulty = next_d(w, card.difficulty, rating);
-            if rating == 1 {
-                card.difficulty -= w[6] * forget_rating_offset;
-                card.difficulty = card.difficulty.clamp(1.0, 10.0);
-            }
-
-            let cost = if forget {
-                fail_cost
-            } else {
-                review_costs[rating - 1]
-            };
-
-            ivl = find_interval(
-                card.stability,
-                desired_retention,
-                max_ivl,
-                day_index,
-                &due_cnt_per_day,
-                &mut rng,
-            );
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
@@ -474,17 +497,30 @@ pub fn simulate(
             let pre_sim_days = (-card.last_date) as usize;
             for i in 0..delta_t {
                 memorized_cnt_per_day[last_date_index + i] +=
-                    power_forgetting_curve((pre_sim_days + i) as f32, last_stability);
+                    power_forgetting_curve(w, (pre_sim_days + i) as f32, last_stability);
             }
         }
 
+        let mut ivl = next_interval(w, card.stability, desired_retention)
+            .round()
+            .clamp(1.0, config.max_ivl);
+
         card.last_date = day_index as f32;
+        card.interval = ivl;
         card.due = day_index as f32 + ivl;
+
+        if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
+            ivl = cb(card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
+            card.interval = ivl;
+            card.due = day_index as f32 + ivl;
+        }
+
         if card.due < due_cnt_per_day.len() as f32 {
             due_cnt_per_day[card.due as usize] += 1;
         }
 
-        card_priorities.change_priority(&card_index, card_priority(card, false));
+        card_priorities
+            .change_priority(&card_index, card_priority(card, false, &review_priority_fn));
     }
 
     /*dbg!((
@@ -499,6 +535,8 @@ pub fn simulate(
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
+        correct_cnt_per_day,
+        cards,
     })
 }
 
@@ -530,7 +568,7 @@ where
                 None,
             )?;
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
-            let total_cost = cost_per_day.sum();
+            let total_cost = cost_per_day.iter().sum::<f32>();
             Ok(total_cost / total_memorized)
         })
         .collect();
@@ -679,7 +717,7 @@ impl<B: Backend> FSRS<B> {
         }
         let xmin = x;
         let success = iter < maxiter && (R_MIN..=R_MAX).contains(&xmin);
-        dbg!(iter);
+        // dbg!(iter);
 
         if success {
             Ok(xmin)
@@ -722,6 +760,60 @@ pub struct RevlogEntry {
     pub review_kind: RevlogReviewKind,
 }
 
+/// Calculate transition matrix and counts from sequences of ratings
+fn calculate_transitions(
+    sequences: &[Vec<u8>],
+    n_states: usize,
+    smoothing: f32,
+) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    let mut transition_counts = vec![vec![0.0; n_states]; n_states];
+    let mut initial_counts = vec![0.0; n_states];
+
+    // Count transition frequencies and initial state frequencies
+    for sequence in sequences {
+        if sequence.is_empty() {
+            continue;
+        }
+
+        // Record initial state
+        initial_counts[sequence[0] as usize - 1] += 1.0;
+
+        // Record transitions
+        for i in 0..sequence.len() - 1 {
+            let current_state = sequence[i] as usize - 1;
+            let next_state = sequence[i + 1] as usize - 1;
+            transition_counts[current_state][next_state] += 1.0;
+        }
+    }
+
+    // Apply Laplace smoothing
+    for i in 0..n_states {
+        for j in 0..n_states {
+            transition_counts[i][j] += smoothing;
+        }
+        initial_counts[i] += smoothing;
+    }
+
+    // Calculate transition probability matrix
+    let mut transition_matrix = vec![vec![0.0; n_states]; n_states];
+    for i in 0..n_states {
+        let row_sum: f32 = transition_counts[i].iter().sum();
+        if row_sum > 0.0 {
+            for j in 0..n_states {
+                transition_matrix[i][j] = transition_counts[i][j] / row_sum;
+            }
+        } else {
+            // If a state never appears, assume uniform distribution
+            let uniform_prob = 1.0 / n_states as f32;
+            for j in 0..n_states {
+                transition_matrix[i][j] = uniform_prob;
+            }
+        }
+    }
+
+    (transition_matrix, transition_counts)
+}
+
 pub fn extract_simulator_config(
     df: Vec<RevlogEntry>,
     day_cutoff: i64,
@@ -730,50 +822,59 @@ pub fn extract_simulator_config(
     if df.is_empty() {
         return SimulatorConfig::default();
     }
-    /*
-        def rating_counts(x):
-            tmp = defaultdict(int, x.value_counts().to_dict())
-            first = x.iloc[0]
-            tmp[first] -= 1
-            return tmp
-    */
-    fn rating_counts(entries: &[RevlogEntry]) -> [u32; 4] {
-        let mut counts = [0; 4];
 
-        for entry in entries.iter().skip(1) {
-            counts[entry.button_chosen as usize - 1] += 1;
+    // Calculate state rating costs
+    let mut state_rating_costs = [[0.0; 4]; 3];
+    let mut state_rating_counts = [[0; 4]; 3];
+    let mut state_rating_durations = HashMap::<(usize, usize), Vec<u32>>::new();
+
+    for entry in df.iter() {
+        if entry.taken_millis > 0 && entry.taken_millis < 1200000 {
+            let state = entry.review_kind as usize;
+            let rating = entry.button_chosen as usize - 1;
+            if state < 3 && rating < 4 {
+                state_rating_durations
+                    .entry((state, rating))
+                    .or_default()
+                    .push(entry.taken_millis);
+                state_rating_counts[state][rating] += 1;
+            }
         }
-
-        counts
     }
-    /*
-        df1 = (
-            df[(df["review_duration"] > 0) & (df["review_duration"] < 1200000)]
-            .groupby(by=["card_id", "real_days"])
-            .agg(
-                {
-                    "review_state": "first",
-                    "review_rating": ["first", rating_counts],
-                    "review_duration": "sum",
-                }
-            )
-            .reset_index()
-        )
-    */
+
+    fn median(x: &mut [u32]) -> u32 {
+        x.sort_unstable();
+        let n = x.len();
+        if n % 2 == 0 {
+            (x[n / 2 - 1] + x[n / 2]) / 2
+        } else {
+            x[n / 2]
+        }
+    }
+
+    // Calculate median costs
+    for ((state, rating), durations) in state_rating_durations.iter() {
+        let mut durations = durations.clone();
+        let median_duration = median(&mut durations);
+        state_rating_costs[*state][*rating] = median_duration as f32 / 1000.0;
+    }
+
+    // Group data by card_id and real_days
     struct Df1Row {
         card_id: i64,
         first_review_state: u8,
         first_review_rating: u8,
-        review_rating_counts: [u32; 4],
-        sum_review_duration: u32,
+        same_day_ratings: Vec<u8>,
     }
+
     let df1 = {
         let mut grouped_data = HashMap::new();
         for &row in df.iter() {
             if row.taken_millis > 0 && row.taken_millis < 1200000 {
                 let real_days = (row.id / 1000 - day_cutoff) / 86400;
                 let key = (row.cid, real_days);
-                grouped_data.entry(key).or_insert_with(Vec::new).push(row);
+                let entry = grouped_data.entry(key).or_insert_with(Vec::new);
+                entry.push(row);
             }
         }
 
@@ -783,78 +884,33 @@ pub fn extract_simulator_config(
                 entries.first().map(|first_entry| {
                     let first_review_state = first_entry.review_kind as u8 + 1;
                     let first_review_rating = first_entry.button_chosen;
-                    let review_rating_counts = rating_counts(&entries);
-                    let sum_review_duration =
-                        entries.iter().map(|entry| entry.taken_millis).sum::<u32>();
+                    let same_day_ratings = entries.iter().map(|e| e.button_chosen).collect();
 
                     Df1Row {
                         card_id,
                         first_review_state,
                         first_review_rating,
-                        review_rating_counts,
-                        sum_review_duration,
+                        same_day_ratings,
                     }
                 })
             })
             .collect_vec()
     };
 
-    let cost_dict = {
-        let mut cost_dict = HashMap::new();
-        for row in df1.iter() {
-            cost_dict
-                .entry((row.first_review_state, row.first_review_rating))
-                .or_insert_with(Vec::new)
-                .push(row.sum_review_duration);
-        }
-        // calculate the median of the sum_review_duration
-        fn median(x: &mut [u32]) -> u32 {
-            x.sort_unstable();
-            let n = x.len();
-            if n % 2 == 0 {
-                (x[n / 2 - 1] + x[n / 2]) / 2
-            } else {
-                x[n / 2]
-            }
-        }
-        cost_dict
-            .into_iter()
-            .map(|(k, mut v)| (k, median(&mut v)))
-            .collect::<HashMap<_, _>>()
-    };
-
-    // [cost_dict[(1, i)] / 1000 for i in range(1, 5)]
-    let mut learn_costs: [f32; 4] = (1..5)
-        .map(|i| cost_dict.get(&(1, i)).copied().unwrap_or_default() as f32 / 1000f32)
-        .collect_vec()
-        .try_into()
-        .unwrap();
-    // [cost_dict[(2, i)] / 1000 for i in range(1, 5)]
-    let mut review_costs: [f32; 4] = (1..5)
-        .map(|i| cost_dict.get(&(2, i)).copied().unwrap_or_default() as f32 / 1000f32)
-        .collect_vec()
-        .try_into()
-        .unwrap();
-    /*
-        button_usage_dict = (
-        df1.groupby(by=["first_review_state", "first_review_rating"])["card_id"]
-        .count()
-        .to_dict()
-    ) */
-    let button_usage_dict = {
-        let mut button_usage_dict = HashMap::new();
-        for row in df1.iter() {
-            button_usage_dict
-                .entry((row.first_review_state, row.first_review_rating))
-                .or_insert_with(Vec::new)
-                .push(row.card_id); // is this correct?
-        }
+    // Calculate button usage
+    let mut button_usage_dict = HashMap::new();
+    for row in df1.iter() {
         button_usage_dict
-            .into_iter()
-            .map(|(x, y)| (x, y.len() as i64))
-            .collect::<HashMap<_, _>>()
-    };
-    // [button_usage_dict.get((1, i), 0) for i in range(1, 5)]
+            .entry((row.first_review_state, row.first_review_rating))
+            .or_insert_with(Vec::new)
+            .push(row.card_id);
+    }
+    let button_usage_dict = button_usage_dict
+        .into_iter()
+        .map(|(x, y)| (x, y.len() as i64))
+        .collect::<HashMap<_, _>>();
+
+    // Calculate rating probabilities
     let mut learn_buttons: [i64; 4] = (1..=4)
         .map(|i| button_usage_dict.get(&(1, i)).copied().unwrap_or_default())
         .collect_vec()
@@ -863,7 +919,7 @@ pub fn extract_simulator_config(
     if learn_buttons.iter().all(|&x| x == 0) {
         learn_buttons = [1, 1, 1, 1];
     }
-    // [button_usage_dict.get((2, i), 0) for i in range(1, 5)]
+
     let mut review_buttons: [i64; 4] = (1..=4)
         .map(|i| button_usage_dict.get(&(2, i)).copied().unwrap_or_default())
         .collect_vec()
@@ -872,14 +928,14 @@ pub fn extract_simulator_config(
     if review_buttons.iter().skip(1).all(|&x| x == 0) {
         review_buttons = [review_buttons[0], 1, 1, 1];
     }
-    // self.first_rating_prob = self.learn_buttons / self.learn_buttons.sum()
+
     let mut first_rating_prob: [f32; 4] = learn_buttons
         .iter()
         .map(|x| *x as f32 / learn_buttons.iter().sum::<i64>() as f32)
         .collect_vec()
         .try_into()
         .unwrap();
-    // self.review_buttons[1:] / self.review_buttons[1:].sum()
+
     let mut review_rating_prob: [f32; 3] = review_buttons
         .iter()
         .skip(1)
@@ -888,144 +944,45 @@ pub fn extract_simulator_config(
         .try_into()
         .unwrap();
 
-    // df2 = (
-    //     df1.groupby(by=["first_review_state", "first_review_rating"])[[1, 2, 3, 4]]
-    //     .mean()
-    //     .round(2)
-    // )
+    // Calculate transition matrices
+    let mut learning_step_rating_sequences = Vec::new();
+    let mut relearning_step_rating_sequences = Vec::new();
 
-    let df2 = {
-        let mut grouped = HashMap::new();
-        for review in df1 {
-            grouped
-                .entry((review.first_review_state, review.first_review_rating))
-                .or_insert_with(Vec::new)
-                .push(review);
+    for row in df1.iter() {
+        if row.first_review_state == 1 {
+            learning_step_rating_sequences.push(row.same_day_ratings.clone());
+        } else if row.first_review_state == 2 && row.first_review_rating == 1 {
+            relearning_step_rating_sequences.push(row.same_day_ratings.clone());
         }
-        grouped
-            .iter()
-            .map(|((state, rating), group)| {
-                let count = group.len() as f32;
-                let (sum1, sum2, sum3, sum4) =
-                    group
-                        .iter()
-                        .fold((0, 0, 0, 0), |(sum1, sum2, sum3, sum4), review| {
-                            (
-                                sum1 + review.review_rating_counts[0],
-                                sum2 + review.review_rating_counts[1],
-                                sum3 + review.review_rating_counts[2],
-                                sum4 + review.review_rating_counts[3],
-                            )
-                        });
+    }
 
-                let averages = [
-                    (sum1 as f32 / count).to_2_decimal(),
-                    (sum2 as f32 / count).to_2_decimal(),
-                    (sum3 as f32 / count).to_2_decimal(),
-                    (sum4 as f32 / count).to_2_decimal(),
-                ];
+    let (learning_transition_matrix, learning_transition_counts) =
+        calculate_transitions(&learning_step_rating_sequences, 4, 1.0);
+    let (relearning_transition_matrix, relearning_transition_counts) =
+        calculate_transitions(&relearning_step_rating_sequences, 4, 1.0);
 
-                ((*state, *rating), averages)
-            })
-            .collect::<HashMap<_, _>>()
-    };
-    // rating_offset_dict = sum([df2[g] * (g - 3) for g in range(1, 5)]).to_dict()
-    let rating_offset_dict = {
-        let mut rating_offset_dict = HashMap::new();
-        for (k, averages) in df2.iter() {
-            let offset = averages
-                .iter()
-                .enumerate()
-                .map(|(i, &v)| ((i + 1) as f32 - 3.0) * v)
-                .sum::<f32>();
-            rating_offset_dict.insert(k, (offset).to_2_decimal());
-        }
-        rating_offset_dict
-    };
-    // session_len_dict = sum([df2[g] for g in range(1, 5)]).to_dict()
-    let session_len_dict = {
-        let mut session_len_dict = HashMap::new();
-        for (k, averages) in df2.iter() {
-            let sum = averages.iter().sum::<f32>();
-            session_len_dict.insert(k, (sum).to_2_decimal());
-        }
-        session_len_dict
-    };
-    // [rating_offset_dict[(1, i)] for i in range(1, 5)]
-    let mut first_rating_offsets: [f32; 4] = (1..5)
-        .map(|i| rating_offset_dict.get(&(1, i)).copied().unwrap_or_default())
+    let mut learning_step_transitions: [[f32; 4]; 3] = learning_transition_matrix
+        .iter()
+        .take(3)
+        .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
         .collect_vec()
         .try_into()
         .unwrap();
 
-    // [session_len_dict[(1, i)] for i in range(1, 5)]
-    let mut first_session_lens: [f32; 4] = (1..5)
-        .map(|i| session_len_dict.get(&(1, i)).copied().unwrap_or_default())
+    let mut relearning_step_transitions: [[f32; 4]; 3] = relearning_transition_matrix
+        .iter()
+        .take(3)
+        .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
         .collect_vec()
         .try_into()
         .unwrap();
 
-    first_rating_offsets[3] = 0.0;
-    first_session_lens[3] = 0.0;
-
-    // rating_offset_dict[(2, 1)]
-    let mut forget_rating_offset = rating_offset_dict.get(&(2, 1)).copied().unwrap_or_default();
-    // session_len_dict[(2, 1)]
-    let mut forget_session_len = session_len_dict.get(&(2, 1)).copied().unwrap_or_default();
-    ///  t * v0 + (1f32 - t) * v1
+    // Smooth probabilities if requested
     fn lerp(v0: f32, v1: f32, t: f32) -> f32 {
         t * v0 + (1f32 - t) * v1
     }
     if smooth {
         let config = SimulatorConfig::default();
-
-        izip!(
-            &mut learn_costs,
-            &mut first_rating_offsets,
-            &mut first_session_lens,
-            &learn_buttons,
-            &config.learn_costs,
-            &config.first_rating_offsets,
-            &config.first_session_lens,
-        )
-        .for_each(
-            |(
-                learn_cost,
-                first_rating_offset,
-                first_session_len,
-                &learn_button,
-                &config_learn_cost,
-                &config_first_rating_offset,
-                &config_first_session_len,
-            )| {
-                let weight = learn_button as f32 / (50.0 + learn_button as f32);
-                *learn_cost = lerp(*learn_cost, config_learn_cost, weight).to_2_decimal();
-                *first_rating_offset =
-                    lerp(*first_rating_offset, config_first_rating_offset, weight).to_2_decimal();
-                *first_session_len =
-                    lerp(*first_session_len, config_first_session_len, weight).to_2_decimal();
-            },
-        );
-
-        let mut weight = [0.0f32; 4];
-        izip!(
-            &mut weight,
-            &mut review_costs,
-            &review_buttons,
-            &config.review_costs
-        )
-        .for_each(
-            |(weight, review_cost, review_button, config_review_costs)| {
-                *weight = *review_button as f32 / (50.0 + *review_button as f32);
-                *review_cost = lerp(*review_cost, *config_review_costs, *weight).to_2_decimal();
-            },
-        );
-
-        forget_rating_offset =
-            lerp(forget_rating_offset, config.forget_rating_offset, weight[0]).to_2_decimal();
-
-        forget_session_len =
-            lerp(forget_session_len, config.forget_session_len, weight[0]).to_2_decimal();
 
         let total_learn_buttons: i64 = learn_buttons.iter().sum();
         let weight = total_learn_buttons as f32 / (50.0 + total_learn_buttons as f32);
@@ -1033,25 +990,60 @@ pub fn extract_simulator_config(
             .iter_mut()
             .zip(config.first_rating_prob)
             .for_each(|(prob, first_rating_prob)| *prob = lerp(*prob, first_rating_prob, weight));
+
         let total_review_buttons_except_first: i64 = review_buttons[1..].iter().sum();
         let weight = total_review_buttons_except_first as f32
             / (50.0 + total_review_buttons_except_first as f32);
-
         review_rating_prob
             .iter_mut()
             .zip(config.review_rating_prob)
             .for_each(|(prob, review_rating_prob)| *prob = lerp(*prob, review_rating_prob, weight));
+
+        izip!(
+            learning_step_transitions.iter_mut(),
+            config.learning_step_transitions,
+            learning_transition_counts,
+        )
+        .for_each(|(rating_probs, default_rating_probs, transition_counts)| {
+            let total_learning_step_entries = transition_counts.iter().sum::<f32>();
+            let weight = total_learning_step_entries / (50.0 + total_learning_step_entries);
+            izip!(rating_probs.iter_mut(), default_rating_probs)
+                .for_each(|(prob, default_prob)| *prob = lerp(*prob, default_prob, weight));
+        });
+
+        izip!(
+            relearning_step_transitions.iter_mut(),
+            config.relearning_step_transitions,
+            relearning_transition_counts,
+        )
+        .for_each(|(rating_probs, default_rating_probs, transition_counts)| {
+            let total_relearning_step_entries = transition_counts.iter().sum::<f32>();
+            let weight = total_relearning_step_entries / (50.0 + total_relearning_step_entries);
+            izip!(rating_probs.iter_mut(), default_rating_probs)
+                .for_each(|(prob, default_prob)| *prob = lerp(*prob, default_prob, weight));
+        });
+
+        izip!(
+            state_rating_costs.iter_mut(),
+            config.state_rating_costs.iter(),
+            state_rating_counts.iter()
+        )
+        .for_each(|(rating_costs, default_rating_costs, rating_counts)| {
+            izip!(rating_costs.iter_mut(), default_rating_costs, rating_counts).for_each(
+                |(cost, &default_cost, &count)| {
+                    let weight = count as f32 / (50.0 + count as f32);
+                    *cost = lerp(*cost, default_cost, weight).to_2_decimal();
+                },
+            );
+        });
     }
 
     SimulatorConfig {
-        learn_costs,
-        review_costs,
         first_rating_prob,
         review_rating_prob,
-        first_rating_offsets,
-        first_session_lens,
-        forget_rating_offset,
-        forget_session_len,
+        learning_step_transitions,
+        relearning_step_transitions,
+        state_rating_costs,
         ..Default::default()
     }
 }
@@ -1059,10 +1051,67 @@ pub fn extract_simulator_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{convertor_tests::read_collection, DEFAULT_PARAMETERS};
+    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
+    const LEARN_COST: f32 = 42.;
+    const REVIEW_COST: f32 = 43.;
 
     #[test]
-    fn simulator() -> Result<()> {
+    fn test_memory_state_short_term() {
+        let w = DEFAULT_PARAMETERS;
+        let config = SimulatorConfig::default();
+        let mut rng = StdRng::seed_from_u64(42);
+
+        // Expected results for each init_rating
+        let expected_results = [
+            (0.24325262, 8.282093, 41.5), // init_rating = 1
+            (1.7962034, 6.191415, 28.26), // init_rating = 2
+            (3.5362437, 4.8680573, 16.0), // init_rating = 3
+            (16.1507, 2.4824386, 6.38),   // init_rating = 4
+        ];
+
+        // Test for each init_rating from 1 to 4
+        for init_rating in 1..=4 {
+            let s = w[init_rating - 1];
+            let d = init_d(&w, init_rating);
+            dbg!(s, d);
+
+            let result = memory_state_short_term(
+                &w,
+                s,
+                d,
+                Some(init_rating),
+                &config.state_rating_costs[LEARNING],
+                &config.learning_step_transitions,
+                config.learning_step_count,
+                &mut rng,
+            );
+
+            // Check against expected result for this init_rating
+            assert_eq!(result, expected_results[init_rating - 1]);
+        }
+
+        let s = 10.0;
+        let d = 5.0;
+        let post_lapse_s = stability_after_failure(&w, s, 0.9, d);
+        let post_lapse_d = next_d(&w, d, 1);
+        let cost = config.state_rating_costs[REVIEW][0];
+        dbg!(post_lapse_s, post_lapse_d, cost);
+        let mut rng = StdRng::seed_from_u64(2024);
+        let result = memory_state_short_term(
+            &w,
+            post_lapse_s,
+            post_lapse_d,
+            None,
+            &config.state_rating_costs[RELEARNING],
+            &config.relearning_step_transitions,
+            config.relearning_step_count,
+            &mut rng,
+        );
+        assert_eq!(result, (2.4895842, 7.2628965, 7.37));
+    }
+
+    #[test]
+    fn simulator_memorization() -> Result<()> {
         let config = SimulatorConfig::default();
         let SimulationResult {
             memorized_cnt_per_day,
@@ -1070,8 +1119,43 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5918.385
+            6757.842
         );
+        Ok(())
+    }
+
+    #[test]
+    fn simulator_learn_review_costs() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_span: 1,
+            first_rating_prob: [0., 0., 1., 0.],
+            state_rating_costs: [[LEARN_COST; 4], [REVIEW_COST; 4], [0.; 4]],
+            learning_step_count: 1,
+            ..Default::default()
+        };
+
+        let cards = vec![Card {
+            id: 0,
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 0.0,
+            interval: 5.0,
+            lapses: 0,
+        }];
+
+        let SimulationResult {
+            cost_per_day: cost_per_day_learn,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(cost_per_day_learn[0], LEARN_COST);
+
+        let SimulationResult {
+            cost_per_day: cost_per_day_review,
+            ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        assert_eq!(cost_per_day_review[0], REVIEW_COST);
         Ok(())
     }
 
@@ -1122,28 +1206,40 @@ mod tests {
         };
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
+                lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 0.0,
+                interval: 2.0,
+                lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 1.0,
+                interval: 3.0,
+                lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -8.0,
                 due: -1.0,
+                interval: 7.0,
+                lapses: 0,
             },
         ];
         let SimulationResult {
@@ -1159,6 +1255,36 @@ mod tests {
     }
 
     #[test]
+    fn simulate_suspend_on_lapse_count() -> Result<()> {
+        let cards = vec![Card {
+            id: 0,
+            difficulty: 10.0,
+            stability: f32::EPSILON,
+            last_date: -5.0,
+            due: 0.0,
+            interval: 5.0,
+            lapses: 0,
+        }];
+
+        let config = SimulatorConfig {
+            learn_limit: 1,
+            review_limit: 100,
+            learn_span: 200,
+            deck_size: cards.len(),
+            suspend_after_lapses: Some(1),
+            ..Default::default()
+        };
+
+        let SimulationResult {
+            review_cnt_per_day, ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+
+        assert_eq!(1, review_cnt_per_day.iter().sum::<usize>());
+
+        Ok(())
+    }
+
+    #[test]
     fn simulate_with_learn_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_limit: 3,
@@ -1169,10 +1295,13 @@ mod tests {
 
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
+                lapses: 0
             };
             9
         ];
@@ -1199,10 +1328,13 @@ mod tests {
 
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 500.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
+                lapses: 0
             };
             9
         ];
@@ -1213,40 +1345,6 @@ mod tests {
 
         assert_eq!(learn_cnt_per_day.to_vec(), vec![1, 3, 3]);
 
-        Ok(())
-    }
-
-    #[test]
-    fn simulator_learn_review_costs() -> Result<()> {
-        const LEARN_COST: f32 = 42.;
-        const REVIEW_COST: f32 = 43.;
-
-        let config = SimulatorConfig {
-            deck_size: 1,
-            learn_costs: [LEARN_COST; 4],
-            review_costs: [REVIEW_COST; 4],
-            learn_span: 1,
-            ..Default::default()
-        };
-
-        let cards = vec![Card {
-            difficulty: 5.0,
-            stability: 5.0,
-            last_date: -5.0,
-            due: 0.0,
-        }];
-
-        let SimulationResult {
-            cost_per_day: cost_per_day_learn,
-            ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
-        assert_eq!(cost_per_day_learn[0], LEARN_COST);
-
-        let SimulationResult {
-            cost_per_day: cost_per_day_review,
-            ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
-        assert_eq!(cost_per_day_review[0], REVIEW_COST);
         Ok(())
     }
 
@@ -1267,8 +1365,8 @@ mod tests {
         assert_eq!(
             review_cnt_per_day.to_vec(),
             vec![
-                0, 10, 24, 39, 59, 70, 63, 82, 89, 94, 107, 117, 118, 132, 122, 129, 142, 140, 136,
-                151, 150, 161, 142, 170, 150, 185, 178, 186, 194, 190
+                0, 19, 34, 49, 68, 69, 90, 87, 109, 129, 106, 112, 135, 139, 144, 157, 124, 152,
+                179, 172, 188, 188, 173, 200, 181, 200, 199, 200, 200, 200
             ]
         );
         assert_eq!(
@@ -1290,19 +1388,45 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5675.0625
+            6547.6294
         );
         Ok(())
     }
 
     #[test]
-    fn simulate_with_zero_card() -> Result<()> {
+    fn simulate_with_zero_cards() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 0,
             ..Default::default()
         };
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_returns_cards() -> Result<()> {
+        let w = DEFAULT_PARAMETERS;
+
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_span: 1,
+            first_rating_prob: [0., 0., 1., 0.],
+            state_rating_costs: [[LEARN_COST; 4], [REVIEW_COST; 4], [0.; 4]],
+            learning_step_count: 1,
+            ..Default::default()
+        };
+
+        let SimulationResult { cards, .. } =
+            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+
+        assert_eq!(cards.len(), 1);
+        let card = &cards[0];
+        let rating = 3;
+        assert_eq!(card.lapses, 0);
+        assert_eq!(card.stability, w[rating - 1]);
+        assert_eq!(card.difficulty, init_d(&w, rating));
+
         Ok(())
     }
 
@@ -1314,20 +1438,158 @@ mod tests {
         };
         let cards = vec![
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
+                interval: 5.0,
+                lapses: 0,
             },
             Card {
+                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 0.0,
+                interval: 2.0,
+                lapses: 0,
             },
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
+        Ok(())
+    }
+
+    #[test]
+    fn learn_does_not_affect_correct_count() -> Result<()> {
+        let mut w = DEFAULT_PARAMETERS;
+        w[3] = 10000.;
+
+        let config = SimulatorConfig {
+            first_rating_prob: [0., 0., 0., 1.],
+            deck_size: 5000,
+            learn_limit: 10,
+            ..Default::default()
+        };
+
+        let cards = vec![
+            Card {
+                id: 0,
+                difficulty: 5.0,
+                stability: f32::INFINITY,
+                last_date: -5.0,
+                due: 1.0,
+                interval: 5.0,
+                lapses: 0,
+            };
+            5
+        ];
+
+        let SimulationResult {
+            correct_cnt_per_day,
+            review_cnt_per_day,
+            ..
+        } = simulate(&config, &w, 0.9, None, Some(cards))?;
+
+        assert_eq!(correct_cnt_per_day[0], 0);
+        assert_eq!(review_cnt_per_day[1], 5);
+        assert_eq!(correct_cnt_per_day[1], 5);
+
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_post_scheduling_fn() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 10,
+            learn_span: 10,
+            learn_limit: 1,
+            post_scheduling_fn: Some(PostSchedulingFn(Arc::new(|_, _, _, _, _| 1.0))),
+            ..Default::default()
+        };
+        let SimulationResult {
+            review_cnt_per_day, ..
+        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        assert_eq!(&review_cnt_per_day, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9,]);
+        Ok(())
+    }
+
+    #[test]
+    fn simulate_with_review_priority_fn() -> Result<()> {
+        fn calc_cost_per_memorization(
+            memorized_cnt_per_day: &Parameters,
+            cost_per_day: &Parameters,
+        ) -> f32 {
+            let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
+            let total_cost = cost_per_day.iter().sum::<f32>();
+            total_cost / total_memorized
+        }
+        let mut config = SimulatorConfig {
+            deck_size: 1000,
+            learn_span: 100,
+            learn_limit: 10,
+            review_limit: 5,
+            ..Default::default()
+        };
+
+        // Define a macro to set the review priority fn, run simulation and assert the expected cost.
+        macro_rules! run_test {
+            ($review_priority:expr, $expected:expr) => {{
+                config.review_priority_fn = $review_priority;
+                let SimulationResult {
+                    memorized_cnt_per_day,
+                    cost_per_day,
+                    ..
+                } = simulate(&config, &DEFAULT_PARAMETERS, 0.8, None, None)?;
+                let cost_per_memorization =
+                    calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
+                println!("cost_per_memorization: {}", cost_per_memorization);
+                assert!((cost_per_memorization - $expected).abs() < 0.01);
+                Ok(())
+            }};
+        }
+
+        macro_rules! wrap {
+            ($f:expr) => {
+                Some(ReviewPriorityFn(std::sync::Arc::new($f)))
+            };
+        }
+        println!("Default behavior: low difficulty cards reviewed first.");
+        run_test!(None, 42.339848)?;
+        println!("High difficulty cards reviewed first.");
+        run_test!(
+            wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
+            43.859474
+        )?;
+        println!("Low retrievability cards reviewed first.");
+        run_test!(
+            wrap!(|card: &Card| (card.retrievability(&DEFAULT_PARAMETERS) * 1000.0) as i32),
+            43.482998
+        )?;
+        println!("High retrievability cards reviewed first.");
+        run_test!(
+            wrap!(|card: &Card| -(card.retrievability(&DEFAULT_PARAMETERS) * 1000.0) as i32),
+            41.110588
+        )?;
+        println!("High stability cards reviewed first.");
+        run_test!(
+            wrap!(|card: &Card| -(card.stability * 100.0) as i32),
+            41.006256
+        )?;
+        println!("Low stability cards reviewed first.");
+        run_test!(
+            wrap!(|card: &Card| (card.stability * 100.0) as i32),
+            43.077534
+        )?;
+        println!("Long interval cards reviewed first.");
+        run_test!(wrap!(|card: &Card| -card.interval as i32), 40.92563)?;
+        println!("Short interval cards reviewed first.");
+        run_test!(wrap!(|card: &Card| card.interval as i32), 43.282585)?;
+        println!("Early scheduled due cards reviewed first.");
+        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 43.309185)?;
+        println!("Late scheduled due cards reviewed first.");
+        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 42.79738)?;
         Ok(())
     }
 
@@ -1343,9 +1605,10 @@ mod tests {
             learn_limit,
             ..Default::default()
         };
-        let optimal_retention = fsrs.optimal_retention(&config, &[], |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.8213668);
-        assert!(fsrs.optimal_retention(&config, &[1.], |_v| true).is_err());
+        let optimal_retention = fsrs.optimal_retention(&config, &[], |_| true).unwrap();
+        dbg!(optimal_retention);
+        assert!((optimal_retention - 0.7).abs() < 0.01);
+        assert!(fsrs.optimal_retention(&config, &[1.], |_| true).is_err());
         Ok(())
     }
 
@@ -1364,7 +1627,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs.optimal_retention(&config, &param, |_v| true).unwrap();
-        assert_eq!(optimal_retention, 0.85450846);
+        assert_eq!(optimal_retention, 0.7);
         Ok(())
     }
 
@@ -1377,14 +1640,23 @@ mod tests {
         assert_eq!(
             simulator_config,
             SimulatorConfig {
-                learn_costs: [30.061, 0., 17.298, 12.352],
-                review_costs: [19.139, 6.887, 5.83, 4.002],
                 first_rating_prob: [0.19349411, 0., 0.14357824, 0.662_927_6],
                 review_rating_prob: [0.07351815, 0.9011334, 0.025348445],
-                first_rating_offsets: [1.64, 0., 0.69, 0.],
-                first_session_lens: [2.74, 0., 1.32, 0.],
-                forget_rating_offset: 1.28,
-                forget_session_len: 1.77,
+                learning_step_transitions: [
+                    [0.11098131, 0.0011682243, 0.24883178, 0.6390187],
+                    [0.25, 0.25, 0.25, 0.25],
+                    [0.017305315, 0.0012360939, 0.53646475, 0.44499382]
+                ],
+                relearning_step_transitions: [
+                    [0.040342297, 0.001222494, 0.22249389, 0.7359413],
+                    [0.25, 0.25, 0.25, 0.25],
+                    [0.028571429, 0.007142857, 0.55, 0.41428572]
+                ],
+                state_rating_costs: [
+                    [9.922, 0.0, 7.524, 5.467],
+                    [9.318, 6.84, 5.83, 3.991],
+                    [9.912, 0.0, 4.671, 4.731]
+                ],
                 ..Default::default()
             }
         );
@@ -1393,14 +1665,23 @@ mod tests {
         assert_eq!(
             simulator_config,
             SimulatorConfig {
-                learn_costs: [30.31, 24.3, 16.98, 12.23],
-                review_costs: [19.37, 7.12, 5.84, 4.21],
                 first_rating_prob: [0.19413717, 0.0012997796, 0.1484375, 0.65612555],
                 review_rating_prob: [0.07409216, 0.900103, 0.025804851],
-                first_rating_offsets: [1.48, -0.15, 0.63, 0.],
-                first_session_lens: [2.69, 1.28, 1.27, 0.],
-                forget_rating_offset: 1.19,
-                forget_session_len: 1.73,
+                learning_step_transitions: [
+                    [0.12520419, 0.0045695365, 0.26328918, 0.6069371],
+                    [0.059351854, 0.44009256, 0.43120366, 0.06935185],
+                    [0.019313155, 0.0038998832, 0.5544936, 0.42229337]
+                ],
+                relearning_step_transitions: [
+                    [0.050443545, 0.004855989, 0.24766704, 0.6970334],
+                    [0.06481481, 0.44796297, 0.43287036, 0.05435185],
+                    [0.048842106, 0.043, 0.5964737, 0.31168422]
+                ],
+                state_rating_costs: [
+                    [10.08, 12.26, 7.54, 5.47],
+                    [9.54, 7.08, 5.84, 4.2],
+                    [10.26, 10.0, 5.08, 4.76]
+                ],
                 ..Default::default()
             }
         );

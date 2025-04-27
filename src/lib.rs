@@ -17,11 +17,13 @@ pub use convertor_tests::{anki_to_fsrs, to_revlog_entry};
 pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
 pub use inference::{
-    ItemProgress, ItemState, MemoryState, ModelEvaluation, NextStates, DEFAULT_PARAMETERS,
+    DEFAULT_PARAMETERS, FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, ItemProgress, ItemState,
+    MemoryState, ModelEvaluation, NextStates,
 };
 pub use model::FSRS;
 pub use optimal_retention::{
-    extract_simulator_config, simulate, Card, RevlogEntry, RevlogReviewKind, SimulatorConfig,
+    Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind, SimulationResult,
+    SimulatorConfig, extract_simulator_config, simulate,
 };
-pub use training::CombinedProgressState;
+pub use training::{CombinedProgressState, ComputeParametersInput};
 pub use training::Progress;
