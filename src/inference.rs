@@ -286,7 +286,7 @@ impl<B: Backend> FSRS<B> {
         let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
 
         for chunk in weighted_items.chunks(512) {
-            let batch = batcher.batch(chunk.to_vec());
+            let batch = batcher.batch(chunk.to_vec(), &self.device());
             let (_state, retrievability) = infer::<B>(model, batch.clone());
             let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
             let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
@@ -361,7 +361,7 @@ impl<B: Backend> FSRS<B> {
         let fsrs_other = Self::new_with_backend(Some(parameters), self.device())?;
         let model_other = fsrs_other.model();
         for chunk in weighted_items.chunks(512) {
-            let batch = batcher.batch(chunk.to_vec());
+            let batch = batcher.batch(chunk.to_vec(), &self.device());
 
             let (_state, retrievability) = infer::<B>(model_self, batch.clone());
             let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();

@@ -304,7 +304,7 @@ fn conversion_works() {
 
     let device = NdArrayDevice::Cpu;
     let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
-    let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()]);
+    let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()], &device);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     assert_eq!(
         res.r_historys

@@ -16,11 +16,11 @@ pub(crate) struct BatchTensorDataset<B: Backend> {
 impl<B: Backend> BatchTensorDataset<B> {
     /// Creates a new shuffled dataset.
     pub fn new(dataset: FSRSDataset, batch_size: usize, device: B::Device) -> Self {
-        let batcher = FSRSBatcher::<B>::new(device);
+        let batcher = FSRSBatcher::<B>::new(device.clone());
         let dataset = dataset
             .items
             .chunks(batch_size)
-            .map(|items| batcher.batch(items.to_vec()))
+            .map(|items| batcher.batch(items.to_vec(), &device))
             .collect();
         Self { dataset }
     }

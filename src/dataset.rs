@@ -97,8 +97,8 @@ pub(crate) struct FSRSBatch<B: Backend> {
     pub weights: Tensor<B, 1, Float>,
 }
 
-impl<B: Backend> Batcher<WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
-    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>) -> FSRSBatch<B> {
+impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
+    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, _device: &B::Device) -> FSRSBatch<B> {
         let pad_size = weighted_items
             .iter()
             .map(|x| x.item.reviews.len())
@@ -297,6 +297,8 @@ pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedF
 
 #[cfg(test)]
 mod tests {
+    use burn::tensor::Tolerance;
+
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
@@ -404,34 +406,34 @@ mod tests {
             .into_iter()
             .map(|item| WeightedFSRSItem { weight: 1.0, item })
             .collect();
-        let batch = batcher.batch(items);
-        batch.t_historys.to_data().assert_approx_eq(
+        let batch = batcher.batch(items, &device);
+        batch.t_historys.to_data().assert_approx_eq::<f32>(
             &TensorData::from([
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 5.0, 0.0, 2.0, 2.0, 2.0, 0.0, 1.0],
                 [0.0, 0.0, 0.0, 0.0, 6.0, 6.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 16.0, 0.0, 0.0],
             ]),
-            5,
+            Tolerance::absolute(1e-5),
         );
-        batch.r_historys.to_data().assert_approx_eq(
+        batch.r_historys.to_data().assert_approx_eq::<f32>(
             &TensorData::from([
                 [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 1.0, 1.0],
                 [0.0, 3.0, 0.0, 3.0, 3.0, 3.0, 0.0, 1.0],
                 [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0],
             ]),
-            5,
+            Tolerance::absolute(1e-5),
         );
 
-        batch.delta_ts.to_data().assert_approx_eq(
+        batch.delta_ts.to_data().assert_approx_eq::<f32>(
             &TensorData::from([5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0]),
-            5,
+            Tolerance::absolute(1e-5),
         );
-        batch
-            .labels
-            .to_data()
-            .assert_approx_eq(&TensorData::from([1, 1, 1, 1, 1, 1, 0, 1]), 5);
+        batch.labels.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([1, 1, 1, 1, 1, 1, 0, 1]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
