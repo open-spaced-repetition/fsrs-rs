@@ -857,6 +857,13 @@ mod tests {
         assert_eq!(splits[3].test_items.len(), 1);
         assert_eq!(splits[4].train_items.len(), 5);
         assert_eq!(splits[4].test_items.len(), 1);
+
+        let splits = TimeSeriesSplit::split(items[..5].to_vec(), 5);
+        assert!(splits.is_empty());
+
+        let splits = TimeSeriesSplit::split(items[..6].to_vec(), 0);
+        assert!(splits.is_empty());
+
         Ok(())
     }
 
