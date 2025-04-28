@@ -268,7 +268,7 @@ impl<B: Backend> FSRS<B> {
     /// 1. Use training data to compute parameters
     /// 2. Use test data to make predictions
     /// 3. Collect all predictions
-    /// 
+    ///
     /// Finally, evaluate all predictions together
     ///
     /// # Arguments
