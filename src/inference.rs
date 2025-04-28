@@ -602,38 +602,48 @@ pub struct TimeSeriesSplit {
 
 impl TimeSeriesSplit {
     /// Split the dataset into training and validation sets based on time order.
-    /// The validation set will be the last n_splits portions of the data.
+    /// Creates n_splits folds where each fold's test set is a single segment,
+    /// and the training set consists of all segments before the test segment.
+    ///
+    /// For example, with n_splits=5, the folds would be:
+    /// Fold 0: Train=[0], Test=[1]
+    /// Fold 1: Train=[0,1], Test=[2]
+    /// Fold 2: Train=[0,1,2], Test=[3]
+    /// Fold 3: Train=[0,1,2,3], Test=[4]
+    /// Fold 4: Train=[0,1,2,3,4], Test=[5]
     ///
     /// # Arguments
-    /// * `dataset` - The dataset to split
+    /// * `sorted_items` - The dataset to split, assumed to be in time order
     /// * `n_splits` - Number of splits to create
     ///
     /// # Returns
     /// A vector of TimeSeriesSplit, each containing train and validation items
-    pub fn split(dataset: Vec<FSRSItem>, n_splits: usize) -> Vec<TimeSeriesSplit> {
-        if dataset.is_empty() || n_splits == 0 {
+    pub fn split(sorted_items: Vec<FSRSItem>, n_splits: usize) -> Vec<TimeSeriesSplit> {
+        let total_items = sorted_items.len();
+        if total_items < n_splits + 1 || n_splits == 0 {
             return vec![];
         }
 
-        // Sort items by their last review time
-        let mut sorted_items = dataset;
-        sorted_items.sort_by(|a, b| {
-            let a_last = a.reviews.last().map(|r| r.delta_t).unwrap_or(0);
-            let b_last = b.reviews.last().map(|r| r.delta_t).unwrap_or(0);
-            a_last.cmp(&b_last)
-        });
-
-        let total_items = sorted_items.len();
-        let split_size = total_items / (n_splits + 1);
+        let segment_size = total_items / (n_splits + 1);
+        if segment_size == 0 {
+            return vec![];
+        }
 
         (0..n_splits)
             .map(|i| {
-                let split_point = total_items - (n_splits - i) * split_size;
-                let (train_items, val_items) = sorted_items.split_at(split_point);
+                // Calculate the start of the test segment
+                let test_start = (i + 1) * segment_size;
+                // Calculate the end of the test segment (or the end of the data)
+                let test_end = if i == n_splits - 1 {
+                    total_items
+                } else {
+                    (i + 2) * segment_size
+                };
 
+                // Create the split
                 TimeSeriesSplit {
-                    train_items: train_items.to_vec(),
-                    test_items: val_items.to_vec(),
+                    train_items: sorted_items[0..test_start].to_vec(),
+                    test_items: sorted_items[test_start..test_end].to_vec(),
                 }
             })
             .collect()
@@ -786,6 +796,79 @@ mod tests {
             .partition(|item| item.long_term_review_cnt() == 1);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         let items = [pretrainset, trainset].concat();
+
+        let fsrs = FSRS::new(Some(&[
+            0.335561,
+            1.6840581,
+            5.166598,
+            11.659035,
+            7.466705,
+            0.7205129,
+            2.622295,
+            0.001,
+            1.315015,
+            0.10468433,
+            0.8349206,
+            1.822305,
+            0.12473127,
+            0.26111007,
+            2.3030033,
+            0.13117497,
+            3.0265594,
+            0.41468078,
+            0.09714265,
+            0.106824234,
+            0.20447432,
+        ]))?;
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.205_835_95, 0.026_072_025]);
+
+        let fsrs = FSRS::new(Some(&[]))?;
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.217_924_48, 0.039_937_04]);
+
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
+        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.208_657_4, 0.030_946_612]);
+
+        let (self_by_other, other_by_self) = fsrs
+            .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
+            .unwrap();
+
+        [self_by_other, other_by_self].assert_approx_eq([0.015_672_438, 0.028_422_62]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_time_series_split() -> Result<()> {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let splits = TimeSeriesSplit::split(items[..6].to_vec(), 5);
+        assert_eq!(splits.len(), 5);
+        assert_eq!(splits[0].train_items.len(), 1);
+        assert_eq!(splits[0].test_items.len(), 1);
+        assert_eq!(splits[1].train_items.len(), 2);
+        assert_eq!(splits[1].test_items.len(), 1);
+        assert_eq!(splits[2].train_items.len(), 3);
+        assert_eq!(splits[2].test_items.len(), 1);
+        assert_eq!(splits[3].train_items.len(), 4);
+        assert_eq!(splits[3].test_items.len(), 1);
+        assert_eq!(splits[4].train_items.len(), 5);
+        assert_eq!(splits[4].test_items.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_evaluate_with_time_series_splits() -> Result<()> {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+            .into_iter()
+            .partition(|item| item.long_term_review_cnt() == 1);
+        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+        let items = [pretrainset, trainset].concat();
         let input = ComputeParametersInput {
             train_set: items.clone(),
             progress: None,
@@ -798,7 +881,18 @@ mod tests {
             .evaluate_with_time_series_splits(input.clone(), |_| true)
             .unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.21433567, 0.035302162]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19735593, 0.027728133]);
+
+        let result = fsrs.evaluate_with_time_series_splits(
+            ComputeParametersInput {
+                train_set: items[..5].to_vec(),
+                progress: None,
+                enable_short_term: true,
+                num_relearning_steps: None,
+            },
+            |_| true,
+        );
+        assert!(result.is_err());
         Ok(())
     }
 
