@@ -2,14 +2,13 @@ use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
 use crate::model::{FSRS, Get, MemoryStateTensors};
+use crate::training::ComputeParametersInput;
 use burn::nn::loss::Reduction;
 use burn::tensor::cast::ToElement;
 use burn::tensor::{Shape, Tensor, TensorData};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
-use crate::dataset::{
-    FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items, recency_weighted_fsrs_items,
-};
+use crate::dataset::{FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items};
 use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
@@ -264,8 +263,19 @@ impl<B: Backend> FSRS<B> {
         })
     }
 
-    /// Determine how well the model and parameters predict performance.
-    /// Parameters must have been provided when calling FSRS::new().
+    /// Determine how well the model and parameters predict performance using time series splits.
+    /// For each split:
+    /// 1. Use training data to compute parameters
+    /// 2. Use test data to make predictions
+    /// 3. Collect all predictions
+    /// 4. Evaluate all predictions together
+    ///
+    /// # Arguments
+    /// * `items` - The dataset to evaluate
+    /// * `progress` - A callback function to report progress
+    ///
+    /// # Returns
+    /// A ModelEvaluation containing metrics for all predictions
     pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
     where
         F: FnMut(ItemProgress) -> bool,
@@ -273,58 +283,38 @@ impl<B: Backend> FSRS<B> {
         if items.is_empty() {
             return Err(FSRSError::NotEnoughData);
         }
-        let weighted_items = recency_weighted_fsrs_items(items);
-        let batcher = FSRSBatcher::new(self.device());
-        let mut all_retrievability = vec![];
-        let mut all_labels = vec![];
-        let mut all_weights = vec![];
-        let mut progress_info = ItemProgress {
-            current: 0,
-            total: weighted_items.len(),
-        };
-        let model = self.model();
-        let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
 
-        for chunk in weighted_items.chunks(512) {
-            let batch = batcher.batch(chunk.to_vec(), &self.device());
-            let (_state, retrievability) = infer::<B>(model, batch.clone());
-            let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
-            let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
-            all_retrievability.push(retrievability);
-            all_labels.push(batch.labels);
-            all_weights.push(batch.weights);
-            izip!(chunk, pred, true_val).for_each(|(weighted_item, p, y)| {
-                let bin = weighted_item.item.r_matrix_index();
-                let value = r_matrix.entry(bin).or_default();
-                value.predicted += p;
-                value.actual += y as f32;
-                value.count += 1.0;
-                value.weight += weighted_item.weight;
-            });
-            progress_info.current += chunk.len();
-            if !progress(progress_info) {
-                return Err(FSRSError::Interrupted);
-            }
+        let splits = TimeSeriesSplit::split(items, 5);
+        let mut all_predictions = Vec::new();
+
+        for split in splits.into_iter() {
+            let mut progress_info = ItemProgress {
+                current: 0,
+                total: split.train_items.len() + split.test_items.len(),
+            };
+
+            // Compute parameters on training data
+            let input = ComputeParametersInput {
+                train_set: split.train_items.clone(),
+                enable_short_term: true,
+                num_relearning_steps: Some(0),
+                progress: None,
+            };
+            let parameters = self.compute_parameters(input)?;
+
+            // Make predictions on test data
+            let predictions =
+                batch_predict::<B, _>(split.test_items, &parameters, &mut |p: ItemProgress| {
+                    progress_info.current = split.train_items.len() + p.current;
+                    progress(progress_info)
+                })?;
+
+            // Collect predictions
+            all_predictions.extend(predictions);
         }
-        let rmse = (r_matrix
-            .values()
-            .map(|v| {
-                let pred = v.predicted / v.count;
-                let real = v.actual / v.count;
-                (pred - real).powi(2) * v.weight
-            })
-            .sum::<f32>()
-            / r_matrix.values().map(|v| v.weight).sum::<f32>())
-        .sqrt();
-        let all_retrievability = Tensor::cat(all_retrievability, 0);
-        let all_labels = Tensor::cat(all_labels, 0).float();
-        let all_weights = Tensor::cat(all_weights, 0);
-        let loss =
-            BCELoss::new().forward(all_retrievability, all_labels, all_weights, Reduction::Auto);
-        Ok(ModelEvaluation {
-            log_loss: loss.into_scalar().to_f32(),
-            rmse_bins: rmse,
-        })
+
+        // Evaluate all predictions together
+        evaluate::<B, _>(all_predictions, &mut |p: ItemProgress| progress(p))
     }
 
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
@@ -392,6 +382,144 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PredictedFSRSItem {
+    pub item: FSRSItem,
+    pub retrievability: f32,
+}
+
+/// Batch predict retrievability for a set of items.
+///
+/// # Arguments
+/// * `items` - The dataset to predict
+/// * `parameters` - The model parameters to use for prediction
+/// * `progress` - A callback function to report progress
+///
+/// # Returns
+/// A vector of PredictedFSRSItem containing the original items and their predicted retrievability
+fn batch_predict<B: Backend, F>(
+    items: Vec<FSRSItem>,
+    parameters: &[f32],
+    mut progress: F,
+) -> Result<Vec<PredictedFSRSItem>>
+where
+    F: FnMut(ItemProgress) -> bool,
+{
+    if items.is_empty() {
+        return Err(FSRSError::NotEnoughData);
+    }
+    let weighted_items = constant_weighted_fsrs_items(items);
+    let batcher = FSRSBatcher::new(B::Device::default());
+    let mut progress_info = ItemProgress {
+        current: 0,
+        total: weighted_items.len(),
+    };
+    let fsrs = FSRS::<B>::new_with_backend(Some(parameters), B::Device::default())?;
+    let model = fsrs.model();
+    let mut predicted_items = Vec::with_capacity(weighted_items.len());
+
+    for chunk in weighted_items.chunks(512) {
+        let batch = batcher.batch(chunk.to_vec(), &B::Device::default());
+        let (_state, retrievability) = infer::<B>(model, batch.clone());
+        let pred = retrievability.to_data().to_vec::<f32>().unwrap();
+
+        for (weighted_item, p) in chunk.iter().zip(pred) {
+            predicted_items.push(PredictedFSRSItem {
+                item: weighted_item.item.clone(),
+                retrievability: p,
+            });
+        }
+
+        progress_info.current += chunk.len();
+        if !progress(progress_info) {
+            return Err(FSRSError::Interrupted);
+        }
+    }
+
+    Ok(predicted_items)
+}
+
+/// Evaluate model predictions against ground truth.
+///
+/// # Arguments
+/// * `predicted_items` - The items with their predicted retrievability values
+/// * `progress` - A callback function to report progress
+///
+/// # Returns
+/// A ModelEvaluation containing log loss and RMSE metrics
+fn evaluate<B: Backend, F>(
+    predicted_items: Vec<PredictedFSRSItem>,
+    mut progress: F,
+) -> Result<ModelEvaluation>
+where
+    F: FnMut(ItemProgress) -> bool,
+{
+    if predicted_items.is_empty() {
+        return Err(FSRSError::NotEnoughData);
+    }
+    let weighted_items =
+        constant_weighted_fsrs_items(predicted_items.iter().map(|p| p.item.clone()).collect());
+    let batcher = FSRSBatcher::new(B::Device::default());
+    let mut all_labels = vec![];
+    let mut all_weights = vec![];
+    let mut progress_info = ItemProgress {
+        current: 0,
+        total: weighted_items.len(),
+    };
+    let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+
+    for chunk in weighted_items.chunks(512) {
+        let batch = batcher.batch(chunk.to_vec(), &B::Device::default());
+        let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
+        all_labels.push(batch.labels);
+        all_weights.push(batch.weights);
+
+        for (weighted_item, y) in chunk.iter().zip(true_val) {
+            let pred = predicted_items[progress_info.current].retrievability;
+            let bin = weighted_item.item.r_matrix_index();
+            let value = r_matrix.entry(bin).or_default();
+            value.predicted += pred;
+            value.actual += y as f32;
+            value.count += 1.0;
+            value.weight += weighted_item.weight;
+        }
+
+        progress_info.current += chunk.len();
+        if !progress(progress_info) {
+            return Err(FSRSError::Interrupted);
+        }
+    }
+
+    let rmse = (r_matrix
+        .values()
+        .map(|v| {
+            let pred = v.predicted / v.count;
+            let real = v.actual / v.count;
+            (pred - real).powi(2) * v.weight
+        })
+        .sum::<f32>()
+        / r_matrix.values().map(|v| v.weight).sum::<f32>())
+    .sqrt();
+
+    let all_labels = Tensor::cat(all_labels, 0).float();
+    let all_weights = Tensor::cat(all_weights, 0);
+    let all_retrievability: Tensor<B, 1> = Tensor::from_data(
+        TensorData::new(
+            predicted_items.iter().map(|p| p.retrievability).collect(),
+            Shape {
+                dims: vec![predicted_items.len()],
+            },
+        ),
+        &B::Device::default(),
+    );
+
+    let loss = BCELoss::new().forward(all_retrievability, all_labels, all_weights, Reduction::Auto);
+    Ok(ModelEvaluation {
+        log_loss: loss.into_scalar().to_f32(),
+        rmse_bins: rmse,
+    })
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct ModelEvaluation {
     pub log_loss: f32,
@@ -416,6 +544,52 @@ pub struct ItemState {
 pub struct ItemProgress {
     pub current: usize,
     pub total: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeSeriesSplit {
+    pub train_items: Vec<FSRSItem>,
+    pub test_items: Vec<FSRSItem>,
+}
+
+impl TimeSeriesSplit {
+    /// Split the dataset into training and validation sets based on time order.
+    /// The validation set will be the last n_splits portions of the data.
+    ///
+    /// # Arguments
+    /// * `dataset` - The dataset to split
+    /// * `n_splits` - Number of splits to create
+    ///
+    /// # Returns
+    /// A vector of TimeSeriesSplit, each containing train and validation items
+    pub fn split(dataset: Vec<FSRSItem>, n_splits: usize) -> Vec<TimeSeriesSplit> {
+        if dataset.is_empty() || n_splits == 0 {
+            return vec![];
+        }
+
+        // Sort items by their last review time
+        let mut sorted_items = dataset;
+        sorted_items.sort_by(|a, b| {
+            let a_last = a.reviews.last().map(|r| r.delta_t).unwrap_or(0);
+            let b_last = b.reviews.last().map(|r| r.delta_t).unwrap_or(0);
+            a_last.cmp(&b_last)
+        });
+
+        let total_items = sorted_items.len();
+        let split_size = total_items / (n_splits + 1);
+
+        (0..n_splits)
+            .map(|i| {
+                let split_point = total_items - (n_splits - i) * split_size;
+                let (train_items, val_items) = sorted_items.split_at(split_point);
+
+                TimeSeriesSplit {
+                    train_items: train_items.to_vec(),
+                    test_items: val_items.to_vec(),
+                }
+            })
+            .collect()
+    }
 }
 
 fn get_bin(x: f32, bins: i32) -> i32 {
