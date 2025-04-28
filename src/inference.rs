@@ -277,7 +277,7 @@ impl<B: Backend> FSRS<B> {
     ///
     /// # Returns
     /// A ModelEvaluation containing metrics for all predictions
-    pub fn evaluate(
+    pub fn evaluate<F>(
         &self,
         ComputeParametersInput {
             train_set,
@@ -285,13 +285,21 @@ impl<B: Backend> FSRS<B> {
             num_relearning_steps,
             ..
         }: ComputeParametersInput,
-    ) -> Result<ModelEvaluation> {
+        mut progress: F,
+    ) -> Result<ModelEvaluation>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
         if train_set.is_empty() {
             return Err(FSRSError::NotEnoughData);
         }
 
         let splits = TimeSeriesSplit::split(train_set, 5);
         let mut all_predictions = Vec::new();
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: splits.len(),
+        };
 
         for split in splits.into_iter() {
             // Compute parameters on training data
@@ -308,6 +316,11 @@ impl<B: Backend> FSRS<B> {
 
             // Collect predictions
             all_predictions.extend(predictions);
+
+            progress_info.current += 1;
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
         }
 
         // Evaluate all predictions together
@@ -716,7 +729,7 @@ mod tests {
         };
 
         let fsrs = FSRS::new(None)?;
-        let metrics = fsrs.evaluate(input.clone()).unwrap();
+        let metrics = fsrs.evaluate(input.clone(), |_| true).unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.21433567, 0.035302162]);
         Ok(())
