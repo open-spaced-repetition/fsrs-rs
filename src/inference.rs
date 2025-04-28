@@ -8,7 +8,9 @@ use burn::tensor::cast::ToElement;
 use burn::tensor::{Shape, Tensor, TensorData};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
-use crate::dataset::{FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items};
+use crate::dataset::{
+    FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items, recency_weighted_fsrs_items,
+};
 use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
@@ -263,6 +265,69 @@ impl<B: Backend> FSRS<B> {
         })
     }
 
+    /// Determine how well the model and parameters predict performance.
+    /// Parameters must have been provided when calling FSRS::new().
+    pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if items.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
+        let weighted_items = recency_weighted_fsrs_items(items);
+        let batcher = FSRSBatcher::new(self.device());
+        let mut all_retrievability = vec![];
+        let mut all_labels = vec![];
+        let mut all_weights = vec![];
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: weighted_items.len(),
+        };
+        let model = self.model();
+        let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+
+        for chunk in weighted_items.chunks(512) {
+            let batch = batcher.batch(chunk.to_vec(), &self.device());
+            let (_state, retrievability) = infer::<B>(model, batch.clone());
+            let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
+            let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
+            all_retrievability.push(retrievability);
+            all_labels.push(batch.labels);
+            all_weights.push(batch.weights);
+            izip!(chunk, pred, true_val).for_each(|(weighted_item, p, y)| {
+                let bin = weighted_item.item.r_matrix_index();
+                let value = r_matrix.entry(bin).or_default();
+                value.predicted += p;
+                value.actual += y as f32;
+                value.count += 1.0;
+                value.weight += weighted_item.weight;
+            });
+            progress_info.current += chunk.len();
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+        let rmse = (r_matrix
+            .values()
+            .map(|v| {
+                let pred = v.predicted / v.count;
+                let real = v.actual / v.count;
+                (pred - real).powi(2) * v.weight
+            })
+            .sum::<f32>()
+            / r_matrix.values().map(|v| v.weight).sum::<f32>())
+        .sqrt();
+        let all_retrievability = Tensor::cat(all_retrievability, 0);
+        let all_labels = Tensor::cat(all_labels, 0).float();
+        let all_weights = Tensor::cat(all_weights, 0);
+        let loss =
+            BCELoss::new().forward(all_retrievability, all_labels, all_weights, Reduction::Auto);
+        Ok(ModelEvaluation {
+            log_loss: loss.into_scalar().to_f32(),
+            rmse_bins: rmse,
+        })
+    }
+
     /// Determine how well the model and parameters predict performance using time series splits.
     /// For each split:
     /// 1. Use training data to compute parameters
@@ -277,7 +342,7 @@ impl<B: Backend> FSRS<B> {
     ///
     /// # Returns
     /// A ModelEvaluation containing metrics for all predictions
-    pub fn evaluate<F>(
+    pub fn evaluate_with_time_series_splits<F>(
         &self,
         ComputeParametersInput {
             train_set,
@@ -729,7 +794,9 @@ mod tests {
         };
 
         let fsrs = FSRS::new(None)?;
-        let metrics = fsrs.evaluate(input.clone(), |_| true).unwrap();
+        let metrics = fsrs
+            .evaluate_with_time_series_splits(input.clone(), |_| true)
+            .unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.21433567, 0.035302162]);
         Ok(())
