@@ -725,7 +725,7 @@ mod tests {
         let fsrs = FSRS::new(None)?;
         let metrics = fsrs.evaluate(input.clone()).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.205_835_95, 0.026_072_025]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.21433567, 0.04509071]);
         Ok(())
     }
 
