@@ -8,7 +8,7 @@ use burn::tensor::cast::ToElement;
 use burn::tensor::{Shape, Tensor, TensorData};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
-use crate::dataset::{FSRSBatch, FSRSBatcher, WeightedFSRSItem, constant_weighted_fsrs_items};
+use crate::dataset::{FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items};
 use crate::error::Result;
 use crate::model::Model;
 use crate::training::BCELoss;
@@ -380,7 +380,7 @@ impl<B: Backend> FSRS<B> {
 
 #[derive(Debug, Clone)]
 pub struct PredictedFSRSItem {
-    pub item: WeightedFSRSItem,
+    pub item: FSRSItem,
     pub retrievability: f32,
 }
 
@@ -416,7 +416,7 @@ where
 
         for (weighted_item, p) in chunk.iter().zip(pred) {
             predicted_items.push(PredictedFSRSItem {
-                item: weighted_item.clone(),
+                item: weighted_item.item.clone(),
                 retrievability: p,
             });
         }
@@ -437,29 +437,18 @@ fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<Model
     if predicted_items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
-    let batcher = FSRSBatcher::new(B::Device::default());
     let mut all_labels = vec![];
-    let mut all_weights = vec![];
     let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
-    for chunk in predicted_items.chunks(512) {
-        let weighted_items = chunk
-            .iter()
-            .map(|p| p.item.clone())
-            .collect::<Vec<WeightedFSRSItem>>();
-        let batch = batcher.batch(weighted_items, &B::Device::default());
-        let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
-        all_labels.push(batch.labels);
-        all_weights.push(batch.weights);
-
-        for (predicted_item, y) in predicted_items.iter().zip(true_val) {
-            let pred = predicted_item.retrievability;
-            let bin = predicted_item.item.item.r_matrix_index();
-            let value = r_matrix.entry(bin).or_default();
-            value.predicted += pred;
-            value.actual += y as f32;
-            value.count += 1.0;
-            value.weight += predicted_item.item.weight;
-        }
+    for predicted_item in predicted_items.iter() {
+        let pred = predicted_item.retrievability;
+        let y = (predicted_item.item.current().rating > 1) as i32;
+        all_labels.push(y);
+        let bin = predicted_item.item.r_matrix_index();
+        let value = r_matrix.entry(bin).or_default();
+        value.predicted += pred;
+        value.actual += y as f32;
+        value.count += 1.0;
+        value.weight += 1.0;
     }
 
     let rmse = (r_matrix
@@ -473,8 +462,16 @@ fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<Model
         / r_matrix.values().map(|v| v.weight).sum::<f32>())
     .sqrt();
 
-    let all_labels = Tensor::cat(all_labels, 0).float();
-    let all_weights = Tensor::cat(all_weights, 0);
+    let all_labels = Tensor::from_data(
+        TensorData::new(
+            all_labels.clone(),
+            Shape {
+                dims: vec![all_labels.len()],
+            },
+        ),
+        &B::Device::default(),
+    );
+    let all_weights = Tensor::ones(all_labels.shape(), &B::Device::default());
     let all_retrievability: Tensor<B, 1> = Tensor::from_data(
         TensorData::new(
             predicted_items.iter().map(|p| p.retrievability).collect(),
@@ -720,7 +717,7 @@ mod tests {
         let fsrs = FSRS::new(None)?;
         let metrics = fsrs.evaluate(input.clone()).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.21433567, 0.04509071]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.21433567, 0.035302162]);
         Ok(())
     }
 
