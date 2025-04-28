@@ -619,11 +619,10 @@ impl TimeSeriesSplit {
     /// # Returns
     /// A vector of TimeSeriesSplit, each containing train and validation items
     pub fn split(sorted_items: Vec<FSRSItem>, n_splits: usize) -> Vec<TimeSeriesSplit> {
-        let total_items = sorted_items.len();
-        if total_items < n_splits + 1 || n_splits == 0 {
+        if sorted_items.is_empty() || n_splits == 0 {
             return vec![];
         }
-
+        let total_items = sorted_items.len();
         let segment_size = total_items / (n_splits + 1);
         if segment_size == 0 {
             return vec![];
