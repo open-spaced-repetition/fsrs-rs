@@ -276,45 +276,41 @@ impl<B: Backend> FSRS<B> {
     ///
     /// # Returns
     /// A ModelEvaluation containing metrics for all predictions
-    pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
-    where
-        F: FnMut(ItemProgress) -> bool,
-    {
-        if items.is_empty() {
+    pub fn evaluate(
+        &self,
+        ComputeParametersInput {
+            train_set,
+            enable_short_term,
+            num_relearning_steps,
+            ..
+        }: ComputeParametersInput,
+    ) -> Result<ModelEvaluation> {
+        if train_set.is_empty() {
             return Err(FSRSError::NotEnoughData);
         }
 
-        let splits = TimeSeriesSplit::split(items, 5);
+        let splits = TimeSeriesSplit::split(train_set, 5);
         let mut all_predictions = Vec::new();
 
         for split in splits.into_iter() {
-            let mut progress_info = ItemProgress {
-                current: 0,
-                total: split.train_items.len() + split.test_items.len(),
-            };
-
             // Compute parameters on training data
             let input = ComputeParametersInput {
                 train_set: split.train_items.clone(),
-                enable_short_term: true,
-                num_relearning_steps: Some(0),
+                enable_short_term,
+                num_relearning_steps,
                 progress: None,
             };
             let parameters = self.compute_parameters(input)?;
 
             // Make predictions on test data
-            let predictions =
-                batch_predict::<B, _>(split.test_items, &parameters, &mut |p: ItemProgress| {
-                    progress_info.current = split.train_items.len() + p.current;
-                    progress(progress_info)
-                })?;
+            let predictions = batch_predict::<B>(split.test_items, &parameters)?;
 
             // Collect predictions
             all_predictions.extend(predictions);
         }
 
         // Evaluate all predictions together
-        evaluate::<B, _>(all_predictions, &mut |p: ItemProgress| progress(p))
+        evaluate::<B>(all_predictions)
     }
 
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
@@ -397,23 +393,18 @@ pub struct PredictedFSRSItem {
 ///
 /// # Returns
 /// A vector of PredictedFSRSItem containing the original items and their predicted retrievability
-fn batch_predict<B: Backend, F>(
+fn batch_predict<B: Backend>(
     items: Vec<FSRSItem>,
     parameters: &[f32],
-    mut progress: F,
 ) -> Result<Vec<PredictedFSRSItem>>
 where
-    F: FnMut(ItemProgress) -> bool,
 {
     if items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
     let weighted_items = constant_weighted_fsrs_items(items);
     let batcher = FSRSBatcher::new(B::Device::default());
-    let mut progress_info = ItemProgress {
-        current: 0,
-        total: weighted_items.len(),
-    };
+
     let fsrs = FSRS::<B>::new_with_backend(Some(parameters), B::Device::default())?;
     let model = fsrs.model();
     let mut predicted_items = Vec::with_capacity(weighted_items.len());
@@ -429,11 +420,6 @@ where
                 retrievability: p,
             });
         }
-
-        progress_info.current += chunk.len();
-        if !progress(progress_info) {
-            return Err(FSRSError::Interrupted);
-        }
     }
 
     Ok(predicted_items)
@@ -447,13 +433,7 @@ where
 ///
 /// # Returns
 /// A ModelEvaluation containing log loss and RMSE metrics
-fn evaluate<B: Backend, F>(
-    predicted_items: Vec<PredictedFSRSItem>,
-    mut progress: F,
-) -> Result<ModelEvaluation>
-where
-    F: FnMut(ItemProgress) -> bool,
-{
+fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<ModelEvaluation> {
     if predicted_items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
@@ -485,9 +465,6 @@ where
         }
 
         progress_info.current += chunk.len();
-        if !progress(progress_info) {
-            return Err(FSRSError::Interrupted);
-        }
     }
 
     let rmse = (r_matrix
@@ -738,50 +715,17 @@ mod tests {
             .partition(|item| item.long_term_review_cnt() == 1);
         (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
         let items = [pretrainset, trainset].concat();
+        let input = ComputeParametersInput {
+            train_set: items.clone(),
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        };
 
-        let fsrs = FSRS::new(Some(&[
-            0.335561,
-            1.6840581,
-            5.166598,
-            11.659035,
-            7.466705,
-            0.7205129,
-            2.622295,
-            0.001,
-            1.315015,
-            0.10468433,
-            0.8349206,
-            1.822305,
-            0.12473127,
-            0.26111007,
-            2.3030033,
-            0.13117497,
-            3.0265594,
-            0.41468078,
-            0.09714265,
-            0.106824234,
-            0.20447432,
-        ]))?;
-        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
+        let fsrs = FSRS::new(None)?;
+        let metrics = fsrs.evaluate(input.clone()).unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.205_835_95, 0.026_072_025]);
-
-        let fsrs = FSRS::new(Some(&[]))?;
-        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
-
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.217_924_48, 0.039_937_04]);
-
-        let fsrs = FSRS::new(Some(PARAMETERS))?;
-        let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
-
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.208_657_4, 0.030_946_612]);
-
-        let (self_by_other, other_by_self) = fsrs
-            .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
-            .unwrap();
-
-        [self_by_other, other_by_self].assert_approx_eq([0.015_672_438, 0.028_422_62]);
-
         Ok(())
     }
 
