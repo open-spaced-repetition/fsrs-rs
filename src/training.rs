@@ -843,6 +843,11 @@ mod tests {
                     })
                     .unwrap();
                 dbg!(&parameters);
+
+                // evaluate
+                let model = FSRS::new(Some(&parameters)).unwrap();
+                let metrics = model.evaluate(items.clone(), |_| true).unwrap();
+                dbg!(&metrics);
             }
         }
     }
