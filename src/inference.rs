@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
 use crate::model::{FSRS, Get, MemoryStateTensors};
+use crate::training::ComputeParametersInput;
 use burn::nn::loss::Reduction;
 use burn::tensor::cast::ToElement;
 use burn::tensor::{Shape, Tensor, TensorData};
@@ -327,6 +328,70 @@ impl<B: Backend> FSRS<B> {
         })
     }
 
+    /// Determine how well the model and parameters predict performance using time series splits.
+    /// For each split:
+    /// 1. Use training data to compute parameters
+    /// 2. Use test data to make predictions
+    /// 3. Collect all predictions
+    ///
+    /// Finally, evaluate all predictions together
+    ///
+    /// # Arguments
+    /// * `items` - The dataset to evaluate
+    /// * `progress` - A callback function to report progress
+    ///
+    /// # Returns
+    /// A ModelEvaluation containing metrics for all predictions
+    pub fn evaluate_with_time_series_splits<F>(
+        &self,
+        ComputeParametersInput {
+            train_set,
+            enable_short_term,
+            num_relearning_steps,
+            ..
+        }: ComputeParametersInput,
+        mut progress: F,
+    ) -> Result<ModelEvaluation>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if train_set.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
+
+        let splits = TimeSeriesSplit::split(train_set, 5);
+        let mut all_predictions = Vec::new();
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: splits.len(),
+        };
+
+        for split in splits.into_iter() {
+            // Compute parameters on training data
+            let input = ComputeParametersInput {
+                train_set: split.train_items.clone(),
+                enable_short_term,
+                num_relearning_steps,
+                progress: None,
+            };
+            let parameters = self.compute_parameters(input)?;
+
+            // Make predictions on test data
+            let predictions = batch_predict::<B>(split.test_items, &parameters)?;
+
+            // Collect predictions
+            all_predictions.extend(predictions);
+
+            progress_info.current += 1;
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+
+        // Evaluate all predictions together
+        evaluate::<B>(all_predictions)
+    }
+
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
     /// review.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f32) -> f32 {
@@ -392,6 +457,117 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PredictedFSRSItem {
+    pub item: FSRSItem,
+    pub retrievability: f32,
+}
+
+/// Batch predict retrievability for a set of items.
+///
+/// # Arguments
+/// * `items` - The dataset to predict
+/// * `parameters` - The model parameters to use for prediction
+/// * `progress` - A callback function to report progress
+///
+/// # Returns
+/// A vector of PredictedFSRSItem containing the original items and their predicted retrievability
+fn batch_predict<B: Backend>(
+    items: Vec<FSRSItem>,
+    parameters: &[f32],
+) -> Result<Vec<PredictedFSRSItem>>
+where
+{
+    if items.is_empty() {
+        return Err(FSRSError::NotEnoughData);
+    }
+    let weighted_items = constant_weighted_fsrs_items(items);
+    let batcher = FSRSBatcher::new(B::Device::default());
+
+    let fsrs = FSRS::<B>::new_with_backend(Some(parameters), B::Device::default())?;
+    let model = fsrs.model();
+    let mut predicted_items = Vec::with_capacity(weighted_items.len());
+
+    for chunk in weighted_items.chunks(512) {
+        let batch = batcher.batch(chunk.to_vec(), &B::Device::default());
+        let (_state, retrievability) = infer::<B>(model, batch.clone());
+        let pred = retrievability.to_data().to_vec::<f32>().unwrap();
+
+        for (weighted_item, p) in chunk.iter().zip(pred) {
+            predicted_items.push(PredictedFSRSItem {
+                item: weighted_item.item.clone(),
+                retrievability: p,
+            });
+        }
+    }
+
+    Ok(predicted_items)
+}
+
+/// Evaluate model predictions against ground truth.
+///
+/// # Arguments
+/// * `predicted_items` - The items with their predicted retrievability values
+/// * `progress` - A callback function to report progress
+///
+/// # Returns
+/// A ModelEvaluation containing log loss and RMSE metrics
+fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<ModelEvaluation> {
+    if predicted_items.is_empty() {
+        return Err(FSRSError::NotEnoughData);
+    }
+    let mut all_labels = Vec::with_capacity(predicted_items.len());
+    let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+    for predicted_item in predicted_items.iter() {
+        let pred = predicted_item.retrievability;
+        let y = (predicted_item.item.current().rating > 1) as i32;
+        all_labels.push(y);
+        let bin = predicted_item.item.r_matrix_index();
+        let value = r_matrix.entry(bin).or_default();
+        value.predicted += pred;
+        value.actual += y as f32;
+        value.count += 1.0;
+        value.weight += 1.0;
+    }
+
+    let rmse = (r_matrix
+        .values()
+        .map(|v| {
+            let pred = v.predicted / v.count;
+            let real = v.actual / v.count;
+            (pred - real).powi(2) * v.weight
+        })
+        .sum::<f32>()
+        / r_matrix.values().map(|v| v.weight).sum::<f32>())
+    .sqrt();
+
+    let all_labels = Tensor::from_data(
+        TensorData::new(
+            all_labels.clone(),
+            Shape {
+                dims: vec![all_labels.len()],
+            },
+        ),
+        &B::Device::default(),
+    );
+    let all_weights = Tensor::ones(all_labels.shape(), &B::Device::default());
+    let all_retrievability: Tensor<B, 1> = Tensor::from_data(
+        TensorData::new(
+            predicted_items.iter().map(|p| p.retrievability).collect(),
+            Shape {
+                dims: vec![predicted_items.len()],
+            },
+        ),
+        &B::Device::default(),
+    );
+
+    let loss = BCELoss::new().forward(all_retrievability, all_labels, all_weights, Reduction::Auto);
+    Ok(ModelEvaluation {
+        log_loss: loss.into_scalar().to_f32(),
+        rmse_bins: rmse,
+    })
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct ModelEvaluation {
     pub log_loss: f32,
@@ -416,6 +592,61 @@ pub struct ItemState {
 pub struct ItemProgress {
     pub current: usize,
     pub total: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeSeriesSplit {
+    pub train_items: Vec<FSRSItem>,
+    pub test_items: Vec<FSRSItem>,
+}
+
+impl TimeSeriesSplit {
+    /// Split the dataset into training and validation sets based on time order.
+    /// Creates n_splits folds where each fold's test set is a single segment,
+    /// and the training set consists of all segments before the test segment.
+    ///
+    /// For example, with n_splits=5, the folds would be:
+    /// Fold 0: Train=[0], Test=[1]
+    /// Fold 1: Train=[0,1], Test=[2]
+    /// Fold 2: Train=[0,1,2], Test=[3]
+    /// Fold 3: Train=[0,1,2,3], Test=[4]
+    /// Fold 4: Train=[0,1,2,3,4], Test=[5]
+    ///
+    /// # Arguments
+    /// * `sorted_items` - The dataset to split, assumed to be in time order
+    /// * `n_splits` - Number of splits to create
+    ///
+    /// # Returns
+    /// A vector of TimeSeriesSplit, each containing train and validation items
+    pub fn split(sorted_items: Vec<FSRSItem>, n_splits: usize) -> Vec<TimeSeriesSplit> {
+        if sorted_items.is_empty() || n_splits == 0 {
+            return vec![];
+        }
+        let total_items = sorted_items.len();
+        let segment_size = total_items / (n_splits + 1);
+        if segment_size == 0 {
+            return vec![];
+        }
+
+        (0..n_splits)
+            .map(|i| {
+                // Calculate the start of the test segment
+                let test_start = (i + 1) * segment_size;
+                // Calculate the end of the test segment (or the end of the data)
+                let test_end = if i == n_splits - 1 {
+                    total_items
+                } else {
+                    (i + 2) * segment_size
+                };
+
+                // Create the split
+                TimeSeriesSplit {
+                    train_items: sorted_items[..test_start].to_vec(),
+                    test_items: sorted_items[test_start..test_end].to_vec(),
+                }
+            })
+            .collect()
+    }
 }
 
 fn get_bin(x: f32, bins: i32) -> i32 {
@@ -608,6 +839,66 @@ mod tests {
 
         [self_by_other, other_by_self].assert_approx_eq([0.015_672_438, 0.028_422_62]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_time_series_split() -> Result<()> {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let splits = TimeSeriesSplit::split(items[..6].to_vec(), 5);
+        assert_eq!(splits.len(), 5);
+        assert_eq!(splits[0].train_items.len(), 1);
+        assert_eq!(splits[0].test_items.len(), 1);
+        assert_eq!(splits[1].train_items.len(), 2);
+        assert_eq!(splits[1].test_items.len(), 1);
+        assert_eq!(splits[2].train_items.len(), 3);
+        assert_eq!(splits[2].test_items.len(), 1);
+        assert_eq!(splits[3].train_items.len(), 4);
+        assert_eq!(splits[3].test_items.len(), 1);
+        assert_eq!(splits[4].train_items.len(), 5);
+        assert_eq!(splits[4].test_items.len(), 1);
+
+        let splits = TimeSeriesSplit::split(items[..5].to_vec(), 5);
+        assert!(splits.is_empty());
+
+        let splits = TimeSeriesSplit::split(items[..6].to_vec(), 0);
+        assert!(splits.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_evaluate_with_time_series_splits() -> Result<()> {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+            .into_iter()
+            .partition(|item| item.long_term_review_cnt() == 1);
+        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+        let items = [pretrainset, trainset].concat();
+        let input = ComputeParametersInput {
+            train_set: items.clone(),
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        };
+
+        let fsrs = FSRS::new(None)?;
+        let metrics = fsrs
+            .evaluate_with_time_series_splits(input.clone(), |_| true)
+            .unwrap();
+
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19735593, 0.027728133]);
+
+        let result = fsrs.evaluate_with_time_series_splits(
+            ComputeParametersInput {
+                train_set: items[..5].to_vec(),
+                progress: None,
+                enable_short_term: true,
+                num_relearning_steps: None,
+            },
+            |_| true,
+        );
+        assert!(result.is_err());
         Ok(())
     }
 
