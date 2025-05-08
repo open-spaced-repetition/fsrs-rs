@@ -516,7 +516,7 @@ fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<Model
     if predicted_items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
-    let mut all_labels = vec![];
+    let mut all_labels = Vec::with_capacity(predicted_items.len());
     let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
     for predicted_item in predicted_items.iter() {
         let pred = predicted_item.retrievability;
@@ -641,7 +641,7 @@ impl TimeSeriesSplit {
 
                 // Create the split
                 TimeSeriesSplit {
-                    train_items: sorted_items[0..test_start].to_vec(),
+                    train_items: sorted_items[..test_start].to_vec(),
                     test_items: sorted_items[test_start..test_end].to_vec(),
                 }
             })
