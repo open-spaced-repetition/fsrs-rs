@@ -817,7 +817,7 @@ mod tests {
     }
     #[test]
     fn test_memory_state() {
-        let mut w = DEFAULT_PARAMETERS.clone();
+        let mut w = DEFAULT_PARAMETERS;
         assert_memory_state(&w, 49.4473, 6.8573);
         // freeze short term
         w[17] = 0.0;
