@@ -776,6 +776,56 @@ mod tests {
         Ok(())
     }
 
+    fn assert_memory_state(w: &[f32], expected_stability: f32, expected_difficulty: f32) {
+        let desired_retention = 0.9;
+        let fsrs = FSRS::new(Some(w)).unwrap();
+        let ratings: [u32; 6] = [1, 3, 3, 3, 3, 3];
+        let intervals: [u32; 6] = [0, 0, 1, 3, 8, 21];
+
+        let mut memory_state = None;
+        for (&rating, &interval) in ratings.iter().zip(intervals.iter()) {
+            let state = fsrs
+                .next_states(memory_state, desired_retention, interval)
+                .unwrap();
+            memory_state = match rating {
+                1 => Some(state.again.memory),
+                2 => Some(state.hard.memory),
+                3 => Some(state.good.memory),
+                4 => Some(state.easy.memory),
+                _ => None,
+            };
+            // dbg!(
+            //     "stability: {}, difficulty: {}",
+            //     memory_state.as_ref().unwrap().stability,
+            //     memory_state.as_ref().unwrap().difficulty
+            // );
+        }
+
+        let memory_state = memory_state.unwrap();
+        let stability = memory_state.stability;
+        let difficulty = memory_state.difficulty;
+        assert!(
+            (stability - expected_stability).abs() < 1e-4,
+            "stability: {}",
+            stability
+        );
+        assert!(
+            (difficulty - expected_difficulty).abs() < 1e-4,
+            "difficulty: {}",
+            difficulty
+        );
+    }
+    #[test]
+    fn test_memory_state() {
+        let mut w = DEFAULT_PARAMETERS.clone();
+        assert_memory_state(&w, 49.4473, 6.8573);
+        // freeze short term
+        w[17] = 0.0;
+        w[18] = 0.0;
+        w[19] = 0.0;
+        assert_memory_state(&w, 48.6015, 6.8573);
+    }
+
     #[test]
     fn test_next_interval() {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
