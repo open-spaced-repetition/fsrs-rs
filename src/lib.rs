@@ -24,6 +24,6 @@ pub use inference::{
 pub use model::FSRS;
 pub use optimal_retention::{
     Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind, SimulationResult,
-    SimulatorConfig, extract_simulator_config, simulate, expected_workload,
+    SimulatorConfig, expected_workload, extract_simulator_config, simulate,
 };
 pub use training::{CombinedProgressState, ComputeParametersInput};

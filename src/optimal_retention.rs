@@ -276,12 +276,7 @@ pub fn expected_workload(
             next_d(w, difficulty, 1),
         )
     } else {
-        (
-            w[2],
-            w[0],
-            init_d(w, 3),
-            init_d(w, 1),
-        )
+        (w[2], w[0], init_d(w, 3), init_d(w, 1))
     };
 
     let ivl_recall = next_interval(w, s_recall, dr);
@@ -1815,7 +1810,18 @@ mod tests {
     fn test_expected_workload() {
         for desired_retention in [0.95, 0.9, 0.85, 0.8, 0.75, 0.7] {
             let mut record = [0.0; 1000];
-            expected_workload(&DEFAULT_PARAMETERS, 1.0, 0.0, 0.0, 0.0, &mut record, desired_retention, 0.0, 0.0, 1000.0);
+            expected_workload(
+                &DEFAULT_PARAMETERS,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                &mut record,
+                desired_retention,
+                0.0,
+                0.0,
+                1000.0,
+            );
             dbg!(desired_retention, record.iter().sum::<f32>());
         }
     }
