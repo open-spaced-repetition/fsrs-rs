@@ -243,6 +243,78 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
+const RECALL_COST: f32 = 7.0;
+const FORGET_COST: f32 = 23.0;
+
+pub fn expected_workload(
+    w: &[f32],
+    acc_prob: f32,
+    stability: f32,
+    difficulty: f32,
+    day: f32,
+    record: &mut [f32],
+    dr: f32,
+    tr: f32,
+    cost: f32,
+    learn_day_limit: f32,
+) {
+    if day >= learn_day_limit || acc_prob <= 1e-5 {
+        return;
+    }
+    // Assuming day is always an integer value stored in an f32.
+    // If day exceeds the record length, we simply return.
+    if (day as usize) >= record.len() {
+        return;
+    }
+    record[day as usize] += acc_prob * cost;
+
+    let (s_recall, s_forget, d_recall, d_forget) = if stability > 0.0 {
+        (
+            stability_after_success(w, stability, tr, difficulty, 3),
+            stability_after_failure(w, stability, tr, difficulty),
+            next_d(w, difficulty, 3),
+            next_d(w, difficulty, 1),
+        )
+    } else {
+        (
+            w[2],
+            w[0],
+            init_d(w, 3),
+            init_d(w, 1),
+        )
+    };
+
+    let ivl_recall = next_interval(w, s_recall, dr);
+    let tr_recall = power_forgetting_curve(w, ivl_recall, s_recall);
+    let ivl_forget = next_interval(w, s_forget, dr);
+    let tr_forget = power_forgetting_curve(w, ivl_forget, s_forget);
+
+    expected_workload(
+        w,
+        acc_prob * tr,
+        s_recall,
+        d_recall,
+        day + ivl_recall,
+        record,
+        dr,
+        tr_recall,
+        RECALL_COST,
+        learn_day_limit,
+    );
+    expected_workload(
+        w,
+        acc_prob * (1.0 - tr),
+        s_forget,
+        d_forget,
+        day + ivl_forget,
+        record,
+        dr,
+        tr_forget,
+        FORGET_COST,
+        learn_day_limit,
+    );
+}
+
 #[derive(Debug, Clone)]
 pub struct Card {
     // "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
@@ -1737,5 +1809,14 @@ mod tests {
     fn extract_simulator_config_without_revlog() {
         let simulator_config = extract_simulator_config(vec![], 0, true);
         assert_eq!(simulator_config, SimulatorConfig::default());
+    }
+
+    #[test]
+    fn test_expected_workload() {
+        for desired_retention in [0.95, 0.9, 0.85, 0.8, 0.75, 0.7] {
+            let mut record = [0.0; 1000];
+            expected_workload(&DEFAULT_PARAMETERS, 1.0, 0.0, 0.0, 0.0, &mut record, desired_retention, 0.0, 0.0, 1000.0);
+            dbg!(desired_retention, record.iter().sum::<f32>());
+        }
     }
 }
