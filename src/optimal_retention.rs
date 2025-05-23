@@ -298,29 +298,29 @@ fn _expected_workload(
     let ivl_forget = next_interval(w, s_forget, dr);
     let tr_forget = power_forgetting_curve(w, ivl_forget, s_forget);
 
-    acc_prob * cost +
-    _expected_workload(
-        w,
-        acc_prob * tr,
-        s_recall,
-        d_recall,
-        day + ivl_recall,
-        dr,
-        tr_recall,
-        RECALL_COST,
-        learn_day_limit,
-    ) +
-    _expected_workload(
-        w,
-        acc_prob * (1.0 - tr),
-        s_forget,
-        d_forget,
-        day + ivl_forget,
-        dr,
-        tr_forget,
-        FORGET_COST,
-        learn_day_limit,
-    )
+    acc_prob * cost
+        + _expected_workload(
+            w,
+            acc_prob * tr,
+            s_recall,
+            d_recall,
+            day + ivl_recall,
+            dr,
+            tr_recall,
+            RECALL_COST,
+            learn_day_limit,
+        )
+        + _expected_workload(
+            w,
+            acc_prob * (1.0 - tr),
+            s_forget,
+            d_forget,
+            day + ivl_forget,
+            dr,
+            tr_forget,
+            FORGET_COST,
+            learn_day_limit,
+        )
 }
 
 #[derive(Debug, Clone)]
@@ -1822,11 +1822,7 @@ mod tests {
     #[test]
     fn test_expected_workload() {
         for desired_retention in [0.95, 0.9, 0.85, 0.8, 0.75, 0.7] {
-            let result = expected_workload(
-                &DEFAULT_PARAMETERS,
-                desired_retention,
-                1000
-            );
+            let result = expected_workload(&DEFAULT_PARAMETERS, desired_retention, 1000);
             expected_workload(&DEFAULT_PARAMETERS, desired_retention, 1000);
             dbg!(desired_retention, result);
         }
