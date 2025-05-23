@@ -249,6 +249,8 @@ pub fn expected_workload(
     learn_day_limit: usize,
     cost_success: f32,
     cost_failure: f32,
+    cost_learn: f32,
+    initial_pass_rate: f32,
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
 
@@ -257,11 +259,11 @@ pub fn expected_workload(
         1.0,
         0.0,
         0.0,
-        0.0,
+        0,
         desired_retention,
-        0.5,
-        0.0,
-        learn_day_limit as f32,
+        initial_pass_rate,
+        cost_learn,
+        learn_day_limit,
         cost_success,
         cost_failure,
     ))
@@ -273,11 +275,11 @@ fn _expected_workload(
     acc_prob: f32,
     stability: f32,
     difficulty: f32,
-    today: f32,
+    today: usize,
     desired_retention: f32,
     retrievability: f32,
     cost: f32,
-    learn_day_limit: f32,
+    learn_day_limit: usize,
     cost_success: f32,
     cost_failure: f32,
 ) -> f32 {
@@ -311,7 +313,7 @@ fn _expected_workload(
             acc_prob * retrievability,
             s_success,
             d_success,
-            today + ivl_success,
+            today + ivl_success as usize,
             desired_retention,
             r_success,
             cost_success,
@@ -324,7 +326,7 @@ fn _expected_workload(
             acc_prob * (1.0 - retrievability),
             s_failure,
             d_failure,
-            today + ivl_failure,
+            today + ivl_failure as usize,
             desired_retention,
             r_failure,
             cost_failure,
@@ -1834,14 +1836,16 @@ mod tests {
     fn test_expected_workload() {
         let cost_success = 7.0;
         let cost_failure = 23.0;
+        let cost_learn = 30.0;
+        let initial_pass_rate = 0.8;
         let learn_day_limit = 1000;
         let expected_values = [
-            (0.95, 138.32233),
-            (0.9, 100.61332),
-            (0.85, 89.37259),
-            (0.8, 82.79645),
-            (0.75, 77.03458),
-            (0.7, 77.27548),
+            (0.95, 143.94835),
+            (0.9, 111.40602),
+            (0.85, 103.08624),
+            (0.8, 96.140526),
+            (0.75, 91.11093),
+            (0.7, 91.00179),
         ];
         for (desired_retention, expected) in expected_values {
             let result = expected_workload(
@@ -1850,6 +1854,8 @@ mod tests {
                 learn_day_limit,
                 cost_success,
                 cost_failure,
+                cost_learn,
+                initial_pass_rate,
             );
             [result.unwrap()].assert_approx_eq([expected]);
         }
