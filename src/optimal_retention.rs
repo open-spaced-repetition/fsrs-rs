@@ -1152,7 +1152,7 @@ pub fn extract_simulator_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
+    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
     const LEARN_COST: f32 = 42.;
     const REVIEW_COST: f32 = 43.;
 
@@ -1830,6 +1830,7 @@ mod tests {
     fn test_expected_workload() {
         let recall_cost = 7.0;
         let forget_cost = 23.0;
+        let learn_day_limit = 1000;
         let expected_values = [
             (0.95, 183.33904),
             (0.9, 135.08559),
@@ -1842,11 +1843,11 @@ mod tests {
             let result = expected_workload(
                 &DEFAULT_PARAMETERS,
                 desired_retention,
-                1000,
+                learn_day_limit,
                 recall_cost,
                 forget_cost,
             );
-            assert!((result.unwrap() - expected).abs() < 0.0001);
+            [result.unwrap()].assert_approx_eq([expected]);
         }
     }
 }
