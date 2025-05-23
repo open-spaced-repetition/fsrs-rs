@@ -243,6 +243,99 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
+pub fn expected_workload(
+    parameters: &Parameters,
+    desired_retention: f32,
+    learn_day_limit: usize,
+    cost_success: f32,
+    cost_failure: f32,
+    cost_learn: f32,
+    initial_pass_rate: f32,
+) -> Result<f32> {
+    let w = &check_and_fill_parameters(parameters)?;
+
+    Ok(_expected_workload(
+        w,
+        1.0,
+        0.0,
+        0.0,
+        0,
+        desired_retention,
+        initial_pass_rate,
+        cost_learn,
+        learn_day_limit,
+        cost_success,
+        cost_failure,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn _expected_workload(
+    w: &Parameters,
+    acc_prob: f32,
+    stability: f32,
+    difficulty: f32,
+    today: usize,
+    desired_retention: f32,
+    retrievability: f32,
+    cost: f32,
+    learn_day_limit: usize,
+    cost_success: f32,
+    cost_failure: f32,
+) -> f32 {
+    if today >= learn_day_limit || acc_prob <= 1e-5 {
+        return 0.0;
+    }
+
+    let (s_success, s_failure, d_success, d_failure) = if stability > 0.0 {
+        (
+            stability_after_success(w, stability, retrievability, difficulty, 3),
+            stability_after_failure(w, stability, retrievability, difficulty),
+            next_d(w, difficulty, 3),
+            next_d(w, difficulty, 1),
+        )
+    } else {
+        (w[2], w[0], init_d(w, 3), init_d(w, 1))
+    };
+
+    let ivl_success = next_interval(w, s_success, desired_retention)
+        .round()
+        .max(1.0);
+    let r_success = power_forgetting_curve(w, ivl_success, s_success);
+    let ivl_failure = next_interval(w, s_failure, desired_retention)
+        .round()
+        .max(1.0);
+    let r_failure = power_forgetting_curve(w, ivl_failure, s_failure);
+
+    acc_prob * cost
+        + _expected_workload(
+            w,
+            acc_prob * retrievability,
+            s_success,
+            d_success,
+            today + ivl_success as usize,
+            desired_retention,
+            r_success,
+            cost_success,
+            learn_day_limit,
+            cost_success,
+            cost_failure,
+        )
+        + _expected_workload(
+            w,
+            acc_prob * (1.0 - retrievability),
+            s_failure,
+            d_failure,
+            today + ivl_failure as usize,
+            desired_retention,
+            r_failure,
+            cost_failure,
+            learn_day_limit,
+            cost_success,
+            cost_failure,
+        )
+}
+
 #[derive(Debug, Clone)]
 pub struct Card {
     // "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
@@ -1065,7 +1158,7 @@ pub fn extract_simulator_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
+    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
     const LEARN_COST: f32 = 42.;
     const REVIEW_COST: f32 = 43.;
 
@@ -1737,5 +1830,34 @@ mod tests {
     fn extract_simulator_config_without_revlog() {
         let simulator_config = extract_simulator_config(vec![], 0, true);
         assert_eq!(simulator_config, SimulatorConfig::default());
+    }
+
+    #[test]
+    fn test_expected_workload() {
+        let cost_success = 7.0;
+        let cost_failure = 23.0;
+        let cost_learn = 30.0;
+        let initial_pass_rate = 0.8;
+        let learn_day_limit = 1000;
+        let expected_values = [
+            (0.95, 143.94835),
+            (0.9, 111.40602),
+            (0.85, 103.08624),
+            (0.8, 96.140526),
+            (0.75, 91.11093),
+            (0.7, 91.00179),
+        ];
+        for (desired_retention, expected) in expected_values {
+            let result = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                learn_day_limit,
+                cost_success,
+                cost_failure,
+                cost_learn,
+                initial_pass_rate,
+            );
+            [result.unwrap()].assert_approx_eq([expected]);
+        }
     }
 }
