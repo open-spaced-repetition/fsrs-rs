@@ -246,27 +246,41 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
 const RECALL_COST: f32 = 7.0;
 const FORGET_COST: f32 = 23.0;
 
-pub fn expected_workload(
+pub fn expected_workload(w: &[f32], dr: f32, learn_day_limit: usize) -> Result<f32> {
+    let w = &check_and_fill_parameters(w)?;
+    Ok(_expected_workload(
+        w,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        dr,
+        0.0,
+        0.0,
+        learn_day_limit as f32,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn _expected_workload(
     w: &[f32],
     acc_prob: f32,
     stability: f32,
     difficulty: f32,
     day: f32,
-    record: &mut [f32],
     dr: f32,
     tr: f32,
     cost: f32,
     learn_day_limit: f32,
-) {
+) -> f32 {
     if day >= learn_day_limit || acc_prob <= 1e-5 {
-        return;
+        return 0.0;
     }
     // Assuming day is always an integer value stored in an f32.
     // If day exceeds the record length, we simply return.
-    if (day as usize) >= record.len() {
-        return;
+    if day >= learn_day_limit {
+        return 0.0;
     }
-    record[day as usize] += acc_prob * cost;
 
     let (s_recall, s_forget, d_recall, d_forget) = if stability > 0.0 {
         (
@@ -284,30 +298,29 @@ pub fn expected_workload(
     let ivl_forget = next_interval(w, s_forget, dr);
     let tr_forget = power_forgetting_curve(w, ivl_forget, s_forget);
 
-    expected_workload(
+    acc_prob * cost +
+    _expected_workload(
         w,
         acc_prob * tr,
         s_recall,
         d_recall,
         day + ivl_recall,
-        record,
         dr,
         tr_recall,
         RECALL_COST,
         learn_day_limit,
-    );
-    expected_workload(
+    ) +
+    _expected_workload(
         w,
         acc_prob * (1.0 - tr),
         s_forget,
         d_forget,
         day + ivl_forget,
-        record,
         dr,
         tr_forget,
         FORGET_COST,
         learn_day_limit,
-    );
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -1809,20 +1822,13 @@ mod tests {
     #[test]
     fn test_expected_workload() {
         for desired_retention in [0.95, 0.9, 0.85, 0.8, 0.75, 0.7] {
-            let mut record = [0.0; 1000];
-            expected_workload(
+            let result = expected_workload(
                 &DEFAULT_PARAMETERS,
-                1.0,
-                0.0,
-                0.0,
-                0.0,
-                &mut record,
                 desired_retention,
-                0.0,
-                0.0,
-                1000.0,
+                1000
             );
-            dbg!(desired_retention, record.iter().sum::<f32>());
+            expected_workload(&DEFAULT_PARAMETERS, desired_retention, 1000);
+            dbg!(desired_retention, result);
         }
     }
 }
