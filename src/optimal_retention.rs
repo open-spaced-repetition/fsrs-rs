@@ -243,49 +243,52 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
-const RECALL_COST: f32 = 7.0;
-const FORGET_COST: f32 = 23.0;
+pub fn expected_workload(
+    parameters: &Parameters,
+    desired_retention: f32,
+    learn_day_limit: usize,
+    recall_cost: f32,
+    forget_cost: f32,
+) -> Result<f32> {
+    let w = &check_and_fill_parameters(parameters)?;
 
-pub fn expected_workload(w: &[f32], dr: f32, learn_day_limit: usize) -> Result<f32> {
-    let w = &check_and_fill_parameters(w)?;
     Ok(_expected_workload(
         w,
         1.0,
         0.0,
         0.0,
         0.0,
-        dr,
+        desired_retention,
         0.0,
         0.0,
         learn_day_limit as f32,
+        recall_cost,
+        forget_cost,
     ))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn _expected_workload(
-    w: &[f32],
+    w: &Parameters,
     acc_prob: f32,
     stability: f32,
     difficulty: f32,
-    day: f32,
-    dr: f32,
-    tr: f32,
+    today: f32,
+    desired_retention: f32,
+    retrievability: f32,
     cost: f32,
     learn_day_limit: f32,
+    recall_cost: f32,
+    forget_cost: f32,
 ) -> f32 {
-    if day >= learn_day_limit || acc_prob <= 1e-5 {
-        return 0.0;
-    }
-    // Assuming day is always an integer value stored in an f32.
-    // If day exceeds the record length, we simply return.
-    if day >= learn_day_limit {
+    if today >= learn_day_limit || acc_prob <= 1e-5 {
         return 0.0;
     }
 
     let (s_recall, s_forget, d_recall, d_forget) = if stability > 0.0 {
         (
-            stability_after_success(w, stability, tr, difficulty, 3),
-            stability_after_failure(w, stability, tr, difficulty),
+            stability_after_success(w, stability, retrievability, difficulty, 3),
+            stability_after_failure(w, stability, retrievability, difficulty),
             next_d(w, difficulty, 3),
             next_d(w, difficulty, 1),
         )
@@ -293,33 +296,37 @@ fn _expected_workload(
         (w[2], w[0], init_d(w, 3), init_d(w, 1))
     };
 
-    let ivl_recall = next_interval(w, s_recall, dr);
+    let ivl_recall = next_interval(w, s_recall, desired_retention);
     let tr_recall = power_forgetting_curve(w, ivl_recall, s_recall);
-    let ivl_forget = next_interval(w, s_forget, dr);
+    let ivl_forget = next_interval(w, s_forget, desired_retention);
     let tr_forget = power_forgetting_curve(w, ivl_forget, s_forget);
 
     acc_prob * cost
         + _expected_workload(
             w,
-            acc_prob * tr,
+            acc_prob * retrievability,
             s_recall,
             d_recall,
-            day + ivl_recall,
-            dr,
+            today + ivl_recall,
+            desired_retention,
             tr_recall,
-            RECALL_COST,
+            recall_cost,
             learn_day_limit,
+            recall_cost,
+            forget_cost,
         )
         + _expected_workload(
             w,
-            acc_prob * (1.0 - tr),
+            acc_prob * (1.0 - retrievability),
             s_forget,
             d_forget,
-            day + ivl_forget,
-            dr,
+            today + ivl_forget,
+            desired_retention,
             tr_forget,
-            FORGET_COST,
+            forget_cost,
             learn_day_limit,
+            recall_cost,
+            forget_cost,
         )
 }
 
@@ -1821,10 +1828,17 @@ mod tests {
 
     #[test]
     fn test_expected_workload() {
+        let recall_cost = 7.0;
+        let forget_cost = 23.0;
         for desired_retention in [0.95, 0.9, 0.85, 0.8, 0.75, 0.7] {
-            let result = expected_workload(&DEFAULT_PARAMETERS, desired_retention, 1000);
-            expected_workload(&DEFAULT_PARAMETERS, desired_retention, 1000);
-            dbg!(desired_retention, result);
+            let result = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                1000,
+                recall_cost,
+                forget_cost,
+            );
+            dbg!(desired_retention, result.unwrap());
         }
     }
 }
