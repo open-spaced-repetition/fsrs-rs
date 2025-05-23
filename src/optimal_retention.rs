@@ -1830,7 +1830,15 @@ mod tests {
     fn test_expected_workload() {
         let recall_cost = 7.0;
         let forget_cost = 23.0;
-        for desired_retention in [0.95, 0.9, 0.85, 0.8, 0.75, 0.7] {
+        let expected_values = [
+            (0.95, 183.33904),
+            (0.9, 135.08559),
+            (0.85, 115.25519),
+            (0.8, 109.89388),
+            (0.75, 104.378624),
+            (0.7, 103.83365),
+        ];
+        for (desired_retention, expected) in expected_values {
             let result = expected_workload(
                 &DEFAULT_PARAMETERS,
                 desired_retention,
@@ -1838,7 +1846,7 @@ mod tests {
                 recall_cost,
                 forget_cost,
             );
-            dbg!(desired_retention, result.unwrap());
+            assert!((result.unwrap() - expected).abs() < 0.0001);
         }
     }
 }
