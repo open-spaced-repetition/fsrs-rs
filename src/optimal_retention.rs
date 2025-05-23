@@ -247,8 +247,8 @@ pub fn expected_workload(
     parameters: &Parameters,
     desired_retention: f32,
     learn_day_limit: usize,
-    recall_cost: f32,
-    forget_cost: f32,
+    cost_success: f32,
+    cost_failure: f32,
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
 
@@ -259,11 +259,11 @@ pub fn expected_workload(
         0.0,
         0.0,
         desired_retention,
-        0.0,
+        0.5,
         0.0,
         learn_day_limit as f32,
-        recall_cost,
-        forget_cost,
+        cost_success,
+        cost_failure,
     ))
 }
 
@@ -278,14 +278,14 @@ fn _expected_workload(
     retrievability: f32,
     cost: f32,
     learn_day_limit: f32,
-    recall_cost: f32,
-    forget_cost: f32,
+    cost_success: f32,
+    cost_failure: f32,
 ) -> f32 {
     if today >= learn_day_limit || acc_prob <= 1e-5 {
         return 0.0;
     }
 
-    let (s_recall, s_forget, d_recall, d_forget) = if stability > 0.0 {
+    let (s_success, s_failure, d_success, d_failure) = if stability > 0.0 {
         (
             stability_after_success(w, stability, retrievability, difficulty, 3),
             stability_after_failure(w, stability, retrievability, difficulty),
@@ -296,37 +296,41 @@ fn _expected_workload(
         (w[2], w[0], init_d(w, 3), init_d(w, 1))
     };
 
-    let ivl_recall = next_interval(w, s_recall, desired_retention);
-    let tr_recall = power_forgetting_curve(w, ivl_recall, s_recall);
-    let ivl_forget = next_interval(w, s_forget, desired_retention);
-    let tr_forget = power_forgetting_curve(w, ivl_forget, s_forget);
+    let ivl_success = next_interval(w, s_success, desired_retention)
+        .round()
+        .max(1.0);
+    let r_success = power_forgetting_curve(w, ivl_success, s_success);
+    let ivl_failure = next_interval(w, s_failure, desired_retention)
+        .round()
+        .max(1.0);
+    let r_failure = power_forgetting_curve(w, ivl_failure, s_failure);
 
     acc_prob * cost
         + _expected_workload(
             w,
             acc_prob * retrievability,
-            s_recall,
-            d_recall,
-            today + ivl_recall,
+            s_success,
+            d_success,
+            today + ivl_success,
             desired_retention,
-            tr_recall,
-            recall_cost,
+            r_success,
+            cost_success,
             learn_day_limit,
-            recall_cost,
-            forget_cost,
+            cost_success,
+            cost_failure,
         )
         + _expected_workload(
             w,
             acc_prob * (1.0 - retrievability),
-            s_forget,
-            d_forget,
-            today + ivl_forget,
+            s_failure,
+            d_failure,
+            today + ivl_failure,
             desired_retention,
-            tr_forget,
-            forget_cost,
+            r_failure,
+            cost_failure,
             learn_day_limit,
-            recall_cost,
-            forget_cost,
+            cost_success,
+            cost_failure,
         )
 }
 
@@ -1828,24 +1832,24 @@ mod tests {
 
     #[test]
     fn test_expected_workload() {
-        let recall_cost = 7.0;
-        let forget_cost = 23.0;
+        let cost_success = 7.0;
+        let cost_failure = 23.0;
         let learn_day_limit = 1000;
         let expected_values = [
-            (0.95, 183.33904),
-            (0.9, 135.08559),
-            (0.85, 115.25519),
-            (0.8, 109.89388),
-            (0.75, 104.378624),
-            (0.7, 103.83365),
+            (0.95, 138.32233),
+            (0.9, 100.61332),
+            (0.85, 89.37259),
+            (0.8, 82.79645),
+            (0.75, 77.03458),
+            (0.7, 77.27548),
         ];
         for (desired_retention, expected) in expected_values {
             let result = expected_workload(
                 &DEFAULT_PARAMETERS,
                 desired_retention,
                 learn_day_limit,
-                recall_cost,
-                forget_cost,
+                cost_success,
+                cost_failure,
             );
             [result.unwrap()].assert_approx_eq([expected]);
         }
