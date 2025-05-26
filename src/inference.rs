@@ -411,11 +411,7 @@ impl<B: Backend> FSRS<B> {
         seconds_elapsed: u32,
         decay: f32,
     ) -> f32 {
-        current_retrievability(
-            state,
-            seconds_elapsed as f32 / 86400.0,
-            decay,
-        )
+        current_retrievability(state, seconds_elapsed as f32 / 86400.0, decay)
     }
 
     /// Returns the universal metrics for the existing and provided parameters. If the first value
