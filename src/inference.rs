@@ -413,7 +413,7 @@ impl<B: Backend> FSRS<B> {
     ) -> f32 {
         current_retrievability(
             state,
-            seconds_elapsed as f32 / 86400.0 / state.stability,
+            seconds_elapsed as f32 / 86400.0,
             decay,
         )
     }
