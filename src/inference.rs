@@ -58,7 +58,7 @@ fn infer<B: Backend>(
     (state, retrievability)
 }
 
-fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32) -> f32 {
+pub fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32) -> f32 {
     let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
     (days_elapsed / state.stability * factor + 1.0).powf(-decay)
 }
