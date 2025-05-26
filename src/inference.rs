@@ -399,6 +399,18 @@ impl<B: Backend> FSRS<B> {
         (days_elapsed as f32 / state.stability * factor + 1.0).powf(-decay)
     }
 
+    /// How well the user is likely to remember the item after `seconds_elapsed` since the previous
+    /// review.
+    pub fn current_retrievability_seconds(
+        &self,
+        state: MemoryState,
+        seconds_elapsed: u32,
+        decay: f32,
+    ) -> f32 {
+        let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
+        (seconds_elapsed as f32 / 86400.0 / state.stability * factor + 1.0).powf(-decay)
+    }
+
     /// Returns the universal metrics for the existing and provided parameters. If the first value
     /// is smaller than the second value, the existing parameters are better than the provided ones.
     pub fn universal_metrics<F>(
