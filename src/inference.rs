@@ -399,6 +399,18 @@ impl<B: Backend> FSRS<B> {
         (days_elapsed as f32 / state.stability * factor + 1.0).powf(-decay)
     }
 
+    /// How well the user is likely to remember the item after `seconds_elapsed` since the previous
+    /// review.
+    pub fn current_retrievability_seconds(
+        &self,
+        state: MemoryState,
+        seconds_elapsed: u32,
+        decay: f32,
+    ) -> f32 {
+        let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
+        (seconds_elapsed as f32 / 86400.0 / state.stability * factor + 1.0).powf(-decay)
+    }
+
     /// Returns the universal metrics for the existing and provided parameters. If the first value
     /// is smaller than the second value, the existing parameters are better than the provided ones.
     pub fn universal_metrics<F>(
@@ -1128,6 +1140,29 @@ mod tests {
         assert_eq!(fsrs.current_retrievability(state, 1, 0.2), 0.9);
         assert_eq!(fsrs.current_retrievability(state, 2, 0.2), 0.84028935);
         assert_eq!(fsrs.current_retrievability(state, 3, 0.2), 0.7985001);
+    }
+
+    #[test]
+    fn current_retrievability_seconds() {
+        let fsrs = FSRS::new(None).unwrap();
+        let state = MemoryState {
+            stability: 1.0,
+            difficulty: 5.0,
+        };
+        assert_eq!(fsrs.current_retrievability_seconds(state, 0, 0.2), 1.0);
+        assert_eq!(
+            fsrs.current_retrievability_seconds(state, 1, 0.2),
+            0.9999984
+        );
+        assert_eq!(
+            fsrs.current_retrievability_seconds(state, 60, 0.2),
+            0.9999037
+        );
+        assert_eq!(
+            fsrs.current_retrievability_seconds(state, 3600, 0.2),
+            0.9943189
+        );
+        assert_eq!(fsrs.current_retrievability_seconds(state, 86400, 0.2), 0.9);
     }
 
     #[test]
