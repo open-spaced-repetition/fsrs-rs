@@ -58,6 +58,11 @@ fn infer<B: Backend>(
     (state, retrievability)
 }
 
+fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32) -> f32 {
+    let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
+    (days_elapsed / state.stability * factor + 1.0).powf(-decay)
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemoryState {
     pub stability: f32,
@@ -395,8 +400,7 @@ impl<B: Backend> FSRS<B> {
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
     /// review.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f32) -> f32 {
-        let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
-        (days_elapsed as f32 / state.stability * factor + 1.0).powf(-decay)
+        current_retrievability(state, days_elapsed as f32, decay)
     }
 
     /// How well the user is likely to remember the item after `seconds_elapsed` since the previous
@@ -407,8 +411,11 @@ impl<B: Backend> FSRS<B> {
         seconds_elapsed: u32,
         decay: f32,
     ) -> f32 {
-        let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
-        (seconds_elapsed as f32 / 86400.0 / state.stability * factor + 1.0).powf(-decay)
+        current_retrievability(
+            state,
+            seconds_elapsed as f32 / 86400.0 / state.stability,
+            decay,
+        )
     }
 
     /// Returns the universal metrics for the existing and provided parameters. If the first value
