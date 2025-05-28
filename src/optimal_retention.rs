@@ -243,6 +243,7 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn expected_workload(
     parameters: &Parameters,
     desired_retention: f32,
