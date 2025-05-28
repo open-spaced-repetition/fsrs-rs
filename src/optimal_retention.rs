@@ -483,6 +483,7 @@ pub fn simulate(
         if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
             if !is_learn {
                 let delta_t = config.learn_span.max(last_date_index) - last_date_index;
+                // last_date..next_date
                 for (i, day) in memorized_cnt_per_day
                     .iter_mut()
                     .enumerate()
@@ -604,6 +605,7 @@ pub fn simulate(
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
+            // last_date_index..day_index
             for (i, day) in memorized_cnt_per_day
                 .iter_mut()
                 .enumerate()
