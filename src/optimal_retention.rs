@@ -1875,5 +1875,23 @@ mod tests {
             // dbg!(desired_retention, result.unwrap());
             [result.unwrap()].assert_approx_eq([expected]);
         }
+
+        // compare with the workload of default desired retention 0.9
+        for desired_retention in (30..=99).map(|x| x as f32 / 100.0) {
+            let result = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                learn_day_limit,
+                cost_success,
+                cost_failure,
+                cost_learn,
+                initial_pass_rate,
+                termination_prob,
+            );
+            dbg!(
+                desired_retention,
+                (result.unwrap() / 152.06544).to_2_decimal()
+            );
+        }
     }
 }
