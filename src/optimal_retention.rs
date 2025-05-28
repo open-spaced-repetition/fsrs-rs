@@ -1853,6 +1853,13 @@ mod tests {
             (0.8, 118.77044),
             (0.75, 112.48672),
             (0.7, 111.44324),
+            (0.65, 111.118546),
+            (0.6, 113.59447),
+            (0.55, 115.70723),
+            (0.5, 124.22273),
+            (0.45, 126.41985),
+            (0.4, 135.42369),
+            (0.35, 146.95555),
         ];
         for (desired_retention, expected) in expected_values {
             let result = expected_workload(
@@ -1865,6 +1872,7 @@ mod tests {
                 initial_pass_rate,
                 termination_prob,
             );
+            // dbg!(desired_retention, result.unwrap());
             [result.unwrap()].assert_approx_eq([expected]);
         }
     }
