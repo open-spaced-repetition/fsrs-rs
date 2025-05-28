@@ -243,6 +243,7 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn expected_workload(
     parameters: &Parameters,
     desired_retention: f32,
@@ -251,6 +252,7 @@ pub fn expected_workload(
     cost_failure: f32,
     cost_learn: f32,
     initial_pass_rate: f32,
+    termination_prob: f32,
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
 
@@ -266,6 +268,7 @@ pub fn expected_workload(
         learn_day_limit,
         cost_success,
         cost_failure,
+        termination_prob,
     ))
 }
 
@@ -282,8 +285,9 @@ fn _expected_workload(
     learn_day_limit: usize,
     cost_success: f32,
     cost_failure: f32,
+    termination_prob: f32,
 ) -> f32 {
-    if today >= learn_day_limit || acc_prob <= 1e-5 {
+    if today >= learn_day_limit || acc_prob <= termination_prob {
         return 0.0;
     }
 
@@ -320,6 +324,7 @@ fn _expected_workload(
             learn_day_limit,
             cost_success,
             cost_failure,
+            termination_prob,
         )
         + _expected_workload(
             w,
@@ -333,6 +338,7 @@ fn _expected_workload(
             learn_day_limit,
             cost_success,
             cost_failure,
+            termination_prob,
         )
 }
 
@@ -1838,14 +1844,22 @@ mod tests {
         let cost_failure = 23.0;
         let cost_learn = 30.0;
         let initial_pass_rate = 0.8;
-        let learn_day_limit = 1000;
+        let termination_prob = 0.01;
+        let learn_day_limit = 1e8 as usize;
         let expected_values = [
-            (0.95, 143.94835),
-            (0.9, 111.40602),
-            (0.85, 103.08624),
-            (0.8, 96.140526),
-            (0.75, 91.11093),
-            (0.7, 91.00179),
+            (0.95, 227.08311),
+            (0.9, 152.06544),
+            (0.85, 127.4576),
+            (0.8, 118.77044),
+            (0.75, 112.48672),
+            (0.7, 111.44324),
+            (0.65, 111.118546),
+            (0.6, 113.59447),
+            (0.55, 115.70723),
+            (0.5, 124.22273),
+            (0.45, 126.41985),
+            (0.4, 135.42369),
+            (0.35, 146.95555),
         ];
         for (desired_retention, expected) in expected_values {
             let result = expected_workload(
@@ -1856,8 +1870,28 @@ mod tests {
                 cost_failure,
                 cost_learn,
                 initial_pass_rate,
+                termination_prob,
             );
+            // dbg!(desired_retention, result.unwrap());
             [result.unwrap()].assert_approx_eq([expected]);
+        }
+
+        // compare with the workload of default desired retention 0.9
+        for desired_retention in (30..=99).map(|x| x as f32 / 100.0) {
+            let result = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                learn_day_limit,
+                cost_success,
+                cost_failure,
+                cost_learn,
+                initial_pass_rate,
+                termination_prob,
+            );
+            dbg!(
+                desired_retention,
+                (result.unwrap() / 152.06544).to_2_decimal()
+            );
         }
     }
 }
