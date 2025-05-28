@@ -232,6 +232,7 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
 }
 
 fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
+    // debug_assert!(t >= 0.);
     let decay = -w[20];
     let factor = 0.9f32.powf(1.0 / decay) - 1.0;
     (t / s).mul_add(factor, 1.0).powf(decay)
@@ -360,8 +361,12 @@ impl Card {
         power_forgetting_curve(w, t, self.stability)
     }
 
-    pub fn target_r(&self, w: &[f32]) -> f32 {
-        self.power_forgetting_curve(w, self.due - self.last_date)
+    pub fn retention_on(&self, w: &[f32], date: f32) -> f32 {
+        self.power_forgetting_curve(w, date - self.last_date)
+    }
+
+    pub fn target_retention(&self, w: &[f32]) -> f32 {
+        self.retention_on(w, self.due)
     }
 
     pub fn scheduled_due(&self) -> f32 {
@@ -478,10 +483,8 @@ pub fn simulate(
         if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
             if !is_learn {
                 let delta_t = config.learn_span.max(last_date_index) - last_date_index;
-                let pre_sim_days = (-card.last_date) as usize;
-                for i in 0..delta_t {
-                    memorized_cnt_per_day[last_date_index + i] +=
-                        card.power_forgetting_curve(w, (pre_sim_days + i) as f32);
+                for i in last_date_index..(last_date_index + delta_t) {
+                    memorized_cnt_per_day[i] += card.retention_on(w, i as f32);
                 }
             }
             card_priorities.pop();
@@ -542,7 +545,7 @@ pub fn simulate(
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = card.target_r(w);
+            let retrievability = card.target_retention(w);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
@@ -1681,12 +1684,12 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| (card.target_r(w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| (card.target_retention(w) * 1000.0) as i32),
             43.482998
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| -(card.target_r(w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| -(card.target_retention(w) * 1000.0) as i32),
             41.110588
         )?;
         println!("High stability cards reviewed first.");
