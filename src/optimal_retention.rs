@@ -483,8 +483,13 @@ pub fn simulate(
         if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
             if !is_learn {
                 let delta_t = config.learn_span.max(last_date_index) - last_date_index;
-                for i in last_date_index..(last_date_index + delta_t) {
-                    memorized_cnt_per_day[i] += card.retention_on(w, i as f32);
+                for (i, day) in memorized_cnt_per_day
+                    .iter_mut()
+                    .enumerate()
+                    .skip(last_date_index)
+                    .take(delta_t)
+                {
+                    *day += card.retention_on(w, i as f32);
                 }
             }
             card_priorities.pop();
@@ -599,8 +604,13 @@ pub fn simulate(
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
-            for i in last_date_index..day_index {
-                memorized_cnt_per_day[i] += card.retention_on(w, i as f32);
+            for (i, day) in memorized_cnt_per_day
+                .iter_mut()
+                .enumerate()
+                .take(day_index)
+                .skip(last_date_index)
+            {
+                *day += card.retention_on(w, i as f32);
             }
 
             card.stability = new_s;
