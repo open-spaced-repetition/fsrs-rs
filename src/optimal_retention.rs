@@ -356,8 +356,12 @@ pub struct Card {
 }
 
 impl Card {
-    pub fn retrievability(&self, w: &[f32]) -> f32 {
-        power_forgetting_curve(w, self.due - self.last_date, self.stability)
+    pub fn power_forgetting_curve(&self, w: &[f32], t: f32) -> f32 {
+        power_forgetting_curve(w, t, self.stability)
+    }
+
+    pub fn target_r(&self, w: &[f32]) -> f32 {
+        self.power_forgetting_curve(w, self.due - self.last_date)
     }
 
     pub fn scheduled_due(&self) -> f32 {
@@ -477,7 +481,7 @@ pub fn simulate(
                 let pre_sim_days = (-card.last_date) as usize;
                 for i in 0..delta_t {
                     memorized_cnt_per_day[last_date_index + i] +=
-                        power_forgetting_curve(w, (pre_sim_days + i) as f32, card.stability);
+                        card.power_forgetting_curve(w, (pre_sim_days + i) as f32);
                 }
             }
             card_priorities.pop();
@@ -538,7 +542,7 @@ pub fn simulate(
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = card.retrievability(w);
+            let retrievability = card.target_r(w);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
@@ -1677,12 +1681,12 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| (card.retrievability(w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| (card.target_r(w) * 1000.0) as i32),
             43.482998
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| -(card.retrievability(w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| -(card.target_r(w) * 1000.0) as i32),
             41.110588
         )?;
         println!("High stability cards reviewed first.");
