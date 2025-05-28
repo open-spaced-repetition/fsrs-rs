@@ -594,19 +594,17 @@ pub fn simulate(
                     config.state_rating_costs[REVIEW][rating - 1],
                 )
             };
-            card.stability = new_s;
-            card.difficulty = new_d;
 
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
-            let delta_t = day_index - last_date_index;
-            let pre_sim_days = (-card.last_date) as usize;
-            for i in 0..delta_t {
-                memorized_cnt_per_day[last_date_index + i] +=
-                    power_forgetting_curve(w, (pre_sim_days + i) as f32, last_stability);
+            for i in last_date_index..day_index {
+                memorized_cnt_per_day[i] += card.retention_on(w, i as f32);
             }
+
+            card.stability = new_s;
+            card.difficulty = new_d;
         }
 
         let mut ivl = next_interval(w, card.stability, desired_retention)
