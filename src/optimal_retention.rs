@@ -365,7 +365,7 @@ impl Card {
         self.power_forgetting_curve(w, date - self.last_date)
     }
 
-    pub fn target_retention(&self, w: &[f32]) -> f32 {
+    pub fn retrievability(&self, w: &[f32]) -> f32 {
         self.retention_on(w, self.due)
     }
 
@@ -545,7 +545,7 @@ pub fn simulate(
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = card.target_retention(w);
+            let retrievability = card.retrievability(w);
 
             // Create 'forget' mask
             let forget = !rng.gen_bool(retrievability as f64);
@@ -1682,12 +1682,12 @@ mod tests {
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| (card.target_retention(w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| (card.retrievability(w) * 1000.0) as i32),
             43.482998
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| -(card.target_retention(w) * 1000.0) as i32),
+            wrap!(|card: &Card, w: &Parameters| -(card.retrievability(w) * 1000.0) as i32),
             41.110588
         )?;
         println!("High stability cards reviewed first.");
