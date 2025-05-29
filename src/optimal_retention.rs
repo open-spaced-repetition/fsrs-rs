@@ -232,6 +232,7 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
 }
 
 fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
+    debug_assert!(t >= 0.);
     let decay = -w[20];
     let factor = 0.9f32.powf(1.0 / decay) - 1.0;
     (t / s).mul_add(factor, 1.0).powf(decay)
@@ -356,8 +357,16 @@ pub struct Card {
 }
 
 impl Card {
+    pub fn power_forgetting_curve(&self, w: &[f32], t: f32) -> f32 {
+        power_forgetting_curve(w, t, self.stability)
+    }
+
+    pub fn retention_on(&self, w: &[f32], date: f32) -> f32 {
+        self.power_forgetting_curve(w, date - self.last_date)
+    }
+
     pub fn retrievability(&self, w: &[f32]) -> f32 {
-        power_forgetting_curve(w, self.due - self.last_date, self.stability)
+        self.retention_on(w, self.due)
     }
 
     pub fn scheduled_due(&self) -> f32 {
@@ -474,10 +483,14 @@ pub fn simulate(
         if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
             if !is_learn {
                 let delta_t = config.learn_span.max(last_date_index) - last_date_index;
-                let pre_sim_days = (-card.last_date) as usize;
-                for i in 0..delta_t {
-                    memorized_cnt_per_day[last_date_index + i] +=
-                        power_forgetting_curve(w, (pre_sim_days + i) as f32, card.stability);
+                // last_date..next_date
+                for (i, day) in memorized_cnt_per_day
+                    .iter_mut()
+                    .enumerate()
+                    .skip(last_date_index)
+                    .take(delta_t)
+                {
+                    *day += card.retention_on(w, i as f32);
                 }
             }
             card_priorities.pop();
@@ -587,19 +600,23 @@ pub fn simulate(
                     config.state_rating_costs[REVIEW][rating - 1],
                 )
             };
-            card.stability = new_s;
-            card.difficulty = new_d;
 
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
-            let delta_t = day_index - last_date_index;
-            let pre_sim_days = (-card.last_date) as usize;
-            for i in 0..delta_t {
-                memorized_cnt_per_day[last_date_index + i] +=
-                    power_forgetting_curve(w, (pre_sim_days + i) as f32, last_stability);
+            // last_date_index..day_index
+            for (i, day) in memorized_cnt_per_day
+                .iter_mut()
+                .enumerate()
+                .take(day_index)
+                .skip(last_date_index)
+            {
+                *day += card.retention_on(w, i as f32);
             }
+
+            card.stability = new_s;
+            card.difficulty = new_d;
         }
 
         let mut ivl = next_interval(w, card.stability, desired_retention)
