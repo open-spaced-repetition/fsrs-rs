@@ -1789,7 +1789,7 @@ mod tests {
         let optimal_retention = fsrs
             .optimal_retention(&config, &param, |_v| true, None)
             .unwrap();
-        assert_eq!(optimal_retention, 0.7603231);
+        [optimal_retention].assert_approx_eq([0.7603231]);
         Ok(())
     }
 
