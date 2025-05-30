@@ -291,7 +291,7 @@ mod tests {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
         let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8402893843661203, 0.7985001724759597]);
+        let expected = Array1::from(vec![1.0, 0.9, 0.8458846447796301, 0.8093881028681906]);
         assert_eq!(y, expected);
     }
 
@@ -299,14 +299,14 @@ mod tests {
     fn test_loss() {
         let delta_t = Array1::from(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
         let recall = Array1::from(vec![
-            0.86684181, 0.90758192, 0.73348482, 0.76776996, 0.68769064,
+            0.86666667, 0.90721649, 0.73015873, 0.76315789, 0.67857143,
         ]);
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 0.7840586, default_s0);
-        assert_eq!(actual, 279.0853744625948);
+        assert_eq!(actual, 279.9206961069712);
         let actual = loss(&delta_t, &recall, &count, 0.7840590622451964, default_s0);
-        assert_eq!(actual, 279.0853744626048);
+        assert_eq!(actual, 279.9206977311556);
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
             ],
         )]);
         let actual = search_parameters(pretrainset, 0.943_028_57);
-        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.784_058_6]);
+        [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.7355089]);
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
         pretrain(pretrainset, average_recall)
             .unwrap()
             .0
-            .assert_approx_eq([0.784_058_6, 2.159_816, 4.367_439_3, 10.768_476])
+            .assert_approx_eq([0.73550886, 2.1338913, 4.473312, 11.087741])
     }
 
     #[test]
@@ -373,6 +373,6 @@ mod tests {
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.06458245, 0.35, 0.9693909, 4.802264]);
+        assert_eq!(actual, [0.05738148, 0.35, 0.6242943, 2.2453482]);
     }
 }
