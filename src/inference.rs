@@ -23,29 +23,29 @@ pub type Parameters = [f32];
 use itertools::izip;
 
 pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
-pub const FSRS6_DEFAULT_DECAY: f32 = 0.2;
+pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
 
 pub static DEFAULT_PARAMETERS: [f32; 21] = [
-    0.2172,
-    1.1771,
-    3.2602,
-    16.1507,
-    7.0114,
-    0.57,
-    2.0966,
-    0.0069,
-    1.5261,
-    0.112,
-    1.0178,
-    1.849,
-    0.1133,
-    0.3127,
-    2.2934,
-    0.2191,
-    3.0004,
-    0.7536,
-    0.3332,
-    0.1437,
+    0.212,
+    1.2931,
+    2.3065,
+    8.2956,
+    6.4133,
+    0.8334,
+    3.0194,
+    0.001,
+    1.8722,
+    0.1666,
+    0.796,
+    1.4835,
+    0.0614,
+    0.2629,
+    1.6483,
+    0.6014,
+    1.8729,
+    0.5425,
+    0.0912,
+    0.0658,
     FSRS6_DEFAULT_DECAY,
 ];
 
@@ -833,12 +833,12 @@ mod tests {
     #[test]
     fn test_memory_state() {
         let mut w = DEFAULT_PARAMETERS;
-        assert_memory_state(&w, 49.4473, 6.8573);
+        assert_memory_state(&w, 53.62691, 6.3574867);
         // freeze short term
         w[17] = 0.0;
         w[18] = 0.0;
         w[19] = 0.0;
-        assert_memory_state(&w, 48.6015, 6.8573);
+        assert_memory_state(&w, 53.335106, 6.3574867);
     }
 
     #[test]
@@ -849,7 +849,7 @@ mod tests {
             .iter()
             .map(|r| fsrs.next_interval(Some(1.0), *r, 1).round().max(1.0) as i32)
             .collect::<Vec<_>>();
-        assert_eq!(intervals, [144193, 4505, 592, 139, 45, 17, 7, 3, 1, 1]);
+        assert_eq!(intervals, [3116766, 34793, 2508, 387, 90, 27, 9, 3, 1, 1]);
     }
 
     #[test]
@@ -886,12 +886,12 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.205_835_95, 0.026_072_025]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20580745, 0.026005825]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.217_924_48, 0.039_937_04]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20967911, 0.030774858]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
@@ -902,7 +902,7 @@ mod tests {
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        [self_by_other, other_by_self].assert_approx_eq([0.015_672_438, 0.028_422_62]);
+        [self_by_other, other_by_self].assert_approx_eq([0.014087644, 0.017199915]);
 
         Ok(())
     }
@@ -952,7 +952,7 @@ mod tests {
             .evaluate_with_time_series_splits(input.clone(), |_| true)
             .unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19735593, 0.027728133]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19735593, 0.02609019]);
 
         let result = fsrs.evaluate_with_time_series_splits(
             ComputeParametersInput {
@@ -1173,15 +1173,13 @@ mod tests {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
 
-        [memory_state.stability, memory_state.difficulty].assert_approx_eq([10.0, 7.061_206]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([10.0, 6.9140563]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
 
-        [memory_state.stability, memory_state.difficulty]
-            .assert_approx_eq([3.380_071_9, 9.344_574]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([3.01572, 9.393428]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
 
-        [memory_state.stability, memory_state.difficulty]
-            .assert_approx_eq([23.721_418, 2.095_691_7]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([24.841097, 1.2974405]);
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
 
         [memory_state.stability, memory_state.difficulty].assert_approx_eq([20.0, 10.0]);
