@@ -214,7 +214,7 @@ fn benchmark_evaluate(c: &mut Criterion) {
     // Evaluate uses the FSRS instance's existing parameters.
     let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
 
-    let mut group = c.benchmark_group("evaluation");
+    let mut group = c.benchmark_group("parameters");
     group.sample_size(10); // Reduce sample size if benchmarks are too long
 
     group.bench_function("evaluate", |b| {
@@ -237,7 +237,7 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
         num_relearning_steps: None, // Default/typical value
     };
 
-    let mut group = c.benchmark_group("evaluation");
+    let mut group = c.benchmark_group("parameters");
     group.sample_size(10); // Reduce sample size as this involves training
 
     group.bench_function("evaluate_with_time_series_splits", |b| {
@@ -260,7 +260,7 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
         num_relearning_steps: None, // Default/typical value
     };
 
-    let mut group = c.benchmark_group("parameter_computation");
+    let mut group = c.benchmark_group("parameters");
     group.sample_size(10); // Reduce sample size as this involves optimization
 
     group.bench_function("compute_parameters", |b| {
