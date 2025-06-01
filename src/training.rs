@@ -11,12 +11,13 @@ use crate::pre_training::{pretrain, smooth_and_fill}; // Review for tensor ops
 use crate::{DEFAULT_PARAMETERS, FSRS, FSRSError}; // FSRS is candle-based
 
 // Candle imports
-use candle_core::{Device, Tensor, D, utils}; // Added utils for manual_seed
+use candle_core::{Device, Tensor}; // Removed utils import as manual_seed doesn't exist
 use candle_nn::{VarMap, ops}; // Removed unused Loss, loss_bce, binary_cross_entropy_with_logits
-use candle_optimisers::{AdamW, Optimizer as CandleOptimizer, ParamsAdamW}; // Changed candle_optim to candle_optimisers
+use candle_nn::{AdamW, Optimizer, ParamsAdamW}; // Use candle_nn optimizers
 
 use core::marker::PhantomData;
 use log::info;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 // Assuming this is still relevant and used as a slice for a Tensor
@@ -55,10 +56,10 @@ impl BCELossCandle {
             + ((labels.ones_like()? - labels)? * (retrievability.ones_like()? - retrievability)?.log()?)?)?
             * weights;
 
-        match reduction {
-            Reduction::Mean => loss_val.mean_all()?.neg(),
-            Reduction::Sum => loss_val.sum_all()?.neg(),
-        }
+        Ok(match reduction {
+            Reduction::Mean => loss_val?.mean_all()?.neg()?,
+            Reduction::Sum => loss_val?.sum_all()?.neg()?,
+        })
     }
 }
 
@@ -89,8 +90,8 @@ impl Model {
     ) -> Result<Tensor> {
         let w_tensor = self.w.as_tensor();
         let diff = (w_tensor - init_w)?;
-        let reg_loss = (diff.powf(2.0)?.div(&params_stddev.powf(2.0)?)?)?.sum_all()? * gamma;
-        Ok(reg_loss)
+        let reg_loss = (diff.powf(2.0)?.div(&params_stddev.powf(2.0)?)?).sum_all()? * gamma;
+        Ok(reg_loss?)
     }
 }
 
@@ -373,13 +374,13 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
             return Err(FSRSError::InvalidInput);
         }
 
-        let mut optimized_initial_stability_tuples: Vec<(u32, f32)> = optimized_parameters[0..4]
+        let mut optimized_initial_stability_map: HashMap<u32, f32> = optimized_parameters[0..4]
             .iter()
             .enumerate()
             .map(|(i, &val)| (i as u32 + 1, val))
             .collect();
         let clamped_stability =
-            smooth_and_fill(&mut optimized_initial_stability_tuples, &initial_rating_count).unwrap(); // Assuming smooth_and_fill is compatible
+            smooth_and_fill(&mut optimized_initial_stability_map, &initial_rating_count).unwrap(); // Now using HashMap
         let final_optimized_parameters = clamped_stability
             .into_iter()
             .chain(optimized_parameters[4..].iter().copied())
@@ -443,7 +444,8 @@ fn train(
     progress: Option<ProgressCollector>,
 ) -> Result<Model> {
 
-    utils::manual_seed(config.seed); // Changed to utils::manual_seed, and it doesn't return Result
+    // Note: manual_seed is not available in candle-core, so we'll skip setting seed for now
+    // utils::manual_seed(config.seed); // Candle doesn't have manual_seed
 
     let total_size = train_set_items.len();
     let iterations = (total_size.saturating_sub(1) / config.batch_size + 1) * config.num_epochs;

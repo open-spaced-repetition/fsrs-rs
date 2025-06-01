@@ -16,7 +16,7 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 [dependencies]
 candle-core = { version = "0.9.1", default-features = false }
 candle-nn = { version = "0.9.1", default-features = false }
-# candle-optimisers = { version = "0.9.0", default-features = false } # Removed, optimizers seem to be in candle-nn
+candle-optimisers = { version = "0.9.0", default-features = false }
 itertools = "0.14.0"
 log = "0.4"
 ndarray = "0.16.1"

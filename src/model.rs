@@ -3,15 +3,26 @@ use crate::error::{FSRSError, Result};
 use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters, S_MAX, S_MIN};
 use crate::parameter_clipper::clip_parameters;
 use candle_core::{Device, Tensor};
-use candle_nn::{Module, VarBuilder};
-
+use candle_nn::VarBuilder;
+use candle_core::IndexOp;
 use candle_nn::VarMap;
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Model {
     pub w: candle_core::Var, // Changed from Tensor to Var
     device: Device,
     varmap: VarMap, // To store and manage variables
+}
+
+// Manual Debug implementation since VarMap doesn't implement Debug
+impl std::fmt::Debug for Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Model")
+            .field("w", &self.w)
+            .field("device", &self.device)
+            .field("varmap", &"VarMap")
+            .finish()
+    }
 }
 
 // TODO: Is there a candle equivalent of burn::tensor::backend::Backend?
@@ -29,7 +40,7 @@ pub struct Model {
 
 impl Model {
     #[allow(clippy::new_without_default)]
-    pub fn new(config: ModelConfig, device: Device, varmap: VarMap) -> Result<Self> {
+    pub fn new(config: ModelConfig, device: Device, mut varmap: VarMap) -> Result<Self> {
         let mut initial_params_vec: Vec<f32> = config
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
@@ -42,20 +53,12 @@ impl Model {
             initial_params_vec[19] = 0.0;
         }
 
-        // Create a VarBuilder to manage the lifecycle of `w`
-        let vb = VarBuilder::from_varmap(&varmap, candle_core::DType::F32, &device);
-
-        // Initialize `w` using VarBuilder. If loading pre-trained, ensure data is correctly passed.
-        // For now, initializing with `initial_params_vec`.
-        // The name "w" will be used to identify this variable in the VarMap.
-        let w = vb.get_or_init("w", candle_core::initializer::Const(initial_params_vec.as_slice()))?;
-        // TODO: Confirm if get_or_init with a slice works as expected for initializing.
-        // It seems get_or_init might be more for shape-based initialization with an Initializer.
-        // Consider vb.var_from_tensor("w", &initial_tensor, &device)? if direct tensor init is needed.
-        // For now, assuming get_or_init with Const works or can be adapted.
-        // Let's try creating the tensor first and then the var.
+        // Create the tensor first and then store it in varmap
         let initial_w_tensor = Tensor::from_vec(initial_params_vec, (21,), &device)?;
-        let w = vb.var_from_tensor("w", &initial_w_tensor)?;
+        
+        // Store the tensor in varmap and create a Var from it
+        varmap.set_one("w", &initial_w_tensor)?;
+        let w = candle_core::Var::from_tensor(&initial_w_tensor)?;
 
 
         Ok(Self { w, device, varmap })
@@ -66,11 +69,21 @@ impl Model {
         self.w.as_tensor()
     }
 
+    // Helper to access the device
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+
     pub fn power_forgetting_curve(&self, t: &Tensor, s: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let decay = (w.i(20)? * -1.0)?;
-        let factor = (((decay.powf(-1.0)? * 0.9f32.ln())?.exp()? - 1.0))?;
-        (t / s * factor + 1.0)?.powf(&decay)
+        let decay = (w.i(20)? * (-1.0))?;
+        let ln_09 = 0.9f32.ln();
+        let decay_inv = decay.powf(-1.0)?;
+        let ln_09_tensor = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
+        let factor = ((decay_inv * ln_09_tensor)?.exp()? - 1.0)?;
+        let result = (((t / s)? * &factor)? + 1.0)?;
+        let decay_scalar = decay.to_scalar::<f32>()? as f64;
+        Ok(result.powf(decay_scalar)?)
     }
 
     pub fn next_interval(
@@ -79,9 +92,15 @@ impl Model {
         desired_retention: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
-        let decay = (w.i(20)? * -1.0)?;
-        let factor = (((decay.powf(-1.0)? * 0.9f32.ln())?.exp()? - 1.0))?;
-        (stability / factor * (desired_retention.powf(&(decay.powf(-1.0)?))? - 1.0))
+        let decay = (w.i(20)? * (-1.0))?;
+        let ln_09 = 0.9f32.ln();
+        let decay_inv = decay.powf(-1.0)?;
+        let ln_09_tensor = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
+        let factor = ((&decay_inv * &ln_09_tensor)?.exp()? - 1.0)?;
+        let decay_inv_scalar = decay_inv.to_scalar::<f32>()? as f64;
+        let power_result = desired_retention.powf(decay_inv_scalar)?;
+        let power_minus_one = (power_result - 1.0)?;
+        Ok(((stability / &factor)? * &power_minus_one)?)
     }
 
     fn stability_after_success(
@@ -93,19 +112,27 @@ impl Model {
     ) -> Result<Tensor> {
         let w = self.w_tensor();
         let batch_size = rating.dims()[0];
-        let hard_penalty = Tensor::ones(batch_size, candle_core::DType::F32, &self.device)?
-            .where_cond(&rating.eq_lit(2.0)?, &w.i(15)?, &Tensor::ones_like(rating)?)?;
-        let easy_bonus = Tensor::ones(batch_size, candle_core::DType::F32, &self.device)?
-            .where_cond(&rating.eq_lit(4.0)?, &w.i(16)?, &Tensor::ones_like(rating)?)?;
+        
+        // Create condition tensors for hard penalty and easy bonus
+        let rating_eq_2 = rating.eq(&Tensor::full(2.0, rating.shape(), &self.device)?)?;
+        let hard_penalty = rating_eq_2.where_cond(&w.i(15)?, &Tensor::ones_like(rating)?)?;
+        
+        let rating_eq_4 = rating.eq(&Tensor::full(4.0, rating.shape(), &self.device)?)?;
+        let easy_bonus = rating_eq_4.where_cond(&w.i(16)?, &Tensor::ones_like(rating)?)?;
 
-        (last_s
-            * ((w.i(8)?.exp()?
-                * (last_d * -1.0 + 11.0)?
-                * (last_s.powf(&w.i(9)?.neg()?)?)?
-                * (((r * -1.0 + 1.0)? * w.i(10)?)?.exp()? - 1.0)?
-                * hard_penalty)?
-                * easy_bonus)?
-            + 1.0)
+        let w8_exp = w.i(8)?.exp()?;
+        let last_d_term = ((last_d * (-1.0))? + 11.0)?;
+        let w9_neg = w.i(9)?.neg()?;
+        let w9_neg_scalar = w9_neg.to_scalar::<f32>()? as f64;
+        let last_s_power = last_s.powf(w9_neg_scalar)?;
+        let r_term = (((r * (-1.0))? + 1.0)? * &w.i(10)?)?;
+        let r_exp = (r_term.exp()? - 1.0)?;
+        
+        let multiplier = ((&w8_exp * &last_d_term)? * &last_s_power)?;
+        let multiplier_penalty = (&multiplier * &hard_penalty)?;
+        let bonus_product = (&multiplier_penalty * &easy_bonus)?;
+        let final_multiplier = (&bonus_product + 1.0)?;
+        Ok((last_s * &final_multiplier)?)
     }
 
     fn stability_after_failure(
@@ -115,26 +142,52 @@ impl Model {
         r: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
-        let new_s = (w.i(11)?
-            * last_d.powf(&w.i(12)?.neg()?)?
-            * ((last_s + 1.0)?.powf(&w.i(13)?)? - 1.0)?
-            * (((r * -1.0 + 1.0)? * w.i(14)?)?.exp())?)?;
-        let new_s_min = (last_s / (w.i(17)? * w.i(18)?)?.exp())?;
-        new_s.where_cond(&new_s_min.lt(&new_s)?, &new_s_min, &new_s)
+        let w11 = w.i(11)?;
+        let w12_neg = w.i(12)?.neg()?;
+        let w12_neg_scalar = w12_neg.to_scalar::<f32>()? as f64;
+        let last_d_power = last_d.powf(w12_neg_scalar)?;
+        
+        let last_s_plus_1 = (last_s + 1.0)?;
+        let w13 = w.i(13)?;
+        let w13_scalar = w13.to_scalar::<f32>()? as f64;
+        let last_s_power = (last_s_plus_1.powf(w13_scalar)? - 1.0)?;
+        
+        let r_term = (((r * (-1.0))? + 1.0)? * &w.i(14)?)?;
+        let r_exp = r_term.exp()?;
+        
+        let new_s = (((&w11 * &last_d_power)? * &last_s_power)? * &r_exp)?;
+        
+        let exp_term = (w.i(17)? * &w.i(18)?)?;
+        let new_s_min = (last_s / &exp_term.exp()?)?;
+        
+        let condition = new_s_min.lt(&new_s)?;
+        Ok(condition.where_cond(&new_s_min, &new_s)?)
     }
 
     fn stability_short_term(&self, last_s: &Tensor, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let sinc = ((w.i(17)? * (rating - 3.0 + w.i(18)?)?)?.exp()?
-            * last_s.powf(&w.i(19)?.neg()?)?)?;
-
-        (last_s * sinc.where_cond(&rating.ge_lit(3.0)?, &sinc.minimum(1.0)?, &sinc)?)
+        let rating_term = ((rating - 3.0)? + &w.i(18)?)?;
+        let exp_term = (w.i(17)? * &rating_term)?.exp()?;
+        
+        let w19_neg = w.i(19)?.neg()?;
+        let w19_neg_scalar = w19_neg.to_scalar::<f32>()? as f64;
+        let last_s_power = last_s.powf(w19_neg_scalar)?;
+        
+        let sinc = (&exp_term * &last_s_power)?;
+        
+        let rating_ge_3 = rating.ge(&Tensor::full(3.0, rating.shape(), &self.device)?)?;
+        let sinc_min = sinc.minimum(&Tensor::ones_like(&sinc)?)?;
+        let final_sinc = rating_ge_3.where_cond(&sinc_min, &sinc)?;
+        
+        Ok((last_s * &final_sinc)?)
     }
 
     fn mean_reversion(&self, new_d: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
         let rating = Tensor::from_slice(&[4.0], (1,), &self.device)?;
-        (w.i(7)? * (self.init_difficulty(&rating)? - new_d)? + new_d)
+        let init_d = self.init_difficulty(&rating)?;
+        let diff = (&init_d - new_d)?;
+        Ok(((w.i(7)? * &diff)? + new_d)?)
     }
 
     pub(crate) fn init_stability(&self, rating: &Tensor) -> Result<Tensor> {
@@ -143,22 +196,28 @@ impl Model {
         // Subtract 1 from rating to get 0-based indices.
         let indices = (rating - 1.0)?.to_dtype(candle_core::DType::U32)?;
         // Select from self.w along dimension 0 using the calculated indices.
-        w.index_select(&indices, 0)
+        Ok(w.index_select(&indices, 0)?)
     }
 
     fn init_difficulty(&self, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        (w.i(4)? - (w.i(5)? * (rating - 1.0)?)?.exp()? + 1.0)
+        let rating_minus_1 = (rating - 1.0)?;
+        let exp_term = (w.i(5)? * &rating_minus_1)?.exp()?;
+        Ok(((w.i(4)? - &exp_term)? + 1.0)?)
     }
 
     fn linear_damping(&self, delta_d: &Tensor, old_d: &Tensor) -> Result<Tensor> {
-        ((old_d.neg()? + 10.0)? * delta_d / 9.0)
+        let old_d_neg = old_d.neg()?;
+        let term = (old_d_neg + 10.0)?;
+        Ok(((term * delta_d)? / 9.0)?)
     }
 
     fn next_difficulty(&self, difficulty: &Tensor, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let delta_d = (w.i(6)?.neg()? * (rating - 3.0)?)?;
-        (difficulty + self.linear_damping(&delta_d, difficulty)?)
+        let rating_minus_3 = (rating - 3.0)?;
+        let delta_d = (w.i(6)?.neg()? * &rating_minus_3)?;
+        let damping = self.linear_damping(&delta_d, difficulty)?;
+        Ok((difficulty + &damping)?)
     }
 
     pub(crate) fn step(
@@ -183,15 +242,19 @@ impl Model {
             )?;
             let stability_short_term =
                 self.stability_short_term(&state.stability, rating)?;
-            let mut new_stability = stability_after_success
-                .where_cond(&rating.eq_lit(1.0)?, &stability_after_failure, &stability_after_success)?;
-            new_stability = new_stability.where_cond(&delta_t.eq_lit(0.0)?, &stability_short_term, &new_stability)?;
+            let rating_eq_1 = rating.eq(&Tensor::full(1.0, rating.shape(), &self.device)?)?;
+            let mut new_stability = rating_eq_1.where_cond(&stability_after_failure, &stability_after_success)?;
+            
+            let delta_t_eq_0 = delta_t.eq(&Tensor::full(0.0, delta_t.shape(), &self.device)?)?;
+            new_stability = delta_t_eq_0.where_cond(&stability_short_term, &new_stability)?;
 
             let mut new_difficulty = self.next_difficulty(&state.difficulty, rating)?;
             new_difficulty = self.mean_reversion(&new_difficulty)?.clamp(1.0, 10.0)?;
+            
             // mask padding zeros for rating
-            new_stability = new_stability.where_cond(&rating.eq_lit(0.0)?, &state.stability, &new_stability)?;
-            new_difficulty = new_difficulty.where_cond(&rating.eq_lit(0.0)?, &state.difficulty, &new_difficulty)?;
+            let rating_eq_0 = rating.eq(&Tensor::full(0.0, rating.shape(), &self.device)?)?;
+            new_stability = rating_eq_0.where_cond(&state.stability, &new_stability)?;
+            new_difficulty = rating_eq_0.where_cond(&state.difficulty, &new_difficulty)?;
             (new_stability, new_difficulty)
         } else {
             (
@@ -221,7 +284,7 @@ impl Model {
             state = Some(self.step(&delta_t, &rating, state)?);
         }
         // state.unwrap() // This will panic if state is None. Consider returning Result.
-        state.ok_or_else(|| FSRSError::Internal("Forward resulted in None state".to_string()))
+        state.ok_or_else(|| FSRSError::Internal { message: "Forward resulted in None state".to_string() })
     }
 }
 
@@ -290,7 +353,7 @@ impl FSRS {
     pub(crate) fn model(&self) -> Result<&Model> {
         self.model
             .as_ref()
-            .ok_or_else(|| FSRSError::Internal("Model not initialized".to_string()))
+            .ok_or_else(|| FSRSError::Internal { message: "Model not initialized".to_string() })
     }
 
     pub(crate) fn device(&self) -> Device {

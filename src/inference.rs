@@ -6,8 +6,8 @@ use crate::training::ComputeParametersInput; // This should be fine
 use crate::training::{BCELossCandle, Reduction}; // Use candle BCELoss and local Reduction
 
 // candle imports
-use candle_core::{Device, Error as CandleError, Tensor, DType, Shape};
-
+use candle_core::{Device, Error as CandleError, Tensor};
+use candle_core::IndexOp;
 // Removed burn imports. FSRSBatch, FSRSBatcher are now candle-based from dataset.rs
 use crate::dataset::{
     FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items, recency_weighted_fsrs_items,
@@ -54,7 +54,7 @@ pub static DEFAULT_PARAMETERS: [f32; 21] = [
 fn infer(
     model: &Model, // candle Model
     batch: FSRSBatch, // candle FSRSBatch
-) -> Result<(MemoryStateTensors, Tensor), CandleError> { // candle MemoryStateTensors, candle Tensor
+) -> Result<(MemoryStateTensors, Tensor)> { // Use FSRSError for consistency
     // model.forward and power_forgetting_curve now return Result
     let state = model.forward(&batch.t_historys, &batch.r_historys, None)?;
     let stability = state.stability.copy()?; // Ensure stability is cloned if needed by power_forgetting_curve
@@ -137,7 +137,7 @@ impl FSRS {
             .unzip();
         let size = item.reviews.len();
 
-        let time_history = Tensor::from_vec(time_history_vec, (size,), &self.device)?
+        let time_history = Tensor::from_vec(time_history_vec.clone(), (size,), &self.device())?
             .unsqueeze(1)? // To [size, 1] for transpose compatibility if needed, or handle as 1D
             .transpose(0,1)?; // To [1, size] if model expects batch dim first even for single item
                                // Or if model expects [seq_len, 1], then no transpose needed after unsqueeze(1)
@@ -147,10 +147,10 @@ impl FSRS {
                                // Tensor::from_vec(..., (size,), dev)?.unsqueeze(D::Dim(1))? would be [size,1]
                                // If it needs to be [batch_size=1, seq_len], then .unsqueeze(0)?
                                // Let's stick to [seq_len, 1] based on original transpose logic.
-        let time_history = Tensor::from_vec(time_history_vec, (size,1), &self.device)?;
+        let time_history = Tensor::from_vec(time_history_vec, (size,1), &self.device())?;
 
 
-        let rating_history = Tensor::from_vec(rating_history_vec, (size,1), &self.device)?;
+        let rating_history = Tensor::from_vec(rating_history_vec, (size,1), &self.device())?;
 
         Ok((time_history, rating_history))
     }
@@ -167,7 +167,7 @@ impl FSRS {
     ) -> Result<MemoryState> { // Returns Result now
         let (time_history, rating_history) = self.item_to_tensors(&item)?; // Use ?
         let starting_state_tensors = if let Some(ss) = starting_state {
-            Some(MemoryStateTensors::new(ss, &self.device)?)
+            Some(MemoryStateTensors::new(ss, &self.device())?)
         } else {
             None
         };
@@ -194,7 +194,7 @@ impl FSRS {
         }
         let seq_len = time_history.dims()[0];
         let mut current_mst = if let Some(ss) = starting_state {
-            Some(MemoryStateTensors::new(ss, &self.device)?)
+            Some(MemoryStateTensors::new(ss, &self.device())?)
         } else {
             None
         };
@@ -228,7 +228,7 @@ impl FSRS {
         let model = self.model()?;
         let w_tensor = model.w.as_tensor();
         let decay_val = w_tensor.i(20)?.to_scalar::<f32>()?;
-        if decay_val == 0.0 { return Err(FSRSError::Internal("Decay is zero".to_string()));}
+        if decay_val == 0.0 { return Err(FSRSError::Internal { message: "Decay is zero".to_string() });}
         let decay = decay_val * -1.0;
         let factor = 0.9f32.powf(1.0 / decay) - 1.0;
         let stability = interval.max(S_MIN) * factor / (sm2_retention.powf(1.0 / decay) - 1.0);
@@ -259,13 +259,13 @@ impl FSRS {
     ) -> Result<f32> {
         let model = self.model()?;
         let stability_tensor = if let Some(s) = stability_opt {
-            Tensor::from_slice(&[s], [1], &self.device)?
+            Tensor::from_slice(&[s], &[1], &self.device())?
         } else {
-            let rating_tensor = Tensor::from_slice(&[rating_val as f32], [1], &self.device)?;
+            let rating_tensor = Tensor::from_slice(&[rating_val as f32], &[1], &self.device())?;
             model.init_stability(&rating_tensor)?
         };
 
-        let desired_retention_tensor = Tensor::from_slice(&[desired_retention], [1], &self.device)?;
+        let desired_retention_tensor = Tensor::from_slice(&[desired_retention], &[1], &self.device())?;
         let interval = model
             .next_interval(&stability_tensor, &desired_retention_tensor)?
             .to_scalar::<f32>()?;
@@ -281,16 +281,16 @@ impl FSRS {
         desired_retention: f32,
         days_elapsed: u32,
     ) -> Result<NextStates> {
-        let delta_t = Tensor::from_slice(&[days_elapsed as f32], [1], &self.device)?;
+        let delta_t = Tensor::from_slice(&[days_elapsed as f32], &[1], &self.device())?;
         let current_memory_state_tensors = match current_memory_state {
-            Some(cms) => Some(MemoryStateTensors::new(cms, &self.device)?),
+            Some(cms) => Some(MemoryStateTensors::new(cms, &self.device())?),
             None => None,
         };
         let model = self.model()?;
 
         let mut states_results = Vec::new();
         for rating_val in 1..=4 {
-            let rating_tensor = Tensor::from_slice(&[rating_val as f32], [1], &self.device)?;
+            let rating_tensor = Tensor::from_slice(&[rating_val as f32], &[1], &self.device())?;
             let state_tensors = model.step(&delta_t, &rating_tensor, current_memory_state_tensors.clone())?;
             let state = MemoryState::from(state_tensors);
             if !state.stability.is_finite() || !state.difficulty.is_finite() {
@@ -299,10 +299,10 @@ impl FSRS {
             states_results.push(state);
         }
 
-        let desired_retention_tensor = Tensor::from_slice(&[desired_retention], [1], &self.device)?;
+        let desired_retention_tensor = Tensor::from_slice(&[desired_retention], &[1], &self.device())?;
         let mut item_states = Vec::new();
         for memory in states_results {
-            let stability_tensor = Tensor::from_slice(&[memory.stability], [1], &self.device)?;
+            let stability_tensor = Tensor::from_slice(&[memory.stability], &[1], &self.device())?;
             let interval = model.next_interval(&stability_tensor, &desired_retention_tensor)?.to_scalar::<f32>()?;
             item_states.push(ItemState { memory, interval });
         }
@@ -325,7 +325,7 @@ impl FSRS {
             return Err(FSRSError::NotEnoughData);
         }
         let weighted_items = recency_weighted_fsrs_items(items);
-        let batcher = FSRSBatcher::new(self.device.clone());
+        let batcher = FSRSBatcher::new(self.device().clone());
         let mut all_retrievability_tensors: Vec<Tensor> = vec![];
         let mut all_labels_tensors: Vec<Tensor> = vec![];
         let mut all_weights_tensors: Vec<Tensor> = vec![];
@@ -377,7 +377,7 @@ impl FSRS {
 
         let loss_items = BCELossCandle::new().forward(&all_retrievability, &all_labels, &all_weights, Reduction::Sum)?;
         let total_weights = all_weights.sum_all()?.to_scalar::<f32>()?;
-        let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / total_weights)?.neg()?.to_scalar::<f32>()? };
+        let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / Tensor::from_slice(&[total_weights], &[1], &self.device())?)?.neg()?.to_scalar::<f32>()? };
 
         Ok(ModelEvaluation {
             log_loss,
@@ -418,7 +418,7 @@ impl FSRS {
             };
             let parameters = self.compute_parameters(input)?;
 
-            let predictions = batch_predict(split.test_items, &parameters, &self.device)?;
+            let predictions = batch_predict(split.test_items, &parameters, &self.device())?;
 
             all_predictions.extend(predictions);
 
@@ -427,7 +427,7 @@ impl FSRS {
                 return Err(FSRSError::Interrupted);
             }
         }
-        evaluate(all_predictions, &self.device)
+        evaluate(all_predictions, &self.device())
     }
 
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f32) -> f32 {
@@ -456,7 +456,7 @@ impl FSRS {
             return Err(FSRSError::NotEnoughData);
         }
         let weighted_items = constant_weighted_fsrs_items(items);
-        let batcher = FSRSBatcher::new(self.device.clone());
+        let batcher = FSRSBatcher::new(self.device().clone());
         let mut all_predictions_self_vec: Vec<f32> = vec![];
         let mut all_predictions_other_vec: Vec<f32> = vec![];
         let mut all_true_val_vec: Vec<f32> = vec![];
@@ -465,7 +465,7 @@ impl FSRS {
             total: weighted_items.len(),
         };
         let model_self = self.model()?;
-        let fsrs_other = FSRS::new_with_device(Some(parameters), self.device.clone())?;
+        let fsrs_other = FSRS::new_with_device(Some(parameters), self.device().clone())?;
         let model_other = fsrs_other.model()?;
 
         for chunk in weighted_items.chunks(512) {
@@ -571,7 +571,7 @@ fn evaluate(
 
     let loss_items = BCELossCandle::new().forward(&all_retrievability_tensor, &all_labels_tensor, &all_weights_tensor, Reduction::Sum)?;
     let total_weights = all_weights_tensor.sum_all()?.to_scalar::<f32>()?;
-    let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / total_weights)?.neg()?.to_scalar::<f32>()? };
+            let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / Tensor::from_slice(&[total_weights], &[1], device)?)?.neg()?.to_scalar::<f32>()? };
 
     Ok(ModelEvaluation {
         log_loss,
