@@ -6,8 +6,7 @@
 // are needed in the future, they can be added here.
 
 // Test helpers for candle-based tests
-use candle_core::{Device, Tensor};
-use crate::error::Result;
+use candle_core::Device;
 
 pub type NdArrayAutodiff = Device; // For compatibility with existing test code
 

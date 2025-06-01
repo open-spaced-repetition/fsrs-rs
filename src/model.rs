@@ -40,7 +40,7 @@ impl std::fmt::Debug for Model {
 
 impl Model {
     #[allow(clippy::new_without_default)]
-    pub fn new(config: ModelConfig, device: Device, mut varmap: VarMap) -> Result<Self> {
+    pub fn new(config: ModelConfig, device: Device, varmap: VarMap) -> Result<Self> {
         let mut initial_params_vec: Vec<f32> = config
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
@@ -56,8 +56,7 @@ impl Model {
         // Create the tensor first
         let initial_w_tensor = Tensor::from_vec(initial_params_vec, (21,), &device)?;
         
-        // Set the tensor in the varmap and create a Var from it
-        varmap.set_one("w", &initial_w_tensor)?;
+        // Create a Var from the tensor
         let w = candle_core::Var::from_tensor(&initial_w_tensor)?;
 
         Ok(Self { w, device, varmap })
@@ -79,7 +78,7 @@ impl Model {
         let ln_09 = 0.9f32.ln();
         let decay_inv = decay.powf(-1.0)?;
         let ln_09_tensor = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
-        let factor = ((decay_inv * ln_09_tensor)?.exp()? - 1.0)?;
+        let factor = ((decay_inv.unsqueeze(0)? * ln_09_tensor)?.exp()? - 1.0)?;
         let result = (((t / s)? * &factor)? + 1.0)?;
         let decay_scalar = decay.to_scalar::<f32>()? as f64;
         Ok(result.powf(decay_scalar)?)
@@ -95,7 +94,7 @@ impl Model {
         let ln_09 = 0.9f32.ln();
         let decay_inv = decay.powf(-1.0)?;
         let ln_09_tensor = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
-        let factor = ((&decay_inv * &ln_09_tensor)?.exp()? - 1.0)?;
+        let factor = ((&decay_inv.unsqueeze(0)? * &ln_09_tensor)?.exp()? - 1.0)?;
         let decay_inv_scalar = decay_inv.to_scalar::<f32>()? as f64;
         let power_result = desired_retention.powf(decay_inv_scalar)?;
         let power_minus_one = (power_result - 1.0)?;

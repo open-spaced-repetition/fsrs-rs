@@ -127,7 +127,7 @@ mod tests {
     //     backend::{NdArray, ndarray::NdArrayDevice}, // Removed burn backend
     //     tensor::Shape, // Removed burn Shape
     // };
-    use candle_core::{Device, Tensor, Shape}; // Using candle types
+    use candle_core::{Device, Shape}; // Using candle types
     use itertools::Itertools;
 
     use super::*;

@@ -684,7 +684,6 @@ mod tests {
         FSRSReview, convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
         // test_helpers::TestHelper, // Removed burn specific helper
     };
-    use candle_core::Device; // Added candle device
 
     // Helper for float slice comparisons
     fn assert_f32_slices_approx_eq(result: &[f32], expected: &[f32]) {
