@@ -217,14 +217,15 @@ impl FSRS {
     ) -> Result<MemoryState> {
         let model = self.model()?;
         let w_tensor = model.w.as_tensor();
-        let decay_val = w_tensor.i(20)?.to_scalar::<f64>()?;
+        let w_vec = w_tensor.to_vec1::<f64>()?;
+        let decay_val = w_vec[20];
         if decay_val == 0.0 { return Err(FSRSError::Internal { message: "Decay is zero".to_string() });}
         let decay = decay_val * -1.0;
         let factor = 0.9f64.powf(1.0 / decay) - 1.0;
         let stability = interval.max(S_MIN) * factor / (sm2_retention.powf(1.0 / decay) - 1.0);
-        let w8 = w_tensor.i(8)?.to_scalar::<f64>()?;
-        let w9 = w_tensor.i(9)?.to_scalar::<f64>()?;
-        let w10 = w_tensor.i(10)?.to_scalar::<f64>()?;
+        let w8 = w_vec[8];
+        let w9 = w_vec[9];
+        let w10 = w_vec[10];
         let difficulty = 11.0
             - (ease_factor - 1.0)
                 / (w8.exp() * stability.powf(-w9) * ((1.0 - sm2_retention) * w10).exp_m1());
@@ -293,7 +294,8 @@ impl FSRS {
         let mut item_states = Vec::new();
         for memory in states_results {
             let stability_tensor = Tensor::from_slice(&[memory.stability], &[1], &self.device())?;
-            let interval = model.next_interval(&stability_tensor, &desired_retention_tensor)?.to_scalar::<f64>()?;
+            let interval_tensor = model.next_interval(&stability_tensor, &desired_retention_tensor)?;
+            let interval = interval_tensor.to_vec1::<f64>()?[0];
             item_states.push(ItemState { memory, interval });
         }
 
@@ -1055,12 +1057,9 @@ mod tests {
         let ease_factor = 2.0;
         let initial_sm2_state = fsrs.memory_state_from_sm2(ease_factor, interval as f64, 0.9)?;
         dbg!(initial_sm2_state);
-        let fsrs_factor = fsrs
-            .next_states(Some(initial_sm2_state), 0.9, interval)?
-            .good
-            .memory
-            .stability
-            / interval as f64;
+        let next_states_result = fsrs.next_states(Some(initial_sm2_state), 0.9, interval)?;
+        let fsrs_factor = next_states_result.good.memory.stability / interval as f64;
+        dbg!(next_states_result.good.memory.stability, fsrs_factor, ease_factor);
         assert!((fsrs_factor - ease_factor).abs() < 0.01);
         Ok(())
     }

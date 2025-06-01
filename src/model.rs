@@ -78,10 +78,11 @@ impl Model {
         let s = s.to_dtype(candle_core::DType::F64)?;
         
         let w = self.w_tensor();
-        let decay = (w.i(20)? * (-1.0))?;
+        let w_vec = w.to_vec1::<f64>()?;
+        let decay = w_vec[20] * (-1.0);
         let ln_09 = 0.9f64.ln();
-        let decay_inv = decay.powf(-1.0)?;
-        let decay_inv_scalar = decay_inv.to_scalar::<f64>()?;
+        let decay_inv = decay.powf(-1.0);
+        let decay_inv_scalar = decay_inv;
         
         // Create tensors that broadcast correctly with t and s, all as f64
         let ln_09_scalar = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
@@ -101,12 +102,13 @@ impl Model {
         desired_retention: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
-        let decay = (w.i(20)? * (-1.0f64))?;
+        let w_vec = w.to_vec1::<f64>()?;
+        let decay = w_vec[20] * (-1.0f64);
         let ln_09 = 0.9f64.ln();
-        let decay_inv = decay.powf(-1.0f64)?;
-        let decay_inv_scalar = decay_inv.to_scalar::<f64>()?;
-        let ln_09_tensor = Tensor::from_slice(&[ln_09], (), &self.device)?;
-        let decay_inv_tensor = Tensor::from_slice(&[decay_inv_scalar], (), &self.device)?;
+        let decay_inv = decay.powf(-1.0f64);
+        let decay_inv_scalar = decay_inv;
+        let ln_09_tensor = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
+        let decay_inv_tensor = Tensor::from_slice(&[decay_inv_scalar], (1,), &self.device)?;
         let factor = ((decay_inv_tensor.clone() * ln_09_tensor)?.exp()? - 1.0f64)?;
         let power_result = desired_retention.powf(decay_inv_scalar as f64)?;
         let power_minus_one = (power_result - 1.0f64)?;
@@ -121,6 +123,7 @@ impl Model {
         rating: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
+        let w_vec = w.to_vec1::<f64>()?;
         let batch_size = rating.dims()[0];
         
         // Create condition tensors for hard penalty and easy bonus
@@ -134,12 +137,11 @@ impl Model {
 
         let w8_exp = w.i(8)?.exp()?;
         let last_d_term = ((last_d * (-1.0f64))? + 11.0f64)?;
-        let w9_neg = w.i(9)?.neg()?;
-        let w9_neg_scalar = w9_neg.to_scalar::<f64>()?;
+        let w9_neg_scalar = w_vec[9] * (-1.0);
         let last_s_power = last_s.powf(w9_neg_scalar as f64)?;
         let w10 = w.i(10)?.broadcast_as(r.shape())?;
         let r_term = (((r * (-1.0f64))? + 1.0f64)? * w10)?;
-        let r_exp = (r_term.exp()? - 1.0f64)?;
+        let _r_exp = (r_term.exp()? - 1.0f64)?;
         
         let w8_exp_broadcasted = w8_exp.broadcast_as(last_d_term.shape())?;
         let multiplier = ((w8_exp_broadcasted * &last_d_term)? * &last_s_power)?;
@@ -156,14 +158,13 @@ impl Model {
         r: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
+        let w_vec = w.to_vec1::<f64>()?;
         let w11 = w.i(11)?.broadcast_as(last_d.shape())?;
-        let w12_neg = w.i(12)?.neg()?;
-        let w12_neg_scalar = w12_neg.to_scalar::<f64>()?;
+        let w12_neg_scalar = w_vec[12] * (-1.0);
         let last_d_power = last_d.powf(w12_neg_scalar as f64)?;
         
         let last_s_plus_1 = (last_s + 1.0f64)?;
-        let w13 = w.i(13)?;
-        let w13_scalar = w13.to_scalar::<f64>()?;
+        let w13_scalar = w_vec[13];
         let last_s_power = (last_s_plus_1.powf(w13_scalar as f64)? - 1.0f64)?;
         
         let w14 = w.i(14)?.broadcast_as(r.shape())?;
@@ -186,13 +187,13 @@ impl Model {
 
     fn stability_short_term(&self, last_s: &Tensor, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
+        let w_vec = w.to_vec1::<f64>()?;
         let w18 = w.i(18)?.broadcast_as(rating.shape())?;
         let rating_term = ((rating - 3.0f64)? + w18)?;
         let w17 = w.i(17)?.broadcast_as(rating_term.shape())?;
         let exp_term = (w17 * rating_term)?.exp()?;
         
-        let w19_neg = w.i(19)?.neg()?;
-        let w19_neg_scalar = w19_neg.to_scalar::<f64>()?;
+        let w19_neg_scalar = w_vec[19] * (-1.0);
         let last_s_power = last_s.powf(w19_neg_scalar as f64)?;
         
         let sinc = (exp_term * last_s_power)?;
@@ -206,7 +207,7 @@ impl Model {
 
     fn mean_reversion(&self, new_d: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let rating = Tensor::from_slice(&[4.0], (), &self.device)?;
+        let rating = Tensor::from_slice(&[4.0], new_d.shape(), &self.device)?;
         let init_d = self.init_difficulty(&rating)?;
         let diff = (init_d - new_d)?;
         let w7 = w.i(7)?.broadcast_as(diff.shape())?;
