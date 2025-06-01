@@ -57,7 +57,7 @@ name = "simulation"
 harness = false
 
 [[bench]]
-name = "evaluate"
+name = "parameters"
 harness = false
 
 [[example]]

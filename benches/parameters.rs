@@ -249,9 +249,33 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_compute_parameters(c: &mut Criterion) {
+    let items = load_and_prepare_data();
+    // compute_parameters computes new parameters, so initial FSRS parameters don't matter.
+    let fsrs = FSRS::new(None).unwrap();
+    let input = ComputeParametersInput {
+        train_set: items.clone(), // Using the full prepared dataset
+        progress: None,
+        enable_short_term: true,    // Default/typical value
+        num_relearning_steps: None, // Default/typical value
+    };
+
+    let mut group = c.benchmark_group("parameter_computation");
+    group.sample_size(10); // Reduce sample size as this involves optimization
+
+    group.bench_function("compute_parameters", |b| {
+        b.iter(|| {
+            fsrs.compute_parameters(black_box(input.clone())).unwrap();
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_evaluate,
-    benchmark_evaluate_with_time_series_splits
+    benchmark_evaluate_with_time_series_splits,
+    benchmark_compute_parameters
 );
 criterion_main!(benches);
