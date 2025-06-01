@@ -1685,7 +1685,7 @@ mod tests {
                     calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
                 println!("cost_per_memorization: {}", cost_per_memorization);
                 assert!((cost_per_memorization - $expected).abs() < 0.01);
-                Ok(())
+                Ok::<(), crate::FSRSError>(())
             }};
         }
 

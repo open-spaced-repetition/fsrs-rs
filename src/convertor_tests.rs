@@ -2,7 +2,7 @@ use crate::convertor_tests::RevlogReviewKind::*;
 use crate::dataset::{FSRSBatcher, constant_weighted_fsrs_items};
 use crate::dataset::{FSRSItem, FSRSReview};
 use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
-use crate::test_helpers::NdArrayAutodiff;
+// Removed unused import: use crate::test_helpers::NdArrayAutodiff;
 use candle_core::Device;
 use chrono::prelude::*;
 use chrono_tz::Tz;
@@ -149,25 +149,29 @@ pub struct RevlogCsv {
 
 pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     const CSV_FILE: &str = "tests/data/revlog.csv";
-    let rdr = csv::ReaderBuilder::new();
-    let dataset = InMemDataset::<RevlogCsv>::from_csv(CSV_FILE, &rdr).unwrap();
-    let revlogs: Vec<_> = dataset
-        .iter()
-        .map(|r| RevlogEntry {
-            id: r.review_time,
-            cid: r.card_id,
-            button_chosen: r.review_rating as u8,
-            taken_millis: r.review_duration,
-            review_kind: match r.review_state {
-                0 => RevlogReviewKind::Learning,
-                1 => RevlogReviewKind::Learning,
-                2 => RevlogReviewKind::Review,
-                3 => RevlogReviewKind::Relearning,
-                4 => RevlogReviewKind::Filtered,
-                5 => RevlogReviewKind::Manual,
-                _ => panic!("Invalid review state"),
-            },
-            ..Default::default()
+    
+    // Read CSV data directly using csv crate
+    let mut rdr = csv::ReaderBuilder::new().from_path(CSV_FILE).unwrap();
+    let revlogs: Vec<_> = rdr
+        .deserialize()
+        .map(|result| {
+            let r: RevlogCsv = result.unwrap();
+            RevlogEntry {
+                id: r.review_time,
+                cid: r.card_id,
+                button_chosen: r.review_rating as u8,
+                taken_millis: r.review_duration,
+                review_kind: match r.review_state {
+                    0 => RevlogReviewKind::Learning,
+                    1 => RevlogReviewKind::Learning,
+                    2 => RevlogReviewKind::Review,
+                    3 => RevlogReviewKind::Relearning,
+                    4 => RevlogReviewKind::Filtered,
+                    5 => RevlogReviewKind::Manual,
+                    _ => panic!("Invalid review state"),
+                },
+                ..Default::default()
+            }
         })
         .collect();
     dbg!(revlogs.len());
@@ -316,7 +320,7 @@ fn conversion_works() {
             .unwrap(),
         [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
     );
-    assert_eq!(res.labels.to_scalar::<i32>().unwrap(), 1);
+    assert_eq!(res.labels.to_scalar::<f32>().unwrap(), 1.0);
 }
 
 #[test]
