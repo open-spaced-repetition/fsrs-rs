@@ -2,7 +2,7 @@ use crate::FSRS;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters, S_MAX, S_MIN};
 use crate::model::check_and_fill_parameters;
-use burn::tensor::backend::Backend;
+// Removed: use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
 use ndarray_rand::rand::distributions::WeightedIndex;
 use ndarray_rand::rand::rngs::StdRng;
@@ -696,7 +696,7 @@ where
     results.map(|v| v.iter().sum::<f32>() / n as f32)
 }
 
-impl<B: Backend> FSRS<B> {
+impl FSRS { // Ensure this was changed, if not, it should be. If it was already `impl FSRS`, this block is fine.
     /// For the given simulator parameters and parameters, determine the suggested `desired_retention`
     /// value.
     pub fn optimal_retention<F>(
@@ -1181,9 +1181,18 @@ pub fn extract_simulator_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
+    use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
+    // TestHelper was removed from this file in a previous step, this is just confirming.
     const LEARN_COST: f32 = 42.;
     const REVIEW_COST: f32 = 43.;
+
+    // Helper for float slice comparisons
+    fn assert_f32_slices_approx_eq_optimal(result: &[f32], expected: &[f32], tolerance: f32) {
+        assert_eq!(result.len(), expected.len(), "Slice lengths differ.");
+        for (r, e) in result.iter().zip(expected.iter()) {
+            assert!((r - e).abs() < tolerance, "Value mismatch: {} (result) vs {} (expected)", r, e);
+        }
+    }
 
     #[test]
     fn test_memory_state_short_term() {
@@ -1889,8 +1898,7 @@ mod tests {
                 initial_pass_rate,
                 termination_prob,
             );
-            // dbg!(desired_retention, result.unwrap());
-            [result.unwrap()].assert_approx_eq([expected]);
+            assert_f32_slices_approx_eq_optimal(&[result.expect("expected_workload failed")], &[expected], 1e-5);
         }
 
         // compare with the workload of default desired retention 0.9

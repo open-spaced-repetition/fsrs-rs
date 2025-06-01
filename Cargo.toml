@@ -13,23 +13,10 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies.burn]
-version = "0.17.0"
-# git = "https://github.com/tracel-ai/burn.git"
-# rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
-# path = "../burn/burn"
-default-features = false
-features = ["std", "train", "ndarray", "metrics"]
-
-[dev-dependencies.burn]
-version = "0.17.0"
-# git = "https://github.com/tracel-ai/burn.git"
-# rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
-# path = "../burn/burn"
-default-features = false
-features = ["std", "train", "ndarray", "sqlite-bundled", "metrics"]
-
 [dependencies]
+candle-core = { version = "0.9.1", default-features = false }
+candle-nn = { version = "0.9.1", default-features = false }
+# candle-optimisers = { version = "0.9.0", default-features = false } # Removed, optimizers seem to be in candle-nn
 itertools = "0.14.0"
 log = "0.4"
 ndarray = "0.16.1"
@@ -41,6 +28,8 @@ snafu = "0.8.5"
 strum = { version = "0.27.1", features = ["derive"] }
 
 [dev-dependencies]
+candle-core = { version = "0.9.1", default-features = false } # Also needed for tests if they use Tensors
+candle-nn = { version = "0.9.1", default-features = false }   # If tests build models
 chrono = { version = "0.4.41", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10.3"
 criterion = { version = "0.6.0" }

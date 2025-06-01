@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use burn::data::dataloader::batcher::Batcher;
-use burn::{
-    data::dataset::Dataset,
-    tensor::{Float, Int, Shape, Tensor, TensorData, backend::Backend},
-};
+// candle imports
+use candle_core::{Device, Tensor, DType, Error as CandleError}; // Added DType, Error
+
+// Removed burn imports: Batcher, Dataset, Float, Int, Shape, TensorData, Backend
+// These will be replaced by candle equivalents or different structures.
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -78,120 +78,119 @@ impl FSRSItem {
 }
 
 #[derive(Clone)]
-pub(crate) struct FSRSBatcher<B: Backend> {
-    device: B::Device,
+pub(crate) struct FSRSBatcher { // Removed <B: Backend> generic
+    device: Device, // Uses candle_core::Device
 }
 
-impl<B: Backend> FSRSBatcher<B> {
-    pub const fn new(device: B::Device) -> Self {
+impl FSRSBatcher {
+    pub const fn new(device: Device) -> Self {
         Self { device }
     }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct FSRSBatch<B: Backend> {
-    pub t_historys: Tensor<B, 2, Float>,
-    pub r_historys: Tensor<B, 2, Float>,
-    pub delta_ts: Tensor<B, 1, Float>,
-    pub labels: Tensor<B, 1, Int>,
-    pub weights: Tensor<B, 1, Float>,
+pub(crate) struct FSRSBatch { // Removed <B: Backend> generic
+    pub t_historys: Tensor, // candle::Tensor
+    pub r_historys: Tensor, // candle::Tensor
+    pub delta_ts: Tensor,   // candle::Tensor
+    pub labels: Tensor,     // candle::Tensor (should be U32 or I64 for CrossEntropy, or F32 for BCE)
+    pub weights: Tensor,    // candle::Tensor
 }
 
-impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
-    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, _device: &B::Device) -> FSRSBatch<B> {
+// The Batcher trait from burn.data is removed. This is now a concrete struct method.
+// The method signature changes to return Result<FSRSBatch, CandleError> for error handling.
+impl FSRSBatcher {
+    pub fn batch(&self, weighted_items: Vec<WeightedFSRSItem>) -> Result<FSRSBatch, CandleError> {
         let pad_size = weighted_items
             .iter()
             .map(|x| x.item.reviews.len())
             .max()
-            .expect("FSRSItem is empty")
-            - 1;
+            .unwrap_or(0) // Handle empty weighted_items
+            .saturating_sub(1); // Ensure pad_size is not negative if max len is 0 or 1.
 
-        let (time_histories, rating_histories) = weighted_items
-            .iter()
-            .map(|weighted_item| {
-                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) = weighted_item
-                    .item
-                    .history()
-                    .map(|r| (r.delta_t, r.rating))
-                    .unzip();
-                delta_t.resize(pad_size, 0);
-                rating.resize(pad_size, 0);
-                let delta_t = Tensor::<B, 2>::from_floats(
-                    TensorData::new(
-                        delta_t,
-                        Shape {
-                            dims: vec![1, pad_size],
-                        },
-                    ),
-                    &self.device,
-                );
-                let rating = Tensor::<B, 2>::from_data(
-                    TensorData::new(
-                        rating,
-                        Shape {
-                            dims: vec![1, pad_size],
-                        },
-                    ),
-                    &self.device,
-                );
-                (delta_t, rating)
-            })
-            .unzip();
+        let mut time_histories_vec: Vec<Tensor> = Vec::new();
+        let mut rating_histories_vec: Vec<Tensor> = Vec::new();
 
-        let (delta_ts, labels, weights) = weighted_items
+        for weighted_item in &weighted_items {
+            let (mut delta_t_values, mut rating_values): (Vec<f32>, Vec<f32>) = weighted_item
+                .item
+                .history()
+                .map(|r| (r.delta_t as f32, r.rating as f32))
+                .unzip();
+
+            delta_t_values.resize(pad_size, 0.0);
+            rating_values.resize(pad_size, 0.0);
+
+            // Create 1D tensors first, then reshape/unsqueeze for concat
+            let delta_t_tensor = Tensor::from_vec(delta_t_values, (pad_size,), &self.device)?.unsqueeze(0)?; // Shape [1, pad_size]
+            let rating_tensor = Tensor::from_vec(rating_values, (pad_size,), &self.device)?.unsqueeze(0)?; // Shape [1, pad_size]
+
+            time_histories_vec.push(delta_t_tensor);
+            rating_histories_vec.push(rating_tensor);
+        }
+
+        let (delta_ts_vec, labels_vec, weights_vec): (Vec<Tensor>, Vec<Tensor>, Vec<Tensor>) = weighted_items
             .iter()
             .map(|weighted_item| {
                 let current = weighted_item.item.current();
-                let delta_t: Tensor<B, 1> =
-                    Tensor::from_floats([current.delta_t as f32], &self.device);
-                let label = match current.rating {
-                    1 => 0,
-                    _ => 1,
+                let delta_t = Tensor::from_slice(&[current.delta_t as f32], (1,), &self.device)?;
+                let label_val = match current.rating {
+                    1 => 0f32, // Using f32 for labels if BCE is used directly with probabilities
+                    _ => 1f32,
                 };
-                let label: Tensor<B, 1, Int> = Tensor::from_ints([label], &self.device);
-                let weight: Tensor<B, 1> =
-                    Tensor::from_floats([weighted_item.weight], &self.device);
-                (delta_t, label, weight)
+                let label = Tensor::from_slice(&[label_val], (1,), &self.device)?;
+                let weight = Tensor::from_slice(&[weighted_item.weight], (1,), &self.device)?;
+                Ok((delta_t, label, weight))
             })
+            .collect::<Result<Vec<_>, CandleError>>()? // Handle potential errors from tensor creation
+            .into_iter()
             .multiunzip();
 
-        let t_historys = Tensor::cat(time_histories, 0)
-            .transpose()
-            .to_device(&self.device); // [seq_len, batch_size]
-        let r_historys = Tensor::cat(rating_histories, 0)
-            .transpose()
-            .to_device(&self.device); // [seq_len, batch_size]
-        let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);
-        let labels = Tensor::cat(labels, 0).to_device(&self.device);
-        let weights = Tensor::cat(weights, 0).to_device(&self.device);
+        // Concatenate along batch dimension (dim 0)
+        let t_historys = if !time_histories_vec.is_empty() {
+            Tensor::cat(&time_histories_vec, 0)?.transpose(0, 1)? // [pad_size, batch_size]
+        } else {
+            Tensor::zeros((pad_size, weighted_items.len()), DType::F32, &self.device)?
+        };
 
-        // dbg!(&items[0].t_history);
-        // dbg!(&t_historys);
+        let r_historys = if !rating_histories_vec.is_empty() {
+            Tensor::cat(&rating_histories_vec, 0)?.transpose(0, 1)? // [pad_size, batch_size]
+        } else {
+            Tensor::zeros((pad_size, weighted_items.len()), DType::F32, &self.device)?
+        };
 
-        FSRSBatch {
+        let delta_ts = if !delta_ts_vec.is_empty() { Tensor::cat(&delta_ts_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F32, &self.device)? };
+        let labels = if !labels_vec.is_empty() { Tensor::cat(&labels_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F32, &self.device)? }; // Assuming F32 labels
+        let weights = if !weights_vec.is_empty() { Tensor::cat(&weights_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F32, &self.device)? };
+
+
+        Ok(FSRSBatch { // Ok wrapping
             t_historys,
             r_historys,
             delta_ts,
             labels,
             weights,
-        }
+        })
     }
 }
 
+// FSRSDataset no longer implements burn::data::dataset::Dataset
+// It's now a simple struct that holds the data.
 pub(crate) struct FSRSDataset {
     pub(crate) items: Vec<WeightedFSRSItem>,
 }
 
-impl Dataset<WeightedFSRSItem> for FSRSDataset {
-    fn len(&self) -> usize {
+// Methods for FSRSDataset (if needed, e.g. len, get)
+impl FSRSDataset {
+    pub fn len(&self) -> usize {
         self.items.len()
     }
 
-    fn get(&self, index: usize) -> Option<WeightedFSRSItem> {
-        // info!("get {}", index);
-        self.items.get(index).cloned()
+    pub fn get(&self, index: usize) -> Option<&WeightedFSRSItem> { // Return ref
+        self.items.get(index)
     }
 }
+
 
 impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     fn from(items: Vec<WeightedFSRSItem>) -> Self {
@@ -297,20 +296,30 @@ pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedF
 
 #[cfg(test)]
 mod tests {
-    use burn::tensor::Tolerance;
+    // use burn::tensor::Tolerance; // Removed burn import
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
+    use candle_core::Device; // Using candle Device
+
+    // Helper for tests: compare two tensors (assuming f32 data)
+    fn assert_tensor_eq(result: &Tensor, expected_data: &[f32], shape: &[usize]) -> Result<(), CandleError> {
+        let expected = Tensor::from_slice(expected_data, shape, &Device::Cpu)?;
+        let diff = (result - &expected)?.abs()?.sum_all()?.to_scalar::<f32>()?;
+        assert!(diff < 1e-5, "Tensors are not equal. Result: {:?}, Expected: {:?}", result.to_vec2::<f32>(), expected.to_vec2::<f32>());
+        Ok(())
+    }
+
 
     #[test]
-    fn from_anki() {
-        use burn::data::dataloader::Dataset;
+    fn from_anki() -> Result<(), CandleError> { // Return Result for candle ops
+        // use burn::data::dataloader::Dataset; // Removed burn import
 
         let dataset = FSRSDataset::from(constant_weighted_fsrs_items(
             anki21_sample_file_converted_to_fsrs(),
         ));
         assert_eq!(
-            dataset.get(704).unwrap().item,
+            dataset.get(704).unwrap().item, // .cloned() removed as get now returns ref
             FSRSItem {
                 reviews: vec![
                     FSRSReview {
@@ -325,17 +334,21 @@ mod tests {
             }
         );
 
-        use burn::backend::ndarray::NdArrayDevice;
+        // The DataLoader part of this test is removed as it depends on burn::data::DataLoaderBuilder
+        // and a compatible Batcher trait. This needs to be re-done with candle's approach to data loading.
+        // For now, we can test the batcher directly if needed.
+        /*
+        use burn::backend::ndarray::NdArrayDevice; // This would be Device::Cpu
         let device = NdArrayDevice::Cpu;
-        use burn::backend::NdArray;
-        type Backend = NdArray<f32>;
-        let batcher = FSRSBatcher::<Backend>::new(device);
+        use burn::backend::NdArray; // Not needed
+        type Backend = NdArray<f32>; // Not needed
+        let batcher = FSRSBatcher::<Backend>::new(device); // Now FSRSBatcher::new(device)
         use burn::data::dataloader::DataLoaderBuilder;
         let dataloader = DataLoaderBuilder::new(batcher)
             .batch_size(1)
             .shuffle(42)
             .num_workers(4)
-            .build(dataset);
+            .build(dataset); // build(dataset) would need FSRSDataset to impl burn::Dataset
         dbg!(
             dataloader
                 .iter()
@@ -343,16 +356,18 @@ mod tests {
                 .expect("loader is empty")
                 .r_historys
         );
+        */
+        Ok(())
     }
 
     #[test]
-    fn batcher() {
-        use burn::backend::NdArray;
-        use burn::backend::ndarray::NdArrayDevice;
-        type Backend = NdArray<f32>;
-        let device = NdArrayDevice::Cpu;
-        let batcher = FSRSBatcher::<Backend>::new(device);
-        let items = [
+    fn batcher() -> Result<(), CandleError> { // Return Result
+        // use burn::backend::NdArray; // Removed
+        // use burn::backend::ndarray::NdArrayDevice; // Removed
+        // type Backend = NdArray<f32>; // Removed
+        let device = Device::Cpu; // Use candle Device
+        let batcher = FSRSBatcher::new(device.clone()); // Pass candle device
+        let items_data = [ // Renamed to avoid conflict
             FSRSItem {
                 reviews: [(4, 0), (3, 5)]
                     .into_iter()
@@ -402,38 +417,31 @@ mod tests {
                     .collect(),
             },
         ];
-        let items = items
+        let weighted_items: Vec<WeightedFSRSItem> = items_data // Use new name
             .into_iter()
             .map(|item| WeightedFSRSItem { weight: 1.0, item })
             .collect();
-        let batch = batcher.batch(items, &device);
-        batch.t_historys.to_data().assert_approx_eq::<f32>(
-            &TensorData::from([
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 5.0, 0.0, 2.0, 2.0, 2.0, 0.0, 1.0],
-                [0.0, 0.0, 0.0, 0.0, 6.0, 6.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 16.0, 0.0, 0.0],
-            ]),
-            Tolerance::absolute(1e-5),
-        );
-        batch.r_historys.to_data().assert_approx_eq::<f32>(
-            &TensorData::from([
-                [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 1.0, 1.0],
-                [0.0, 3.0, 0.0, 3.0, 3.0, 3.0, 0.0, 1.0],
-                [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0],
-            ]),
-            Tolerance::absolute(1e-5),
-        );
+        let batch = batcher.batch(weighted_items)?; // Use ?, remove device arg
 
-        batch.delta_ts.to_data().assert_approx_eq::<f32>(
-            &TensorData::from([5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0]),
-            Tolerance::absolute(1e-5),
-        );
-        batch.labels.to_data().assert_approx_eq::<f32>(
-            &TensorData::from([1, 1, 1, 1, 1, 1, 0, 1]),
-            Tolerance::absolute(1e-5),
-        );
+        assert_tensor_eq(&batch.t_historys, &[
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 5.0, 0.0, 2.0, 2.0, 2.0, 0.0, 1.0,
+            0.0, 0.0, 0.0, 0.0, 6.0, 6.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 16.0,0.0, 0.0,
+        ], &[4, 8])?; // Shape is [pad_size, batch_size] -> [4, 8]
+
+        assert_tensor_eq(&batch.r_historys, &[
+            4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 1.0, 1.0,
+            0.0, 3.0, 0.0, 3.0, 3.0, 3.0, 0.0, 1.0,
+            0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0,
+        ], &[4, 8])?;
+
+        assert_tensor_eq(&batch.delta_ts, &[5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0], &[8])?;
+
+        // Labels are now f32: 0.0 for fail (rating 1), 1.0 for pass (rating > 1)
+        assert_tensor_eq(&batch.labels, &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0], &[8])?;
+        Ok(())
     }
 
     #[test]
