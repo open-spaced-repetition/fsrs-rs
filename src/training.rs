@@ -1,21 +1,16 @@
-use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader}; // Must be updated for candle
 use crate::cosine_annealing::CosineAnnealingLR; // Assumed to be usable
 use crate::dataset::{
-    FSRSDataset, FSRSItem, WeightedFSRSItem, prepare_training_data, recency_weighted_fsrs_items,
-    FSRSBatch, // Assuming FSRSBatch will be updated to hold candle::Tensor
+    FSRSItem, WeightedFSRSItem, prepare_training_data, recency_weighted_fsrs_items
 };
 use crate::error::Result;
 use crate::model::{Model, ModelConfig}; // Already candle-based
-use crate::parameter_clipper::parameter_clipper_candle; // Must be candle-compatible
 use crate::pre_training::{pretrain, smooth_and_fill}; // Review for tensor ops
 use crate::{DEFAULT_PARAMETERS, FSRS, FSRSError}; // FSRS is candle-based
 
 // Candle imports
 use candle_core::{Device, Tensor}; // Removed utils import as manual_seed doesn't exist
-use candle_nn::{VarMap, ops}; // Removed unused Loss, loss_bce, binary_cross_entropy_with_logits
+use candle_nn::VarMap; // Removed unused ops
 use candle_nn::{AdamW, Optimizer, ParamsAdamW}; // Use candle_nn optimizers
-
-use core::marker::PhantomData;
 use log::info;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -471,9 +466,9 @@ fn train(
         None => Box::new(NoProgress {}),
     };
 
-    let mut model = Model::new(config.model.clone(), device.clone(), varmap.clone())?;
-    let init_w_tensor = model.w.as_tensor().copy()?;
-    let params_stddev_tensor = Tensor::from_slice(&PARAMS_STDDEV, (PARAMS_STDDEV.len(),), &device)?;
+    let model = Model::new(config.model.clone(), device.clone(), varmap.clone())?;
+    let _init_w_tensor = model.w.as_tensor().copy()?;
+    let _params_stddev_tensor = Tensor::from_slice(&PARAMS_STDDEV, (PARAMS_STDDEV.len(),), &device)?;
 
     let adam_params = ParamsAdamW {
         lr: config.learning_rate,
@@ -581,8 +576,8 @@ fn train(
         }
 
         // Validation loop (conceptual - needs dataloader_valid)
-        let mut current_epoch_valid_loss = 0.0;
-        let num_valid_batches = 0; // Count actual validation batches
+        let current_epoch_valid_loss = 0.0;
+        let _num_valid_batches = 0; // Count actual validation batches
         // for valid_item_batch_result in dataloader_valid.iter() {
             /*
             let valid_item = valid_item_batch_result?;
@@ -640,7 +635,7 @@ mod tests {
     use crate::convertor_tests::data_from_csv;
     use crate::dataset::FSRSBatch;
     use crate::test_helpers::TestHelper;
-    use burn::backend::NdArray;
+
     use log::LevelFilter;
 
     #[test]
@@ -652,57 +647,58 @@ mod tests {
 
     #[test]
     fn test_loss_and_grad() {
-        use burn::backend::ndarray::NdArrayDevice;
-        use burn::tensor::TensorData;
+        use candle_core::Device;
+        use candle_nn::VarMap;
 
         let config = ModelConfig::default();
-        let device = NdArrayDevice::Cpu;
-        type B = Autodiff<NdArray<f32>>;
-        let mut model: Model<B> = config.init();
-        let init_w = model.w.val();
-        let params_stddev = Tensor::from_iter(PARAMS_STDDEV, &device);
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let mut model = config.init(device.clone(), varmap.clone()).unwrap();
+        let init_w = model.w.as_tensor().clone();
+        let params_stddev = Tensor::from_iter(PARAMS_STDDEV, &device).unwrap();
 
         let item = FSRSBatch {
-            t_historys: Tensor::from_iter(
-                TensorData::from([
+            t_historys: Tensor::from_slice(
+                &[
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 1.0],
                     [0.0, 1.0, 1.0, 3.0],
                     [1.0, 3.0, 3.0, 5.0],
                     [3.0, 6.0, 6.0, 12.0],
-                ]),
+                ],
                 &device,
-            ).expect("T historys is None"),
-            r_historys: Tensor::from_iter(
-                TensorData::from([
+            ).unwrap(),
+            r_historys: Tensor::from_slice(
+                &[
                     [1.0, 2.0, 3.0, 4.0],
                     [3.0, 4.0, 2.0, 4.0],
                     [1.0, 4.0, 4.0, 3.0],
                     [4.0, 3.0, 3.0, 3.0],
                     [3.0, 1.0, 3.0, 3.0],
                     [2.0, 3.0, 3.0, 4.0],
-                ]),
+                ],
                 &device,
-            ).expect("T historys is None"),
-            delta_ts: Tensor::from_iter([4.0, 11.0, 12.0, 23.0], &device),
-            labels: Tensor::from_iter([1, 1, 1, 0], &device),
-            weights: Tensor::from_iter([1.0, 1.0, 1.0, 1.0], &device),
+            ).unwrap(),
+            delta_ts: Tensor::from_iter([4.0, 11.0, 12.0, 23.0], &device).unwrap(),
+            labels: Tensor::from_iter([1, 1, 1, 0], &device).unwrap(),
+            weights: Tensor::from_iter([1.0, 1.0, 1.0, 1.0], &device).unwrap(),
         };
 
         let loss = model.forward_classification(
-            item.t_historys,
-            item.r_historys,
-            item.delta_ts,
-            item.labels,
-            item.weights,
+            &item.t_historys,
+            &item.r_historys,
+            &item.delta_ts,
+            &item.labels,
+            &item.weights,
             Reduction::Sum,
         );
 
-        assert_eq!(loss.clone().into_scalar().to_f32(), 4.514678);
-        let gradients = loss.expect("Loss is None").backward();
+        let loss_tensor = loss.unwrap();
+        assert_eq!(loss_tensor.to_scalar::<f32>().unwrap(), 4.514678);
+        let gradients = loss_tensor.backward().unwrap();
 
-        let w_grad = model.w.grad(&gradients).unwrap();
+        let w_grad = gradients.get(&model.w).unwrap();
 
         w_grad.to_data().to_vec::<f32>().unwrap().assert_approx_eq([
             -0.09797614,
@@ -748,7 +744,7 @@ mod tests {
             ]);
 
         let penalty =
-            model.l2_regularization(init_w.clone(), params_stddev.clone(), 512, 1000, 2.0);
+            model.l2_regularization(&init_w.clone(), &params_stddev.clone(), 512, 1000, 2.0);
         assert_eq!(penalty.clone().into_scalar().to_f32(), 0.67711174);
 
         let gradients = penalty.expect("Penalty is None").backward();
@@ -800,9 +796,9 @@ mod tests {
                 ]),
                 &device,
             ).expect("R historys is None"),
-            delta_ts: Tensor::from_iter([4.0, 11.0, 12.0, 23.0], &device),
-            labels: Tensor::from_iter([1, 1, 1, 0], &device),
-            weights: Tensor::from_iter([1.0, 1.0, 1.0, 1.0], &device),
+            delta_ts: Tensor::from_iter([4.0, 11.0, 12.0, 23.0], &device).expect("Delta ts is None"),
+            labels: Tensor::from_iter([1, 1, 1, 0], &device).expect("Labels is None"),
+            weights: Tensor::from_iter([1.0, 1.0, 1.0, 1.0], &device).expect("Weights is None"),
         };
 
         let loss = model.forward_classification(

@@ -3,7 +3,7 @@ use crate::error::{FSRSError, Result};
 use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters, S_MAX, S_MIN};
 use crate::parameter_clipper::clip_parameters;
 use candle_core::{Device, Tensor};
-use candle_nn::VarBuilder;
+
 use candle_core::IndexOp;
 use candle_nn::VarMap;
 
@@ -111,7 +111,7 @@ impl Model {
         rating: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
-        let batch_size = rating.dims()[0];
+        let _batch_size = rating.dims()[0];
         
         // Create condition tensors for hard penalty and easy bonus
         let rating_eq_2 = rating.eq(&Tensor::full(2.0, rating.shape(), &self.device)?)?;
@@ -126,7 +126,7 @@ impl Model {
         let w9_neg_scalar = w9_neg.to_scalar::<f32>()? as f64;
         let last_s_power = last_s.powf(w9_neg_scalar)?;
         let r_term = (((r * (-1.0))? + 1.0)? * &w.i(10)?)?;
-        let r_exp = (r_term.exp()? - 1.0)?;
+        let _r_exp = (r_term.exp()? - 1.0)?;
         
         let multiplier = ((&w8_exp * &last_d_term)? * &last_s_power)?;
         let multiplier_penalty = (&multiplier * &hard_penalty)?;
@@ -370,7 +370,7 @@ pub(crate) fn parameters_to_model(parameters: &Parameters, device: Device, varma
     // This means we need a way to set the Var `w` in the model to these specific parameters.
 
     // Create the model instance. `w` will be initialized by Model::new.
-    let mut model = Model::new(config.clone(), device.clone(), varmap)?;
+    let model = Model::new(config.clone(), device.clone(), varmap)?;
 
     // Now, update the tensor `w` within the model with the clipped parameters.
     // This requires `w` to be mutable or a method to update it.
@@ -613,7 +613,8 @@ mod tests {
         // s_forget.clone().backward();
         assert_tensor_data_approx_eq(&s_forget, &[1.746_929_3, 2.031_279_6, 2.440_167_7, 2.970_743_7], TEST_TOLERANCE)?;
 
-        let next_stability_recall_forget = s_recall.where_cond(&rating.eq_lit(1.0)?, &s_forget, &s_recall)?;
+        let rating_is_one = rating.eq(&Tensor::from_slice(&[1.0], (), &device)?.broadcast_as(rating.shape())?)?;
+        let next_stability_recall_forget = rating_is_one.where_cond(&s_forget, &s_recall)?;
         // next_stability_recall_forget.clone().backward();
         assert_tensor_data_approx_eq(&next_stability_recall_forget, &[1.746_929_3, 13.550_501, 59.868_79, 207.703_83], TEST_TOLERANCE)?;
 

@@ -3,11 +3,7 @@ use crate::dataset::{FSRSBatcher, constant_weighted_fsrs_items};
 use crate::dataset::{FSRSItem, FSRSReview};
 use crate::optimal_retention::{RevlogEntry, RevlogReviewKind};
 use crate::test_helpers::NdArrayAutodiff;
-use burn::backend::ndarray::NdArrayDevice;
-use burn::data::dataloader::Dataset;
-use burn::data::dataloader::batcher::Batcher;
-use burn::data::dataset::InMemDataset;
-use burn::tensor::cast::ToElement;
+use candle_core::Device;
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
@@ -302,27 +298,25 @@ fn conversion_works() {
 
     let mut weighted_fsrs_items = constant_weighted_fsrs_items(fsrs_items);
 
-    let device = NdArrayDevice::Cpu;
-    let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
-    let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()], &device);
-    assert_eq!(res.delta_ts.into_scalar(), 64.0);
+    let device = Device::Cpu;
+    let batcher = FSRSBatcher::new(device.clone());
+    let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()]).unwrap();
+    assert_eq!(res.delta_ts.to_scalar::<f32>().unwrap(), 64.0);
     assert_eq!(
         res.r_historys
-            .squeeze::<1>(1)
-            .to_data()
-            .to_vec::<f32>()
+            .squeeze(1).unwrap()
+            .to_vec1::<f32>()
             .unwrap(),
         [3.0, 4.0, 3.0, 3.0, 3.0, 2.0],
     );
     assert_eq!(
         res.t_historys
-            .squeeze::<1>(1)
-            .to_data()
-            .to_vec::<f32>()
+            .squeeze(1).unwrap()
+            .to_vec1::<f32>()
             .unwrap(),
         [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
     );
-    assert_eq!(res.labels.into_scalar().to_i32(), 1);
+    assert_eq!(res.labels.to_scalar::<i32>().unwrap(), 1);
 }
 
 #[test]

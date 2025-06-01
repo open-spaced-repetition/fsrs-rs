@@ -30,7 +30,7 @@ impl CosineAnnealingLR {
         // Inner function remains the same, but types are f64
         fn cosine_annealing_lr(
             init_lr: f64,
-            lr: f64,
+            _lr: f64,
             step_count: f64,
             t_max: f64,
             eta_min: f64,

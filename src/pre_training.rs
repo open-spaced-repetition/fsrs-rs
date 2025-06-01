@@ -283,7 +283,7 @@ pub(crate) fn smooth_and_fill(
 mod tests {
     use super::*;
     use crate::dataset::filter_outlier;
-    use crate::test_helpers::TestHelper;
+    use crate::test_helpers::{TestHelper, AssertApproxEq};
     use crate::training::calculate_average_recall;
 
     #[test]

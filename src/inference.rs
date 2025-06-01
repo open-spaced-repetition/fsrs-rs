@@ -137,16 +137,6 @@ impl FSRS {
             .unzip();
         let size = item.reviews.len();
 
-        let time_history = Tensor::from_vec(time_history_vec.clone(), (size,), &self.device())?
-            .unsqueeze(1)? // To [size, 1] for transpose compatibility if needed, or handle as 1D
-            .transpose(0,1)?; // To [1, size] if model expects batch dim first even for single item
-                               // Or if model expects [seq_len, 1], then no transpose needed after unsqueeze(1)
-                               // Let's assume model.forward expects [seq_len, batch_size=1]
-                               // So, if size is seq_len: [size, 1] is fine.
-                               // Original burn code: .unsqueeze().transpose() suggests it was making it [seq_len, 1]
-                               // Tensor::from_vec(..., (size,), dev)?.unsqueeze(D::Dim(1))? would be [size,1]
-                               // If it needs to be [batch_size=1, seq_len], then .unsqueeze(0)?
-                               // Let's stick to [seq_len, 1] based on original transpose logic.
         let time_history = Tensor::from_vec(time_history_vec, (size,1), &self.device())?;
 
 
@@ -801,7 +791,7 @@ mod tests {
             };
         }
 
-        let final_memory_state = memory_state_opt.ok_or(FSRSError::Internal("Memory state not found".to_string()))?;
+        let final_memory_state = memory_state_opt.ok_or(FSRSError::Internal { message: "Memory state not found".to_string() })?;
         assert!((final_memory_state.stability - expected_stability).abs() < 1e-4, "stability: {}", final_memory_state.stability);
         assert!((final_memory_state.difficulty - expected_difficulty).abs() < 1e-4, "difficulty: {}", final_memory_state.difficulty);
         Ok(())
@@ -1009,9 +999,9 @@ mod tests {
     #[ignore = "just for exploration"]
     fn init_stability_after_same_day_review_hard_vs_good_vs_easy() -> Result<(), FSRSError> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
-        let item1 = FSRSItem { reviews: vec![ FSRReview { rating: 2, delta_t: 0 }, FSRSReview { rating: 3, delta_t: 0 }, FSRSReview { rating: 3, delta_t: 0 } ] };
+        let item1 = FSRSItem { reviews: vec![ FSRSReview { rating: 2, delta_t: 0 }, FSRSReview { rating: 3, delta_t: 0 }, FSRSReview { rating: 3, delta_t: 0 } ] };
         dbg!(fsrs.memory_state(item1, None)?);
-        let item2 = FSRSItem { reviews: vec![ FSRReview { rating: 3, delta_t: 0 }, FSRSReview { rating: 3, delta_t: 0 } ] };
+        let item2 = FSRSItem { reviews: vec![ FSRSReview { rating: 3, delta_t: 0 }, FSRSReview { rating: 3, delta_t: 0 } ] };
         dbg!(fsrs.memory_state(item2, None)?);
         let item3 = FSRSItem { reviews: vec![FSRSReview { rating: 4, delta_t: 0 }] };
         dbg!(fsrs.memory_state(item3, None)?);
