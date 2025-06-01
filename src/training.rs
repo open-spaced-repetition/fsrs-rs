@@ -466,7 +466,7 @@ fn train(
         None => Box::new(NoProgress {}),
     };
 
-    let model = Model::new(config.model.clone(), device.clone(), varmap.clone())?;
+    let model = config.model.init(device.clone(), varmap.clone())?;
     let _init_w_tensor = model.w.as_tensor().copy()?;
     let _params_stddev_tensor = Tensor::from_slice(&PARAMS_STDDEV, (PARAMS_STDDEV.len(),), &device)?;
 
@@ -653,34 +653,39 @@ mod tests {
         let config = ModelConfig::default();
         let device = Device::Cpu;
         let varmap = VarMap::new();
-        let mut model = config.init(device.clone(), varmap.clone()).unwrap();
+        let model = config.init(device.clone(), varmap.clone()).unwrap();
         let _init_w = model.w.as_tensor().clone();
         let _params_stddev = Tensor::from_slice(&PARAMS_STDDEV, (PARAMS_STDDEV.len(),), &device).unwrap();
 
-        // Fix tensor creation - use proper shape and data layout
-        let t_historys_data = vec![
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 1.0,
-            0.0, 1.0, 1.0, 3.0,
-            1.0, 3.0, 3.0, 5.0,
-            3.0, 6.0, 6.0, 12.0,
-        ];
-        let r_historys_data = vec![
-            1.0, 2.0, 3.0, 4.0,
-            3.0, 4.0, 2.0, 4.0,
-            1.0, 4.0, 4.0, 3.0,
-            4.0, 3.0, 3.0, 3.0,
-            3.0, 1.0, 3.0, 3.0,
-            2.0, 3.0, 3.0, 4.0,
-        ];
-
+        // Create test tensors with proper types and shapes for candle
         let item = FSRSBatch {
-            t_historys: Tensor::from_slice(&t_historys_data, (6, 4), &device).unwrap(),
-            r_historys: Tensor::from_slice(&r_historys_data, (6, 4), &device).unwrap(),
-            delta_ts: Tensor::from_slice(&[4.0, 11.0, 12.0, 23.0], (4,), &device).unwrap(),
-            labels: Tensor::from_slice(&[1.0, 1.0, 1.0, 0.0], (4,), &device).unwrap(), // Use f32 for BCE
-            weights: Tensor::from_slice(&[1.0, 1.0, 1.0, 1.0], (4,), &device).unwrap(),
+            t_historys: Tensor::from_slice(
+                &[
+                    0.0f32, 0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0,
+                    0.0, 1.0, 1.0, 3.0,
+                    1.0, 3.0, 3.0, 5.0,
+                    3.0, 6.0, 6.0, 12.0,
+                ], 
+                (6, 4), 
+                &device
+            ).unwrap(),
+            r_historys: Tensor::from_slice(
+                &[
+                    1.0f32, 2.0, 3.0, 4.0,
+                    3.0, 4.0, 2.0, 4.0,
+                    1.0, 4.0, 4.0, 3.0,
+                    4.0, 3.0, 3.0, 3.0,
+                    3.0, 1.0, 3.0, 3.0,
+                    2.0, 3.0, 3.0, 4.0,
+                ], 
+                (6, 4), 
+                &device
+            ).unwrap(),
+            delta_ts: Tensor::from_slice(&[4.0f32, 11.0, 12.0, 23.0], (4,), &device).unwrap(),
+            labels: Tensor::from_slice(&[1.0f32, 1.0, 1.0, 0.0], (4,), &device).unwrap(),
+            weights: Tensor::from_slice(&[1.0f32, 1.0, 1.0, 1.0], (4,), &device).unwrap(),
         };
 
         let loss = model.forward_classification(
@@ -692,12 +697,11 @@ mod tests {
             Reduction::Sum,
         );
 
-        // Test that loss calculation works (without exact value check for now)
+        // Test that loss calculation works
         let _loss_tensor = loss.unwrap();
         
-        // Note: The complex gradient testing and optimizer stepping is not yet implemented
-        // in the Candle version as it requires completing the full training loop implementation.
-        // For now, we verify basic loss calculation works.
+        // For now, we just verify that the loss calculation works
+        // Full gradient testing and optimizer integration will be implemented later
     }
 
     #[test]

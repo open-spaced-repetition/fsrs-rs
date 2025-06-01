@@ -140,12 +140,10 @@ mod tests {
         // a different set of input parameters or a different interpretation of the formula.
         // For now, I will assert based on the current DEFAULT_PARAMETERS and the formula in clip_parameters.
         // If default params are [..., 0.0, 0.0, 0.0, ...], they should remain 0.0 as 0.0 is within [0.0, ceiling].
-        let expected_slice = [values[17], values[18], values[19]]; // Check current values after clipping
-        // Based on calculation with current DEFAULT_PARAMETERS, w17_w18_ceiling is approx 1.1098.
-        // clamps[17] = (0.0, 1.1098), clamps[18] = (0.0, 1.1098), clamps[19] = (0.0, 0.8)
-        // DEFAULT_PARAMETERS[17..20] are 0.0, 0.0, 0.0
-        // So they should remain 0.0 after clipping.
-        assert_vec_approx_eq(&expected_slice, &[0.0, 0.0, 0.0], 1e-5);
+        // Based on calculation with current DEFAULT_PARAMETERS, w17_w18_ceiling is calculated.
+        // DEFAULT_PARAMETERS[17..20] are originally 0.0, 0.0, 0.0
+        // After clipping with the ceiling constraints, they should remain 0.0.
+        assert_vec_approx_eq(&[values[17], values[18], values[19]], &[0.0, 0.0, 0.0], 1e-5);
         Ok(())
     }
 }

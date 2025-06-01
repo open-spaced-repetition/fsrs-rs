@@ -320,7 +320,7 @@ fn conversion_works() {
             .unwrap(),
         [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
     );
-    assert_eq!(res.labels.to_scalar::<f32>().unwrap(), 1.0);
+    assert_eq!(res.labels.to_vec1::<f32>().unwrap()[0], 1.0);
 }
 
 #[test]

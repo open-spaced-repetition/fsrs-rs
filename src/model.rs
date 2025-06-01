@@ -53,13 +53,12 @@ impl Model {
             initial_params_vec[19] = 0.0;
         }
 
-        // Create the tensor first and then store it in varmap
+        // Create the tensor first
         let initial_w_tensor = Tensor::from_vec(initial_params_vec, (21,), &device)?;
         
-        // Store the tensor in varmap and create a Var from it
+        // Set the tensor in the varmap and create a Var from it
         varmap.set_one("w", &initial_w_tensor)?;
         let w = candle_core::Var::from_tensor(&initial_w_tensor)?;
-
 
         Ok(Self { w, device, varmap })
     }
