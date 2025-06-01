@@ -132,7 +132,7 @@ fn convert_to_fsrs_items(
                     .collect();
                 (entry.id, FSRSItem { reviews })
             })
-            .filter(|(_, item)| item.reviews.last().map_or(false, |r| r.delta_t > 0)) // Ensure last review has delta_t > 0
+            .filter(|(_, item)| item.reviews.last().is_some_and(|r| r.delta_t > 0)) // Ensure last review has delta_t > 0
             .collect(),
     )
 }
