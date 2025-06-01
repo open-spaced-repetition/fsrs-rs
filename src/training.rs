@@ -660,10 +660,10 @@ mod tests {
         type B = Autodiff<NdArray<f32>>;
         let mut model: Model<B> = config.init();
         let init_w = model.w.val();
-        let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
+        let params_stddev = Tensor::from_iter(PARAMS_STDDEV, &device);
 
         let item = FSRSBatch {
-            t_historys: Tensor::from_floats(
+            t_historys: Tensor::from_iter(
                 TensorData::from([
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0],
@@ -673,8 +673,8 @@ mod tests {
                     [3.0, 6.0, 6.0, 12.0],
                 ]),
                 &device,
-            ),
-            r_historys: Tensor::from_floats(
+            ).expect("T historys is None"),
+            r_historys: Tensor::from_iter(
                 TensorData::from([
                     [1.0, 2.0, 3.0, 4.0],
                     [3.0, 4.0, 2.0, 4.0],
@@ -684,10 +684,10 @@ mod tests {
                     [2.0, 3.0, 3.0, 4.0],
                 ]),
                 &device,
-            ),
-            delta_ts: Tensor::from_floats([4.0, 11.0, 12.0, 23.0], &device),
-            labels: Tensor::from_ints([1, 1, 1, 0], &device),
-            weights: Tensor::from_floats([1.0, 1.0, 1.0, 1.0], &device),
+            ).expect("T historys is None"),
+            delta_ts: Tensor::from_iter([4.0, 11.0, 12.0, 23.0], &device),
+            labels: Tensor::from_iter([1, 1, 1, 0], &device),
+            weights: Tensor::from_iter([1.0, 1.0, 1.0, 1.0], &device),
         };
 
         let loss = model.forward_classification(
@@ -700,7 +700,7 @@ mod tests {
         );
 
         assert_eq!(loss.clone().into_scalar().to_f32(), 4.514678);
-        let gradients = loss.backward();
+        let gradients = loss.expect("Loss is None").backward();
 
         let w_grad = model.w.grad(&gradients).unwrap();
 
@@ -751,7 +751,7 @@ mod tests {
             model.l2_regularization(init_w.clone(), params_stddev.clone(), 512, 1000, 2.0);
         assert_eq!(penalty.clone().into_scalar().to_f32(), 0.67711174);
 
-        let gradients = penalty.backward();
+        let gradients = penalty.expect("Penalty is None").backward();
         let w_grad = model.w.grad(&gradients).unwrap();
         w_grad.to_data().to_vec::<f32>().unwrap().assert_approx_eq([
             0.0019813816,
@@ -778,7 +778,7 @@ mod tests {
         ]);
 
         let item = FSRSBatch {
-            t_historys: Tensor::from_floats(
+            t_historys: Tensor::from_iter(
                 TensorData::from([
                     [0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0],
@@ -789,7 +789,7 @@ mod tests {
                 ]),
                 &device,
             ),
-            r_historys: Tensor::from_floats(
+            r_historys: Tensor::from_iter(
                 TensorData::from([
                     [1.0, 2.0, 3.0, 4.0],
                     [3.0, 4.0, 2.0, 4.0],
@@ -799,22 +799,22 @@ mod tests {
                     [2.0, 3.0, 3.0, 4.0],
                 ]),
                 &device,
-            ),
-            delta_ts: Tensor::from_floats([4.0, 11.0, 12.0, 23.0], &device),
-            labels: Tensor::from_ints([1, 1, 1, 0], &device),
-            weights: Tensor::from_floats([1.0, 1.0, 1.0, 1.0], &device),
+            ).expect("R historys is None"),
+            delta_ts: Tensor::from_iter([4.0, 11.0, 12.0, 23.0], &device),
+            labels: Tensor::from_iter([1, 1, 1, 0], &device),
+            weights: Tensor::from_iter([1.0, 1.0, 1.0, 1.0], &device),
         };
 
         let loss = model.forward_classification(
-            item.t_historys,
-            item.r_historys,
-            item.delta_ts,
-            item.labels,
-            item.weights,
+            &item.t_historys,
+            &item.r_historys,
+            &item.delta_ts,
+            &item.labels,
+            &item.weights,
             Reduction::Sum,
         );
         assert_eq!(loss.clone().into_scalar().to_f32(), 4.2499204);
-        let gradients = loss.backward();
+        let gradients = loss.expect("Loss is None").backward();
         let w_grad = model.w.grad(&gradients).unwrap();
         w_grad
             .clone()
