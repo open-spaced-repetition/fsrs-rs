@@ -148,7 +148,7 @@ mod tests {
         let seed = 114514;
         let device = Device::Cpu; // candle Device
 
-        // type Backend = NdArray<f32>; // Removed
+        // type Backend = NdArray<f64>; // Removed
 
         let batch_tensor_dataset = BatchTensorDataset::new(fsrs_dataset, batch_size, device)?; // Use ?, Renamed
         let dataloader = ShuffleDataLoader::new(batch_tensor_dataset, seed);

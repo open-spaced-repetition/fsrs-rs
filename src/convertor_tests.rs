@@ -305,22 +305,22 @@ fn conversion_works() {
     let device = Device::Cpu;
     let batcher = FSRSBatcher::new(device.clone());
     let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()]).unwrap();
-    assert_eq!(res.delta_ts.to_scalar::<f32>().unwrap(), 64.0);
+    assert_eq!(res.delta_ts.to_scalar::<f64>().unwrap(), 64.0);
     assert_eq!(
         res.r_historys
             .squeeze(1).unwrap()
-            .to_vec1::<f32>()
+            .to_vec1::<f64>()
             .unwrap(),
         [3.0, 4.0, 3.0, 3.0, 3.0, 2.0],
     );
     assert_eq!(
         res.t_historys
             .squeeze(1).unwrap()
-            .to_vec1::<f32>()
+            .to_vec1::<f64>()
             .unwrap(),
         [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
     );
-    assert_eq!(res.labels.to_vec1::<f32>().unwrap()[0], 1.0);
+    assert_eq!(res.labels.to_vec1::<f64>().unwrap()[0], 1.0);
 }
 
 #[test]

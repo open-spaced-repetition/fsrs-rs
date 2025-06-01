@@ -41,7 +41,7 @@ impl std::fmt::Debug for Model {
 impl Model {
     #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig, device: Device, varmap: VarMap) -> Result<Self> {
-        let mut initial_params_vec: Vec<f32> = config
+        let mut initial_params_vec: Vec<f64> = config
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
             .into_iter()
@@ -73,15 +73,26 @@ impl Model {
     }
 
     pub fn power_forgetting_curve(&self, t: &Tensor, s: &Tensor) -> Result<Tensor> {
+        // Ensure input tensors are f64 for consistency
+        let t = t.to_dtype(candle_core::DType::F64)?;
+        let s = s.to_dtype(candle_core::DType::F64)?;
+        
         let w = self.w_tensor();
         let decay = (w.i(20)? * (-1.0))?;
-        let ln_09 = 0.9f32.ln();
+        let ln_09 = 0.9f64.ln();
         let decay_inv = decay.powf(-1.0)?;
-        let ln_09_tensor = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
-        let factor = ((decay_inv.unsqueeze(0)? * ln_09_tensor)?.exp()? - 1.0)?;
-        let result = (((t / s)? * &factor)? + 1.0)?;
-        let decay_scalar = decay.to_scalar::<f32>()? as f64;
-        Ok(result.powf(decay_scalar)?)
+        let decay_inv_scalar = decay_inv.to_scalar::<f64>()?;
+        
+        // Create tensors that broadcast correctly with t and s, all as f64
+        let ln_09_scalar = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
+        let decay_inv_scalar_tensor = Tensor::from_slice(&[decay_inv_scalar], (1,), &self.device)?;
+        
+        let ln_09_tensor = ln_09_scalar.broadcast_as(t.shape())?;
+        let decay_inv_tensor = decay_inv_scalar_tensor.broadcast_as(t.shape())?;
+        
+        let factor = ((decay_inv_tensor * ln_09_tensor)?.exp()? - 1.0f64)?;
+        let result = (((t / s)? * factor)? + 1.0f64)?;
+        Ok(result.powf(decay_inv_scalar as f64)?)
     }
 
     pub fn next_interval(
@@ -90,15 +101,16 @@ impl Model {
         desired_retention: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
-        let decay = (w.i(20)? * (-1.0))?;
-        let ln_09 = 0.9f32.ln();
-        let decay_inv = decay.powf(-1.0)?;
-        let ln_09_tensor = Tensor::from_slice(&[ln_09], (1,), &self.device)?;
-        let factor = ((&decay_inv.unsqueeze(0)? * &ln_09_tensor)?.exp()? - 1.0)?;
-        let decay_inv_scalar = decay_inv.to_scalar::<f32>()? as f64;
-        let power_result = desired_retention.powf(decay_inv_scalar)?;
-        let power_minus_one = (power_result - 1.0)?;
-        Ok(((stability / &factor)? * &power_minus_one)?)
+        let decay = (w.i(20)? * (-1.0f64))?;
+        let ln_09 = 0.9f64.ln();
+        let decay_inv = decay.powf(-1.0f64)?;
+        let decay_inv_scalar = decay_inv.to_scalar::<f64>()?;
+        let ln_09_tensor = Tensor::from_slice(&[ln_09], (), &self.device)?;
+        let decay_inv_tensor = Tensor::from_slice(&[decay_inv_scalar], (), &self.device)?;
+        let factor = ((decay_inv_tensor.clone() * ln_09_tensor)?.exp()? - 1.0f64)?;
+        let power_result = desired_retention.powf(decay_inv_scalar as f64)?;
+        let power_minus_one = (power_result - 1.0f64)?;
+        Ok(((stability / factor)? * power_minus_one)?)
     }
 
     fn stability_after_success(
@@ -109,27 +121,31 @@ impl Model {
         rating: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
-        let _batch_size = rating.dims()[0];
+        let batch_size = rating.dims()[0];
         
         // Create condition tensors for hard penalty and easy bonus
         let rating_eq_2 = rating.eq(&Tensor::full(2.0, rating.shape(), &self.device)?)?;
-        let hard_penalty = rating_eq_2.where_cond(&w.i(15)?, &Tensor::ones_like(rating)?)?;
+        let w15 = w.i(15)?.broadcast_as(rating.shape())?;
+        let hard_penalty = rating_eq_2.where_cond(&w15, &Tensor::ones_like(rating)?)?;
         
         let rating_eq_4 = rating.eq(&Tensor::full(4.0, rating.shape(), &self.device)?)?;
-        let easy_bonus = rating_eq_4.where_cond(&w.i(16)?, &Tensor::ones_like(rating)?)?;
+        let w16 = w.i(16)?.broadcast_as(rating.shape())?;
+        let easy_bonus = rating_eq_4.where_cond(&w16, &Tensor::ones_like(rating)?)?;
 
         let w8_exp = w.i(8)?.exp()?;
-        let last_d_term = ((last_d * (-1.0))? + 11.0)?;
+        let last_d_term = ((last_d * (-1.0f64))? + 11.0f64)?;
         let w9_neg = w.i(9)?.neg()?;
-        let w9_neg_scalar = w9_neg.to_scalar::<f32>()? as f64;
-        let last_s_power = last_s.powf(w9_neg_scalar)?;
-        let r_term = (((r * (-1.0))? + 1.0)? * &w.i(10)?)?;
-        let _r_exp = (r_term.exp()? - 1.0)?;
+        let w9_neg_scalar = w9_neg.to_scalar::<f64>()?;
+        let last_s_power = last_s.powf(w9_neg_scalar as f64)?;
+        let w10 = w.i(10)?.broadcast_as(r.shape())?;
+        let r_term = (((r * (-1.0f64))? + 1.0f64)? * w10)?;
+        let r_exp = (r_term.exp()? - 1.0f64)?;
         
-        let multiplier = ((&w8_exp * &last_d_term)? * &last_s_power)?;
+        let w8_exp_broadcasted = w8_exp.broadcast_as(last_d_term.shape())?;
+        let multiplier = ((w8_exp_broadcasted * &last_d_term)? * &last_s_power)?;
         let multiplier_penalty = (&multiplier * &hard_penalty)?;
         let bonus_product = (&multiplier_penalty * &easy_bonus)?;
-        let final_multiplier = (&bonus_product + 1.0)?;
+        let final_multiplier = (&bonus_product + 1.0f64)?;
         Ok((last_s * &final_multiplier)?)
     }
 
@@ -140,23 +156,29 @@ impl Model {
         r: &Tensor,
     ) -> Result<Tensor> {
         let w = self.w_tensor();
-        let w11 = w.i(11)?;
+        let w11 = w.i(11)?.broadcast_as(last_d.shape())?;
         let w12_neg = w.i(12)?.neg()?;
-        let w12_neg_scalar = w12_neg.to_scalar::<f32>()? as f64;
-        let last_d_power = last_d.powf(w12_neg_scalar)?;
+        let w12_neg_scalar = w12_neg.to_scalar::<f64>()?;
+        let last_d_power = last_d.powf(w12_neg_scalar as f64)?;
         
-        let last_s_plus_1 = (last_s + 1.0)?;
+        let last_s_plus_1 = (last_s + 1.0f64)?;
         let w13 = w.i(13)?;
-        let w13_scalar = w13.to_scalar::<f32>()? as f64;
-        let last_s_power = (last_s_plus_1.powf(w13_scalar)? - 1.0)?;
+        let w13_scalar = w13.to_scalar::<f64>()?;
+        let last_s_power = (last_s_plus_1.powf(w13_scalar as f64)? - 1.0f64)?;
         
-        let r_term = (((r * (-1.0))? + 1.0)? * &w.i(14)?)?;
+        let w14 = w.i(14)?.broadcast_as(r.shape())?;
+        let r_term = (((r * (-1.0f64))? + 1.0f64)? * w14)?;
         let r_exp = r_term.exp()?;
         
-        let new_s = (((&w11 * &last_d_power)? * &last_s_power)? * &r_exp)?;
+        let temp1 = (w11 * &last_d_power)?;
+        let temp2 = (temp1 * &last_s_power)?;
+        let new_s = (temp2 * &r_exp)?;
         
-        let exp_term = (w.i(17)? * &w.i(18)?)?;
-        let new_s_min = (last_s / &exp_term.exp()?)?;
+        let w17 = w.i(17)?;
+        let w18 = w.i(18)?;
+        let exp_term = (w17 * w18)?;
+        let exp_term_broadcasted = exp_term.broadcast_as(last_s.shape())?;
+        let new_s_min = (last_s / exp_term_broadcasted.exp()?)?;
         
         let condition = new_s_min.lt(&new_s)?;
         Ok(condition.where_cond(&new_s_min, &new_s)?)
@@ -164,58 +186,66 @@ impl Model {
 
     fn stability_short_term(&self, last_s: &Tensor, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let rating_term = ((rating - 3.0)? + &w.i(18)?)?;
-        let exp_term = (w.i(17)? * &rating_term)?.exp()?;
+        let w18 = w.i(18)?.broadcast_as(rating.shape())?;
+        let rating_term = ((rating - 3.0f64)? + w18)?;
+        let w17 = w.i(17)?.broadcast_as(rating_term.shape())?;
+        let exp_term = (w17 * rating_term)?.exp()?;
         
         let w19_neg = w.i(19)?.neg()?;
-        let w19_neg_scalar = w19_neg.to_scalar::<f32>()? as f64;
-        let last_s_power = last_s.powf(w19_neg_scalar)?;
+        let w19_neg_scalar = w19_neg.to_scalar::<f64>()?;
+        let last_s_power = last_s.powf(w19_neg_scalar as f64)?;
         
-        let sinc = (&exp_term * &last_s_power)?;
+        let sinc = (exp_term * last_s_power)?;
         
         let rating_ge_3 = rating.ge(&Tensor::full(3.0, rating.shape(), &self.device)?)?;
         let sinc_min = sinc.minimum(&Tensor::ones_like(&sinc)?)?;
         let final_sinc = rating_ge_3.where_cond(&sinc_min, &sinc)?;
         
-        Ok((last_s * &final_sinc)?)
+        Ok((last_s * final_sinc)?)
     }
 
     fn mean_reversion(&self, new_d: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let rating = Tensor::from_slice(&[4.0], (1,), &self.device)?;
+        let rating = Tensor::from_slice(&[4.0], (), &self.device)?;
         let init_d = self.init_difficulty(&rating)?;
-        let diff = (&init_d - new_d)?;
-        Ok(((w.i(7)? * &diff)? + new_d)?)
+        let diff = (init_d - new_d)?;
+        let w7 = w.i(7)?.broadcast_as(diff.shape())?;
+        Ok(((w7 * diff)? + new_d)?)
     }
 
     pub(crate) fn init_stability(&self, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        // Convert rating to indices (u32 or i64). Let's use u32.
+        // Convert rating to indices (i64 for index_select). 
         // Subtract 1 from rating to get 0-based indices.
-        let indices = (rating - 1.0)?.to_dtype(candle_core::DType::U32)?;
-        // Select from self.w along dimension 0 using the calculated indices.
-        Ok(w.index_select(&indices, 0)?)
+        let indices = (rating - 1.0f64)?.to_dtype(candle_core::DType::I64)?;
+        // Select from first 4 elements of w (stability parameters)
+        let w_stability = w.narrow(0, 0, 4)?;
+        Ok(w_stability.index_select(&indices, 0)?)
     }
 
     fn init_difficulty(&self, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let rating_minus_1 = (rating - 1.0)?;
-        let exp_term = (w.i(5)? * &rating_minus_1)?.exp()?;
-        Ok(((w.i(4)? - &exp_term)? + 1.0)?)
+        let rating_minus_1 = (rating - 1.0f64)?;
+        let w5 = w.i(5)?.broadcast_as(rating_minus_1.shape())?;
+        let exp_term = (w5 * rating_minus_1)?.exp()?;
+        let w4 = w.i(4)?.broadcast_as(exp_term.shape())?;
+        Ok(((w4 - exp_term)? + 1.0f64)?)
     }
 
     fn linear_damping(&self, delta_d: &Tensor, old_d: &Tensor) -> Result<Tensor> {
         let old_d_neg = old_d.neg()?;
-        let term = (old_d_neg + 10.0)?;
-        Ok(((term * delta_d)? / 9.0)?)
+        let term = (old_d_neg + 10.0f64)?;
+        Ok(((term * delta_d)? / 9.0f64)?)
     }
 
     fn next_difficulty(&self, difficulty: &Tensor, rating: &Tensor) -> Result<Tensor> {
         let w = self.w_tensor();
-        let rating_minus_3 = (rating - 3.0)?;
-        let delta_d = (w.i(6)?.neg()? * &rating_minus_3)?;
+        let rating_minus_3 = (rating - 3.0f64)?;
+        let w6_neg = w.i(6)?.neg()?;
+        let w6_neg_broadcasted = w6_neg.broadcast_as(rating_minus_3.shape())?;
+        let delta_d = (w6_neg_broadcasted * rating_minus_3)?;
         let damping = self.linear_damping(&delta_d, difficulty)?;
-        Ok((difficulty + &damping)?)
+        Ok((difficulty + damping)?)
     }
 
     pub(crate) fn step(
@@ -296,7 +326,7 @@ pub(crate) struct MemoryStateTensors {
 pub struct ModelConfig {
     // #[config(default = false)] // Removed burn-specific macro
     pub freeze_initial_stability: bool,
-    pub initial_stability: Option<[f32; 4]>,
+    pub initial_stability: Option<[f64; 4]>,
     // #[config(default = false)] // Removed burn-specific macro
     pub freeze_short_term_stability: bool,
     // #[config(default = 1)] // Removed burn-specific macro
@@ -380,7 +410,7 @@ pub(crate) fn parameters_to_model(parameters: &Parameters, device: Device, varma
     Ok(model)
 }
 
-pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>> {
+pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f64>> {
     let parameters = match parameters.len() {
         0 => DEFAULT_PARAMETERS.to_vec(),
         17 => {
@@ -414,7 +444,7 @@ mod tests {
     // use burn::tensor::{TensorData, Tolerance}; // Remove burn specific test items
 
     // Need to define a tolerance for float comparisons in candle
-    const TEST_TOLERANCE: f32 = 1e-5;
+    const TEST_TOLERANCE: f64 = 1e-5;
 
     #[test]
     fn w() -> Result<()> {
@@ -422,11 +452,11 @@ mod tests {
         let varmap = VarMap::new();
         let model = Model::new(ModelConfig::default(), device.clone(), varmap)?;
         let expected_w_vec = DEFAULT_PARAMETERS.to_vec();
-        let model_w_vec = model.w.as_tensor().to_vec1::<f32>()?;
+        let model_w_vec = model.w.as_tensor().to_vec1::<f64>()?;
 
         assert_eq!(model_w_vec.len(), expected_w_vec.len());
         for (val_model, val_expected) in model_w_vec.iter().zip(expected_w_vec.iter()) {
-            assert!((val_model - val_expected).abs() < f32::EPSILON);
+            assert!((val_model - val_expected).abs() < f64::EPSILON);
         }
         Ok(())
     }
@@ -441,16 +471,15 @@ mod tests {
         assert_eq!(
             fsrs5_param,
             vec![
-                0.4, 0.6, 2.4, 5.8, 6.81, 0.44675013, 1.36, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05,
-                0.34, 1.26, 0.29, 2.61, 0.0, 0.0, 0.0, 0.5
+                0.4, 0.6, 2.4, 5.8, 6.81, 0.4467501408728279, 1.3599999999999999, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 2.61, 0.0, 0.0, 0.0, 0.5
             ]
         );
         Ok(())
     }
 
     // Helper function for comparing tensor data with tolerance
-    fn assert_tensor_data_approx_eq(tensor: &Tensor, expected_data: &[f32], tolerance: f32) -> Result<()> {
-        let data = tensor.to_vec1::<f32>()?;
+    fn assert_tensor_data_approx_eq(tensor: &Tensor, expected_data: &[f64], tolerance: f64) -> Result<()> {
+        let data = tensor.to_vec1::<f64>()?;
         assert_eq!(data.len(), expected_data.len(), "Tensor dimensions mismatch");
         for (a, b) in data.iter().zip(expected_data) {
             assert!((a - b).abs() < tolerance, "Tensor data mismatch: {} vs {}", a, b);
@@ -611,7 +640,7 @@ mod tests {
         // s_forget.clone().backward();
         assert_tensor_data_approx_eq(&s_forget, &[1.746_929_3, 2.031_279_6, 2.440_167_7, 2.970_743_7], TEST_TOLERANCE)?;
 
-        let rating_is_one = rating.eq(&Tensor::from_slice(&[1.0], (), &device)?.broadcast_as(rating.shape())?)?;
+        let rating_is_one = rating.eq(&Tensor::ones_like(&rating)?)?;
         let next_stability_recall_forget = rating_is_one.where_cond(&s_forget, &s_recall)?;
         // next_stability_recall_forget.clone().backward();
         assert_tensor_data_approx_eq(&next_stability_recall_forget, &[1.746_929_3, 13.550_501, 59.868_79, 207.703_83], TEST_TOLERANCE)?;

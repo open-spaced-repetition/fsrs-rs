@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 // Assuming this is still relevant and used as a slice for a Tensor
-static PARAMS_STDDEV: [f32; 21] = [
+static PARAMS_STDDEV: [f64; 21] = [
     6.43, 9.66, 17.58, 27.85, 0.57, 0.28, 0.6, 0.12, 0.39, 0.18, 0.33, 0.3, 0.09, 0.16, 0.57, 0.25,
     1.03, 0.31, 0.32, 0.14, 0.27,
 ];
@@ -44,7 +44,7 @@ impl BCELossCandle {
         weights: &Tensor,
         reduction: Reduction,
     ) -> Result<Tensor> {
-        let epsilon = 1e-7f32;
+        let epsilon = 1e-7f64;
         let retrievability = retrievability.clamp(epsilon, 1.0 - epsilon)?;
 
         let loss_val = ((labels * retrievability.log()?)?
@@ -65,14 +65,14 @@ impl Model {
         t_historys: &Tensor,
         r_historys: &Tensor,
         delta_ts: &Tensor,
-        labels: &Tensor,     // Should be F32 for BCE
+        labels: &Tensor,     // Should be f64 for BCE
         weights: &Tensor,
         reduce: Reduction,
     ) -> Result<Tensor> {
         let state = self.forward(t_historys, r_historys, None)?;
         let retrievability = self.power_forgetting_curve(delta_ts, &state.stability)?;
-        // Ensure labels are compatible with retrievability (e.g. F32)
-        // If labels are Int, they need casting: `labels.to_dtype(DType::F32)?`
+        // Ensure labels are compatible with retrievability (e.g. f64)
+        // If labels are Int, they need casting: `labels.to_dtype(DType::F64)?`
         BCELossCandle::new().forward(&retrievability, labels, weights, reduce)
     }
 
@@ -240,7 +240,7 @@ impl TrainingConfig {
 }
 
 
-pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
+pub fn calculate_average_recall(items: &[FSRSItem]) -> f64 {
     let (total_recall, total_reviews) = items
         .iter()
         .map(|item| item.current())
@@ -251,7 +251,7 @@ pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     if total_reviews == 0 {
         return 0.0;
     }
-    total_recall as f32 / total_reviews as f32
+    total_recall as f64 / total_reviews as f64
 }
 
 #[derive(Clone, Debug)]
@@ -283,7 +283,7 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
             num_relearning_steps,
             ..
         }: ComputeParametersInput,
-    ) -> Result<Vec<f32>> {
+    ) -> Result<Vec<f64>> {
         let finish_progress = || {
             if let Some(progress_arc) = &progress {
                 progress_arc.lock().unwrap().finished = true;
@@ -301,8 +301,8 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
             pretrain(pre_train_set.clone(), average_recall).inspect_err(|_e| {
                 finish_progress();
             })?;
-        let pretrained_parameters: Vec<f32> = initial_stability // Assuming initial_stability is Vec<[f32;4]> or similar
-            .iter().copied() // if it's Vec<f32> already from pretrain
+        let pretrained_parameters: Vec<f64> = initial_stability // Assuming initial_stability is Vec<[f64;4]> or similar
+            .iter().copied() // if it's Vec<f64> already from pretrain
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
 
@@ -314,7 +314,7 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_initial_stability: !enable_short_term,
-                initial_stability: Some(initial_stability.clone()), // pretrain returns [f32;4]
+                initial_stability: Some(initial_stability.clone()), // pretrain returns [f64;4]
                 freeze_short_term_stability: !enable_short_term,
                 num_relearning_steps: num_relearning_steps.unwrap_or(1),
             },
@@ -352,7 +352,7 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
             progress.clone().map(|p| ProgressCollector::new(p, 0)),
         );
 
-        let optimized_parameters: Vec<f32> = trained_model
+        let optimized_parameters: Vec<f64> = trained_model
             .inspect_err(|_e| {
                 finish_progress();
             })?
@@ -364,12 +364,12 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
 
         if optimized_parameters
             .iter()
-            .any(|parameter: &f32| parameter.is_infinite())
+            .any(|parameter: &f64| parameter.is_infinite())
         {
             return Err(FSRSError::InvalidInput);
         }
 
-        let mut optimized_initial_stability_map: HashMap<u32, f32> = optimized_parameters[0..4]
+        let mut optimized_initial_stability_map: HashMap<u32, f64> = optimized_parameters[0..4]
             .iter()
             .enumerate()
             .map(|(i, &val)| (i as u32 + 1, val))
@@ -392,7 +392,7 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
             num_relearning_steps,
             ..
         }: ComputeParametersInput,
-    ) -> Result<Vec<f32>> {
+    ) -> Result<Vec<f64>> {
         let average_recall = calculate_average_recall(&train_set);
         let (pre_train_set, _next_train_set) = train_set
             .clone()
@@ -425,7 +425,7 @@ impl FSRS { // FSRS is now candle-based, no <B: Backend>
             None,
         )?;
 
-        let parameters: Vec<f32> = trained_model.w.as_tensor().to_vec1()?;
+        let parameters: Vec<f64> = trained_model.w.as_tensor().to_vec1()?;
         Ok(parameters)
     }
 }
@@ -513,7 +513,7 @@ fn train(
                 &item.t_historys,
                 &item.r_historys,
                 &item.delta_ts,
-                &item.labels,    // Ensure labels are F32
+                &item.labels,    // Ensure labels are f64
                 &item.weights,
                 Reduction::Sum,
             )?;
@@ -536,8 +536,8 @@ fn train(
                 // This is a simplified way to restore. For it to work correctly,
                 // we need to ensure that we're modifying the Var's tensor data directly.
                 let w_var_tensor = model.w.as_tensor();
-                let mut w_current_data_vec = w_var_tensor.to_vec1::<f32>()?;
-                let w_prev_data_vec = w_prev.to_vec1::<f32>()?;
+                let mut w_current_data_vec = w_var_tensor.to_vec1::<f64>()?;
+                let w_prev_data_vec = w_prev.to_vec1::<f64>()?;
 
                 if config.model.freeze_initial_stability {
                     for i in 0..4 {
@@ -587,7 +587,7 @@ fn train(
                 &valid_item.t_historys, &valid_item.r_historys, &valid_item.delta_ts,
                 &valid_item.labels, &valid_item.weights, Reduction::Sum,
             )?;
-            let total_loss_val = (loss + penalty)?.to_scalar::<f32>()?;
+            let total_loss_val = (loss + penalty)?.to_scalar::<f64>()?;
             current_epoch_valid_loss += f64::from(total_loss_val);
             num_valid_batches +=1;
             */
@@ -642,7 +642,7 @@ mod tests {
     fn test_calculate_average_recall() {
         let items = anki21_sample_file_converted_to_fsrs();
         let average_recall = calculate_average_recall(&items);
-        assert_eq!(average_recall, 0.9435269);
+        assert_eq!(average_recall, 0.9435269419174248);
     }
 
     #[test]
@@ -661,7 +661,7 @@ mod tests {
         let item = FSRSBatch {
             t_historys: Tensor::from_slice(
                 &[
-                    0.0f32, 0.0, 0.0, 0.0,
+                    0.0f64, 0.0, 0.0, 0.0,
                     0.0, 0.0, 0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0,
                     0.0, 1.0, 1.0, 3.0,
@@ -673,7 +673,7 @@ mod tests {
             ).unwrap(),
             r_historys: Tensor::from_slice(
                 &[
-                    1.0f32, 2.0, 3.0, 4.0,
+                    1.0f64, 2.0, 3.0, 4.0,
                     3.0, 4.0, 2.0, 4.0,
                     1.0, 4.0, 4.0, 3.0,
                     4.0, 3.0, 3.0, 3.0,
@@ -683,9 +683,9 @@ mod tests {
                 (6, 4), 
                 &device
             ).unwrap(),
-            delta_ts: Tensor::from_slice(&[4.0f32, 11.0, 12.0, 23.0], (4,), &device).unwrap(),
-            labels: Tensor::from_slice(&[1.0f32, 1.0, 1.0, 0.0], (4,), &device).unwrap(),
-            weights: Tensor::from_slice(&[1.0f32, 1.0, 1.0, 1.0], (4,), &device).unwrap(),
+            delta_ts: Tensor::from_slice(&[4.0f64, 11.0, 12.0, 23.0], (4,), &device).unwrap(),
+            labels: Tensor::from_slice(&[1.0f64, 1.0, 1.0, 0.0], (4,), &device).unwrap(),
+            weights: Tensor::from_slice(&[1.0f64, 1.0, 1.0, 1.0], (4,), &device).unwrap(),
         };
 
         let loss = model.forward_classification(

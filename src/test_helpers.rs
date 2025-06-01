@@ -23,15 +23,15 @@ pub trait AssertApproxEq<T> {
     fn assert_approx_eq(&self, other: T);
 }
 
-impl AssertApproxEq<[f32; 1]> for [f32; 1] {
-    fn assert_approx_eq(&self, other: [f32; 1]) {
+impl AssertApproxEq<[f64; 1]> for [f64; 1] {
+    fn assert_approx_eq(&self, other: [f64; 1]) {
         let diff = (self[0] - other[0]).abs();
         assert!(diff < 1e-5, "Arrays not approximately equal: {:?} vs {:?}, diff: {}", self, other, diff);
     }
 }
 
-impl AssertApproxEq<[f32; 4]> for [f32; 4] {
-    fn assert_approx_eq(&self, other: [f32; 4]) {
+impl AssertApproxEq<[f64; 4]> for [f64; 4] {
+    fn assert_approx_eq(&self, other: [f64; 4]) {
         for (a, b) in self.iter().zip(other.iter()) {
             let diff = (a - b).abs();
             assert!(diff < 1e-5, "Arrays not approximately equal: {:?} vs {:?}, diff at element: {}", self, other, diff);

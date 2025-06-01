@@ -5,7 +5,7 @@ use crate::inference::S_MIN;
 use ndarray::Array1;
 use std::collections::HashMap;
 
-static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
+static R_S0_DEFAULT_ARRAY: &[(u32, f64); 4] = &[
     (1, DEFAULT_PARAMETERS[0]),
     (2, DEFAULT_PARAMETERS[1]),
     (3, DEFAULT_PARAMETERS[2]),
@@ -14,8 +14,8 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
 
 pub fn pretrain(
     fsrs_items: Vec<FSRSItem>,
-    average_recall: f32,
-) -> Result<([f32; 4], HashMap<u32, u32>)> {
+    average_recall: f64,
+) -> Result<([f64; 4], HashMap<u32, u32>)> {
     let pretrainset = create_pretrain_data(fsrs_items);
     let rating_count = total_rating_count(&pretrainset);
     let mut rating_stability = search_parameters(pretrainset, average_recall);
@@ -117,17 +117,17 @@ fn loss(
     logloss + l1
 }
 
-pub(crate) const INIT_S_MAX: f32 = 100.0;
+pub(crate) const INIT_S_MAX: f64 = 100.0;
 
 fn search_parameters(
     mut pretrainset: HashMap<FirstRating, Vec<AverageRecall>>,
-    average_recall: f32,
-) -> HashMap<u32, f32> {
+    average_recall: f64,
+) -> HashMap<u32, f64> {
     let mut optimal_stabilities = HashMap::new();
     let epsilon = f64::EPSILON;
 
     for (first_rating, data) in &mut pretrainset {
-        let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
+        let r_s0_default: HashMap<u32, f64> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
         let default_s0 = r_s0_default[first_rating] as f64;
         let delta_t = Array1::from_iter(data.iter().map(|d| d.delta_t));
         let count = Array1::from_iter(data.iter().map(|d| d.count));
@@ -160,16 +160,16 @@ fn search_parameters(
             optimal_s = (high + low) / 2.0;
         }
 
-        optimal_stabilities.insert(*first_rating, optimal_s as f32);
+        optimal_stabilities.insert(*first_rating, optimal_s as f64);
     }
 
     optimal_stabilities
 }
 
 pub(crate) fn smooth_and_fill(
-    rating_stability: &mut HashMap<u32, f32>,
+    rating_stability: &mut HashMap<u32, f64>,
     rating_count: &HashMap<u32, u32>,
-) -> Result<[f32; 4]> {
+) -> Result<[f64; 4]> {
     rating_stability.retain(|&key, _| rating_count.contains_key(&key));
     for (small_rating, big_rating) in [(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
         if let (Some(&small_value), Some(&big_value)) = (
@@ -291,7 +291,7 @@ mod tests {
         let t = Array1::from(vec![0.0, 1.0, 2.0, 3.0]);
         let s = 1.0;
         let y = power_forgetting_curve(&t, s);
-        let expected = Array1::from(vec![1.0, 0.9, 0.8402893843661203, 0.7985001724759597]);
+        let expected = Array1::from(vec![1.0, 0.9,0.8402893846730101, 0.7985001730858255]);
         assert_eq!(y, expected);
     }
 
@@ -304,9 +304,9 @@ mod tests {
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
         let default_s0 = DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 0.7840586, default_s0);
-        assert_eq!(actual, 279.0853744625948);
+        assert_eq!(actual, 279.08537444834747);
         let actual = loss(&delta_t, &recall, &count, 0.7840590622451964, default_s0);
-        assert_eq!(actual, 279.0853744626048);
+        assert_eq!(actual, 279.08537444835747);
     }
 
     #[test]
@@ -368,11 +368,11 @@ mod tests {
         let mut rating_stability = HashMap::from([(1, 0.4), (3, 2.3), (4, 10.9)]);
         let rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.4, 1.1227008, 2.3, 10.9,]);
+        assert_eq!(actual, [0.4, 1.1227007679054068, 2.3, 10.9,]);
 
         let mut rating_stability = HashMap::from([(2, 0.35)]);
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
-        assert_eq!(actual, [0.06458245, 0.35, 0.9693909, 4.802264]);
+        assert_eq!(actual, [0.06458244839011129, 0.35, 0.9693908758814034, 4.802264038739274]);
     }
 }

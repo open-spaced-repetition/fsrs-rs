@@ -16,17 +16,17 @@ use crate::error::Result; // This is crate::error::Result, should be fine
 use crate::model::Model; // This is now candle-based Model
 use crate::{FSRSError, FSRSItem}; // These should be fine
 
-pub(crate) const S_MIN: f32 = 0.001;
-pub(crate) const S_MAX: f32 = 36500.0;
+pub(crate) const S_MIN: f64 = 0.001;
+pub(crate) const S_MAX: f64 = 36500.0;
 /// This is a slice for efficiency, but should always be 21 in length.
-pub type Parameters = [f32]; // This is fine
+pub type Parameters = [f64]; // This is fine
 use itertools::izip;
 
-pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
-pub const FSRS6_DEFAULT_DECAY: f32 = 0.2;
+pub const FSRS5_DEFAULT_DECAY: f64 = 0.5;
+pub const FSRS6_DEFAULT_DECAY: f64 = 0.2;
 
 // This is fine
-pub static DEFAULT_PARAMETERS: [f32; 21] = [
+pub static DEFAULT_PARAMETERS: [f64; 21] = [
     0.2172,
     1.1771,
     3.2602,
@@ -62,15 +62,15 @@ fn infer(
     Ok((state, retrievability))
 }
 
-pub fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32) -> f32 {
-    let factor = 0.9f32.powf(1.0 / -decay) - 1.0; // Ensure decay is not zero
+pub fn current_retrievability(state: MemoryState, days_elapsed: f64, decay: f64) -> f64 {
+    let factor = 0.9f64.powf(1.0 / -decay) - 1.0; // Ensure decay is not zero
     (days_elapsed / state.stability * factor + 1.0).powf(-decay)
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MemoryState {
-    pub stability: f32,
-    pub difficulty: f32,
+    pub stability: f64,
+    pub difficulty: f64,
 }
 
 // Updated for candle MemoryStateTensors (no longer generic)
@@ -80,8 +80,8 @@ impl From<MemoryStateTensors> for MemoryState {
         // Use try_into or specific conversion if shapes can vary or error handling is needed.
         // For simplicity, using unwrap based on expected structure. This might need robust error handling.
         Self {
-            stability: m.stability.squeeze(0).unwrap().to_scalar::<f32>().unwrap(),
-            difficulty: m.difficulty.squeeze(0).unwrap().to_scalar::<f32>().unwrap(),
+            stability: m.stability.squeeze(0).unwrap().to_scalar::<f64>().unwrap(),
+            difficulty: m.difficulty.squeeze(0).unwrap().to_scalar::<f64>().unwrap(),
         }
     }
 }
@@ -120,20 +120,20 @@ impl MemoryStateTensors {
 
 #[derive(Default)]
 struct RMatrixValue {
-    predicted: f32,
-    actual: f32,
-    count: f32,
-    weight: f32,
+    predicted: f64,
+    actual: f64,
+    count: f64,
+    weight: f64,
 }
 
 // FSRS is already candle-based (no <B: Backend> generic)
 impl FSRS {
     // Updated to return Result and use candle Tensors
     fn item_to_tensors(&self, item: &FSRSItem) -> Result<(Tensor, Tensor), CandleError> {
-        let (time_history_vec, rating_history_vec): (Vec<f32>, Vec<f32>) = item
+        let (time_history_vec, rating_history_vec): (Vec<f64>, Vec<f64>) = item
             .reviews
             .iter()
-            .map(|r| (r.delta_t as f32, r.rating as f32))
+            .map(|r| (r.delta_t as f64, r.rating as f64))
             .unzip();
         let size = item.reviews.len();
 
@@ -211,20 +211,20 @@ impl FSRS {
     /// Parameters must have been provided when calling FSRS::new().
     pub fn memory_state_from_sm2(
         &self,
-        ease_factor: f32,
-        interval: f32,
-        sm2_retention: f32,
+        ease_factor: f64,
+        interval: f64,
+        sm2_retention: f64,
     ) -> Result<MemoryState> {
         let model = self.model()?;
         let w_tensor = model.w.as_tensor();
-        let decay_val = w_tensor.i(20)?.to_scalar::<f32>()?;
+        let decay_val = w_tensor.i(20)?.to_scalar::<f64>()?;
         if decay_val == 0.0 { return Err(FSRSError::Internal { message: "Decay is zero".to_string() });}
         let decay = decay_val * -1.0;
-        let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+        let factor = 0.9f64.powf(1.0 / decay) - 1.0;
         let stability = interval.max(S_MIN) * factor / (sm2_retention.powf(1.0 / decay) - 1.0);
-        let w8 = w_tensor.i(8)?.to_scalar::<f32>()?;
-        let w9 = w_tensor.i(9)?.to_scalar::<f32>()?;
-        let w10 = w_tensor.i(10)?.to_scalar::<f32>()?;
+        let w8 = w_tensor.i(8)?.to_scalar::<f64>()?;
+        let w9 = w_tensor.i(9)?.to_scalar::<f64>()?;
+        let w10 = w_tensor.i(10)?.to_scalar::<f64>()?;
         let difficulty = 11.0
             - (ease_factor - 1.0)
                 / (w8.exp() * stability.powf(-w9) * ((1.0 - sm2_retention) * w10).exp_m1());
@@ -243,22 +243,22 @@ impl FSRS {
     /// Parameters must have been provided when calling FSRS::new().
     pub fn next_interval(
         &self,
-        stability_opt: Option<f32>,
-        desired_retention: f32,
+        stability_opt: Option<f64>,
+        desired_retention: f64,
         rating_val: u32,
-    ) -> Result<f32> {
+    ) -> Result<f64> {
         let model = self.model()?;
         let stability_tensor = if let Some(s) = stability_opt {
             Tensor::from_slice(&[s], &[1], &self.device())?
         } else {
-            let rating_tensor = Tensor::from_slice(&[rating_val as f32], &[1], &self.device())?;
+            let rating_tensor = Tensor::from_slice(&[rating_val as f64], &[1], &self.device())?;
             model.init_stability(&rating_tensor)?
         };
 
         let desired_retention_tensor = Tensor::from_slice(&[desired_retention], &[1], &self.device())?;
         let interval = model
             .next_interval(&stability_tensor, &desired_retention_tensor)?
-            .to_scalar::<f32>()?;
+            .to_scalar::<f64>()?;
         Ok(interval)
     }
 
@@ -268,10 +268,10 @@ impl FSRS {
     pub fn next_states(
         &self,
         current_memory_state: Option<MemoryState>,
-        desired_retention: f32,
+        desired_retention: f64,
         days_elapsed: u32,
     ) -> Result<NextStates> {
-        let delta_t = Tensor::from_slice(&[days_elapsed as f32], &[1], &self.device())?;
+        let delta_t = Tensor::from_slice(&[days_elapsed as f64], &[1], &self.device())?;
         let current_memory_state_tensors = match current_memory_state {
             Some(cms) => Some(MemoryStateTensors::new(cms, &self.device())?),
             None => None,
@@ -280,7 +280,7 @@ impl FSRS {
 
         let mut states_results = Vec::new();
         for rating_val in 1..=4 {
-            let rating_tensor = Tensor::from_slice(&[rating_val as f32], &[1], &self.device())?;
+            let rating_tensor = Tensor::from_slice(&[rating_val as f64], &[1], &self.device())?;
             let state_tensors = model.step(&delta_t, &rating_tensor, current_memory_state_tensors.clone())?;
             let state = MemoryState::from(state_tensors);
             if !state.stability.is_finite() || !state.difficulty.is_finite() {
@@ -293,7 +293,7 @@ impl FSRS {
         let mut item_states = Vec::new();
         for memory in states_results {
             let stability_tensor = Tensor::from_slice(&[memory.stability], &[1], &self.device())?;
-            let interval = model.next_interval(&stability_tensor, &desired_retention_tensor)?.to_scalar::<f32>()?;
+            let interval = model.next_interval(&stability_tensor, &desired_retention_tensor)?.to_scalar::<f64>()?;
             item_states.push(ItemState { memory, interval });
         }
 
@@ -330,8 +330,8 @@ impl FSRS {
             let batch = batcher.batch(chunk.to_vec())?;
             let (_state, retrievability) = infer(model, batch.clone())?;
 
-            let pred = retrievability.to_vec1::<f32>()?;
-            let true_val = batch.labels.to_vec1::<f32>()?;
+            let pred = retrievability.to_vec1::<f64>()?;
+            let true_val = batch.labels.to_vec1::<f64>()?;
 
             all_retrievability_tensors.push(retrievability);
             all_labels_tensors.push(batch.labels);
@@ -357,8 +357,8 @@ impl FSRS {
                 let real = v.actual / v.count;
                 (pred - real).powi(2) * v.weight
             })
-            .sum::<f32>()
-            / r_matrix.values().map(|v| v.weight).sum::<f32>())
+            .sum::<f64>()
+            / r_matrix.values().map(|v| v.weight).sum::<f64>())
         .sqrt();
 
         let all_retrievability = Tensor::cat(&all_retrievability_tensors, 0)?;
@@ -366,8 +366,8 @@ impl FSRS {
         let all_weights = Tensor::cat(&all_weights_tensors, 0)?;
 
         let loss_items = BCELossCandle::new().forward(&all_retrievability, &all_labels, &all_weights, Reduction::Sum)?;
-        let total_weights = all_weights.sum_all()?.to_scalar::<f32>()?;
-        let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / Tensor::from_slice(&[total_weights], &[1], &self.device())?)?.neg()?.to_scalar::<f32>()? };
+        let total_weights = all_weights.sum_all()?.to_scalar::<f64>()?;
+        let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / Tensor::from_slice(&[total_weights], &[1], &self.device())?)?.neg()?.to_scalar::<f64>()? };
 
         Ok(ModelEvaluation {
             log_loss,
@@ -420,17 +420,17 @@ impl FSRS {
         evaluate(all_predictions, &self.device())
     }
 
-    pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f32) -> f32 {
-        current_retrievability(state, days_elapsed as f32, decay)
+    pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f64) -> f64 {
+        current_retrievability(state, days_elapsed as f64, decay)
     }
 
     pub fn current_retrievability_seconds(
         &self,
         state: MemoryState,
         seconds_elapsed: u32,
-        decay: f32,
-    ) -> f32 {
-        current_retrievability(state, seconds_elapsed as f32 / 86400.0, decay)
+        decay: f64,
+    ) -> f64 {
+        current_retrievability(state, seconds_elapsed as f64 / 86400.0, decay)
     }
 
     pub fn universal_metrics<F>(
@@ -438,7 +438,7 @@ impl FSRS {
         items: Vec<FSRSItem>,
         parameters: &Parameters,
         mut progress: F,
-    ) -> Result<(f32, f32)>
+    ) -> Result<(f64, f64)>
     where
         F: FnMut(ItemProgress) -> bool,
     {
@@ -447,9 +447,9 @@ impl FSRS {
         }
         let weighted_items = constant_weighted_fsrs_items(items);
         let batcher = FSRSBatcher::new(self.device().clone());
-        let mut all_predictions_self_vec: Vec<f32> = vec![];
-        let mut all_predictions_other_vec: Vec<f32> = vec![];
-        let mut all_true_val_vec: Vec<f32> = vec![];
+        let mut all_predictions_self_vec: Vec<f64> = vec![];
+        let mut all_predictions_other_vec: Vec<f64> = vec![];
+        let mut all_true_val_vec: Vec<f64> = vec![];
         let mut progress_info = ItemProgress {
             current: 0,
             total: weighted_items.len(),
@@ -462,12 +462,12 @@ impl FSRS {
             let batch = batcher.batch(chunk.to_vec())?;
 
             let (_state_self, retrievability_self) = infer(model_self, batch.clone())?;
-            all_predictions_self_vec.extend(retrievability_self.to_vec1::<f32>()?);
+            all_predictions_self_vec.extend(retrievability_self.to_vec1::<f64>()?);
 
             let (_state_other, retrievability_other) = infer(model_other, batch.clone())?;
-            all_predictions_other_vec.extend(retrievability_other.to_vec1::<f32>()?);
+            all_predictions_other_vec.extend(retrievability_other.to_vec1::<f64>()?);
 
-            all_true_val_vec.extend(batch.labels.to_vec1::<f32>()?);
+            all_true_val_vec.extend(batch.labels.to_vec1::<f64>()?);
 
             progress_info.current += chunk.len();
             if !progress(progress_info) {
@@ -485,13 +485,13 @@ impl FSRS {
 #[derive(Debug, Clone)]
 pub struct PredictedFSRSItem {
     pub item: FSRSItem,
-    pub retrievability: f32,
+    pub retrievability: f64,
 }
 
 // Updated for candle
 fn batch_predict(
     items: Vec<FSRSItem>,
-    parameters: &[f32],
+    parameters: &[f64],
     device: &Device, // Added device
 ) -> Result<Vec<PredictedFSRSItem>> {
     if items.is_empty() {
@@ -507,7 +507,7 @@ fn batch_predict(
     for chunk in weighted_items.chunks(512) {
         let batch = batcher.batch(chunk.to_vec())?; // batcher.batch now returns Result
         let (_state, retrievability) = infer(model, batch)?; // infer now returns Result
-        let pred_vec = retrievability.to_vec1::<f32>()?; // Renamed
+        let pred_vec = retrievability.to_vec1::<f64>()?; // Renamed
 
         for (weighted_item, p_val) in chunk.iter().zip(pred_vec) { // Renamed
             predicted_items_vec.push(PredictedFSRSItem {
@@ -528,11 +528,11 @@ fn evaluate(
     if predicted_items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
-    let mut all_labels_vec: Vec<f32> = Vec::with_capacity(predicted_items.len()); // Store as f32
+    let mut all_labels_vec: Vec<f64> = Vec::with_capacity(predicted_items.len()); // Store as f64
     let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
     for predicted_item in predicted_items.iter() {
         let pred = predicted_item.retrievability;
-        let y = (predicted_item.item.current().rating > 1) as i32 as f32; // Convert bool to f32
+        let y = (predicted_item.item.current().rating > 1) as i32 as f64; // Convert bool to f64
         all_labels_vec.push(y);
         let bin = predicted_item.item.r_matrix_index();
         let value = r_matrix.entry(bin).or_default();
@@ -549,19 +549,19 @@ fn evaluate(
             let real_mean = v.actual / v.count;   // Renamed for clarity
             (pred_mean - real_mean).powi(2) * v.weight
         })
-        .sum::<f32>()
-        / r_matrix.values().map(|v| v.weight).sum::<f32>())
+        .sum::<f64>()
+        / r_matrix.values().map(|v| v.weight).sum::<f64>())
     .sqrt();
 
     let all_labels_tensor = Tensor::from_vec(all_labels_vec.clone(), (all_labels_vec.len(),), device)?;
     let all_weights_tensor = Tensor::ones_like(&all_labels_tensor)?;
 
-    let retrievability_vec: Vec<f32> = predicted_items.iter().map(|p| p.retrievability).collect();
+    let retrievability_vec: Vec<f64> = predicted_items.iter().map(|p| p.retrievability).collect();
     let all_retrievability_tensor = Tensor::from_vec(retrievability_vec, (predicted_items.len(),), device)?;
 
     let loss_items = BCELossCandle::new().forward(&all_retrievability_tensor, &all_labels_tensor, &all_weights_tensor, Reduction::Sum)?;
-    let total_weights = all_weights_tensor.sum_all()?.to_scalar::<f32>()?;
-            let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / Tensor::from_slice(&[total_weights], &[1], device)?)?.neg()?.to_scalar::<f32>()? };
+    let total_weights = all_weights_tensor.sum_all()?.to_scalar::<f64>()?;
+            let log_loss = if total_weights == 0.0 { 0.0 } else { (loss_items.sum_all()? / Tensor::from_slice(&[total_weights], &[1], device)?)?.neg()?.to_scalar::<f64>()? };
 
     Ok(ModelEvaluation {
         log_loss,
@@ -571,8 +571,8 @@ fn evaluate(
 
 #[derive(Debug, Copy, Clone)]
 pub struct ModelEvaluation {
-    pub log_loss: f32,
-    pub rmse_bins: f32,
+    pub log_loss: f64,
+    pub rmse_bins: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -586,7 +586,7 @@ pub struct NextStates {
 #[derive(Debug, PartialEq, Clone)]
 pub struct ItemState {
     pub memory: MemoryState,
-    pub interval: f32,
+    pub interval: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -650,13 +650,13 @@ impl TimeSeriesSplit {
     }
 }
 
-fn get_bin(x: f32, bins: i32) -> i32 {
-    let log_base = (bins.add(1) as f32).ln();
+fn get_bin(x: f64, bins: i32) -> i32 {
+    let log_base = (bins.add(1) as f64).ln();
     let binned_x = (x * log_base).exp().floor().sub(1.0);
     (binned_x as i32).clamp(0, bins - 1)
 }
 
-fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
+fn measure_a_by_b(pred_a: &[f64], pred_b: &[f64], true_val: &[f64]) -> f64 {
     let mut groups = HashMap::new();
     izip!(pred_a, pred_b, true_val).for_each(|(a, b, t)| {
         let bin = get_bin(*b, 20);
@@ -665,9 +665,9 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
     let mut total_sum = 0.0;
     let mut total_count = 0.0;
     for group in groups.values() {
-        let count = group.len() as f32;
-        let pred_mean = group.iter().map(|(p, _)| *p).sum::<f32>() / count;
-        let true_mean = group.iter().map(|(_, t)| *t).sum::<f32>() / count;
+        let count = group.len() as f64;
+        let pred_mean = group.iter().map(|(p, _)| *p).sum::<f64>() / count;
+        let true_mean = group.iter().map(|(_, t)| *t).sum::<f64>() / count;
 
         let rmse = (pred_mean - true_mean).powi(2);
         total_sum += rmse * count;
@@ -686,7 +686,7 @@ mod tests {
     };
 
     // Helper for float slice comparisons
-    fn assert_f32_slices_approx_eq(result: &[f32], expected: &[f32]) {
+    fn assert_f64_slices_approx_eq(result: &[f64], expected: &[f64]) {
         assert_eq!(result.len(), expected.len(), "Slice lengths differ.");
         for (r, e) in result.iter().zip(expected.iter()) {
             assert!((r - e).abs() < 1e-4, "Value mismatch: {} vs {}", r, e);
@@ -694,7 +694,7 @@ mod tests {
     }
 
 
-    static PARAMETERS_TEST: &[f32] = &[ // Renamed to avoid conflict if PARAMETERS is defined elsewhere
+    static PARAMETERS_TEST: &[f64] = &[ // Renamed to avoid conflict if PARAMETERS is defined elsewhere
         0.6845422,
         1.6790825,
         4.7349424,
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn test_get_bin() {
-        let pred = (0..=100).map(|i| i as f32 / 100.0).collect::<Vec<_>>();
+        let pred = (0..=100).map(|i| i as f64 / 100.0).collect::<Vec<_>>();
         let bin = pred.iter().map(|p| get_bin(*p, 20)).collect::<Vec<_>>();
         assert_eq!(
             bin,
@@ -771,7 +771,7 @@ mod tests {
         Ok(())
     }
 
-    fn assert_memory_state_candle(w: &[f32], expected_stability: f32, expected_difficulty: f32) -> Result<(), FSRSError> {
+    fn assert_memory_state_candle(w: &[f64], expected_stability: f64, expected_difficulty: f64) -> Result<(), FSRSError> {
         let desired_retention = 0.9;
         let fsrs = FSRS::new(Some(w))?;
         let ratings: [u32; 6] = [1, 3, 3, 3, 3, 3];
@@ -811,7 +811,7 @@ mod tests {
     #[test]
     fn test_next_interval() -> Result<(), FSRSError> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
-        let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
+        let desired_retentions = (1..=10).map(|i| i as f64 / 10.0).collect::<Vec<_>>();
         let intervals: Result<Vec<i32>, _> = desired_retentions
             .iter()
             .map(|r| fsrs.next_interval(Some(1.0), *r, 1).map(|val| val.round().max(1.0) as i32))
@@ -837,21 +837,21 @@ mod tests {
         ];
         let fsrs1 = FSRS::new(Some(&params1))?;
         let metrics1 = fsrs1.evaluate(items_for_eval.clone(), |_| true)?;
-        assert_f32_slices_approx_eq(&[metrics1.log_loss, metrics1.rmse_bins], &[0.205_835_95, 0.026_072_025]);
+        assert_f64_slices_approx_eq(&[metrics1.log_loss, metrics1.rmse_bins], &[0.205_835_95, 0.026_072_025]);
 
         let fsrs_default_empty = FSRS::new(Some(&[]))?; // Uses DEFAULT_PARAMETERS via check_and_fill_parameters
         let metrics_default_empty = fsrs_default_empty.evaluate(items_for_eval.clone(), |_| true)?;
-        assert_f32_slices_approx_eq(&[metrics_default_empty.log_loss, metrics_default_empty.rmse_bins], &[0.217_924_48, 0.039_937_04]);
+        assert_f64_slices_approx_eq(&[metrics_default_empty.log_loss, metrics_default_empty.rmse_bins], &[0.217_924_48, 0.039_937_04]);
 
         // Using DEFAULT_PARAMETERS directly for clarity
         let fsrs_default_full = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let metrics_default_full = fsrs_default_full.evaluate(items_for_eval.clone(), |_| true)?;
-        assert_f32_slices_approx_eq(&[metrics_default_full.log_loss, metrics_default_full.rmse_bins], &[0.217_924_48, 0.039_937_04]);
+        assert_f64_slices_approx_eq(&[metrics_default_full.log_loss, metrics_default_full.rmse_bins], &[0.217_924_48, 0.039_937_04]);
 
 
         let (self_by_other, other_by_self) = fsrs_default_full
             .universal_metrics(items_for_eval.clone(), &DEFAULT_PARAMETERS, |_| true)?; // Compare default with default
-        assert_f32_slices_approx_eq(&[self_by_other, other_by_self], &[0.0, 0.0]); // Should be very close to 0
+        assert_f64_slices_approx_eq(&[self_by_other, other_by_self], &[0.0, 0.0]); // Should be very close to 0
 
         Ok(())
     }
@@ -891,7 +891,7 @@ mod tests {
         let fsrs = FSRS::new(None)?; // Uses default parameters
         let metrics = fsrs
             .evaluate_with_time_series_splits(input.clone(), |_| true)?;
-        assert_f32_slices_approx_eq(&[metrics.log_loss, metrics.rmse_bins], &[0.19735593, 0.027728133]);
+        assert_f64_slices_approx_eq(&[metrics.log_loss, metrics.rmse_bins], &[0.19735593, 0.027728133]);
 
         let result_err = fsrs.evaluate_with_time_series_splits(
             ComputeParametersInput {
@@ -1040,26 +1040,27 @@ mod tests {
     fn memory_from_sm2() -> Result<(), FSRSError> {
         let fsrs = FSRS::new(Some(&[]))?; // Uses default parameters
         let memory_state1 = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9)?;
-        assert_f32_slices_approx_eq(&[memory_state1.stability, memory_state1.difficulty], &[10.0, 7.061_206]);
+        assert_f64_slices_approx_eq(&[memory_state1.stability, memory_state1.difficulty], &[10.0, 7.061_206]);
 
         let memory_state2 = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8)?;
-        assert_f32_slices_approx_eq(&[memory_state2.stability, memory_state2.difficulty], &[3.380_071_9, 9.344_574]);
+        assert_f64_slices_approx_eq(&[memory_state2.stability, memory_state2.difficulty], &[3.380_071_9, 9.344_574]);
 
         let memory_state3 = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95)?;
-        assert_f32_slices_approx_eq(&[memory_state3.stability, memory_state3.difficulty], &[23.721_418, 2.095_691_7]);
+        assert_f64_slices_approx_eq(&[memory_state3.stability, memory_state3.difficulty], &[23.721_418, 2.095_691_7]);
 
         let memory_state4 = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9)?;
-        assert_f32_slices_approx_eq(&[memory_state4.stability, memory_state4.difficulty], &[20.0, 10.0]);
+        assert_f64_slices_approx_eq(&[memory_state4.stability, memory_state4.difficulty], &[20.0, 10.0]);
 
         let interval = 15;
         let ease_factor = 2.0;
-        let initial_sm2_state = fsrs.memory_state_from_sm2(ease_factor, interval as f32, 0.9)?;
+        let initial_sm2_state = fsrs.memory_state_from_sm2(ease_factor, interval as f64, 0.9)?;
+        dbg!(initial_sm2_state);
         let fsrs_factor = fsrs
             .next_states(Some(initial_sm2_state), 0.9, interval)?
             .good
             .memory
             .stability
-            / interval as f32;
+            / interval as f64;
         assert!((fsrs_factor - ease_factor).abs() < 0.01);
         Ok(())
     }

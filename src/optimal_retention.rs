@@ -17,27 +17,27 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct SimulationResult {
-    pub memorized_cnt_per_day: Vec<f32>,
+    pub memorized_cnt_per_day: Vec<f64>,
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
-    pub cost_per_day: Vec<f32>,
+    pub cost_per_day: Vec<f64>,
     // The amount of review cards you got correct on a given day (not including learn cards).
     pub correct_cnt_per_day: Vec<usize>,
     pub cards: Vec<Card>,
 }
 
 trait Round {
-    fn to_2_decimal(self) -> f32;
+    fn to_2_decimal(self) -> f64;
 }
 
-impl Round for f32 {
-    fn to_2_decimal(self) -> f32 {
+impl Round for f64 {
+    fn to_2_decimal(self) -> f64 {
         (self * 100.0).round() / 100.0
     }
 }
 
-const R_MIN: f32 = 0.70;
-const R_MAX: f32 = 0.95;
+const R_MIN: f64 = 0.70;
+const R_MAX: f64 = 0.95;
 const RATINGS: [usize; 4] = [1, 2, 3, 4];
 const LEARNING: usize = 0;
 const REVIEW: usize = 1;
@@ -49,7 +49,7 @@ const MAX_STEPS: usize = 5;
 /// and returns a new interval.
 #[allow(clippy::type_complexity)]
 pub struct PostSchedulingFn(
-    pub Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
+    pub Arc<dyn Fn(&Card, f64, usize, &[usize], &mut StdRng) -> f64 + Sync + Send>,
 );
 
 impl PartialEq for PostSchedulingFn {
@@ -91,19 +91,19 @@ impl Default for ReviewPriorityFn {
 pub struct SimulatorConfig {
     pub deck_size: usize,
     pub learn_span: usize,
-    pub max_cost_perday: f32,
-    pub max_ivl: f32,
-    pub first_rating_prob: [f32; 4],
-    pub review_rating_prob: [f32; 3],
+    pub max_cost_perday: f64,
+    pub max_ivl: f64,
+    pub first_rating_prob: [f64; 4],
+    pub review_rating_prob: [f64; 3],
     pub learn_limit: usize,
     pub review_limit: usize,
     pub new_cards_ignore_review_limit: bool,
     pub suspend_after_lapses: Option<u32>,
     pub post_scheduling_fn: Option<PostSchedulingFn>,
     pub review_priority_fn: Option<ReviewPriorityFn>,
-    pub learning_step_transitions: [[f32; 4]; 3],
-    pub relearning_step_transitions: [[f32; 4]; 3],
-    pub state_rating_costs: [[f32; 4]; 3],
+    pub learning_step_transitions: [[f64; 4]; 3],
+    pub relearning_step_transitions: [[f64; 4]; 3],
+    pub state_rating_costs: [[f64; 4]; 3],
     pub learning_step_count: usize,
     pub relearning_step_count: usize,
 }
@@ -144,43 +144,43 @@ impl Default for SimulatorConfig {
     }
 }
 
-fn stability_after_success(w: &[f32], s: f32, r: f32, d: f32, rating: usize) -> f32 {
+fn stability_after_success(w: &[f64], s: f64, r: f64, d: f64, rating: usize) -> f64 {
     let hard_penalty = if rating == 2 { w[15] } else { 1.0 };
     let easy_bonus = if rating == 4 { w[16] } else { 1.0 };
-    (s * (f32::exp(w[8])
+    (s * (f64::exp(w[8])
         * (11.0 - d)
         * s.powf(-w[9])
-        * (f32::exp((1.0 - r) * w[10]) - 1.0)
+        * (f64::exp((1.0 - r) * w[10]) - 1.0)
         * hard_penalty)
         .mul_add(easy_bonus, 1.0))
     .clamp(S_MIN, S_MAX)
 }
 
-fn stability_after_failure(w: &[f32], s: f32, r: f32, d: f32) -> f32 {
+fn stability_after_failure(w: &[f64], s: f64, r: f64, d: f64) -> f64 {
     let new_s_min = s / (w[17] * w[18]).exp();
     let new_s =
-        (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f32::exp((1.0 - r) * w[14]))
+        (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * f64::exp((1.0 - r) * w[14]))
             .min(new_s_min);
     new_s.clamp(S_MIN, S_MAX)
 }
 
-fn stability_short_term(w: &[f32], s: f32, rating: usize) -> f32 {
-    let sinc = (w[17] * (rating as f32 - 3.0 + w[18])).exp() * s.powf(-w[19]);
+fn stability_short_term(w: &[f64], s: f64, rating: usize) -> f64 {
+    let sinc = (w[17] * (rating as f64 - 3.0 + w[18])).exp() * s.powf(-w[19]);
     let new_s = s * if rating >= 3 { sinc.max(1.0) } else { sinc };
     new_s.clamp(S_MIN, S_MAX)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn memory_state_short_term(
-    w: &[f32],
-    s: f32,
-    d: f32,
+    w: &[f64],
+    s: f64,
+    d: f64,
     init_rating: Option<usize>,
-    rating_costs: &[f32; 4],
-    step_transitions: &[[f32; 4]; 3],
+    rating_costs: &[f64; 4],
+    step_transitions: &[[f64; 4]; 3],
     step_count: usize,
     rng: &mut StdRng,
-) -> (f32, f32, f32) {
+) -> (f64, f64, f64) {
     let mut consecutive = 0;
     let mut rating = init_rating.unwrap_or(1);
     let mut cost = if init_rating.is_none() {
@@ -213,48 +213,48 @@ fn memory_state_short_term(
     (new_s, new_d, cost)
 }
 
-fn init_d(w: &[f32], rating: usize) -> f32 {
-    w[4] - (w[5] * (rating - 1) as f32).exp() + 1.0
+fn init_d(w: &[f64], rating: usize) -> f64 {
+    w[4] - (w[5] * (rating - 1) as f64).exp() + 1.0
 }
 
-fn linear_damping(delta_d: f32, old_d: f32) -> f32 {
+fn linear_damping(delta_d: f64, old_d: f64) -> f64 {
     (10.0 - old_d) / 9.0 * delta_d
 }
 
-fn next_d(w: &[f32], d: f32, rating: usize) -> f32 {
-    let delta_d = -w[6] * (rating as f32 - 3.0);
+fn next_d(w: &[f64], d: f64, rating: usize) -> f64 {
+    let delta_d = -w[6] * (rating as f64 - 3.0);
     let new_d = d + linear_damping(delta_d, d);
     mean_reversion(w, init_d(w, 4), new_d).clamp(1.0, 10.0)
 }
 
-fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
+fn mean_reversion(w: &[f64], init: f64, current: f64) -> f64 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
-fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
+fn power_forgetting_curve(w: &[f64], t: f64, s: f64) -> f64 {
     debug_assert!(t >= 0.);
     let decay = -w[20];
-    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    let factor = 0.9f64.powf(1.0 / decay) - 1.0;
     (t / s).mul_add(factor, 1.0).powf(decay)
 }
 
-fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
+fn next_interval(w: &[f64], stability: f64, desired_retention: f64) -> f64 {
     let decay = -w[20];
-    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    let factor = 0.9f64.powf(1.0 / decay) - 1.0;
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn expected_workload(
     parameters: &Parameters,
-    desired_retention: f32,
+    desired_retention: f64,
     learn_day_limit: usize,
-    cost_success: f32,
-    cost_failure: f32,
-    cost_learn: f32,
-    initial_pass_rate: f32,
-    termination_prob: f32,
-) -> Result<f32> {
+    cost_success: f64,
+    cost_failure: f64,
+    cost_learn: f64,
+    initial_pass_rate: f64,
+    termination_prob: f64,
+) -> Result<f64> {
     let w = &check_and_fill_parameters(parameters)?;
 
     Ok(_expected_workload(
@@ -276,18 +276,18 @@ pub fn expected_workload(
 #[allow(clippy::too_many_arguments)]
 fn _expected_workload(
     w: &Parameters,
-    acc_prob: f32,
-    stability: f32,
-    difficulty: f32,
+    acc_prob: f64,
+    stability: f64,
+    difficulty: f64,
     today: usize,
-    desired_retention: f32,
-    retrievability: f32,
-    cost: f32,
+    desired_retention: f64,
+    retrievability: f64,
+    cost: f64,
     learn_day_limit: usize,
-    cost_success: f32,
-    cost_failure: f32,
-    termination_prob: f32,
-) -> f32 {
+    cost_success: f64,
+    cost_failure: f64,
+    termination_prob: f64,
+) -> f64 {
     if today >= learn_day_limit || acc_prob <= termination_prob {
         return 0.0;
     }
@@ -348,28 +348,28 @@ pub struct Card {
     // "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
     // new cards created by the simulation have negative id's so use positive ones.
     pub id: i64,
-    pub difficulty: f32,
-    pub stability: f32,
-    pub last_date: f32,
-    pub due: f32,
-    pub interval: f32,
+    pub difficulty: f64,
+    pub stability: f64,
+    pub last_date: f64,
+    pub due: f64,
+    pub interval: f64,
     pub lapses: u32,
 }
 
 impl Card {
-    pub fn power_forgetting_curve(&self, w: &[f32], t: f32) -> f32 {
+    pub fn power_forgetting_curve(&self, w: &[f64], t: f64) -> f64 {
         power_forgetting_curve(w, t, self.stability)
     }
 
-    pub fn retention_on(&self, w: &[f32], date: f32) -> f32 {
+    pub fn retention_on(&self, w: &[f64], date: f64) -> f64 {
         self.power_forgetting_curve(w, date - self.last_date)
     }
 
-    pub fn retrievability(&self, w: &[f32]) -> f32 {
+    pub fn retrievability(&self, w: &[f64]) -> f64 {
         self.retention_on(w, self.due)
     }
 
-    pub fn scheduled_due(&self) -> f32 {
+    pub fn scheduled_due(&self) -> f64 {
         self.last_date + self.interval
     }
 }
@@ -377,7 +377,7 @@ impl Card {
 pub fn simulate(
     config: &SimulatorConfig,
     w: &Parameters,
-    desired_retention: f32,
+    desired_retention: f64,
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
@@ -430,11 +430,11 @@ pub fn simulate(
     if config.learn_limit > 0 {
         let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
             id: -(i as i64),
-            difficulty: f32::NEG_INFINITY,
-            stability: f32::NEG_INFINITY,
-            last_date: f32::NEG_INFINITY,
-            due: (i / config.learn_limit) as f32,
-            interval: f32::NEG_INFINITY,
+            difficulty: f64::NEG_INFINITY,
+            stability: f64::NEG_INFINITY,
+            last_date: f64::NEG_INFINITY,
+            due: (i / config.learn_limit) as f64,
+            interval: f64::NEG_INFINITY,
             lapses: 0,
         });
 
@@ -462,7 +462,7 @@ pub fn simulate(
             i,
             card_priority(
                 card,
-                card.last_date == f32::NEG_INFINITY,
+                card.last_date == f64::NEG_INFINITY,
                 w,
                 &review_priority_fn,
             ),
@@ -475,12 +475,12 @@ pub fn simulate(
 
         let day_index = card.due as usize;
 
-        let is_learn = card.last_date == f32::NEG_INFINITY;
+        let is_learn = card.last_date == f64::NEG_INFINITY;
 
         let last_date_index = card.last_date as usize;
 
         // Guards
-        if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
+        if card.due >= config.learn_span as f64 || card.lapses >= max_lapses {
             if !is_learn {
                 let delta_t = config.learn_span.max(last_date_index) - last_date_index;
                 // last_date..next_date
@@ -490,7 +490,7 @@ pub fn simulate(
                     .skip(last_date_index)
                     .take(delta_t)
                 {
-                    *day += card.retention_on(w, i as f32);
+                    *day += card.retention_on(w, i as f64);
                 }
             }
             card_priorities.pop();
@@ -515,7 +515,7 @@ pub fn simulate(
                     due_cnt_per_day[day_index + 1] += 1;
                 }
             }
-            card.due = day_index as f32 + 1.0;
+            card.due = day_index as f64 + 1.0;
             card_priorities.change_priority(
                 &card_index,
                 card_priority(card, is_learn, w, &review_priority_fn),
@@ -612,7 +612,7 @@ pub fn simulate(
                 .take(day_index)
                 .skip(last_date_index)
             {
-                *day += card.retention_on(w, i as f32);
+                *day += card.retention_on(w, i as f64);
             }
 
             card.stability = new_s;
@@ -623,17 +623,17 @@ pub fn simulate(
             .round()
             .clamp(1.0, config.max_ivl);
 
-        card.last_date = day_index as f32;
+        card.last_date = day_index as f64;
         card.interval = ivl;
-        card.due = day_index as f32 + ivl;
+        card.due = day_index as f64 + ivl;
 
         if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
             ivl = cb(card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
             card.interval = ivl;
-            card.due = day_index as f32 + ivl;
+            card.due = day_index as f64 + ivl;
         }
 
-        if card.due < due_cnt_per_day.len() as f32 {
+        if card.due < due_cnt_per_day.len() as f64 {
             due_cnt_per_day[card.due as usize] += 1;
         }
 
@@ -663,18 +663,18 @@ pub fn simulate(
 fn sample<F>(
     config: &SimulatorConfig,
     parameters: &Parameters,
-    desired_retention: f32,
+    desired_retention: f64,
     n: usize,
     progress: &mut F,
     cards: &Option<Vec<Card>>,
-) -> Result<f32, FSRSError>
+) -> Result<f64, FSRSError>
 where
     F: FnMut() -> bool,
 {
     if !progress() {
         return Err(FSRSError::Interrupted);
     }
-    let results: Result<Vec<f32>, FSRSError> = (0..n)
+    let results: Result<Vec<f64>, FSRSError> = (0..n)
         .into_par_iter()
         .map(|i| {
             let SimulationResult {
@@ -689,11 +689,11 @@ where
                 cards.clone(),
             )?;
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
-            let total_cost = cost_per_day.iter().sum::<f32>();
+            let total_cost = cost_per_day.iter().sum::<f64>();
             Ok(total_cost / total_memorized)
         })
         .collect();
-    results.map(|v| v.iter().sum::<f32>() / n as f32)
+    results.map(|v| v.iter().sum::<f64>() / n as f64)
 }
 
 impl FSRS { // Ensure this was changed, if not, it should be. If it was already `impl FSRS`, this block is fine.
@@ -705,7 +705,7 @@ impl FSRS { // Ensure this was changed, if not, it should be. If it was already 
         parameters: &Parameters,
         mut progress: F,
         cards: Option<Vec<Card>>,
-    ) -> Result<f32>
+    ) -> Result<f64>
     where
         F: FnMut(ItemProgress) -> bool + Send,
     {
@@ -728,23 +728,23 @@ impl FSRS { // Ensure this was changed, if not, it should be. If it was already 
         parameters: &Parameters,
         cards: Option<Vec<Card>>,
         mut progress: F,
-    ) -> Result<f32, FSRSError>
+    ) -> Result<f64, FSRSError>
     where
         F: FnMut() -> bool,
     {
         let mintol = 1e-10;
         let cg = 0.381_966;
         let maxiter = 64;
-        let tol = 0.01f32;
+        let tol = 0.01f64;
 
         let default_sample_size = 16.0;
         let sample_size = match config.learn_span {
             ..=30 => 180,
             31..365 => {
                 let (a1, a2, a3) = (8.20e-7, 2.41e-3, 1.30e-2);
-                let factor = (config.learn_span as f32)
+                let factor = (config.learn_span as f64)
                     .powf(2.0)
-                    .mul_add(a1, config.learn_span as f32 * a2 + a3);
+                    .mul_add(a1, config.learn_span as f64 * a2 + a3);
                 (default_sample_size / factor).round() as usize
             }
             365.. => default_sample_size as usize,
@@ -764,7 +764,7 @@ impl FSRS { // Ensure this was changed, if not, it should be. If it was already 
         let (mut x, mut v, mut w) = (xb, xb, xb);
         let (mut fx, mut fv, mut fw) = (fb, fb, fb);
         let (mut a, mut b) = (R_MIN, R_MAX);
-        let mut deltax: f32 = 0.0;
+        let mut deltax: f64 = 0.0;
         let mut iter = 0;
         let mut rat = 0.0;
         let mut u;
@@ -774,7 +774,7 @@ impl FSRS { // Ensure this was changed, if not, it should be. If it was already 
             let tol2 = 2.0 * tol1;
             let xmid = 0.5 * (a + b);
             // check for convergence
-            if (x - xmid).abs() < 0.5f32.mul_add(-(b - a), tol2) {
+            if (x - xmid).abs() < 0.5f64.mul_add(-(b - a), tol2) {
                 break;
             }
             if deltax.abs() <= tol1 {
@@ -894,8 +894,8 @@ pub struct RevlogEntry {
 fn calculate_transitions(
     sequences: &[Vec<u8>],
     n_states: usize,
-    smoothing: f32,
-) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    smoothing: f64,
+) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
     let mut transition_counts = vec![vec![0.0; n_states]; n_states];
     let mut initial_counts = vec![0.0; n_states];
 
@@ -927,14 +927,14 @@ fn calculate_transitions(
     // Calculate transition probability matrix
     let mut transition_matrix = vec![vec![0.0; n_states]; n_states];
     for i in 0..n_states {
-        let row_sum: f32 = transition_counts[i].iter().sum();
+        let row_sum: f64 = transition_counts[i].iter().sum();
         if row_sum > 0.0 {
             for j in 0..n_states {
                 transition_matrix[i][j] = transition_counts[i][j] / row_sum;
             }
         } else {
             // If a state never appears, assume uniform distribution
-            let uniform_prob = 1.0 / n_states as f32;
+            let uniform_prob = 1.0 / n_states as f64;
             for j in 0..n_states {
                 transition_matrix[i][j] = uniform_prob;
             }
@@ -986,7 +986,7 @@ pub fn extract_simulator_config(
     for ((state, rating), durations) in state_rating_durations.iter() {
         let mut durations = durations.clone();
         let median_duration = median(&mut durations);
-        state_rating_costs[*state][*rating] = median_duration as f32 / 1000.0;
+        state_rating_costs[*state][*rating] = median_duration as f64 / 1000.0;
     }
 
     // Group data by card_id and real_days
@@ -1059,17 +1059,17 @@ pub fn extract_simulator_config(
         review_buttons = [review_buttons[0], 1, 1, 1];
     }
 
-    let mut first_rating_prob: [f32; 4] = learn_buttons
+    let mut first_rating_prob: [f64; 4] = learn_buttons
         .iter()
-        .map(|x| *x as f32 / learn_buttons.iter().sum::<i64>() as f32)
+        .map(|x| *x as f64 / learn_buttons.iter().sum::<i64>() as f64)
         .collect_vec()
         .try_into()
         .unwrap();
 
-    let mut review_rating_prob: [f32; 3] = review_buttons
+    let mut review_rating_prob: [f64; 3] = review_buttons
         .iter()
         .skip(1)
-        .map(|x| *x as f32 / review_buttons.iter().skip(1).sum::<i64>() as f32)
+        .map(|x| *x as f64 / review_buttons.iter().skip(1).sum::<i64>() as f64)
         .collect_vec()
         .try_into()
         .unwrap();
@@ -1091,7 +1091,7 @@ pub fn extract_simulator_config(
     let (relearning_transition_matrix, relearning_transition_counts) =
         calculate_transitions(&relearning_step_rating_sequences, 4, 1.0);
 
-    let mut learning_step_transitions: [[f32; 4]; 3] = learning_transition_matrix
+    let mut learning_step_transitions: [[f64; 4]; 3] = learning_transition_matrix
         .iter()
         .take(3)
         .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
@@ -1099,7 +1099,7 @@ pub fn extract_simulator_config(
         .try_into()
         .unwrap();
 
-    let mut relearning_step_transitions: [[f32; 4]; 3] = relearning_transition_matrix
+    let mut relearning_step_transitions: [[f64; 4]; 3] = relearning_transition_matrix
         .iter()
         .take(3)
         .map(|row| row.iter().copied().collect_vec().try_into().unwrap())
@@ -1108,22 +1108,22 @@ pub fn extract_simulator_config(
         .unwrap();
 
     // Smooth probabilities if requested
-    fn lerp(v0: f32, v1: f32, t: f32) -> f32 {
-        t * v0 + (1f32 - t) * v1
+    fn lerp(v0: f64, v1: f64, t: f64) -> f64 {
+        t * v0 + (1f64 - t) * v1
     }
     if smooth {
         let config = SimulatorConfig::default();
 
         let total_learn_buttons: i64 = learn_buttons.iter().sum();
-        let weight = total_learn_buttons as f32 / (50.0 + total_learn_buttons as f32);
+        let weight = total_learn_buttons as f64 / (50.0 + total_learn_buttons as f64);
         first_rating_prob
             .iter_mut()
             .zip(config.first_rating_prob)
             .for_each(|(prob, first_rating_prob)| *prob = lerp(*prob, first_rating_prob, weight));
 
         let total_review_buttons_except_first: i64 = review_buttons[1..].iter().sum();
-        let weight = total_review_buttons_except_first as f32
-            / (50.0 + total_review_buttons_except_first as f32);
+        let weight = total_review_buttons_except_first as f64
+            / (50.0 + total_review_buttons_except_first as f64);
         review_rating_prob
             .iter_mut()
             .zip(config.review_rating_prob)
@@ -1135,7 +1135,7 @@ pub fn extract_simulator_config(
             learning_transition_counts,
         )
         .for_each(|(rating_probs, default_rating_probs, transition_counts)| {
-            let total_learning_step_entries = transition_counts.iter().sum::<f32>();
+            let total_learning_step_entries = transition_counts.iter().sum::<f64>();
             let weight = total_learning_step_entries / (50.0 + total_learning_step_entries);
             izip!(rating_probs.iter_mut(), default_rating_probs)
                 .for_each(|(prob, default_prob)| *prob = lerp(*prob, default_prob, weight));
@@ -1147,7 +1147,7 @@ pub fn extract_simulator_config(
             relearning_transition_counts,
         )
         .for_each(|(rating_probs, default_rating_probs, transition_counts)| {
-            let total_relearning_step_entries = transition_counts.iter().sum::<f32>();
+            let total_relearning_step_entries = transition_counts.iter().sum::<f64>();
             let weight = total_relearning_step_entries / (50.0 + total_relearning_step_entries);
             izip!(rating_probs.iter_mut(), default_rating_probs)
                 .for_each(|(prob, default_prob)| *prob = lerp(*prob, default_prob, weight));
@@ -1161,7 +1161,7 @@ pub fn extract_simulator_config(
         .for_each(|(rating_costs, default_rating_costs, rating_counts)| {
             izip!(rating_costs.iter_mut(), default_rating_costs, rating_counts).for_each(
                 |(cost, &default_cost, &count)| {
-                    let weight = count as f32 / (50.0 + count as f32);
+                    let weight = count as f64 / (50.0 + count as f64);
                     *cost = lerp(*cost, default_cost, weight).to_2_decimal();
                 },
             );
@@ -1183,11 +1183,12 @@ mod tests {
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection};
     // TestHelper was removed from this file in a previous step, this is just confirming.
-    const LEARN_COST: f32 = 42.;
-    const REVIEW_COST: f32 = 43.;
+    const LEARN_COST: f64 = 42.;
+    const REVIEW_COST: f64 = 43.;
 
     // Helper for float slice comparisons
-    fn assert_f32_slices_approx_eq_optimal(result: &[f32], expected: &[f32], tolerance: f32) {
+    #[track_caller]
+    fn assert_f64_slices_approx_eq_optimal(result: &[f64], expected: &[f64], tolerance: f64) {
         assert_eq!(result.len(), expected.len(), "Slice lengths differ.");
         for (r, e) in result.iter().zip(expected.iter()) {
             assert!((r - e).abs() < tolerance, "Value mismatch: {} (result) vs {} (expected)", r, e);
@@ -1340,7 +1341,7 @@ mod tests {
             learn_span: 30,
             learn_limit: 60,
             review_limit: 200,
-            max_cost_perday: f32::INFINITY,
+            max_cost_perday: f64::INFINITY,
             ..Default::default()
         };
         let cards = vec![
@@ -1398,7 +1399,7 @@ mod tests {
         let cards = vec![Card {
             id: 0,
             difficulty: 10.0,
-            stability: f32::EPSILON,
+            stability: f64::EPSILON,
             last_date: -5.0,
             due: 0.0,
             interval: 5.0,
@@ -1493,7 +1494,7 @@ mod tests {
             learn_span: 30,
             learn_limit: 60,
             review_limit: 200,
-            max_cost_perday: f32::INFINITY,
+            max_cost_perday: f64::INFINITY,
             ..Default::default()
         };
         let SimulationResult {
@@ -1616,7 +1617,7 @@ mod tests {
             Card {
                 id: 0,
                 difficulty: 5.0,
-                stability: f32::INFINITY,
+                stability: f64::INFINITY,
                 last_date: -5.0,
                 due: 1.0,
                 interval: 5.0,
@@ -1659,9 +1660,9 @@ mod tests {
         fn calc_cost_per_memorization(
             memorized_cnt_per_day: &Parameters,
             cost_per_day: &Parameters,
-        ) -> f32 {
+        ) -> f64 {
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
-            let total_cost = cost_per_day.iter().sum::<f32>();
+            let total_cost = cost_per_day.iter().sum::<f64>();
             total_cost / total_memorized
         }
         let mut config = SimulatorConfig {
@@ -1753,7 +1754,7 @@ mod tests {
         let config = SimulatorConfig {
             deck_size,
             learn_span,
-            max_cost_perday: f32::INFINITY,
+            max_cost_perday: f64::INFINITY,
             learn_limit,
             ..Default::default()
         };
@@ -1789,7 +1790,7 @@ mod tests {
         let config = SimulatorConfig {
             deck_size: learn_span * learn_limit,
             learn_span,
-            max_cost_perday: f32::INFINITY,
+            max_cost_perday: f64::INFINITY,
             learn_limit,
             ..Default::default()
         };
@@ -1898,11 +1899,11 @@ mod tests {
                 initial_pass_rate,
                 termination_prob,
             );
-            assert_f32_slices_approx_eq_optimal(&[result.expect("expected_workload failed")], &[expected], 1e-5);
+            assert_f64_slices_approx_eq_optimal(&[result.expect("expected_workload failed")], &[expected], 1e-5);
         }
 
         // compare with the workload of default desired retention 0.9
-        for desired_retention in (30..=99).map(|x| x as f32 / 100.0) {
+        for desired_retention in (30..=99).map(|x| x as f64 / 100.0) {
             let result = expected_workload(
                 &DEFAULT_PARAMETERS,
                 desired_retention,

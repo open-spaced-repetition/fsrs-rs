@@ -21,7 +21,7 @@ pub struct FSRSItem {
 
 #[derive(Debug, Clone)]
 pub(crate) struct WeightedFSRSItem {
-    pub weight: f32,
+    pub weight: f64,
     pub item: FSRSItem,
 }
 
@@ -93,7 +93,7 @@ pub(crate) struct FSRSBatch { // Removed <B: Backend> generic
     pub t_historys: Tensor, // candle::Tensor
     pub r_historys: Tensor, // candle::Tensor
     pub delta_ts: Tensor,   // candle::Tensor
-    pub labels: Tensor,     // candle::Tensor (should be U32 or I64 for CrossEntropy, or F32 for BCE)
+    pub labels: Tensor,     // candle::Tensor (should be U32 or I64 for CrossEntropy, or f64 for BCE)
     pub weights: Tensor,    // candle::Tensor
 }
 
@@ -112,10 +112,10 @@ impl FSRSBatcher {
         let mut rating_histories_vec: Vec<Tensor> = Vec::new();
 
         for weighted_item in &weighted_items {
-            let (mut delta_t_values, mut rating_values): (Vec<f32>, Vec<f32>) = weighted_item
+            let (mut delta_t_values, mut rating_values): (Vec<f64>, Vec<f64>) = weighted_item
                 .item
                 .history()
-                .map(|r| (r.delta_t as f32, r.rating as f32))
+                .map(|r| (r.delta_t as f64, r.rating as f64))
                 .unzip();
 
             delta_t_values.resize(pad_size, 0.0);
@@ -133,10 +133,10 @@ impl FSRSBatcher {
             .iter()
             .map(|weighted_item| {
                 let current = weighted_item.item.current();
-                let delta_t = Tensor::from_slice(&[current.delta_t as f32], (1,), &self.device)?;
+                let delta_t = Tensor::from_slice(&[current.delta_t as f64], (1,), &self.device)?;
                 let label_val = match current.rating {
-                    1 => 0f32, // Using f32 for labels if BCE is used directly with probabilities
-                    _ => 1f32,
+                    1 => 0f64, // Using f64 for labels if BCE is used directly with probabilities
+                    _ => 1f64,
                 };
                 let label = Tensor::from_slice(&[label_val], (1,), &self.device)?;
                 let weight = Tensor::from_slice(&[weighted_item.weight], (1,), &self.device)?;
@@ -150,18 +150,18 @@ impl FSRSBatcher {
         let t_historys = if !time_histories_vec.is_empty() {
             Tensor::cat(&time_histories_vec, 0)?.transpose(0, 1)? // [pad_size, batch_size]
         } else {
-            Tensor::zeros((pad_size, weighted_items.len()), DType::F32, &self.device)?
+            Tensor::zeros((pad_size, weighted_items.len()), DType::F64, &self.device)?
         };
 
         let r_historys = if !rating_histories_vec.is_empty() {
             Tensor::cat(&rating_histories_vec, 0)?.transpose(0, 1)? // [pad_size, batch_size]
         } else {
-            Tensor::zeros((pad_size, weighted_items.len()), DType::F32, &self.device)?
+            Tensor::zeros((pad_size, weighted_items.len()), DType::F64, &self.device)?
         };
 
-        let delta_ts = if !delta_ts_vec.is_empty() { Tensor::cat(&delta_ts_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F32, &self.device)? };
-        let labels = if !labels_vec.is_empty() { Tensor::cat(&labels_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F32, &self.device)? }; // Assuming F32 labels
-        let weights = if !weights_vec.is_empty() { Tensor::cat(&weights_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F32, &self.device)? };
+        let delta_ts = if !delta_ts_vec.is_empty() { Tensor::cat(&delta_ts_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F64, &self.device)? };
+        let labels = if !labels_vec.is_empty() { Tensor::cat(&labels_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F64, &self.device)? }; // Assuming F64 labels
+        let weights = if !weights_vec.is_empty() { Tensor::cat(&weights_vec, 0)? } else { Tensor::zeros((weighted_items.len(),), DType::F64, &self.device)? };
 
 
         Ok(FSRSBatch { // Ok wrapping
@@ -283,12 +283,12 @@ pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<Weighted
 
 /// The input items should be sorted by the review timestamp.
 pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
-    let length = (items.len() as f32 - 1.0).max(1.0);
+    let length = (items.len() as f64 - 1.0).max(1.0);
     items
         .into_iter()
         .enumerate()
         .map(|(idx, item)| WeightedFSRSItem {
-            weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
+            weight: 0.25 + 0.75 * (idx as f64 / length).powi(3),
             item,
         })
         .collect()
@@ -302,11 +302,11 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use candle_core::Device; // Using candle Device
 
-    // Helper for tests: compare two tensors (assuming f32 data)
-    fn assert_tensor_eq(result: &Tensor, expected_data: &[f32], shape: &[usize]) -> Result<(), CandleError> {
+    // Helper for tests: compare two tensors (assuming f64 data)
+    fn assert_tensor_eq(result: &Tensor, expected_data: &[f64], shape: &[usize]) -> Result<(), CandleError> {
         let expected = Tensor::from_slice(expected_data, shape, &Device::Cpu)?;
-        let diff = (result - &expected)?.abs()?.sum_all()?.to_scalar::<f32>()?;
-        assert!(diff < 1e-5, "Tensors are not equal. Result: {:?}, Expected: {:?}", result.to_vec2::<f32>(), expected.to_vec2::<f32>());
+        let diff = (result - &expected)?.abs()?.sum_all()?.to_scalar::<f64>()?;
+        assert!(diff < 1e-5, "Tensors are not equal. Result: {:?}, Expected: {:?}", result.to_vec2::<f64>(), expected.to_vec2::<f64>());
         Ok(())
     }
 
@@ -341,7 +341,7 @@ mod tests {
         use burn::backend::ndarray::NdArrayDevice; // This would be Device::Cpu
         let device = NdArrayDevice::Cpu;
         use burn::backend::NdArray; // Not needed
-        type Backend = NdArray<f32>; // Not needed
+        type Backend = NdArray<f64>; // Not needed
         let batcher = FSRSBatcher::<Backend>::new(device); // Now FSRSBatcher::new(device)
         use burn::data::dataloader::DataLoaderBuilder;
         let dataloader = DataLoaderBuilder::new(batcher)
@@ -364,7 +364,7 @@ mod tests {
     fn batcher() -> Result<(), CandleError> { // Return Result
         // use burn::backend::NdArray; // Removed
         // use burn::backend::ndarray::NdArrayDevice; // Removed
-        // type Backend = NdArray<f32>; // Removed
+        // type Backend = NdArray<f64>; // Removed
         let device = Device::Cpu; // Use candle Device
         let batcher = FSRSBatcher::new(device.clone()); // Pass candle device
         let items_data = [ // Renamed to avoid conflict
@@ -439,7 +439,7 @@ mod tests {
 
         assert_tensor_eq(&batch.delta_ts, &[5.0, 11.0, 2.0, 6.0, 16.0, 39.0, 1.0, 1.0], &[8])?;
 
-        // Labels are now f32: 0.0 for fail (rating 1), 1.0 for pass (rating > 1)
+        // Labels are now f64: 0.0 for fail (rating 1), 1.0 for pass (rating > 1)
         assert_tensor_eq(&batch.labels, &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0], &[8])?;
         Ok(())
     }

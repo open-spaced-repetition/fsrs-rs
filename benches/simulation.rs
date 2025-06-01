@@ -5,7 +5,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::hint::black_box;
 
-pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f32>, FSRSError> {
+pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f64>, FSRSError> {
     (70..=99)
         .into_par_iter()
         .map(|i| {
@@ -16,18 +16,18 @@ pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f32>, FS
             } = simulate(
                 config,
                 &DEFAULT_PARAMETERS,
-                i as f32 / 100.0,
+                i as f64 / 100.0,
                 Some((i + 42).try_into().unwrap()),
                 None,
             )?;
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
-            let total_cost = cost_per_day.iter().sum::<f32>();
+            let total_cost = cost_per_day.iter().sum::<f64>();
             Ok(total_cost / total_memorized)
         })
         .collect()
 }
 
-pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f32 {
+pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f64 {
     inf.optimal_retention(config, &[], |_v| true, None).unwrap()
 }
 
@@ -36,7 +36,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let config = SimulatorConfig {
         deck_size: 36500,
         learn_span: 90,
-        max_cost_perday: f32::INFINITY,
+        max_cost_perday: f64::INFINITY,
         learn_limit: 100,
         review_limit: 600,
         ..Default::default()

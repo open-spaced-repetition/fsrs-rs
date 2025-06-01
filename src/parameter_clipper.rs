@@ -1,5 +1,5 @@
 use crate::{
-    inference::{Parameters, S_MIN}, // Parameters is type alias for [f32] or Vec<f32>
+    inference::{Parameters, S_MIN}, // Parameters is type alias for [f64] or Vec<f64>
     pre_training::INIT_S_MAX,
 };
 use candle_core::{Device, Error as CandleError, Tensor, Var};
@@ -12,9 +12,9 @@ pub(crate) fn parameter_clipper_candle(
     device: &Device, // Added device for new tensor creation
 ) -> Result<(), CandleError> {
     let w_tensor = model_w.as_tensor();
-    let current_values_vec = w_tensor.to_vec1::<f32>()?;
+    let current_values_vec = w_tensor.to_vec1::<f64>()?;
 
-    // clip_parameters helper function remains largely the same as it works with Vec<f32>
+    // clip_parameters helper function remains largely the same as it works with Vec<f64>
     let clipped_values_vec = clip_parameters(&current_values_vec, num_relearning_steps);
 
     let new_tensor = Tensor::from_vec(clipped_values_vec, w_tensor.shape(), device)?;
@@ -22,9 +22,9 @@ pub(crate) fn parameter_clipper_candle(
     Ok(())
 }
 
-// This helper function remains the same as it operates on slices/Vecs of f32.
-// Parameters is likely an alias for &[f32] or Vec<f32>
-pub(crate) fn clip_parameters(parameters_slice: &Parameters, num_relearning_steps: usize) -> Vec<f32> {
+// This helper function remains the same as it operates on slices/Vecs of f64.
+// Parameters is likely an alias for &[f64] or Vec<f64>
+pub(crate) fn clip_parameters(parameters_slice: &Parameters, num_relearning_steps: usize) -> Vec<f64> {
     let mut parameters = parameters_slice.to_vec();
     // PLS = w11 * D ^ -w12 * [(S + 1) ^ w13 - 1] * e ^ (w14 * (1 - R))
     // PLS * e ^ (num_relearning_steps * w17 * w18) should be <= S
@@ -33,8 +33,8 @@ pub(crate) fn clip_parameters(parameters_slice: &Parameters, num_relearning_step
     // => num_relearning_steps * w17 * w18 <= - ln(w11) - ln(2 ^ w13 - 1) - w14 * 0.3
     // => w17 * w18 <= -[ln(w11) + ln(2 ^ w13 - 1) + w14 * 0.3] / num_relearning_steps
     let w17_w18_ceiling = if num_relearning_steps > 1 {
-        (-(parameters[11].ln() + (2.0f32.powf(parameters[13]) - 1.0).ln() + parameters[14] * 0.3)
-            / num_relearning_steps as f32)
+        (-(parameters[11].ln() + (2.0f64.powf(parameters[13]) - 1.0).ln() + parameters[14] * 0.3)
+            / num_relearning_steps as f64)
             .max(0.01)
             .sqrt()
             .min(2.0)
@@ -42,7 +42,7 @@ pub(crate) fn clip_parameters(parameters_slice: &Parameters, num_relearning_step
         2.0
     };
     // https://regex101.com/r/21mXNI/1
-    let clamps: [(f32, f32); 21] = [
+    let clamps: [(f64, f64); 21] = [
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
         (S_MIN, INIT_S_MAX),
@@ -79,8 +79,8 @@ mod tests {
     use crate::DEFAULT_PARAMETERS;
     use candle_core::{Device, Var}; // Using candle Var and Device
 
-    // Helper to compare Vec<f32> with tolerance
-    fn assert_vec_approx_eq(result: &[f32], expected: &[f32], tolerance: f32) {
+    // Helper to compare Vec<f64> with tolerance
+    fn assert_vec_approx_eq(result: &[f64], expected: &[f64], tolerance: f64) {
         assert_eq!(result.len(), expected.len(), "Vector lengths differ");
         for (r, e) in result.iter().zip(expected.iter()) {
             assert!((r - e).abs() < tolerance, "Value mismatch: {} vs {}", r, e);
@@ -90,12 +90,12 @@ mod tests {
     #[test]
     fn parameter_clipper_candle_works() -> Result<(), CandleError> {
         let device = Device::Cpu;
-        let initial_data = [0.0f32, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1];
+        let initial_data = [0.0f64, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1];
         let var = Var::from_slice(&initial_data, initial_data.len(), &device)?;
 
         parameter_clipper_candle(&var, 1, &device)?;
 
-        let values = var.as_tensor().to_vec1::<f32>()?;
+        let values = var.as_tensor().to_vec1::<f64>()?;
         let expected_values = [0.001, 0.001, 100.0, 0.001, 10.0, 0.001, 1.0, 0.25, 0.0];
 
         assert_vec_approx_eq(&values, &expected_values, 1e-5);
@@ -106,16 +106,16 @@ mod tests {
     fn parameter_clipper_candle_works_with_num_relearning_steps() -> Result<(), CandleError> {
         // use crate::test_helpers::TestHelper; // Removed burn TestHelper
         let device = Device::Cpu;
-        // Ensure DEFAULT_PARAMETERS is &[f32] or Vec<f32>
-        let default_params_slice: &[f32] = &DEFAULT_PARAMETERS;
+        // Ensure DEFAULT_PARAMETERS is &[f64] or Vec<f64>
+        let default_params_slice: &[f64] = &DEFAULT_PARAMETERS;
         let var = Var::from_slice(default_params_slice, default_params_slice.len(), &device)?;
 
         parameter_clipper_candle(&var, 2, &device)?;
-        let values = var.as_tensor().to_vec1::<f32>()?;
+        let values = var.as_tensor().to_vec1::<f64>()?;
 
         // Expected values for indices 17, 18, 19 after clipping with num_relearning_steps = 2
         // These values are from the original test logic of clip_parameters.
-        // w17_w18_ceiling = (-(DEFAULT_PARAMETERS[11].ln() + (2.0f32.powf(DEFAULT_PARAMETERS[13]) - 1.0).ln() + DEFAULT_PARAMETERS[14] * 0.3) / 2.0).max(0.01).sqrt().min(2.0)
+        // w17_w18_ceiling = (-(DEFAULT_PARAMETERS[11].ln() + (2.0f64.powf(DEFAULT_PARAMETERS[13]) - 1.0).ln() + DEFAULT_PARAMETERS[14] * 0.3) / 2.0).max(0.01).sqrt().min(2.0)
         // For DEFAULT_PARAMETERS, this would be:
         // w[11]=2.18, w[13]=0.34, w[14]=1.26
         // -(2.18.ln() + (2^0.34 - 1.0).ln() + 1.26*0.3) / 2.0
@@ -129,7 +129,7 @@ mod tests {
         // The original test had [0.240_861_52, 0.240_861_52, 0.143_7]
         // Let's re-verify the w17_w18_ceiling calculation with original DEFAULT_PARAMETERS
         // DEFAULT_PARAMETERS[11] = 2.18, DEFAULT_PARAMETERS[13] = 0.05, DEFAULT_PARAMETERS[14] = 0.34
-        // -(2.18_f32.ln() + (2.0_f32.powf(0.05) - 1.0).ln() + 0.34_f32 * 0.3) / 2.0
+        // -(2.18_f64.ln() + (2.0_f64.powf(0.05) - 1.0).ln() + 0.34_f64 * 0.3) / 2.0
         // -(0.7793249 + (1.03526 - 1.0).ln() + 0.102) / 2.0
         // -(0.7793249 + (0.03526).ln() + 0.102) / 2.0
         // -(0.7793249 + (-3.345) + 0.102) / 2.0
