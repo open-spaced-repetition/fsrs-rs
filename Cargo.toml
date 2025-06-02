@@ -56,6 +56,10 @@ harness = false
 name = "simulation"
 harness = false
 
+[[bench]]
+name = "parameters"
+harness = false
+
 [[example]]
 name = "schedule"
 path = "examples/schedule.rs"
