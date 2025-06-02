@@ -34,10 +34,10 @@ itertools = "0.14.0"
 log = "0.4"
 ndarray = "0.16.1"
 ndarray-rand = "0.15.0"
-priority-queue = "=2.3.1"
+priority-queue = "=2.5.0"
 rayon = "1.8.0"
 serde = "1.0.219"
-snafu = "0.8.5"
+snafu = "0.8.6"
 strum = { version = "0.27.1", features = ["derive"] }
 
 [dev-dependencies]
