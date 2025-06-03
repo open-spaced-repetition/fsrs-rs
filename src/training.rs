@@ -780,7 +780,6 @@ mod tests {
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
-        dbg!(&model.w.val().to_data().to_vec::<f32>().unwrap());
         model
             .w
             .val()
