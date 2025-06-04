@@ -75,7 +75,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| black_box(optimal_retention(&fsrs, &config)))
     });
     c.bench_function("expected_workload_30_retentions", |b| {
-        b.iter(|| run_expected_workload_for_30_retentions())
+        b.iter(run_expected_workload_for_30_retentions)
     });
 }
 
