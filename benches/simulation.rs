@@ -38,7 +38,7 @@ pub(crate) fn run_expected_workload_for_30_retentions() {
     let cost_learn = 30.0;
     let initial_pass_rate = 0.8;
     let termination_prob = 0.0001;
-    let learn_day_limit = 100_000_000 as usize;
+    let learn_day_limit = 100_000_000_usize;
 
     for i in 0..30 {
         let desired_retention = 0.70 + (i as f32 * 0.01);
