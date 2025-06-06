@@ -346,14 +346,7 @@ mod tests {
         let retrievability = model.power_forgetting_curve(delta_t, stability);
 
         retrievability.to_data().assert_approx_eq::<f32>(
-            &TensorData::from([
-                1.0,
-                0.9421982765197754,
-                0.9268093109130859,
-                0.91965252161026,
-                0.9,
-                0.8178008198738098,
-            ]),
+            &TensorData::from([1.0, 0.9403443, 0.9253786, 0.9185229, 0.9, 0.8261359]),
             Tolerance::absolute(1e-5),
         );
     }
@@ -419,22 +412,18 @@ mod tests {
         let difficulty = state.difficulty.to_data();
 
         stability.to_vec::<f32>().unwrap().assert_approx_eq([
-            0.166_488_5,
-            1.699_295_6,
-            6.414_825_4,
-            28.051_1,
-            0.168_969_63,
-            2.053_075_8,
+            0.10088589,
+            3.2494123,
+            7.3153,
+            18.014914,
+            0.112798266,
+            4.4694576,
         ]);
 
-        difficulty.to_vec::<f32>().unwrap().assert_approx_eq([
-            8.362_965,
-            7.086_328_5,
-            4.868_057,
-            1.0,
-            8.362_965,
-            7.086_328_5,
-        ]);
+        difficulty
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq([8.806304, 6.7404594, 2.1112142, 1.0, 8.806304, 6.7404594]);
     }
 
     #[test]
@@ -450,7 +439,7 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([7.329_555_5, 6.164_777_8, 5.0, 3.835_222_2]);
+            .assert_approx_eq([8.354889, 6.6774445, 5.0, 3.3225555]);
         let next_difficulty = model.mean_reversion(next_difficulty);
         next_difficulty.clone().backward();
 
@@ -458,7 +447,7 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([7.296_110_6, 6.139_369_5, 4.982_629, 3.825_888]);
+            .assert_approx_eq([8.341763, 6.6659956, 4.990228, 3.3144615]);
     }
 
     #[test]
@@ -481,7 +470,7 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([25.578_495, 13.550_501, 59.868_79, 207.703_83]);
+            .assert_approx_eq([25.602541, 28.226582, 58.656002, 127.226685]);
         let s_forget = model.stability_after_failure(stability.clone(), difficulty, retrievability);
         s_forget.clone().backward();
 
@@ -489,7 +478,7 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.746_929_3, 2.031_279_6, 2.440_167_7, 2.970_743_7]);
+            .assert_approx_eq([1.0525396, 1.1894329, 1.3680838, 1.584989]);
         let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
         next_stability.clone().backward();
 
@@ -497,14 +486,14 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.746_929_3, 13.550_501, 59.868_79, 207.703_83]);
+            .assert_approx_eq([1.0525396, 28.226582, 58.656002, 127.226685]);
         let next_stability = model.stability_short_term(stability, rating);
 
         next_stability
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.129_823_2, 2.400_462, 5.100_105_3, 10.835_862]);
+            .assert_approx_eq([1.596818, 2.7470093, 5.0, 8.12961]);
     }
 
     #[test]
