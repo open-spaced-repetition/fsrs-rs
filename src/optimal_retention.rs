@@ -23,6 +23,7 @@ pub struct SimulationResult {
     pub cost_per_day: Vec<f32>,
     // The amount of review cards you got correct on a given day (not including learn cards).
     pub correct_cnt_per_day: Vec<usize>,
+    pub introduced_cnt_per_day: Vec<usize>,
     pub cards: Vec<Card>,
 }
 
@@ -392,6 +393,7 @@ pub fn simulate(
     let mut cost_per_day = vec![0.0; config.learn_span];
     let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
     let mut correct_cnt_per_day = vec![0; config.learn_span];
+    let mut introduced_cnt_per_day = vec![0; config.learn_span];
 
     let first_rating_choices = RATINGS;
     let first_rating_dist = WeightedIndex::new(config.first_rating_prob).unwrap();
@@ -419,6 +421,14 @@ pub fn simulate(
                 .into_iter()
                 .filter(|card| card.stability > 1e-9),
         );
+        for _ in cards
+            .iter()
+            .filter(|card| card.last_date != f32::NEG_INFINITY)
+        {
+            for day in introduced_cnt_per_day.iter_mut() {
+                *day += 1;
+            }
+        }
     }
 
     for card in &cards {
@@ -546,6 +556,10 @@ pub fn simulate(
             // Update days statistics
             learn_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
+
+            for day in introduced_cnt_per_day.iter_mut().skip(day_index) {
+                *day += 1;
+            }
         } else {
             // For review cards
             let last_stability = card.stability;
@@ -657,6 +671,7 @@ pub fn simulate(
         cost_per_day,
         correct_cnt_per_day,
         cards,
+        introduced_cnt_per_day,
     })
 }
 
@@ -1910,5 +1925,80 @@ mod tests {
                 (result.unwrap() / 152.06544).to_2_decimal()
             );
         }
+    }
+
+    #[test]
+    fn test_introduced_cards_per_day() -> Result<()> {
+        let existing_cards = vec![
+            Card {
+                // Already introduced
+                id: 1,
+                stability: 5.0,
+                difficulty: 5.0,
+                last_date: 0.0,
+                due: 5.0,
+                interval: 5.0,
+                lapses: 0,
+            },
+            Card {
+                // New, to be learned on day 0
+                id: 2,
+                stability: f32::NEG_INFINITY,
+                difficulty: f32::NEG_INFINITY,
+                last_date: f32::NEG_INFINITY,
+                due: 0.0,
+                interval: f32::NEG_INFINITY,
+                lapses: 0,
+            },
+            Card {
+                // Already introduced
+                id: 3,
+                stability: 5.0,
+                difficulty: 5.0,
+                last_date: 1.0,
+                due: 6.0,
+                interval: 5.0,
+                lapses: 0,
+            },
+            Card {
+                // New, to be learned on day 1
+                id: 4,
+                stability: f32::NEG_INFINITY,
+                difficulty: f32::NEG_INFINITY,
+                last_date: f32::NEG_INFINITY,
+                due: 1.0,
+                interval: f32::NEG_INFINITY,
+                lapses: 0,
+            },
+        ];
+
+        let config = SimulatorConfig {
+            learn_span: 4,
+            learn_limit: 1, // Allow 1 new card to be learned each day
+            deck_size: 6,   
+            review_limit: 100,
+            max_cost_perday: f32::INFINITY,
+            first_rating_prob: [0.0, 0.0, 1.0, 0.0], // Always rate 'Good' for simplicity
+            ..Default::default()
+        };
+
+        let SimulationResult {
+            introduced_cnt_per_day,
+            ..
+        } = simulate(
+            &config,
+            &DEFAULT_PARAMETERS,
+            0.9,
+            Some(0),
+            Some(existing_cards),
+        )?;
+
+        assert_eq!(
+            introduced_cnt_per_day,
+            vec![3, 4, 5, 6],
+            "introduced_cnt_per_day mismatch"
+        );
+
+        Ok(())
     }
 }
