@@ -1975,7 +1975,7 @@ mod tests {
         let config = SimulatorConfig {
             learn_span: 4,
             learn_limit: 1, // Allow 1 new card to be learned each day
-            deck_size: 6,   
+            deck_size: 6,
             review_limit: 100,
             max_cost_perday: f32::INFINITY,
             first_rating_prob: [0.0, 0.0, 1.0, 0.0], // Always rate 'Good' for simplicity
