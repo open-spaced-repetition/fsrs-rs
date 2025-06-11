@@ -89,6 +89,7 @@ impl Default for ReviewPriorityFn {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub struct CMRRTargetFunction(pub Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
 
 impl std::fmt::Debug for CMRRTargetFunction {
