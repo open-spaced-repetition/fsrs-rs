@@ -88,6 +88,31 @@ impl Default for ReviewPriorityFn {
         Self(Arc::new(|card, _w| (card.difficulty * 100.0) as i32))
     }
 }
+
+pub struct CMRRTargetFunction(pub Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
+
+impl std::fmt::Debug for CMRRTargetFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
+    }
+}
+
+impl Default for CMRRTargetFunction {
+    fn default() -> Self {
+        Self(Arc::new(|result, _w| {
+            let SimulationResult {
+                memorized_cnt_per_day,
+                cost_per_day,
+                ..
+            } = result;
+
+            let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
+            let total_cost = cost_per_day.iter().sum::<f32>();
+            total_cost / total_memorized
+        }))
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct SimulatorConfig {
     pub deck_size: usize,
@@ -682,6 +707,7 @@ fn sample<F>(
     n: usize,
     progress: &mut F,
     cards: &Option<Vec<Card>>,
+    target: &CMRRTargetFunction,
 ) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
@@ -692,20 +718,15 @@ where
     let results: Result<Vec<f32>, FSRSError> = (0..n)
         .into_par_iter()
         .map(|i| {
-            let SimulationResult {
-                memorized_cnt_per_day,
-                cost_per_day,
-                ..
-            } = simulate(
+            let result = simulate(
                 config,
                 parameters,
                 desired_retention,
                 Some((i + 42).try_into().unwrap()),
                 cards.clone(),
             )?;
-            let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
-            let total_cost = cost_per_day.iter().sum::<f32>();
-            Ok(total_cost / total_memorized)
+
+            Ok(target.0(&result, parameters))
         })
         .collect();
     results.map(|v| v.iter().sum::<f32>() / n as f32)
@@ -720,6 +741,7 @@ impl<B: Backend> FSRS<B> {
         parameters: &Parameters,
         mut progress: F,
         cards: Option<Vec<Card>>,
+        target: Option<CMRRTargetFunction>,
     ) -> Result<f32>
     where
         F: FnMut(ItemProgress) -> bool + Send,
@@ -734,7 +756,13 @@ impl<B: Backend> FSRS<B> {
             progress(progress_info)
         };
 
-        Self::brent(config, parameters, cards, inc_progress)
+        Self::brent(
+            config,
+            parameters,
+            cards,
+            inc_progress,
+            target.unwrap_or_default(),
+        )
     }
     /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
     /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
@@ -743,6 +771,7 @@ impl<B: Backend> FSRS<B> {
         parameters: &Parameters,
         cards: Option<Vec<Card>>,
         mut progress: F,
+        target: CMRRTargetFunction,
     ) -> Result<f32, FSRSError>
     where
         F: FnMut() -> bool,
@@ -751,6 +780,7 @@ impl<B: Backend> FSRS<B> {
         let cg = 0.381_966;
         let maxiter = 64;
         let tol = 0.01f32;
+        let parameters = check_and_fill_parameters(parameters)?;
 
         let default_sample_size = 16.0;
         let sample_size = match config.learn_span {
@@ -769,11 +799,12 @@ impl<B: Backend> FSRS<B> {
             R_MIN,
             sample(
                 config,
-                parameters,
+                &parameters,
                 R_MIN,
                 sample_size,
                 &mut progress,
                 &cards,
+                &target,
             )?,
         );
         let (mut x, mut v, mut w) = (xb, xb, xb);
@@ -832,7 +863,15 @@ impl<B: Backend> FSRS<B> {
                 rat
             };
             // calculate new output value
-            let fu = sample(config, parameters, u, sample_size, &mut progress, &cards)?;
+            let fu = sample(
+                config,
+                &parameters,
+                u,
+                sample_size,
+                &mut progress,
+                &cards,
+                &target,
+            )?;
 
             // if it's bigger than current
             if fu > fx {
@@ -1764,7 +1803,7 @@ mod tests {
             ..Default::default()
         };
         let optimal_retention = fsrs
-            .optimal_retention(&config, &[], |_| true, None)
+            .optimal_retention(&config, &[], |_| true, None, None)
             .unwrap();
         dbg!(optimal_retention);
         let card = Card {
@@ -1777,13 +1816,25 @@ mod tests {
             lapses: 0,
         };
         assert!((optimal_retention - 0.7).abs() < 0.01);
-        fsrs.optimal_retention(&config, &[1.], |_| true, None)
+        fsrs.optimal_retention(&config, &[1.], |_| true, None, None)
             .unwrap_err();
         // Check that the cards are passed correctly to simulate
-        fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card.clone(); deck_size]))
-            .unwrap();
-        fsrs.optimal_retention(&config, &[], |_| true, Some(vec![card; deck_size + 1]))
-            .unwrap_err();
+        fsrs.optimal_retention(
+            &config,
+            &[],
+            |_| true,
+            Some(vec![card.clone(); deck_size]),
+            None,
+        )
+        .unwrap();
+        fsrs.optimal_retention(
+            &config,
+            &[],
+            |_| true,
+            Some(vec![card; deck_size + 1]),
+            None,
+        )
+        .unwrap_err();
         Ok(())
     }
 
@@ -1802,7 +1853,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let optimal_retention = fsrs
-            .optimal_retention(&config, &param, |_v| true, None)
+            .optimal_retention(&config, &param, |_v| true, None, None)
             .unwrap();
         [optimal_retention].assert_approx_eq([0.7603231]);
         Ok(())
