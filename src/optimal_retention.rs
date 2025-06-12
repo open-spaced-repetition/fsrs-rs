@@ -90,15 +90,15 @@ impl Default for ReviewPriorityFn {
 }
 
 #[allow(clippy::type_complexity)]
-pub struct CMRRTargetFunction(pub Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
+pub struct CMRRTargetFn(pub Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
 
-impl std::fmt::Debug for CMRRTargetFunction {
+impl std::fmt::Debug for CMRRTargetFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Wrap(<function>)")
     }
 }
 
-impl Default for CMRRTargetFunction {
+impl Default for CMRRTargetFn {
     fn default() -> Self {
         Self(Arc::new(|result, _w| {
             let SimulationResult {
@@ -708,7 +708,7 @@ fn sample<F>(
     n: usize,
     progress: &mut F,
     cards: &Option<Vec<Card>>,
-    CMRRTargetFunction(target): &CMRRTargetFunction,
+    CMRRTargetFn(target): &CMRRTargetFn,
 ) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
@@ -742,7 +742,7 @@ impl<B: Backend> FSRS<B> {
         parameters: &Parameters,
         mut progress: F,
         cards: Option<Vec<Card>>,
-        target: Option<CMRRTargetFunction>,
+        target: Option<CMRRTargetFn>,
     ) -> Result<f32>
     where
         F: FnMut(ItemProgress) -> bool + Send,
@@ -772,7 +772,7 @@ impl<B: Backend> FSRS<B> {
         parameters: &Parameters,
         cards: Option<Vec<Card>>,
         mut progress: F,
-        target: CMRRTargetFunction,
+        target: CMRRTargetFn,
     ) -> Result<f32, FSRSError>
     where
         F: FnMut() -> bool,
