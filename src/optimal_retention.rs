@@ -708,7 +708,7 @@ fn sample<F>(
     n: usize,
     progress: &mut F,
     cards: &Option<Vec<Card>>,
-    target: &CMRRTargetFunction,
+    CMRRTargetFunction(target): &CMRRTargetFunction,
 ) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
@@ -727,7 +727,7 @@ where
                 cards.clone(),
             )?;
 
-            Ok(target.0(&result, parameters))
+            Ok(target(&result, parameters))
         })
         .collect();
     results.map(|v| v.iter().sum::<f32>() / n as f32)
