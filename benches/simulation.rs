@@ -29,7 +29,8 @@ pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f32>, FS
 }
 
 pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f32 {
-    inf.optimal_retention(config, &[], |_v| true, None).unwrap()
+    inf.optimal_retention(config, &[], |_v| true, None, None)
+        .unwrap()
 }
 
 pub(crate) fn run_expected_workload_for_30_retentions() {
