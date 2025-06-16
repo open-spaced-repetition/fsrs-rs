@@ -155,7 +155,7 @@ pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     const CSV_FILE: &str = "tests/data/revlog.csv";
     let rdr = csv::ReaderBuilder::new();
     let dataset = InMemDataset::<RevlogCsv>::from_csv(CSV_FILE, &rdr).unwrap();
-    let revlogs: Vec<_> = dataset
+    let mut revlogs: Vec<_> = dataset
         .iter()
         .map(|r| RevlogEntry {
             id: r.review_time,
@@ -174,6 +174,7 @@ pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
             ..Default::default()
         })
         .collect();
+    revlogs.sort_by_cached_key(|r| (r.cid, r.id));
     dbg!(revlogs.len());
     let fsrs_items = anki_to_fsrs(revlogs);
     dbg!(fsrs_items.len());
