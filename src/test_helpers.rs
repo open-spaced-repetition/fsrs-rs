@@ -1,6 +1,6 @@
 use burn::{
     backend::autodiff::Autodiff,
-    tensor::{Element, TensorData},
+    tensor::{Element, TensorData, Tolerance},
 };
 pub type NdArrayAutodiff = Autodiff<burn::backend::NdArray>;
 pub type Model = crate::model::Model<NdArrayAutodiff>;
@@ -13,7 +13,7 @@ where
     T: Copy + std::fmt::Debug + PartialEq + Element,
     f64: From<T>,
 {
-    TensorData::from(a).assert_approx_eq(&TensorData::from(b), 4);
+    TensorData::from(a).assert_approx_eq::<f32>(&TensorData::from(b), Tolerance::absolute(1e-4));
 }
 
 pub trait TestHelper<const N: usize, T> {

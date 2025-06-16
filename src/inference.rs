@@ -3,6 +3,7 @@ use std::ops::{Add, Sub};
 use wasm_bindgen::prelude::*;
 
 use crate::model::{FSRS, Get, MemoryStateTensors};
+use crate::training::ComputeParametersInput;
 use burn::nn::loss::Reduction;
 use burn::tensor::cast::ToElement;
 use burn::tensor::{Shape, Tensor, TensorData};
@@ -23,29 +24,29 @@ pub type Parameters = [f32];
 use itertools::izip;
 
 pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
-pub const FSRS6_DEFAULT_DECAY: f32 = 0.2;
+pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
 
 pub static DEFAULT_PARAMETERS: [f32; 21] = [
-    0.2172,
-    1.1771,
-    3.2602,
-    16.1507,
-    7.0114,
-    0.57,
-    2.0966,
-    0.0069,
-    1.5261,
-    0.112,
-    1.0178,
-    1.849,
-    0.1133,
-    0.3127,
-    2.2934,
-    0.2191,
-    3.0004,
-    0.7536,
-    0.3332,
-    0.1437,
+    0.212,
+    1.2931,
+    2.3065,
+    8.2956,
+    6.4133,
+    0.8334,
+    3.0194,
+    0.001,
+    1.8722,
+    0.1666,
+    0.796,
+    1.4835,
+    0.0614,
+    0.2629,
+    1.6483,
+    0.6014,
+    1.8729,
+    0.5425,
+    0.0912,
+    0.0658,
     FSRS6_DEFAULT_DECAY,
 ];
 
@@ -56,6 +57,11 @@ fn infer<B: Backend>(
     let state = model.forward(batch.t_historys, batch.r_historys, None);
     let retrievability = model.power_forgetting_curve(batch.delta_ts, state.stability.clone());
     (state, retrievability)
+}
+
+pub fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32) -> f32 {
+    let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
+    (days_elapsed / state.stability * factor + 1.0).powf(-decay)
 }
 
 #[wasm_bindgen]
@@ -288,7 +294,7 @@ impl<B: Backend> FSRS<B> {
         let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
 
         for chunk in weighted_items.chunks(512) {
-            let batch = batcher.batch(chunk.to_vec());
+            let batch = batcher.batch(chunk.to_vec(), &self.device());
             let (_state, retrievability) = infer::<B>(model, batch.clone());
             let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
             let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
@@ -329,11 +335,85 @@ impl<B: Backend> FSRS<B> {
         })
     }
 
+    /// Determine how well the model and parameters predict performance using time series splits.
+    /// For each split:
+    /// 1. Use training data to compute parameters
+    /// 2. Use test data to make predictions
+    /// 3. Collect all predictions
+    ///
+    /// Finally, evaluate all predictions together
+    ///
+    /// # Arguments
+    /// * `items` - The dataset to evaluate
+    /// * `progress` - A callback function to report progress
+    ///
+    /// # Returns
+    /// A ModelEvaluation containing metrics for all predictions
+    pub fn evaluate_with_time_series_splits<F>(
+        &self,
+        ComputeParametersInput {
+            train_set,
+            enable_short_term,
+            num_relearning_steps,
+            ..
+        }: ComputeParametersInput,
+        mut progress: F,
+    ) -> Result<ModelEvaluation>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if train_set.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
+
+        let splits = TimeSeriesSplit::split(train_set, 5);
+        let mut all_predictions = Vec::new();
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: splits.len(),
+        };
+
+        for split in splits.into_iter() {
+            // Compute parameters on training data
+            let input = ComputeParametersInput {
+                train_set: split.train_items.clone(),
+                enable_short_term,
+                num_relearning_steps,
+                progress: None,
+            };
+            let parameters = self.compute_parameters(input)?;
+
+            // Make predictions on test data
+            let predictions = batch_predict::<B>(split.test_items, &parameters)?;
+
+            // Collect predictions
+            all_predictions.extend(predictions);
+
+            progress_info.current += 1;
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+
+        // Evaluate all predictions together
+        evaluate::<B>(all_predictions)
+    }
+
     /// How well the user is likely to remember the item after `days_elapsed` since the previous
     /// review.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f32) -> f32 {
-        let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
-        (days_elapsed as f32 / state.stability * factor + 1.0).powf(-decay)
+        current_retrievability(state, days_elapsed as f32, decay)
+    }
+
+    /// How well the user is likely to remember the item after `seconds_elapsed` since the previous
+    /// review.
+    pub fn current_retrievability_seconds(
+        &self,
+        state: MemoryState,
+        seconds_elapsed: u32,
+        decay: f32,
+    ) -> f32 {
+        current_retrievability(state, seconds_elapsed as f32 / 86400.0, decay)
     }
 
     /// Returns the universal metrics for the existing and provided parameters. If the first value
@@ -363,7 +443,7 @@ impl<B: Backend> FSRS<B> {
         let fsrs_other = Self::new_with_backend(Some(parameters), self.device())?;
         let model_other = fsrs_other.model();
         for chunk in weighted_items.chunks(512) {
-            let batch = batcher.batch(chunk.to_vec());
+            let batch = batcher.batch(chunk.to_vec(), &self.device());
 
             let (_state, retrievability) = infer::<B>(model_self, batch.clone());
             let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
@@ -394,6 +474,117 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PredictedFSRSItem {
+    pub item: FSRSItem,
+    pub retrievability: f32,
+}
+
+/// Batch predict retrievability for a set of items.
+///
+/// # Arguments
+/// * `items` - The dataset to predict
+/// * `parameters` - The model parameters to use for prediction
+/// * `progress` - A callback function to report progress
+///
+/// # Returns
+/// A vector of PredictedFSRSItem containing the original items and their predicted retrievability
+fn batch_predict<B: Backend>(
+    items: Vec<FSRSItem>,
+    parameters: &[f32],
+) -> Result<Vec<PredictedFSRSItem>>
+where
+{
+    if items.is_empty() {
+        return Err(FSRSError::NotEnoughData);
+    }
+    let weighted_items = constant_weighted_fsrs_items(items);
+    let batcher = FSRSBatcher::new(B::Device::default());
+
+    let fsrs = FSRS::<B>::new_with_backend(Some(parameters), B::Device::default())?;
+    let model = fsrs.model();
+    let mut predicted_items = Vec::with_capacity(weighted_items.len());
+
+    for chunk in weighted_items.chunks(512) {
+        let batch = batcher.batch(chunk.to_vec(), &B::Device::default());
+        let (_state, retrievability) = infer::<B>(model, batch.clone());
+        let pred = retrievability.to_data().to_vec::<f32>().unwrap();
+
+        for (weighted_item, p) in chunk.iter().zip(pred) {
+            predicted_items.push(PredictedFSRSItem {
+                item: weighted_item.item.clone(),
+                retrievability: p,
+            });
+        }
+    }
+
+    Ok(predicted_items)
+}
+
+/// Evaluate model predictions against ground truth.
+///
+/// # Arguments
+/// * `predicted_items` - The items with their predicted retrievability values
+/// * `progress` - A callback function to report progress
+///
+/// # Returns
+/// A ModelEvaluation containing log loss and RMSE metrics
+fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<ModelEvaluation> {
+    if predicted_items.is_empty() {
+        return Err(FSRSError::NotEnoughData);
+    }
+    let mut all_labels = Vec::with_capacity(predicted_items.len());
+    let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+    for predicted_item in predicted_items.iter() {
+        let pred = predicted_item.retrievability;
+        let y = (predicted_item.item.current().rating > 1) as i32;
+        all_labels.push(y);
+        let bin = predicted_item.item.r_matrix_index();
+        let value = r_matrix.entry(bin).or_default();
+        value.predicted += pred;
+        value.actual += y as f32;
+        value.count += 1.0;
+        value.weight += 1.0;
+    }
+
+    let rmse = (r_matrix
+        .values()
+        .map(|v| {
+            let pred = v.predicted / v.count;
+            let real = v.actual / v.count;
+            (pred - real).powi(2) * v.weight
+        })
+        .sum::<f32>()
+        / r_matrix.values().map(|v| v.weight).sum::<f32>())
+    .sqrt();
+
+    let all_labels = Tensor::from_data(
+        TensorData::new(
+            all_labels.clone(),
+            Shape {
+                dims: vec![all_labels.len()],
+            },
+        ),
+        &B::Device::default(),
+    );
+    let all_weights = Tensor::ones(all_labels.shape(), &B::Device::default());
+    let all_retrievability: Tensor<B, 1> = Tensor::from_data(
+        TensorData::new(
+            predicted_items.iter().map(|p| p.retrievability).collect(),
+            Shape {
+                dims: vec![predicted_items.len()],
+            },
+        ),
+        &B::Device::default(),
+    );
+
+    let loss = BCELoss::new().forward(all_retrievability, all_labels, all_weights, Reduction::Auto);
+    Ok(ModelEvaluation {
+        log_loss: loss.into_scalar().to_f32(),
+        rmse_bins: rmse,
+    })
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct ModelEvaluation {
     pub log_loss: f32,
@@ -420,6 +611,61 @@ pub struct ItemState {
 pub struct ItemProgress {
     pub current: usize,
     pub total: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeSeriesSplit {
+    pub train_items: Vec<FSRSItem>,
+    pub test_items: Vec<FSRSItem>,
+}
+
+impl TimeSeriesSplit {
+    /// Split the dataset into training and validation sets based on time order.
+    /// Creates n_splits folds where each fold's test set is a single segment,
+    /// and the training set consists of all segments before the test segment.
+    ///
+    /// For example, with n_splits=5, the folds would be:
+    /// Fold 0: Train=[0], Test=[1]
+    /// Fold 1: Train=[0,1], Test=[2]
+    /// Fold 2: Train=[0,1,2], Test=[3]
+    /// Fold 3: Train=[0,1,2,3], Test=[4]
+    /// Fold 4: Train=[0,1,2,3,4], Test=[5]
+    ///
+    /// # Arguments
+    /// * `sorted_items` - The dataset to split, assumed to be in time order
+    /// * `n_splits` - Number of splits to create
+    ///
+    /// # Returns
+    /// A vector of TimeSeriesSplit, each containing train and validation items
+    pub fn split(sorted_items: Vec<FSRSItem>, n_splits: usize) -> Vec<TimeSeriesSplit> {
+        if sorted_items.is_empty() || n_splits == 0 {
+            return vec![];
+        }
+        let total_items = sorted_items.len();
+        let segment_size = total_items / (n_splits + 1);
+        if segment_size == 0 {
+            return vec![];
+        }
+
+        (0..n_splits)
+            .map(|i| {
+                // Calculate the start of the test segment
+                let test_start = (i + 1) * segment_size;
+                // Calculate the end of the test segment (or the end of the data)
+                let test_end = if i == n_splits - 1 {
+                    total_items
+                } else {
+                    (i + 2) * segment_size
+                };
+
+                // Create the split
+                TimeSeriesSplit {
+                    train_items: sorted_items[..test_start].to_vec(),
+                    test_items: sorted_items[test_start..test_end].to_vec(),
+                }
+            })
+            .collect()
+    }
 }
 
 fn get_bin(x: f32, bins: i32) -> i32 {
@@ -549,6 +795,56 @@ mod tests {
         Ok(())
     }
 
+    fn assert_memory_state(w: &[f32], expected_stability: f32, expected_difficulty: f32) {
+        let desired_retention = 0.9;
+        let fsrs = FSRS::new(Some(w)).unwrap();
+        let ratings: [u32; 6] = [1, 3, 3, 3, 3, 3];
+        let intervals: [u32; 6] = [0, 0, 1, 3, 8, 21];
+
+        let mut memory_state = None;
+        for (&rating, &interval) in ratings.iter().zip(intervals.iter()) {
+            let state = fsrs
+                .next_states(memory_state, desired_retention, interval)
+                .unwrap();
+            memory_state = match rating {
+                1 => Some(state.again.memory),
+                2 => Some(state.hard.memory),
+                3 => Some(state.good.memory),
+                4 => Some(state.easy.memory),
+                _ => None,
+            };
+            // dbg!(
+            //     "stability: {}, difficulty: {}",
+            //     memory_state.as_ref().unwrap().stability,
+            //     memory_state.as_ref().unwrap().difficulty
+            // );
+        }
+
+        let memory_state = memory_state.unwrap();
+        let stability = memory_state.stability;
+        let difficulty = memory_state.difficulty;
+        assert!(
+            (stability - expected_stability).abs() < 1e-4,
+            "stability: {}",
+            stability
+        );
+        assert!(
+            (difficulty - expected_difficulty).abs() < 1e-4,
+            "difficulty: {}",
+            difficulty
+        );
+    }
+    #[test]
+    fn test_memory_state() {
+        let mut w = DEFAULT_PARAMETERS;
+        assert_memory_state(&w, 53.62691, 6.3574867);
+        // freeze short term
+        w[17] = 0.0;
+        w[18] = 0.0;
+        w[19] = 0.0;
+        assert_memory_state(&w, 53.335106, 6.3574867);
+    }
+
     #[test]
     fn test_next_interval() {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
@@ -557,7 +853,7 @@ mod tests {
             .iter()
             .map(|r| fsrs.next_interval(Some(1.0), *r, 1).round().max(1.0) as i32)
             .collect::<Vec<_>>();
-        assert_eq!(intervals, [144193, 4505, 592, 139, 45, 17, 7, 3, 1, 1]);
+        assert_eq!(intervals, [3116766, 34793, 2508, 387, 90, 27, 9, 3, 1, 1]);
     }
 
     #[test]
@@ -594,12 +890,12 @@ mod tests {
         ]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.205_835_95, 0.026_072_025]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20580745, 0.026005825]);
 
         let fsrs = FSRS::new(Some(&[]))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.217_924_48, 0.039_937_04]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20967911, 0.030774858]);
 
         let fsrs = FSRS::new(Some(PARAMETERS))?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
@@ -610,8 +906,68 @@ mod tests {
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        [self_by_other, other_by_self].assert_approx_eq([0.015_672_438, 0.028_422_62]);
+        [self_by_other, other_by_self].assert_approx_eq([0.014087644, 0.017199915]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_time_series_split() -> Result<()> {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let splits = TimeSeriesSplit::split(items[..6].to_vec(), 5);
+        assert_eq!(splits.len(), 5);
+        assert_eq!(splits[0].train_items.len(), 1);
+        assert_eq!(splits[0].test_items.len(), 1);
+        assert_eq!(splits[1].train_items.len(), 2);
+        assert_eq!(splits[1].test_items.len(), 1);
+        assert_eq!(splits[2].train_items.len(), 3);
+        assert_eq!(splits[2].test_items.len(), 1);
+        assert_eq!(splits[3].train_items.len(), 4);
+        assert_eq!(splits[3].test_items.len(), 1);
+        assert_eq!(splits[4].train_items.len(), 5);
+        assert_eq!(splits[4].test_items.len(), 1);
+
+        let splits = TimeSeriesSplit::split(items[..5].to_vec(), 5);
+        assert!(splits.is_empty());
+
+        let splits = TimeSeriesSplit::split(items[..6].to_vec(), 0);
+        assert!(splits.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_evaluate_with_time_series_splits() -> Result<()> {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+            .into_iter()
+            .partition(|item| item.long_term_review_cnt() == 1);
+        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
+        let items = [pretrainset, trainset].concat();
+        let input = ComputeParametersInput {
+            train_set: items.clone(),
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        };
+
+        let fsrs = FSRS::new(None)?;
+        let metrics = fsrs
+            .evaluate_with_time_series_splits(input.clone(), |_| true)
+            .unwrap();
+
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19735593, 0.02609019]);
+
+        let result = fsrs.evaluate_with_time_series_splits(
+            ComputeParametersInput {
+                train_set: items[..5].to_vec(),
+                progress: None,
+                enable_short_term: true,
+                num_relearning_steps: None,
+            },
+            |_| true,
+        );
+        assert!(result.is_err());
         Ok(())
     }
 
@@ -794,19 +1150,40 @@ mod tests {
     }
 
     #[test]
+    fn current_retrievability_seconds() {
+        let fsrs = FSRS::new(None).unwrap();
+        let state = MemoryState {
+            stability: 1.0,
+            difficulty: 5.0,
+        };
+        assert_eq!(fsrs.current_retrievability_seconds(state, 0, 0.2), 1.0);
+        assert_eq!(
+            fsrs.current_retrievability_seconds(state, 1, 0.2),
+            0.9999984
+        );
+        assert_eq!(
+            fsrs.current_retrievability_seconds(state, 60, 0.2),
+            0.9999037
+        );
+        assert_eq!(
+            fsrs.current_retrievability_seconds(state, 3600, 0.2),
+            0.9943189
+        );
+        assert_eq!(fsrs.current_retrievability_seconds(state, 86400, 0.2), 0.9);
+    }
+
+    #[test]
     fn memory_from_sm2() -> Result<()> {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
 
-        [memory_state.stability, memory_state.difficulty].assert_approx_eq([10.0, 7.061_206]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([10.0, 6.9140563]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.8).unwrap();
 
-        [memory_state.stability, memory_state.difficulty]
-            .assert_approx_eq([3.380_071_9, 9.344_574]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([3.01572, 9.393428]);
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.95).unwrap();
 
-        [memory_state.stability, memory_state.difficulty]
-            .assert_approx_eq([23.721_418, 2.095_691_7]);
+        [memory_state.stability, memory_state.difficulty].assert_approx_eq([24.841097, 1.2974405]);
         let memory_state = fsrs.memory_state_from_sm2(1.3, 20.0, 0.9).unwrap();
 
         [memory_state.stability, memory_state.difficulty].assert_approx_eq([20.0, 10.0]);

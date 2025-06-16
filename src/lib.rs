@@ -18,12 +18,12 @@ pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
 pub use inference::{
     DEFAULT_PARAMETERS, FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, ItemProgress, ItemState,
-    MemoryState, ModelEvaluation, NextStates,
+    MemoryState, ModelEvaluation, NextStates, current_retrievability,
 };
 pub use model::FSRS;
 pub use optimal_retention::{
-    Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind, SimulationResult,
-    SimulatorConfig, extract_simulator_config, simulate,
+    CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind,
+    SimulationResult, SimulatorConfig, expected_workload, extract_simulator_config, simulate,
 };
 pub use training::{CombinedProgressState, ComputeParametersInput};
 pub use training::Progress;
