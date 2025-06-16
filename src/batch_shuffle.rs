@@ -3,9 +3,9 @@ use std::sync::Mutex;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderIterator, Progress};
 use burn::prelude::Backend;
-use ndarray_rand::rand::SeedableRng;
-use ndarray_rand::rand::rngs::StdRng;
-use ndarray_rand::rand::seq::SliceRandom;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 
