@@ -162,6 +162,7 @@ pub fn to_revlog_entry(
             // taken_millis: times[i],
             review_kind: types[i].into(),
         })
+        .sorted_by_key(|r| (r.cid, r.id))
         .collect()
 }
 
