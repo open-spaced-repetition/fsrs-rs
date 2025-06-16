@@ -3,9 +3,9 @@ use std::sync::Mutex;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderIterator, Progress};
 use burn::prelude::Backend;
-use ndarray_rand::rand::SeedableRng;
-use ndarray_rand::rand::rngs::StdRng;
-use ndarray_rand::rand::seq::SliceRandom;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 
@@ -135,14 +135,14 @@ mod tests {
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: vec![7, batch_size]
+                dims: vec![5, batch_size]
             }
         );
         let batch = iterator.next().unwrap();
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: vec![6, batch_size]
+                dims: vec![3, batch_size]
             }
         );
 
@@ -152,7 +152,7 @@ mod tests {
         assert_eq!(
             lengths,
             [
-                48, 3, 8, 5, 11, 5, 1, 19, 3, 2, 2, 6, 5, 3, 9, 6, 3, 13, 7, 5, 4, 4, 4, 3, 4, 4
+                3, 5, 19, 7, 2, 4, 4, 3, 6, 13, 4, 4, 7, 4, 6, 48, 11, 8, 9, 1, 2, 5, 3, 5, 6, 3
             ]
         );
 
@@ -162,7 +162,7 @@ mod tests {
         assert_eq!(
             batch.t_historys.shape(),
             Shape {
-                dims: vec![19, batch_size]
+                dims: vec![4, batch_size]
             }
         );
         let batch = iterator.next().unwrap();
@@ -179,7 +179,7 @@ mod tests {
         assert_eq!(
             lengths,
             [
-                4, 11, 3, 6, 3, 6, 5, 5, 7, 6, 4, 9, 1, 4, 48, 3, 4, 5, 2, 13, 7, 5, 4, 8, 3, 3
+                11, 4, 5, 3, 1, 3, 13, 5, 4, 6, 2, 6, 19, 6, 3, 7, 4, 3, 48, 9, 5, 8, 5, 4, 3, 7
             ]
         );
     }

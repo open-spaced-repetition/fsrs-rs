@@ -1,6 +1,6 @@
 [package]
 name = "fsrs"
-version = "4.1.0"
+version = "4.1.1"
 authors = ["Open Spaced Repetition"]
 categories = ["algorithms", "science"]
 edition = "2024"
@@ -33,8 +33,8 @@ features = ["std", "train", "ndarray", "sqlite-bundled", "metrics"]
 itertools = "0.14.0"
 log = "0.4"
 ndarray = "0.16.1"
-ndarray-rand = "0.15.0"
 priority-queue = "=2.5.0"
+rand = "0.9.1"
 rayon = "1.8.0"
 serde = "1.0.219"
 snafu = "0.8.6"
