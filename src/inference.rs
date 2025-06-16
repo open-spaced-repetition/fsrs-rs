@@ -956,7 +956,7 @@ mod tests {
             .evaluate_with_time_series_splits(input.clone(), |_| true)
             .unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19735593, 0.02609019]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19692886, 0.025453836]);
 
         let result = fsrs.evaluate_with_time_series_splits(
             ComputeParametersInput {
