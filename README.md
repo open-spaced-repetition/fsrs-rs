@@ -56,6 +56,7 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 
 ## Bindings
 
+- c <https://github.com/open-spaced-repetition/fsrs-rs-c>
 - python <https://github.com/open-spaced-repetition/fsrs-rs-python>
 - nodejs <https://github.com/open-spaced-repetition/fsrs-rs-nodejs>
 - dart <https://github.com/open-spaced-repetition/fsrs-rs-dart>
