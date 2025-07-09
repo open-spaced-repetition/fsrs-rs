@@ -202,13 +202,13 @@ impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
 }
 
 pub fn filter_outlier(
-    pretrainset: Vec<FSRSItem>,
+    dataset_for_initialization: Vec<FSRSItem>,
     mut trainset: Vec<FSRSItem>,
 ) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
     let mut groups = HashMap::<u32, HashMap<u32, Vec<FSRSItem>>>::new();
 
     // group by rating of first review and delta_t of second review
-    for item in pretrainset.into_iter() {
+    for item in dataset_for_initialization.into_iter() {
         let (first_review, second_review) = (item.reviews.first().unwrap(), item.current());
         let rating_group = groups.entry(first_review.rating).or_default();
         let delta_t_group = rating_group.entry(second_review.delta_t).or_default();
@@ -258,14 +258,14 @@ pub fn filter_outlier(
 }
 
 pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
-    let (mut pretrainset, mut trainset) = items
+    let (mut dataset_for_initialization, mut trainset) = items
         .clone()
         .into_iter()
         .partition(|item| item.long_term_review_cnt() == 1);
     if std::env::var("FSRS_NO_OUTLIER").is_err() {
-        (pretrainset, trainset) = filter_outlier(pretrainset, items);
+        (dataset_for_initialization, trainset) = filter_outlier(dataset_for_initialization, items);
     }
-    (pretrainset, trainset)
+    (dataset_for_initialization, trainset)
 }
 
 pub(crate) fn sort_items_by_review_length(
@@ -439,13 +439,15 @@ mod tests {
     #[test]
     fn test_filter_outlier() {
         let dataset = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = dataset
-            .into_iter()
-            .partition(|item| item.long_term_review_cnt() == 1);
-        assert_eq!(pretrainset.len(), 3315);
+        let (mut dataset_for_initialization, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) =
+            dataset
+                .into_iter()
+                .partition(|item| item.long_term_review_cnt() == 1);
+        assert_eq!(dataset_for_initialization.len(), 3315);
         assert_eq!(trainset.len(), 10975);
-        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
-        assert_eq!(pretrainset.len(), 3265);
+        (dataset_for_initialization, trainset) =
+            filter_outlier(dataset_for_initialization, trainset);
+        assert_eq!(dataset_for_initialization.len(), 3265);
         assert_eq!(trainset.len(), 10900);
     }
 }

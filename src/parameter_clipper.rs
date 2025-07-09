@@ -1,6 +1,6 @@
 use crate::{
     inference::{Parameters, S_MIN},
-    pre_training::INIT_S_MAX,
+    parameter_initialization::INIT_S_MAX,
 };
 use burn::{
     module::Param,

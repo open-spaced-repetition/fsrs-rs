@@ -6,7 +6,7 @@ use crate::dataset::{
 use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
-use crate::pre_training::{pretrain, smooth_and_fill};
+use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
 use crate::{DEFAULT_PARAMETERS, FSRS, FSRSError};
 use burn::backend::Autodiff;
 use burn::tensor::cast::ToElement;
@@ -274,7 +274,7 @@ impl<B: Backend> FSRS<B> {
             }
         };
 
-        let (pre_train_set, train_set) = prepare_training_data(train_set);
+        let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
         let average_recall = calculate_average_recall(&train_set);
         if train_set.len() < 8 {
             finish_progress();
@@ -282,16 +282,17 @@ impl<B: Backend> FSRS<B> {
         }
 
         let (initial_stability, initial_rating_count) =
-            pretrain(pre_train_set.clone(), average_recall).inspect_err(|_e| {
-                finish_progress();
-            })?;
-        let pretrained_parameters: Vec<f32> = initial_stability
+            initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)
+                .inspect_err(|_e| {
+                    finish_progress();
+                })?;
+        let initialized_parameters: Vec<f32> = initial_stability
             .into_iter()
             .chain(DEFAULT_PARAMETERS[4..].iter().copied())
             .collect();
-        if train_set.len() == pre_train_set.len() || train_set.len() < 64 {
+        if train_set.len() == dataset_for_initialization.len() || train_set.len() < 64 {
             finish_progress();
-            return Ok(pretrained_parameters);
+            return Ok(initialized_parameters);
         }
         let config = TrainingConfig::new(
             ModelConfig {
@@ -366,11 +367,14 @@ impl<B: Backend> FSRS<B> {
         }: ComputeParametersInput,
     ) -> Vec<f32> {
         let average_recall = calculate_average_recall(&train_set);
-        let (pre_train_set, _next_train_set) = train_set
+        let (dataset_for_initialization, _next_train_set) = train_set
             .clone()
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        let initial_stability = pretrain(pre_train_set, average_recall).unwrap().0;
+        let initial_stability =
+            initialize_stability_parameters(dataset_for_initialization, average_recall)
+                .unwrap()
+                .0;
         let config = TrainingConfig::new(
             ModelConfig {
                 freeze_initial_stability: !enable_short_term,

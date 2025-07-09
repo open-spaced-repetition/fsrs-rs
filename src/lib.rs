@@ -10,7 +10,7 @@ mod inference;
 mod model;
 mod optimal_retention;
 mod parameter_clipper;
-mod pre_training;
+mod parameter_initialization;
 #[cfg(test)]
 mod test_helpers;
 mod training;
