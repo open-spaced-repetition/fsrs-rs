@@ -855,11 +855,12 @@ mod tests {
     #[test]
     fn test_evaluate() -> Result<()> {
         let items = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+        let (mut dataset_for_initialization, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
-        let items = [pretrainset, trainset].concat();
+        (dataset_for_initialization, trainset) =
+            filter_outlier(dataset_for_initialization, trainset);
+        let items = [dataset_for_initialization, trainset].concat();
 
         let fsrs = FSRS::new(Some(&[
             0.335561,
@@ -935,11 +936,12 @@ mod tests {
     #[test]
     fn test_evaluate_with_time_series_splits() -> Result<()> {
         let items = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+        let (mut dataset_for_initialization, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
-        let items = [pretrainset, trainset].concat();
+        (dataset_for_initialization, trainset) =
+            filter_outlier(dataset_for_initialization, trainset);
+        let items = [dataset_for_initialization, trainset].concat();
         let input = ComputeParametersInput {
             train_set: items.clone(),
             progress: None,
