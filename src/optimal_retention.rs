@@ -2067,8 +2067,8 @@ mod tests {
 
         let simulator_config = SimulatorConfig {
             learn_span,
-            learn_limit: 10,
-            deck_size: 10 * learn_span,
+            learn_limit: 100,
+            deck_size: 100 * learn_span,
             review_limit: usize::MAX,
             max_cost_perday: f32::INFINITY,
             first_rating_prob: [1.0 - initial_pass_rate, 0.0, initial_pass_rate, 0.0],
@@ -2120,8 +2120,9 @@ mod tests {
         let day_cutoff = 1720900800;
         let mut simulator_config = extract_simulator_config(revlogs, day_cutoff, true);
         simulator_config.review_limit = usize::MAX;
-        simulator_config.learn_limit = 10;
-        simulator_config.deck_size = 10 * simulator_config.learn_span;
+        simulator_config.learn_limit = 100;
+        simulator_config.learn_span = 365;
+        simulator_config.deck_size = 100 * 365;
 
         dbg!(&simulator_config);
 
