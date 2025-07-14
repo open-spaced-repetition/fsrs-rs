@@ -2119,8 +2119,9 @@ mod tests {
         revlogs.sort_by_cached_key(|r| (r.cid, r.id));
         let day_cutoff = 1720900800;
         let mut simulator_config = extract_simulator_config(revlogs, day_cutoff, true);
-        simulator_config.review_limit = usize::MAX;
         simulator_config.learn_limit = 100;
+        simulator_config.review_limit = usize::MAX;
+        simulator_config.max_cost_perday = f32::INFINITY;
         simulator_config.learn_span = 365;
         simulator_config.deck_size = 100 * 365;
 
