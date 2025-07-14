@@ -1235,6 +1235,8 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::{Connection, params};
+
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
     const LEARN_COST: f32 = 42.;
@@ -2051,6 +2053,169 @@ mod tests {
             "introduced_cnt_per_day mismatch"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn compare_simulator_and_expected_workload_with_mock_data() -> Result<()> {
+        let initial_pass_rate = 0.8;
+        let learning_again_cost = 20.0;
+        let learning_good_cost = 12.0;
+        let review_again_cost = 16.0;
+        let review_good_cost = 10.0;
+        let learn_span = 365;
+
+        let simulator_config = SimulatorConfig {
+            learn_span,
+            learn_limit: 10,
+            deck_size: 10 * learn_span,
+            review_limit: usize::MAX,
+            max_cost_perday: f32::INFINITY,
+            first_rating_prob: [1.0 - initial_pass_rate, 0.0, initial_pass_rate, 0.0],
+            review_rating_prob: [0.0, 1.0, 0.0],
+            state_rating_costs: [
+                [learning_again_cost, 0.0, learning_good_cost, 0.0],
+                [review_again_cost, 0.0, review_good_cost, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ],
+            learning_step_count: 0,
+            relearning_step_count: 0,
+            ..Default::default()
+        };
+
+        let cost_learn = learning_good_cost * initial_pass_rate
+            + learning_again_cost * (1.0 - initial_pass_rate);
+
+        for desired_retention in [0.9, 0.85, 0.8, 0.75, 0.7] {
+            dbg!(desired_retention);
+            let SimulationResult { cost_per_day, .. } = simulate(
+                &simulator_config,
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                None,
+                None,
+            )?;
+            let simulated_total_cost = cost_per_day.iter().sum::<f32>();
+            dbg!(simulated_total_cost);
+            let expected_workload = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                100_000_000,
+                review_good_cost,
+                review_again_cost,
+                cost_learn,
+                initial_pass_rate,
+                0.001,
+            )?;
+            dbg!(expected_workload);
+            dbg!(simulated_total_cost / expected_workload);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compare_simulator_and_expected_workload_with_real_data() -> Result<()> {
+        let mut revlogs = read_collection().unwrap();
+        revlogs.sort_by_cached_key(|r| (r.cid, r.id));
+        let day_cutoff = 1720900800;
+        let mut simulator_config = extract_simulator_config(revlogs, day_cutoff, true);
+        simulator_config.review_limit = usize::MAX;
+        simulator_config.learn_limit = 10;
+        simulator_config.deck_size = 10 * simulator_config.learn_span;
+
+        dbg!(&simulator_config);
+
+        const DEFAULT_LEARN_COST: f32 = 19.4698;
+        const DEFAULT_PASS_COST: f32 = 7.8454;
+        const DEFAULT_FAIL_COST: f32 = 23.185;
+        const DEFAULT_INITIAL_PASS_RATE: f32 = 0.7645;
+
+        #[derive(Debug, Clone, Default)]
+        pub struct RetentionCosts {
+            pub average_pass_time_ms: f32,
+            pub average_fail_time_ms: f32,
+            pub average_learn_time_ms: f32,
+            pub initial_pass_rate: f32,
+            pub pass_count: u32,
+            pub fail_count: u32,
+            pub learn_count: u32,
+        }
+
+        fn get_costs_for_retention(db: &Connection) -> Result<RetentionCosts> {
+            let mut statement = db
+                .prepare(include_str!("../tests/sql/get_costs_for_retention.sql"))
+                .unwrap();
+            let mut query = statement.query(params![]).unwrap();
+            let row = query.next().unwrap().unwrap();
+
+            Ok(RetentionCosts {
+                average_pass_time_ms: row.get(0).unwrap_or(7000.),
+                average_fail_time_ms: row.get(1).unwrap_or(23_000.),
+                average_learn_time_ms: row.get(2).unwrap_or(30_000.),
+                initial_pass_rate: row.get(3).unwrap_or(0.5),
+                pass_count: row.get(4).unwrap_or(0),
+                fail_count: row.get(5).unwrap_or(0),
+                learn_count: row.get(6).unwrap_or(0),
+            })
+        }
+
+        let db = Connection::open("tests/data/collection.anki21").unwrap();
+        let costs = get_costs_for_retention(&db).unwrap();
+
+        fn smoothing(obs: f32, default: f32, count: u32) -> f32 {
+            let alpha = count as f32 / (50.0 + count as f32);
+            obs * alpha + default * (1.0 - alpha)
+        }
+
+        let cost_success = smoothing(
+            costs.average_pass_time_ms / 1000.0,
+            DEFAULT_PASS_COST,
+            costs.pass_count,
+        );
+        let cost_failure = smoothing(
+            costs.average_fail_time_ms / 1000.0,
+            DEFAULT_FAIL_COST,
+            costs.fail_count,
+        );
+        let cost_learn = smoothing(
+            costs.average_learn_time_ms / 1000.0,
+            DEFAULT_LEARN_COST,
+            costs.learn_count,
+        );
+        let initial_pass_rate = smoothing(
+            costs.initial_pass_rate,
+            DEFAULT_INITIAL_PASS_RATE,
+            costs.pass_count,
+        );
+
+        dbg!(cost_success, cost_failure, cost_learn, initial_pass_rate);
+
+        let termination_prob = 0.001;
+        let learn_day_limit = 1e8 as usize;
+        for desired_retention in [0.9, 0.85, 0.8, 0.75, 0.7] {
+            dbg!(desired_retention);
+            let SimulationResult { cost_per_day, .. } = simulate(
+                &simulator_config,
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                None,
+                None,
+            )?;
+            let simulated_total_cost = cost_per_day.iter().sum::<f32>();
+            dbg!(simulated_total_cost);
+            let expected_workload = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                learn_day_limit,
+                cost_success,
+                cost_failure,
+                cost_learn,
+                initial_pass_rate,
+                termination_prob,
+            )?;
+            dbg!(expected_workload);
+            dbg!(simulated_total_cost / expected_workload);
+        }
         Ok(())
     }
 }
