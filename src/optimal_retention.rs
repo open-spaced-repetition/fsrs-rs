@@ -321,13 +321,19 @@ fn _expected_workload(
 
     let (s_success, s_failure, d_success, d_failure) = if stability > 0.0 {
         (
-            stability_after_success(w, stability, retrievability, difficulty, 3),
-            stability_after_failure(w, stability, retrievability, difficulty),
+            stability_after_success(w, stability, retrievability, difficulty, 3)
+                .clamp(S_MIN, S_MAX),
+            stability_after_failure(w, stability, retrievability, difficulty).clamp(S_MIN, S_MAX),
             next_d(w, difficulty, 3),
             next_d(w, difficulty, 1),
         )
     } else {
-        (w[2], w[0], init_d(w, 3), init_d(w, 1))
+        (
+            w[2],
+            w[0],
+            init_d(w, 3).clamp(1.0, 10.0),
+            init_d(w, 1).clamp(1.0, 10.0),
+        )
     };
 
     let ivl_success = next_interval(w, s_success, desired_retention)
@@ -1235,6 +1241,8 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use rusqlite::{Connection, params};
 
     use super::*;
@@ -2064,11 +2072,12 @@ mod tests {
         let review_again_cost = 16.0;
         let review_good_cost = 10.0;
         let learn_span = 365;
+        let sample_size = 100;
 
         let simulator_config = SimulatorConfig {
             learn_span,
-            learn_limit: 100,
-            deck_size: 100 * learn_span,
+            deck_size: sample_size * learn_span,
+            learn_limit: sample_size,
             review_limit: usize::MAX,
             max_cost_perday: f32::INFINITY,
             first_rating_prob: [1.0 - initial_pass_rate, 0.0, initial_pass_rate, 0.0],
@@ -2086,8 +2095,11 @@ mod tests {
         let cost_learn = learning_good_cost * initial_pass_rate
             + learning_again_cost * (1.0 - initial_pass_rate);
 
-        for desired_retention in [0.9, 0.85, 0.8, 0.75, 0.7] {
+        for desired_retention in [
+            0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35,
+        ] {
             dbg!(desired_retention);
+            let start_time = Instant::now();
             let SimulationResult { cost_per_day, .. } = simulate(
                 &simulator_config,
                 &DEFAULT_PARAMETERS,
@@ -2095,18 +2107,23 @@ mod tests {
                 None,
                 None,
             )?;
-            let simulated_total_cost = cost_per_day.iter().sum::<f32>();
+            let duration = start_time.elapsed();
+            dbg!(duration);
+            let simulated_total_cost = cost_per_day[cost_per_day.len() - 1] / sample_size as f32;
             dbg!(simulated_total_cost);
+            let start_time = Instant::now();
             let expected_workload = expected_workload(
                 &DEFAULT_PARAMETERS,
                 desired_retention,
-                100_000_000,
+                learn_span,
                 review_good_cost,
                 review_again_cost,
                 cost_learn,
                 initial_pass_rate,
-                0.001,
+                1e-5,
             )?;
+            let duration = start_time.elapsed();
+            dbg!(duration);
             dbg!(expected_workload);
             dbg!(simulated_total_cost / expected_workload);
         }
@@ -2123,7 +2140,7 @@ mod tests {
         simulator_config.review_limit = usize::MAX;
         simulator_config.max_cost_perday = f32::INFINITY;
         simulator_config.learn_span = 365;
-        simulator_config.deck_size = 100 * 365;
+        simulator_config.deck_size = simulator_config.learn_limit * simulator_config.learn_span;
 
         dbg!(&simulator_config);
 
@@ -2191,10 +2208,9 @@ mod tests {
         );
 
         dbg!(cost_success, cost_failure, cost_learn, initial_pass_rate);
-
-        let termination_prob = 0.001;
-        let learn_day_limit = 1e8 as usize;
-        for desired_retention in [0.9, 0.85, 0.8, 0.75, 0.7] {
+        for desired_retention in [
+            0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35,
+        ] {
             dbg!(desired_retention);
             let SimulationResult { cost_per_day, .. } = simulate(
                 &simulator_config,
@@ -2203,20 +2219,47 @@ mod tests {
                 None,
                 None,
             )?;
-            let simulated_total_cost = cost_per_day.iter().sum::<f32>();
+            let simulated_total_cost =
+                cost_per_day[cost_per_day.len() - 1] / simulator_config.learn_limit as f32;
             dbg!(simulated_total_cost);
-            let expected_workload = expected_workload(
+            let expected_workload_with_retention_costs = expected_workload(
                 &DEFAULT_PARAMETERS,
                 desired_retention,
-                learn_day_limit,
+                simulator_config.learn_span,
                 cost_success,
                 cost_failure,
                 cost_learn,
                 initial_pass_rate,
-                termination_prob,
+                1e-5,
             )?;
-            dbg!(expected_workload);
-            dbg!(simulated_total_cost / expected_workload);
+            dbg!(expected_workload_with_retention_costs);
+            dbg!(simulated_total_cost / expected_workload_with_retention_costs);
+
+            let cost_success = simulator_config.review_rating_prob[0]
+                * simulator_config.state_rating_costs[1][1]
+                + simulator_config.review_rating_prob[1]
+                    * simulator_config.state_rating_costs[1][2]
+                + simulator_config.review_rating_prob[2]
+                    * simulator_config.state_rating_costs[1][3];
+            let cost_failure = simulator_config.state_rating_costs[1][0];
+            let cost_learn = simulator_config.state_rating_costs[0][0]
+                * simulator_config.first_rating_prob[0]
+                + simulator_config.state_rating_costs[0][1] * simulator_config.first_rating_prob[1]
+                + simulator_config.state_rating_costs[0][2] * simulator_config.first_rating_prob[2]
+                + simulator_config.state_rating_costs[0][3] * simulator_config.first_rating_prob[3];
+            let initial_pass_rate = simulator_config.first_rating_prob[2];
+            let expected_workload_with_simulator_costs = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                simulator_config.learn_span,
+                cost_success,
+                cost_failure,
+                cost_learn,
+                initial_pass_rate,
+                1e-5,
+            )?;
+            dbg!(expected_workload_with_simulator_costs);
+            dbg!(simulated_total_cost / expected_workload_with_simulator_costs);
         }
         Ok(())
     }
