@@ -2125,7 +2125,7 @@ mod tests {
             let duration = start_time.elapsed();
             dbg!(duration);
             dbg!(expected_workload);
-            dbg!(simulated_total_cost / expected_workload);
+            dbg!(expected_workload / simulated_total_cost);
         }
         Ok(())
     }
@@ -2233,7 +2233,7 @@ mod tests {
                 1e-5,
             )?;
             dbg!(expected_workload_with_retention_costs);
-            dbg!(simulated_total_cost / expected_workload_with_retention_costs);
+            dbg!(expected_workload_with_retention_costs / simulated_total_cost);
 
             let cost_success = simulator_config.review_rating_prob[0]
                 * simulator_config.state_rating_costs[1][1]
@@ -2259,7 +2259,7 @@ mod tests {
                 1e-5,
             )?;
             dbg!(expected_workload_with_simulator_costs);
-            dbg!(simulated_total_cost / expected_workload_with_simulator_costs);
+            dbg!(expected_workload_with_simulator_costs / simulated_total_cost);
         }
         Ok(())
     }
