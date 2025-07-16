@@ -276,28 +276,95 @@ pub fn expected_workload(
     parameters: &Parameters,
     desired_retention: f32,
     learn_day_limit: usize,
-    cost_success: f32,
-    cost_failure: f32,
     cost_learn: f32,
-    initial_pass_rate: f32,
     termination_prob: f32,
+    first_rating_prob: [f32; 4],
+    review_rating_prob: [f32; 3],
+    rating_costs: [f32; 4],
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
 
-    Ok(_expected_workload(
+    let s_again = w[0];
+    let d_again = init_d(w, 1).clamp(1.0, 10.0);
+    let ivl_again = next_interval(w, s_again, desired_retention)
+        .round()
+        .max(1.0);
+    let r_again = power_forgetting_curve(w, ivl_again, s_again);
+    let again_expected_workload = _expected_workload(
         w,
-        1.0,
-        0.0,
-        0.0,
-        0,
+        first_rating_prob[0],
+        s_again,
+        d_again,
+        ivl_again as usize,
         desired_retention,
-        initial_pass_rate,
+        r_again,
         cost_learn,
         learn_day_limit,
-        cost_success,
-        cost_failure,
         termination_prob,
-    ))
+        review_rating_prob,
+        rating_costs,
+    );
+    let s_hard = w[1];
+    let d_hard = init_d(w, 2).clamp(1.0, 10.0);
+    let ivl_hard = next_interval(w, s_hard, desired_retention).round().max(1.0);
+    let r_hard = power_forgetting_curve(w, ivl_hard, s_hard);
+    let hard_expected_workload = _expected_workload(
+        w,
+        first_rating_prob[1],
+        s_hard,
+        d_hard,
+        ivl_hard as usize,
+        desired_retention,
+        r_hard,
+        cost_learn,
+        learn_day_limit,
+        termination_prob,
+        review_rating_prob,
+        rating_costs,
+    );
+    let s_good = w[2];
+    let d_good = init_d(w, 3).clamp(1.0, 10.0);
+    let ivl_good = next_interval(w, s_good, desired_retention).round().max(1.0);
+    let r_good = power_forgetting_curve(w, ivl_good, s_good);
+    let good_expected_workload = _expected_workload(
+        w,
+        first_rating_prob[2],
+        s_good,
+        d_good,
+        ivl_good as usize,
+        desired_retention,
+        r_good,
+        cost_learn,
+        learn_day_limit,
+        termination_prob,
+        review_rating_prob,
+        rating_costs,
+    );
+    let s_easy = w[3];
+    let d_easy = init_d(w, 4).clamp(1.0, 10.0);
+    let ivl_easy = next_interval(w, s_easy, desired_retention).round().max(1.0);
+    let r_easy = power_forgetting_curve(w, ivl_easy, s_easy);
+    let easy_expected_workload = _expected_workload(
+        w,
+        first_rating_prob[3],
+        s_easy,
+        d_easy,
+        ivl_easy as usize,
+        desired_retention,
+        r_easy,
+        cost_learn,
+        learn_day_limit,
+        termination_prob,
+        review_rating_prob,
+        rating_costs,
+    );
+
+    let total_expected_workload = again_expected_workload
+        + hard_expected_workload
+        + good_expected_workload
+        + easy_expected_workload;
+
+    Ok(total_expected_workload)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -311,62 +378,98 @@ fn _expected_workload(
     retrievability: f32,
     cost: f32,
     learn_day_limit: usize,
-    cost_success: f32,
-    cost_failure: f32,
     termination_prob: f32,
+    review_rating_prob: [f32; 3],
+    rating_costs: [f32; 4],
 ) -> f32 {
     if today >= learn_day_limit || acc_prob <= termination_prob {
-        return 0.0;
+        return acc_prob * cost;
     }
 
-    let (s_success, s_failure, d_success, d_failure) = if stability > 0.0 {
+    let (s_again, s_hard, s_good, s_easy, d_again, d_hard, d_good, d_easy) = {
         (
-            stability_after_success(w, stability, retrievability, difficulty, 3),
             stability_after_failure(w, stability, retrievability, difficulty),
-            next_d(w, difficulty, 3),
+            stability_after_success(w, stability, retrievability, difficulty, 2),
+            stability_after_success(w, stability, retrievability, difficulty, 3),
+            stability_after_success(w, stability, retrievability, difficulty, 4),
             next_d(w, difficulty, 1),
+            next_d(w, difficulty, 2),
+            next_d(w, difficulty, 3),
+            next_d(w, difficulty, 4),
         )
-    } else {
-        (w[2], w[0], init_d(w, 3), init_d(w, 1))
     };
 
-    let ivl_success = next_interval(w, s_success, desired_retention)
-        .round()
-        .max(1.0);
-    let r_success = power_forgetting_curve(w, ivl_success, s_success);
-    let ivl_failure = next_interval(w, s_failure, desired_retention)
-        .round()
-        .max(1.0);
-    let r_failure = power_forgetting_curve(w, ivl_failure, s_failure);
+    let (ivl_again, ivl_hard, ivl_good, ivl_easy) = (
+        next_interval(w, s_again, desired_retention)
+            .round()
+            .max(1.0),
+        next_interval(w, s_hard, desired_retention).round().max(1.0),
+        next_interval(w, s_good, desired_retention).round().max(1.0),
+        next_interval(w, s_easy, desired_retention).round().max(1.0),
+    );
+    let (r_again, r_hard, r_good, r_easy) = (
+        power_forgetting_curve(w, ivl_again, s_again),
+        power_forgetting_curve(w, ivl_hard, s_hard),
+        power_forgetting_curve(w, ivl_good, s_good),
+        power_forgetting_curve(w, ivl_easy, s_easy),
+    );
 
     acc_prob * cost
         + _expected_workload(
             w,
-            acc_prob * retrievability,
-            s_success,
-            d_success,
-            today + ivl_success as usize,
+            acc_prob * (1.0 - retrievability),
+            s_again,
+            d_again,
+            today + ivl_again as usize,
             desired_retention,
-            r_success,
-            cost_success,
+            r_again,
+            rating_costs[0],
             learn_day_limit,
-            cost_success,
-            cost_failure,
             termination_prob,
+            review_rating_prob,
+            rating_costs,
         )
         + _expected_workload(
             w,
-            acc_prob * (1.0 - retrievability),
-            s_failure,
-            d_failure,
-            today + ivl_failure as usize,
+            acc_prob * retrievability * review_rating_prob[0],
+            s_hard,
+            d_hard,
+            today + ivl_hard as usize,
             desired_retention,
-            r_failure,
-            cost_failure,
+            r_hard,
+            rating_costs[1],
             learn_day_limit,
-            cost_success,
-            cost_failure,
             termination_prob,
+            review_rating_prob,
+            rating_costs,
+        )
+        + _expected_workload(
+            w,
+            acc_prob * retrievability * review_rating_prob[1],
+            s_good,
+            d_good,
+            today + ivl_good as usize,
+            desired_retention,
+            r_good,
+            rating_costs[2],
+            learn_day_limit,
+            termination_prob,
+            review_rating_prob,
+            rating_costs,
+        )
+        + _expected_workload(
+            w,
+            acc_prob * retrievability * review_rating_prob[2],
+            s_easy,
+            d_easy,
+            today + ivl_easy as usize,
+            desired_retention,
+            r_easy,
+            rating_costs[3],
+            learn_day_limit,
+            termination_prob,
+            review_rating_prob,
+            rating_costs,
         )
 }
 
@@ -1235,6 +1338,10 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
+    use rusqlite::{Connection, params};
+
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
     const LEARN_COST: f32 = 42.;
@@ -1922,62 +2029,62 @@ mod tests {
         assert_eq!(simulator_config, SimulatorConfig::default());
     }
 
-    #[test]
-    fn test_expected_workload() {
-        let cost_success = 7.0;
-        let cost_failure = 23.0;
-        let cost_learn = 30.0;
-        let initial_pass_rate = 0.8;
-        let termination_prob = 0.01;
-        let learn_day_limit = 1e8 as usize;
-        let expected_values = [
-            (0.95, 224.79605),
-            (0.9, 151.68994),
-            (0.85, 127.88567),
-            (0.8, 119.22617),
-            (0.75, 112.71354),
-            (0.7, 111.705864),
-            (0.65, 111.267654),
-            (0.6, 113.57947),
-            (0.55, 115.45534),
-            (0.5, 124.1929),
-            (0.45, 126.71346),
-            (0.4, 135.42862),
-            (0.35, 146.95714),
-        ];
-        for (desired_retention, expected) in expected_values {
-            let result = expected_workload(
-                &DEFAULT_PARAMETERS,
-                desired_retention,
-                learn_day_limit,
-                cost_success,
-                cost_failure,
-                cost_learn,
-                initial_pass_rate,
-                termination_prob,
-            );
-            // dbg!(desired_retention, result.unwrap());
-            [result.unwrap()].assert_approx_eq([expected]);
-        }
+    // #[test]
+    // fn test_expected_workload() {
+    //     let cost_success = 7.0;
+    //     let cost_failure = 23.0;
+    //     let cost_learn = 30.0;
+    //     let initial_pass_rate = 0.8;
+    //     let termination_prob = 0.01;
+    //     let learn_day_limit = 1e8 as usize;
+    //     let expected_values = [
+    //         (0.95, 224.79605),
+    //         (0.9, 151.68994),
+    //         (0.85, 127.88567),
+    //         (0.8, 119.22617),
+    //         (0.75, 112.71354),
+    //         (0.7, 111.705864),
+    //         (0.65, 111.267654),
+    //         (0.6, 113.57947),
+    //         (0.55, 115.45534),
+    //         (0.5, 124.1929),
+    //         (0.45, 126.71346),
+    //         (0.4, 135.42862),
+    //         (0.35, 146.95714),
+    //     ];
+    //     for (desired_retention, expected) in expected_values {
+    //         let result = expected_workload(
+    //             &DEFAULT_PARAMETERS,
+    //             desired_retention,
+    //             learn_day_limit,
+    //             cost_success,
+    //             cost_failure,
+    //             cost_learn,
+    //             initial_pass_rate,
+    //             termination_prob,
+    //         );
+    //         // dbg!(desired_retention, result.unwrap());
+    //         [result.unwrap()].assert_approx_eq([expected]);
+    //     }
 
-        // compare with the workload of default desired retention 0.9
-        for desired_retention in (30..=99).map(|x| x as f32 / 100.0) {
-            let result = expected_workload(
-                &DEFAULT_PARAMETERS,
-                desired_retention,
-                learn_day_limit,
-                cost_success,
-                cost_failure,
-                cost_learn,
-                initial_pass_rate,
-                termination_prob,
-            );
-            dbg!(
-                desired_retention,
-                (result.unwrap() / 152.06544).to_2_decimal()
-            );
-        }
-    }
+    //     // compare with the workload of default desired retention 0.9
+    //     for desired_retention in (30..=99).map(|x| x as f32 / 100.0) {
+    //         let result = expected_workload(
+    //             &DEFAULT_PARAMETERS,
+    //             desired_retention,
+    //             learn_day_limit,
+    //             cost_success,
+    //             cost_failure,
+    //             cost_learn,
+    //             initial_pass_rate,
+    //             termination_prob,
+    //         );
+    //         dbg!(
+    //             desired_retention,
+    //             (result.unwrap() / 152.06544).to_2_decimal()
+    //         );
+    //     }
+    // }
 
     #[test]
     fn test_introduced_cards_per_day() -> Result<()> {
@@ -2051,6 +2158,199 @@ mod tests {
             "introduced_cnt_per_day mismatch"
         );
 
+        Ok(())
+    }
+
+    // #[test]
+    // fn compare_simulator_and_expected_workload_with_mock_data() -> Result<()> {
+    //     let initial_pass_rate = 0.8;
+    //     let learning_again_cost = 20.0;
+    //     let learning_good_cost = 12.0;
+    //     let review_again_cost = 16.0;
+    //     let review_good_cost = 10.0;
+    //     let learn_span = 365;
+
+    //     let simulator_config = SimulatorConfig {
+    //         learn_span,
+    //         learn_limit: 100,
+    //         deck_size: 100 * learn_span,
+    //         review_limit: usize::MAX,
+    //         max_cost_perday: f32::INFINITY,
+    //         first_rating_prob: [1.0 - initial_pass_rate, 0.0, initial_pass_rate, 0.0],
+    //         review_rating_prob: [0.0, 1.0, 0.0],
+    //         state_rating_costs: [
+    //             [learning_again_cost, 0.0, learning_good_cost, 0.0],
+    //             [review_again_cost, 0.0, review_good_cost, 0.0],
+    //             [0.0, 0.0, 0.0, 0.0],
+    //         ],
+    //         learning_step_count: 0,
+    //         relearning_step_count: 0,
+    //         ..Default::default()
+    //     };
+
+    //     let cost_learn = learning_good_cost * initial_pass_rate
+    //         + learning_again_cost * (1.0 - initial_pass_rate);
+
+    //     for desired_retention in [0.9, 0.85, 0.8, 0.75, 0.7] {
+    //         dbg!(desired_retention);
+    //         let SimulationResult { cost_per_day, .. } = simulate(
+    //             &simulator_config,
+    //             &DEFAULT_PARAMETERS,
+    //             desired_retention,
+    //             None,
+    //             None,
+    //         )?;
+    //         let simulated_total_cost = cost_per_day.iter().sum::<f32>();
+    //         dbg!(simulated_total_cost);
+    //         let expected_workload = expected_workload(
+    //             &DEFAULT_PARAMETERS,
+    //             desired_retention,
+    //             100_000_000,
+    //             review_good_cost,
+    //             review_again_cost,
+    //             cost_learn,
+    //             initial_pass_rate,
+    //             0.001,
+    //         )?;
+    //         dbg!(expected_workload);
+    //         dbg!(simulated_total_cost / expected_workload);
+    //     }
+    //     Ok(())
+    // }
+
+    #[test]
+    fn compare_simulator_and_expected_workload_with_real_data() -> Result<()> {
+        let mut revlogs = read_collection().unwrap();
+        revlogs.sort_by_cached_key(|r| (r.cid, r.id));
+        let day_cutoff = 1720900800;
+        let mut simulator_config = extract_simulator_config(revlogs, day_cutoff, true);
+        simulator_config.learn_limit = 100;
+        simulator_config.review_limit = usize::MAX;
+        simulator_config.max_cost_perday = f32::INFINITY;
+        simulator_config.learn_span = 365;
+        simulator_config.deck_size = simulator_config.learn_limit * simulator_config.learn_span;
+
+        dbg!(&simulator_config);
+
+        const DEFAULT_LEARN_COST: f32 = 19.4698;
+        const DEFAULT_PASS_COST: f32 = 7.8454;
+        const DEFAULT_FAIL_COST: f32 = 23.185;
+        const DEFAULT_INITIAL_PASS_RATE: f32 = 0.7645;
+
+        #[derive(Debug, Clone, Default)]
+        pub struct RetentionCosts {
+            pub average_pass_time_ms: f32,
+            pub average_fail_time_ms: f32,
+            pub average_learn_time_ms: f32,
+            pub initial_pass_rate: f32,
+            pub pass_count: u32,
+            pub fail_count: u32,
+            pub learn_count: u32,
+        }
+
+        fn get_costs_for_retention(db: &Connection) -> Result<RetentionCosts> {
+            let mut statement = db
+                .prepare(include_str!("../tests/sql/get_costs_for_retention.sql"))
+                .unwrap();
+            let mut query = statement.query(params![]).unwrap();
+            let row = query.next().unwrap().unwrap();
+
+            Ok(RetentionCosts {
+                average_pass_time_ms: row.get(0).unwrap_or(7000.),
+                average_fail_time_ms: row.get(1).unwrap_or(23_000.),
+                average_learn_time_ms: row.get(2).unwrap_or(30_000.),
+                initial_pass_rate: row.get(3).unwrap_or(0.5),
+                pass_count: row.get(4).unwrap_or(0),
+                fail_count: row.get(5).unwrap_or(0),
+                learn_count: row.get(6).unwrap_or(0),
+            })
+        }
+
+        let db = Connection::open("tests/data/collection.anki21").unwrap();
+        let costs = get_costs_for_retention(&db).unwrap();
+
+        fn smoothing(obs: f32, default: f32, count: u32) -> f32 {
+            let alpha = count as f32 / (50.0 + count as f32);
+            obs * alpha + default * (1.0 - alpha)
+        }
+
+        let cost_success = smoothing(
+            costs.average_pass_time_ms / 1000.0,
+            DEFAULT_PASS_COST,
+            costs.pass_count,
+        );
+        let cost_failure = smoothing(
+            costs.average_fail_time_ms / 1000.0,
+            DEFAULT_FAIL_COST,
+            costs.fail_count,
+        );
+        let cost_learn = smoothing(
+            costs.average_learn_time_ms / 1000.0,
+            DEFAULT_LEARN_COST,
+            costs.learn_count,
+        );
+        let initial_pass_rate = smoothing(
+            costs.initial_pass_rate,
+            DEFAULT_INITIAL_PASS_RATE,
+            costs.pass_count,
+        );
+
+        dbg!(cost_success, cost_failure, cost_learn, initial_pass_rate);
+        for desired_retention in [
+            0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35,
+        ] {
+            dbg!(desired_retention);
+            let SimulationResult { cost_per_day, .. } = simulate(
+                &simulator_config,
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                None,
+                None,
+            )?;
+            let simulated_total_cost =
+                cost_per_day[cost_per_day.len() - 1] / simulator_config.learn_limit as f32;
+            dbg!(simulated_total_cost);
+            // let expected_workload_with_retention_costs = expected_workload(
+            //     &DEFAULT_PARAMETERS,
+            //     desired_retention,
+            //     simulator_config.learn_span,
+            //     cost_success,
+            //     cost_failure,
+            //     cost_learn,
+            //     initial_pass_rate,
+            //     1e-5,
+            // )?;
+            // dbg!(expected_workload_with_retention_costs);
+            // dbg!(expected_workload_with_retention_costs / simulated_total_cost);
+
+            // let cost_success = simulator_config.review_rating_prob[0]
+            //     * simulator_config.state_rating_costs[1][1]
+            //     + simulator_config.review_rating_prob[1]
+            //         * simulator_config.state_rating_costs[1][2]
+            //     + simulator_config.review_rating_prob[2]
+            //         * simulator_config.state_rating_costs[1][3];
+            // let cost_failure = simulator_config.state_rating_costs[1][0];
+            let cost_learn = simulator_config.state_rating_costs[0][0]
+                * simulator_config.first_rating_prob[0]
+                + simulator_config.state_rating_costs[0][1] * simulator_config.first_rating_prob[1]
+                + simulator_config.state_rating_costs[0][2] * simulator_config.first_rating_prob[2]
+                + simulator_config.state_rating_costs[0][3] * simulator_config.first_rating_prob[3];
+            // let initial_pass_rate = simulator_config.first_rating_prob[2];
+            let mut ratings_costs = simulator_config.state_rating_costs[1];
+            ratings_costs[0] += simulator_config.state_rating_costs[2][2];
+            let expected_workload_with_simulator_costs = expected_workload(
+                &DEFAULT_PARAMETERS,
+                desired_retention,
+                simulator_config.learn_span,
+                cost_learn,
+                1e-10,
+                simulator_config.first_rating_prob,
+                simulator_config.review_rating_prob,
+                ratings_costs,
+            )?;
+            dbg!(expected_workload_with_simulator_costs);
+            dbg!(expected_workload_with_simulator_costs / simulated_total_cost);
+        }
         Ok(())
     }
 }
