@@ -2112,7 +2112,7 @@ mod tests {
             let simulated_total_cost = cost_per_day[cost_per_day.len() - 1] / sample_size as f32;
             dbg!(simulated_total_cost);
             let start_time = Instant::now();
-            let expected_workload = expected_workload(
+            let expected_workload_result = expected_workload(
                 &DEFAULT_PARAMETERS,
                 desired_retention,
                 learn_span,
@@ -2124,8 +2124,8 @@ mod tests {
             )?;
             let duration = start_time.elapsed();
             dbg!(duration);
-            dbg!(expected_workload);
-            dbg!(expected_workload / simulated_total_cost);
+            dbg!(expected_workload_result);
+            dbg!(expected_workload_result / simulated_total_cost);
         }
         Ok(())
     }
