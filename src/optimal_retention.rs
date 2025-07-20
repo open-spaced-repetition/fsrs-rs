@@ -1027,21 +1027,10 @@ pub fn extract_simulator_config(
         }
     }
 
-    fn median(x: &mut [u32]) -> u32 {
-        x.sort_unstable();
-        let n = x.len();
-        if n % 2 == 0 {
-            (x[n / 2 - 1] + x[n / 2]) / 2
-        } else {
-            x[n / 2]
-        }
-    }
-
     // Calculate median costs
     for ((state, rating), durations) in state_rating_durations.iter() {
-        let mut durations = durations.clone();
-        let median_duration = median(&mut durations);
-        state_rating_costs[*state][*rating] = median_duration as f32 / 1000.0;
+        let mean_duration = durations.iter().sum::<u32>() / durations.len() as u32;
+        state_rating_costs[*state][*rating] = mean_duration as f32 / 1000.0;
     }
 
     // Group data by card_id and real_days
