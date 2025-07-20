@@ -1027,7 +1027,7 @@ pub fn extract_simulator_config(
         }
     }
 
-    // Calculate median costs
+    // Calculate mean costs
     for ((state, rating), durations) in state_rating_durations.iter() {
         let mean_duration = durations.iter().sum::<u32>() / durations.len() as u32;
         state_rating_costs[*state][*rating] = mean_duration as f32 / 1000.0;
