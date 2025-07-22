@@ -311,25 +311,25 @@ pub struct WorkloadEstimator {
 
 impl WorkloadEstimator {
     pub fn new(config: &SimulatorConfig) -> Self {
-        let s_max = 365f64;
-        let short_step = (2.0f64).ln() / 5.0;
-        let long_step = 10.0f64;
-        let d_min = 1.0f64;
-        let d_max = 10.0f64;
+        let s_max = 365.0;
+        let short_step = 2.0f32.ln() / 5.0;
+        let long_step = 10.0;
+        let d_min = 1.0;
+        let d_max = 10.0;
         let d_eps = 0.5;
 
         let s_mid = (long_step / (1.0 - (-short_step).exp())).min(s_max);
 
         // Create stability state space
         let mut s_state_small = Vec::new();
-        let mut log_s = (S_MIN as f64).ln();
+        let mut log_s = S_MIN.ln();
         while log_s < s_mid.ln() {
             s_state_small.push(log_s.exp());
             log_s += short_step;
         }
 
         let mut s_state_large = Vec::new();
-        let mut s_val = s_state_small.last().copied().unwrap_or(S_MIN as f64) + long_step;
+        let mut s_val = s_state_small.last().copied().unwrap_or(S_MIN) + long_step;
         while s_val < s_max {
             s_state_large.push(s_val);
             s_val += long_step;
@@ -340,10 +340,10 @@ impl WorkloadEstimator {
         let s_size = s_state.len();
 
         // Create difficulty state space
-        let d_size = ((d_max - d_min) / d_eps + 1.0f64).ceil() as usize;
+        let d_size = ((d_max - d_min) / d_eps + 1.0f32).ceil() as usize;
         let mut d_state = Vec::new();
         for i in 0..d_size {
-            d_state.push(d_min + (d_max - d_min) * i as f64 / (d_size - 1) as f64);
+            d_state.push(d_min + (d_max - d_min) * i as f32 / (d_size - 1) as f32);
         }
 
         let t_size = config.learn_span;
@@ -358,18 +358,18 @@ impl WorkloadEstimator {
         let transition_probs = vec![vec![0.0; s_size]; 4];
 
         Self {
-            s_state: s_state.iter().map(|s| *s as f32).collect(),
-            d_state: d_state.iter().map(|d| *d as f32).collect(),
+            s_state,
+            d_state,
             s_size,
             d_size,
             t_size,
-            short_step: short_step as f32,
-            long_step: long_step as f32,
-            s_mid: s_mid as f32,
-            s_state_small: s_state_small.iter().map(|s| *s as f32).collect(),
-            s_state_large: s_state_large.iter().map(|s| *s as f32).collect(),
-            d_min: d_min as f32,
-            d_max: d_max as f32,
+            short_step,
+            long_step,
+            s_mid,
+            s_state_small,
+            s_state_large,
+            d_min,
+            d_max,
             cost_matrix,
             intervals,
             retrievabilities,
