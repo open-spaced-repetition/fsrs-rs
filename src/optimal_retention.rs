@@ -298,10 +298,10 @@ pub struct WorkloadEstimator {
     cost_matrix: Vec<Vec<Vec<f32>>>, // [s_idx][d_idx][t_idx] -> cost
 
     // Cache precomputed values to avoid recalculating
-    intervals: Vec<Vec<f32>>,           // [s_idx][d_idx] -> interval
-    retrievabilities: Vec<Vec<f32>>,    // [s_idx][d_idx] -> retrievability
-    next_intervals: Vec<Vec<Vec<f32>>>, // [rating][s_idx][d_idx] -> next_interval for next_s
-    transition_probs: Vec<Vec<f32>>,    // [rating][s_idx] -> transition probability
+    intervals: Vec<Vec<f32>>,             // [s_idx][d_idx] -> interval
+    retrievabilities: Vec<Vec<f32>>,      // [s_idx][d_idx] -> retrievability
+    next_intervals: Vec<Vec<Vec<f32>>>,   // [rating][s_idx][d_idx] -> next_interval for next_s
+    transition_probs: Vec<Vec<f32>>,      // [rating][s_idx] -> transition probability
     next_s_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_s_idx
     next_d_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_d_idx
 
