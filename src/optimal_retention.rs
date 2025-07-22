@@ -171,6 +171,10 @@ impl Default for SimulatorConfig {
     }
 }
 
+fn init_s(w: &[f32], rating: usize) -> f32 {
+    w[rating - 1]
+}
+
 fn stability_after_success(w: &[f32], s: f32, r: f32, d: f32, rating: usize) -> f32 {
     let hard_penalty = if rating == 2 { w[15] } else { 1.0 };
     let easy_bonus = if rating == 4 { w[16] } else { 1.0 };
@@ -271,103 +275,223 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Dynamic programming-based workload estimator
+#[derive(Debug)]
+pub struct WorkloadEstimator {
+    // State spaces
+    s_state: Vec<f32>,
+    d_state: Vec<f32>,
+    s_size: usize,
+    d_size: usize,
+    t_size: usize,
+
+    // Configuration
+    short_step: f32,
+    long_step: f32,
+    s_mid: f32,
+    s_state_small: Vec<f32>,
+    s_state_large: Vec<f32>,
+    d_min: f32,
+    d_max: f32,
+
+    // Cost matrix for dynamic programming
+    cost_matrix: Vec<Vec<Vec<f32>>>,
+
+    // Review configuration
+    first_rating_prob: [f32; 4],
+    review_rating_prob: [f32; 3],
+    state_rating_costs: [[f32; 4]; 3],
+}
+
+impl WorkloadEstimator {
+    pub fn new(config: &SimulatorConfig) -> Self {
+        let s_max = 365f64;
+        let short_step = (2.0f64).ln() / 5.0;
+        let long_step = 10.0f64;
+        let d_min = 1.0f64;
+        let d_max = 10.0f64;
+        let d_eps = 0.5;
+
+        let s_mid = (long_step / (1.0 - (-short_step).exp())).min(s_max);
+
+        // Create stability state space
+        let mut s_state_small = Vec::new();
+        let mut log_s = (S_MIN as f64).ln();
+        while log_s < s_mid.ln() {
+            s_state_small.push(log_s.exp());
+            log_s += short_step;
+        }
+
+        let mut s_state_large = Vec::new();
+        let mut s_val = s_state_small.last().copied().unwrap_or(S_MIN as f64) + long_step;
+        while s_val < s_max {
+            s_state_large.push(s_val);
+            s_val += long_step;
+        }
+
+        let mut s_state = s_state_small.clone();
+        s_state.extend_from_slice(&s_state_large);
+        let s_size = s_state.len();
+
+        // Create difficulty state space
+        let d_size = ((d_max - d_min) / d_eps + 1.0f64).ceil() as usize;
+        let mut d_state = Vec::new();
+        for i in 0..d_size {
+            d_state.push(d_min + (d_max - d_min) * i as f64 / (d_size - 1) as f64);
+        }
+
+        let t_size = config.learn_span;
+
+        // Initialize cost matrix
+        let cost_matrix = vec![vec![vec![0.0; t_size + 1]; d_size]; s_size];
+
+        Self {
+            s_state: s_state.iter().map(|s| *s as f32).collect(),
+            d_state: d_state.iter().map(|d| *d as f32).collect(),
+            s_size,
+            d_size,
+            t_size,
+            short_step: short_step as f32,
+            long_step: long_step as f32,
+            s_mid: s_mid as f32,
+            s_state_small: s_state_small.iter().map(|s| *s as f32).collect(),
+            s_state_large: s_state_large.iter().map(|s| *s as f32).collect(),
+            d_min: d_min as f32,
+            d_max: d_max as f32,
+            cost_matrix,
+            first_rating_prob: config.first_rating_prob,
+            review_rating_prob: config.review_rating_prob,
+            state_rating_costs: config.state_rating_costs,
+        }
+    }
+
+    fn s2i(&self, s: f32) -> usize {
+        if s <= self.s_mid {
+            // Handle small values (logarithmic scale)
+            let index = ((s.ln() - S_MIN.ln()) / self.short_step).ceil() as usize;
+            index.min(self.s_state_small.len() - 1)
+        } else {
+            // Handle large values (linear scale)
+            let index = ((s - self.s_state_small.last().copied().unwrap_or(S_MIN) - self.long_step)
+                / self.long_step)
+                .ceil() as usize;
+            self.s_state_small.len() + index.min(self.s_state_large.len() - 1)
+        }
+    }
+
+    fn d2i(&self, d: f32) -> usize {
+        let index =
+            ((d - self.d_min) / (self.d_max - self.d_min) * self.d_size as f32).floor() as usize;
+        index.min(self.d_size - 1)
+    }
+
+    fn get_cost(&self, s: f32, d: f32, t: usize) -> f32 {
+        let s_idx = self.s2i(s);
+        let d_idx = self.d2i(d);
+        let t_idx = t.min(self.t_size);
+        self.cost_matrix[s_idx][d_idx][t_idx]
+    }
+
+    pub fn evaluate_desired_retention(&mut self, desired_retention: f32, w: &Parameters) -> f32 {
+        // Reset cost matrix
+        for s_idx in 0..self.s_size {
+            for d_idx in 0..self.d_size {
+                for t_idx in 0..=self.t_size {
+                    self.cost_matrix[s_idx][d_idx][t_idx] = 0.0;
+                }
+            }
+        }
+
+        // Precompute transitions for all state combinations
+        let mut precomputed_transitions =
+            vec![vec![vec![vec![0.0; 2]; self.d_size]; self.s_size]; 4];
+
+        for s_idx in 0..self.s_size {
+            for d_idx in 0..self.d_size {
+                let s = self.s_state[s_idx];
+                let d = self.d_state[d_idx];
+
+                // Calculate interval and retrievability
+                let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
+                let r = power_forgetting_curve(w, ivl, s);
+
+                // Again case (rating = 1)
+                precomputed_transitions[0][s_idx][d_idx][0] = stability_after_failure(w, s, r, d);
+                precomputed_transitions[0][s_idx][d_idx][1] = next_d(w, d, 1);
+
+                // Success cases (ratings 2, 3, 4)
+                for rating in 2..=4 {
+                    precomputed_transitions[rating - 1][s_idx][d_idx][0] =
+                        stability_after_success(w, s, r, d, rating);
+                    precomputed_transitions[rating - 1][s_idx][d_idx][1] = next_d(w, d, rating);
+                }
+            }
+        }
+
+        // Dynamic programming backward pass
+        for t in (0..self.t_size).rev() {
+            for s_idx in 0..self.s_size {
+                for d_idx in 0..self.d_size {
+                    let s = self.s_state[s_idx];
+                    let _d = self.d_state[d_idx];
+
+                    // Calculate interval and retrievability for current state
+                    let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
+                    let r = power_forgetting_curve(w, ivl, s);
+
+                    let mut current_cost = 0.0;
+
+                    // Rating 1 (Again) - failure case
+                    let next_s = precomputed_transitions[0][s_idx][d_idx][0];
+                    let next_d = precomputed_transitions[0][s_idx][d_idx][1];
+                    let next_ivl = next_interval(w, next_s, desired_retention).max(1.0).floor();
+                    let next_t = (t as f32 + next_ivl).min(self.t_size as f32) as usize;
+                    let transition_prob = 1.0 - r;
+                    let future_cost = self.get_cost(next_s, next_d, next_t);
+                    current_cost +=
+                        (self.state_rating_costs[REVIEW][0] + future_cost) * transition_prob;
+
+                    // Ratings 2, 3, 4 (success cases)
+                    for rating in 2..=4 {
+                        let next_s = precomputed_transitions[rating - 1][s_idx][d_idx][0];
+                        let next_d = precomputed_transitions[rating - 1][s_idx][d_idx][1];
+                        let next_ivl = next_interval(w, next_s, desired_retention).max(1.0).floor();
+                        let next_t = (t as f32 + next_ivl).min(self.t_size as f32) as usize;
+                        let transition_prob = r * self.review_rating_prob[rating - 2];
+                        let future_cost = self.get_cost(next_s, next_d, next_t);
+                        current_cost += (self.state_rating_costs[REVIEW][rating - 1] + future_cost)
+                            * transition_prob;
+                    }
+
+                    self.cost_matrix[s_idx][d_idx][t] = current_cost;
+                }
+            }
+        }
+
+        // Calculate initial cost for mixed initial states
+        let mut total_cost = 0.0;
+        for rating in 1..=4 {
+            let s_idx = self.s2i(init_s(w, rating));
+            let d_idx = self.d2i(init_d(w, rating));
+            total_cost += (self.cost_matrix[s_idx][d_idx][0]
+                + self.state_rating_costs[LEARNING][rating - 1])
+                * self.first_rating_prob[rating - 1];
+        }
+
+        total_cost
+    }
+}
+
 pub fn expected_workload(
     parameters: &Parameters,
     desired_retention: f32,
-    learn_day_limit: usize,
-    cost_success: f32,
-    cost_failure: f32,
-    cost_learn: f32,
-    initial_pass_rate: f32,
-    termination_prob: f32,
+    config: &SimulatorConfig,
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
 
-    Ok(_expected_workload(
-        w,
-        1.0,
-        0.0,
-        0.0,
-        0,
-        desired_retention,
-        initial_pass_rate,
-        cost_learn,
-        learn_day_limit,
-        cost_success,
-        cost_failure,
-        termination_prob,
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn _expected_workload(
-    w: &Parameters,
-    acc_prob: f32,
-    stability: f32,
-    difficulty: f32,
-    today: usize,
-    desired_retention: f32,
-    retrievability: f32,
-    cost: f32,
-    learn_day_limit: usize,
-    cost_success: f32,
-    cost_failure: f32,
-    termination_prob: f32,
-) -> f32 {
-    if today >= learn_day_limit || acc_prob <= termination_prob {
-        return 0.0;
-    }
-
-    let (s_success, s_failure, d_success, d_failure) = if stability > 0.0 {
-        (
-            stability_after_success(w, stability, retrievability, difficulty, 3),
-            stability_after_failure(w, stability, retrievability, difficulty),
-            next_d(w, difficulty, 3),
-            next_d(w, difficulty, 1),
-        )
-    } else {
-        (w[2], w[0], init_d(w, 3), init_d(w, 1))
-    };
-
-    let ivl_success = next_interval(w, s_success, desired_retention)
-        .round()
-        .max(1.0);
-    let r_success = power_forgetting_curve(w, ivl_success, s_success);
-    let ivl_failure = next_interval(w, s_failure, desired_retention)
-        .round()
-        .max(1.0);
-    let r_failure = power_forgetting_curve(w, ivl_failure, s_failure);
-
-    acc_prob * cost
-        + _expected_workload(
-            w,
-            acc_prob * retrievability,
-            s_success,
-            d_success,
-            today + ivl_success as usize,
-            desired_retention,
-            r_success,
-            cost_success,
-            learn_day_limit,
-            cost_success,
-            cost_failure,
-            termination_prob,
-        )
-        + _expected_workload(
-            w,
-            acc_prob * (1.0 - retrievability),
-            s_failure,
-            d_failure,
-            today + ivl_failure as usize,
-            desired_retention,
-            r_failure,
-            cost_failure,
-            learn_day_limit,
-            cost_success,
-            cost_failure,
-            termination_prob,
-        )
+    let mut estimator = WorkloadEstimator::new(config);
+    let workload = estimator.evaluate_desired_retention(desired_retention, w);
+    Ok(workload)
 }
 
 #[derive(Debug, Clone)]
@@ -564,7 +688,7 @@ pub fn simulate(
             // For learning cards
             // Initialize stability and difficulty for new cards
             let init_rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
-            let init_stability = w[init_rating - 1];
+            let init_stability = init_s(w, init_rating);
             let init_difficulty = init_d(w, init_rating).clamp(1.0, 10.0);
             let (new_s, new_d, cost) = memory_state_short_term(
                 w,
@@ -1924,58 +2048,30 @@ mod tests {
 
     #[test]
     fn test_expected_workload() {
-        let cost_success = 7.0;
-        let cost_failure = 23.0;
-        let cost_learn = 30.0;
-        let initial_pass_rate = 0.8;
-        let termination_prob = 0.01;
-        let learn_day_limit = 1e8 as usize;
-        let expected_values = [
-            (0.95, 224.79605),
-            (0.9, 151.68994),
-            (0.85, 127.88567),
-            (0.8, 119.22617),
-            (0.75, 112.71354),
-            (0.7, 111.705864),
-            (0.65, 111.267654),
-            (0.6, 113.57947),
-            (0.55, 115.45534),
-            (0.5, 124.1929),
-            (0.45, 126.71346),
-            (0.4, 135.42862),
-            (0.35, 146.95714),
-        ];
-        for (desired_retention, expected) in expected_values {
-            let result = expected_workload(
-                &DEFAULT_PARAMETERS,
-                desired_retention,
-                learn_day_limit,
-                cost_success,
-                cost_failure,
-                cost_learn,
-                initial_pass_rate,
-                termination_prob,
-            );
-            // dbg!(desired_retention, result.unwrap());
-            [result.unwrap()].assert_approx_eq([expected]);
-        }
-
-        // compare with the workload of default desired retention 0.9
-        for desired_retention in (30..=99).map(|x| x as f32 / 100.0) {
-            let result = expected_workload(
-                &DEFAULT_PARAMETERS,
-                desired_retention,
-                learn_day_limit,
-                cost_success,
-                cost_failure,
-                cost_learn,
-                initial_pass_rate,
-                termination_prob,
-            );
-            dbg!(
-                desired_retention,
-                (result.unwrap() / 152.06544).to_2_decimal()
-            );
+        let mut config = SimulatorConfig::default();
+        config.learn_span = 365;
+        config.learn_limit = 400;
+        config.deck_size = config.learn_span * config.learn_limit;
+        config.max_cost_perday = f32::INFINITY;
+        config.review_limit = usize::MAX;
+        // config.first_rating_prob = [0.2, 0.0, 0.8, 0.0];
+        // config.review_rating_prob = [0.0, 1.0, 0.0];
+        // config.state_rating_costs = [
+        //     [19.4698, 19.4698, 19.4698, 19.4698],
+        //     [23.185, 0.0, 7.8454, 0.0],
+        //     [0.0, 0.0, 0.0, 0.0],
+        // ];
+        config.learning_step_count = 0;
+        config.relearning_step_count = 0;
+        for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
+            let result_dp =
+                expected_workload(&DEFAULT_PARAMETERS, desired_retention, &config).unwrap();
+            let result =
+                simulate(&config, &DEFAULT_PARAMETERS, desired_retention, None, None).unwrap();
+            let result_simulated =
+                result.cost_per_day[result.cost_per_day.len() - 1] / config.learn_limit as f32;
+            dbg!(desired_retention, result_dp, result_simulated);
+            assert!((result_dp - result_simulated).abs() / result_simulated < 0.1);
         }
     }
 
