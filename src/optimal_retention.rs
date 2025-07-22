@@ -302,8 +302,6 @@ pub struct WorkloadEstimator {
     retrievabilities: Vec<Vec<f32>>,    // [s_idx][d_idx] -> retrievability
     next_intervals: Vec<Vec<Vec<f32>>>, // [rating][s_idx][d_idx] -> next_interval for next_s
     transition_probs: Vec<Vec<f32>>,    // [rating][s_idx] -> transition probability
-
-    // 方案四：预计算索引避免 get_cost 中的重复计算
     next_s_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_s_idx
     next_d_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_d_idx
 
@@ -360,8 +358,6 @@ impl WorkloadEstimator {
         let retrievabilities = vec![vec![0.0; d_size]; s_size];
         let next_intervals = vec![vec![vec![0.0; d_size]; s_size]; 4];
         let transition_probs = vec![vec![0.0; s_size]; 4];
-
-        // 方案四：预计算索引避免 get_cost 中的重复计算
         let next_s_indices = vec![vec![vec![0; d_size]; s_size]; 4];
         let next_d_indices = vec![vec![vec![0; d_size]; s_size]; 4];
 
