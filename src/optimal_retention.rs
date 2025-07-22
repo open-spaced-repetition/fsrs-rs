@@ -1359,6 +1359,8 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
     use crate::{DEFAULT_PARAMETERS, convertor_tests::read_collection, test_helpers::TestHelper};
     const LEARN_COST: f32 = 42.;
@@ -2064,10 +2066,16 @@ mod tests {
         config.learning_step_count = 0;
         config.relearning_step_count = 0;
         for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
+            let start = Instant::now();
             let result_dp =
                 expected_workload(&DEFAULT_PARAMETERS, desired_retention, &config).unwrap();
+            let duration = start.elapsed();
+            dbg!(duration);
+            let start = Instant::now();
             let result =
                 simulate(&config, &DEFAULT_PARAMETERS, desired_retention, None, None).unwrap();
+            let duration = start.elapsed();
+            dbg!(duration);
             let result_simulated =
                 result.cost_per_day[result.cost_per_day.len() - 1] / config.learn_limit as f32;
             dbg!(desired_retention, result_dp, result_simulated);
