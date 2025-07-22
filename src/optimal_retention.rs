@@ -297,6 +297,10 @@ pub struct WorkloadEstimator {
     // Cost matrix for dynamic programming
     cost_matrix: Vec<Vec<Vec<f32>>>,
 
+    // 缓存预计算的值以避免重复计算
+    intervals: Vec<Vec<f32>>,        // [s_idx][d_idx] -> interval
+    retrievabilities: Vec<Vec<f32>>, // [s_idx][d_idx] -> retrievability
+
     // Review configuration
     first_rating_prob: [f32; 4],
     review_rating_prob: [f32; 3],
@@ -345,6 +349,10 @@ impl WorkloadEstimator {
         // Initialize cost matrix
         let cost_matrix = vec![vec![vec![0.0; t_size + 1]; d_size]; s_size];
 
+        // 缓存预计算的值以避免重复计算
+        let intervals = vec![vec![0.0; d_size]; s_size];
+        let retrievabilities = vec![vec![0.0; d_size]; s_size];
+
         Self {
             s_state: s_state.iter().map(|s| *s as f32).collect(),
             d_state: d_state.iter().map(|d| *d as f32).collect(),
@@ -359,6 +367,8 @@ impl WorkloadEstimator {
             d_min: d_min as f32,
             d_max: d_max as f32,
             cost_matrix,
+            intervals,
+            retrievabilities,
             first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
@@ -411,9 +421,13 @@ impl WorkloadEstimator {
                 let s = self.s_state[s_idx];
                 let d = self.d_state[d_idx];
 
-                // Calculate interval and retrievability
+                // Calculate interval and retrievability once and cache them
                 let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
                 let r = power_forgetting_curve(w, ivl, s);
+
+                // Store in cache
+                self.intervals[s_idx][d_idx] = ivl;
+                self.retrievabilities[s_idx][d_idx] = r;
 
                 // Again case (rating = 1)
                 precomputed_transitions[0][s_idx][d_idx][0] = stability_after_failure(w, s, r, d);
@@ -432,12 +446,10 @@ impl WorkloadEstimator {
         for t in (0..self.t_size).rev() {
             for s_idx in 0..self.s_size {
                 for d_idx in 0..self.d_size {
-                    let s = self.s_state[s_idx];
                     let _d = self.d_state[d_idx];
 
-                    // Calculate interval and retrievability for current state
-                    let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
-                    let r = power_forgetting_curve(w, ivl, s);
+                    // Use cached retrievability instead of recalculating
+                    let r = self.retrievabilities[s_idx][d_idx];
 
                     let mut current_cost = 0.0;
 
