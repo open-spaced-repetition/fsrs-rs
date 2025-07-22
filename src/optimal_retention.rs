@@ -295,11 +295,13 @@ pub struct WorkloadEstimator {
     d_max: f32,
 
     // Cost matrix for dynamic programming
-    cost_matrix: Vec<Vec<Vec<f32>>>,
+    cost_matrix: Vec<Vec<Vec<f32>>>, // [s_idx][d_idx][t_idx] -> cost
 
-    // 缓存预计算的值以避免重复计算
-    intervals: Vec<Vec<f32>>,        // [s_idx][d_idx] -> interval
-    retrievabilities: Vec<Vec<f32>>, // [s_idx][d_idx] -> retrievability
+    // Cache precomputed values to avoid recalculating
+    intervals: Vec<Vec<f32>>,           // [s_idx][d_idx] -> interval
+    retrievabilities: Vec<Vec<f32>>,    // [s_idx][d_idx] -> retrievability
+    next_intervals: Vec<Vec<Vec<f32>>>, // [rating][s_idx][d_idx] -> next_interval for next_s
+    transition_probs: Vec<Vec<f32>>,    // [rating][s_idx] -> transition probability
 
     // Review configuration
     first_rating_prob: [f32; 4],
@@ -349,9 +351,11 @@ impl WorkloadEstimator {
         // Initialize cost matrix
         let cost_matrix = vec![vec![vec![0.0; t_size + 1]; d_size]; s_size];
 
-        // 缓存预计算的值以避免重复计算
+        // Cache precomputed values to avoid recalculating
         let intervals = vec![vec![0.0; d_size]; s_size];
         let retrievabilities = vec![vec![0.0; d_size]; s_size];
+        let next_intervals = vec![vec![vec![0.0; d_size]; s_size]; 4];
+        let transition_probs = vec![vec![0.0; s_size]; 4];
 
         Self {
             s_state: s_state.iter().map(|s| *s as f32).collect(),
@@ -369,6 +373,8 @@ impl WorkloadEstimator {
             cost_matrix,
             intervals,
             retrievabilities,
+            next_intervals,
+            transition_probs,
             first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
@@ -406,9 +412,7 @@ impl WorkloadEstimator {
         // Reset cost matrix
         for s_idx in 0..self.s_size {
             for d_idx in 0..self.d_size {
-                for t_idx in 0..=self.t_size {
-                    self.cost_matrix[s_idx][d_idx][t_idx] = 0.0;
-                }
+                self.cost_matrix[s_idx][d_idx][self.t_size] = 0.0;
             }
         }
 
@@ -428,16 +432,32 @@ impl WorkloadEstimator {
                 // Store in cache
                 self.intervals[s_idx][d_idx] = ivl;
                 self.retrievabilities[s_idx][d_idx] = r;
+                self.transition_probs[0][s_idx] = 1.0 - r; // Rating 1 (Again)
+                for rating in 2..=4 {
+                    self.transition_probs[rating - 1][s_idx] =
+                        r * self.review_rating_prob[rating - 2];
+                }
 
                 // Again case (rating = 1)
-                precomputed_transitions[0][s_idx][d_idx][0] = stability_after_failure(w, s, r, d);
-                precomputed_transitions[0][s_idx][d_idx][1] = next_d(w, d, 1);
+                let next_s_1 = stability_after_failure(w, s, r, d);
+                let next_d_1 = next_d(w, d, 1);
+                precomputed_transitions[0][s_idx][d_idx][0] = next_s_1;
+                precomputed_transitions[0][s_idx][d_idx][1] = next_d_1;
+
+                self.next_intervals[0][s_idx][d_idx] =
+                    next_interval(w, next_s_1, desired_retention)
+                        .max(1.0)
+                        .floor();
 
                 // Success cases (ratings 2, 3, 4)
                 for rating in 2..=4 {
-                    precomputed_transitions[rating - 1][s_idx][d_idx][0] =
-                        stability_after_success(w, s, r, d, rating);
-                    precomputed_transitions[rating - 1][s_idx][d_idx][1] = next_d(w, d, rating);
+                    let next_s = stability_after_success(w, s, r, d, rating);
+                    let next_d_val = next_d(w, d, rating);
+                    precomputed_transitions[rating - 1][s_idx][d_idx][0] = next_s;
+                    precomputed_transitions[rating - 1][s_idx][d_idx][1] = next_d_val;
+
+                    self.next_intervals[rating - 1][s_idx][d_idx] =
+                        next_interval(w, next_s, desired_retention).max(1.0).floor();
                 }
             }
         }
@@ -446,30 +466,13 @@ impl WorkloadEstimator {
         for t in (0..self.t_size).rev() {
             for s_idx in 0..self.s_size {
                 for d_idx in 0..self.d_size {
-                    let _d = self.d_state[d_idx];
-
-                    // Use cached retrievability instead of recalculating
-                    let r = self.retrievabilities[s_idx][d_idx];
-
                     let mut current_cost = 0.0;
-
-                    // Rating 1 (Again) - failure case
-                    let next_s = precomputed_transitions[0][s_idx][d_idx][0];
-                    let next_d = precomputed_transitions[0][s_idx][d_idx][1];
-                    let next_ivl = next_interval(w, next_s, desired_retention).max(1.0).floor();
-                    let next_t = (t as f32 + next_ivl).min(self.t_size as f32) as usize;
-                    let transition_prob = 1.0 - r;
-                    let future_cost = self.get_cost(next_s, next_d, next_t);
-                    current_cost +=
-                        (self.state_rating_costs[REVIEW][0] + future_cost) * transition_prob;
-
-                    // Ratings 2, 3, 4 (success cases)
-                    for rating in 2..=4 {
+                    for rating in 1..=4 {
                         let next_s = precomputed_transitions[rating - 1][s_idx][d_idx][0];
                         let next_d = precomputed_transitions[rating - 1][s_idx][d_idx][1];
-                        let next_ivl = next_interval(w, next_s, desired_retention).max(1.0).floor();
+                        let next_ivl = self.next_intervals[rating - 1][s_idx][d_idx];
                         let next_t = (t as f32 + next_ivl).min(self.t_size as f32) as usize;
-                        let transition_prob = r * self.review_rating_prob[rating - 2];
+                        let transition_prob = self.transition_probs[rating - 1][s_idx];
                         let future_cost = self.get_cost(next_s, next_d, next_t);
                         current_cost += (self.state_rating_costs[REVIEW][rating - 1] + future_cost)
                             * transition_prob;
