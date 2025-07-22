@@ -303,6 +303,10 @@ pub struct WorkloadEstimator {
     next_intervals: Vec<Vec<Vec<f32>>>, // [rating][s_idx][d_idx] -> next_interval for next_s
     transition_probs: Vec<Vec<f32>>,    // [rating][s_idx] -> transition probability
 
+    // 方案四：预计算索引避免 get_cost 中的重复计算
+    next_s_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_s_idx
+    next_d_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_d_idx
+
     // Review configuration
     first_rating_prob: [f32; 4],
     review_rating_prob: [f32; 3],
@@ -357,6 +361,10 @@ impl WorkloadEstimator {
         let next_intervals = vec![vec![vec![0.0; d_size]; s_size]; 4];
         let transition_probs = vec![vec![0.0; s_size]; 4];
 
+        // 方案四：预计算索引避免 get_cost 中的重复计算
+        let next_s_indices = vec![vec![vec![0; d_size]; s_size]; 4];
+        let next_d_indices = vec![vec![vec![0; d_size]; s_size]; 4];
+
         Self {
             s_state,
             d_state,
@@ -375,6 +383,8 @@ impl WorkloadEstimator {
             retrievabilities,
             next_intervals,
             transition_probs,
+            next_s_indices,
+            next_d_indices,
             first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
@@ -401,13 +411,6 @@ impl WorkloadEstimator {
         index.min(self.d_size - 1)
     }
 
-    fn get_cost(&self, s: f32, d: f32, t: usize) -> f32 {
-        let s_idx = self.s2i(s);
-        let d_idx = self.d2i(d);
-        let t_idx = t.min(self.t_size);
-        self.cost_matrix[s_idx][d_idx][t_idx]
-    }
-
     pub fn evaluate_desired_retention(&mut self, desired_retention: f32, w: &Parameters) -> f32 {
         // Reset cost matrix
         for s_idx in 0..self.s_size {
@@ -417,9 +420,6 @@ impl WorkloadEstimator {
         }
 
         // Precompute transitions for all state combinations
-        let mut precomputed_transitions =
-            vec![vec![vec![vec![0.0; 2]; self.d_size]; self.s_size]; 4];
-
         for s_idx in 0..self.s_size {
             for d_idx in 0..self.d_size {
                 let s = self.s_state[s_idx];
@@ -438,26 +438,17 @@ impl WorkloadEstimator {
                         r * self.review_rating_prob[rating - 2];
                 }
 
-                // Again case (rating = 1)
-                let next_s_1 = stability_after_failure(w, s, r, d);
-                let next_d_1 = next_d(w, d, 1);
-                precomputed_transitions[0][s_idx][d_idx][0] = next_s_1;
-                precomputed_transitions[0][s_idx][d_idx][1] = next_d_1;
-
-                self.next_intervals[0][s_idx][d_idx] =
-                    next_interval(w, next_s_1, desired_retention)
-                        .max(1.0)
-                        .floor();
-
-                // Success cases (ratings 2, 3, 4)
-                for rating in 2..=4 {
-                    let next_s = stability_after_success(w, s, r, d, rating);
+                for rating in 1..=4 {
+                    let next_s = if rating == 1 {
+                        stability_after_failure(w, s, r, d)
+                    } else {
+                        stability_after_success(w, s, r, d, rating)
+                    };
                     let next_d_val = next_d(w, d, rating);
-                    precomputed_transitions[rating - 1][s_idx][d_idx][0] = next_s;
-                    precomputed_transitions[rating - 1][s_idx][d_idx][1] = next_d_val;
-
                     self.next_intervals[rating - 1][s_idx][d_idx] =
                         next_interval(w, next_s, desired_retention).max(1.0).floor();
+                    self.next_s_indices[rating - 1][s_idx][d_idx] = self.s2i(next_s);
+                    self.next_d_indices[rating - 1][s_idx][d_idx] = self.d2i(next_d_val);
                 }
             }
         }
@@ -468,12 +459,14 @@ impl WorkloadEstimator {
                 for d_idx in 0..self.d_size {
                     let mut current_cost = 0.0;
                     for rating in 1..=4 {
-                        let next_s = precomputed_transitions[rating - 1][s_idx][d_idx][0];
-                        let next_d = precomputed_transitions[rating - 1][s_idx][d_idx][1];
                         let next_ivl = self.next_intervals[rating - 1][s_idx][d_idx];
                         let next_t = (t as f32 + next_ivl).min(self.t_size as f32) as usize;
                         let transition_prob = self.transition_probs[rating - 1][s_idx];
-                        let future_cost = self.get_cost(next_s, next_d, next_t);
+                        let next_s_idx = self.next_s_indices[rating - 1][s_idx][d_idx];
+                        let next_d_idx = self.next_d_indices[rating - 1][s_idx][d_idx];
+                        let next_t_idx = next_t.min(self.t_size);
+                        let future_cost = self.cost_matrix[next_s_idx][next_d_idx][next_t_idx];
+
                         current_cost += (self.state_rating_costs[REVIEW][rating - 1] + future_cost)
                             * transition_prob;
                     }
