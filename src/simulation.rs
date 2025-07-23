@@ -4,6 +4,7 @@ use crate::inference::{ItemProgress, Parameters, S_MAX, S_MIN};
 use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
+use ndarray::{Array2, Array3};
 use priority_queue::PriorityQueue;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
@@ -295,13 +296,13 @@ pub struct WorkloadEstimator {
     d_max: f32,
 
     // Cost matrix for dynamic programming
-    cost_matrix: Vec<Vec<Vec<f32>>>, // [s_idx][d_idx][t_idx] -> cost
+    cost_matrix: Array3<f32>, // [s_idx][d_idx][t_idx] -> cost
 
     // Cache precomputed values to avoid recalculating
-    next_intervals: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_interval for next_s
-    transition_probs: Vec<Vec<f32>>,      // [rating][s_idx] -> transition probability
-    next_s_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_s_idx
-    next_d_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_d_idx
+    next_intervals: Array3<usize>, // [rating][s_idx][d_idx] -> next_interval for next_s
+    transition_probs: Array2<f32>, // [rating][s_idx] -> transition probability
+    next_s_indices: Array3<usize>, // [rating][s_idx][d_idx] -> next_s_idx
+    next_d_indices: Array3<usize>, // [rating][s_idx][d_idx] -> next_d_idx
 
     // Review configuration
     first_rating_prob: [f32; 4],
@@ -348,14 +349,14 @@ impl WorkloadEstimator {
 
         let t_size = config.learn_span;
 
-        // Initialize cost matrix
-        let cost_matrix = vec![vec![vec![0.0; t_size + 1]; d_size]; s_size];
+        // Initialize cost matrix using ndarray
+        let cost_matrix = Array3::zeros((s_size, d_size, t_size + 1));
 
-        // Cache precomputed values to avoid recalculating
-        let next_intervals = vec![vec![vec![0; d_size]; s_size]; 4];
-        let transition_probs = vec![vec![0.0; s_size]; 4];
-        let next_s_indices = vec![vec![vec![0; d_size]; s_size]; 4];
-        let next_d_indices = vec![vec![vec![0; d_size]; s_size]; 4];
+        // Cache precomputed values using ndarray
+        let next_intervals = Array3::zeros((4, s_size, d_size));
+        let transition_probs = Array2::zeros((4, s_size));
+        let next_s_indices = Array3::zeros((4, s_size, d_size));
+        let next_d_indices = Array3::zeros((4, s_size, d_size));
 
         Self {
             s_state,
@@ -402,10 +403,10 @@ impl WorkloadEstimator {
     }
 
     pub fn evaluate_desired_retention(&mut self, desired_retention: f32, w: &Parameters) -> f32 {
-        // Reset cost matrix
+        // Reset cost matrix - set all values at t_size to 0.0
         for s_idx in 0..self.s_size {
             for d_idx in 0..self.d_size {
-                self.cost_matrix[s_idx][d_idx][self.t_size] = 0.0;
+                self.cost_matrix[[s_idx, d_idx, self.t_size]] = 0.0;
             }
         }
 
@@ -417,9 +418,9 @@ impl WorkloadEstimator {
             let r = power_forgetting_curve(w, ivl, s);
             for rating in 1..=4 {
                 if rating == 1 {
-                    self.transition_probs[rating - 1][s_idx] = 1.0 - r;
+                    self.transition_probs[[rating - 1, s_idx]] = 1.0 - r;
                 } else {
-                    self.transition_probs[rating - 1][s_idx] =
+                    self.transition_probs[[rating - 1, s_idx]] =
                         r * self.review_rating_prob[rating - 2];
                 }
             }
@@ -434,9 +435,9 @@ impl WorkloadEstimator {
                     let next_d_val = next_d(w, d, rating);
                     let next_ivl =
                         next_interval(w, next_s, desired_retention).max(1.0).floor() as usize;
-                    self.next_s_indices[rating - 1][s_idx][d_idx] = self.s2i(next_s);
-                    self.next_d_indices[rating - 1][s_idx][d_idx] = self.d2i(next_d_val);
-                    self.next_intervals[rating - 1][s_idx][d_idx] = next_ivl;
+                    self.next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
+                    self.next_d_indices[[rating - 1, s_idx, d_idx]] = self.d2i(next_d_val);
+                    self.next_intervals[[rating - 1, s_idx, d_idx]] = next_ivl;
                 }
             }
         }
@@ -447,18 +448,18 @@ impl WorkloadEstimator {
                 for d_idx in 0..self.d_size {
                     let mut current_cost = 0.0;
                     for rating in 1..=4 {
-                        let next_s_idx = self.next_s_indices[rating - 1][s_idx][d_idx];
-                        let next_d_idx = self.next_d_indices[rating - 1][s_idx][d_idx];
-                        let next_ivl = self.next_intervals[rating - 1][s_idx][d_idx];
+                        let next_s_idx = self.next_s_indices[[rating - 1, s_idx, d_idx]];
+                        let next_d_idx = self.next_d_indices[[rating - 1, s_idx, d_idx]];
+                        let next_ivl = self.next_intervals[[rating - 1, s_idx, d_idx]];
                         let next_t_idx = (t + next_ivl).min(self.t_size);
-                        let future_cost = self.cost_matrix[next_s_idx][next_d_idx][next_t_idx];
-                        let transition_prob = self.transition_probs[rating - 1][s_idx];
+                        let future_cost = self.cost_matrix[[next_s_idx, next_d_idx, next_t_idx]];
+                        let transition_prob = self.transition_probs[[rating - 1, s_idx]];
 
                         current_cost += (self.state_rating_costs[REVIEW][rating - 1] + future_cost)
                             * transition_prob;
                     }
 
-                    self.cost_matrix[s_idx][d_idx][t] = current_cost;
+                    self.cost_matrix[[s_idx, d_idx, t]] = current_cost;
                 }
             }
         }
@@ -468,7 +469,7 @@ impl WorkloadEstimator {
         for rating in 1..=4 {
             let s_idx = self.s2i(init_s(w, rating));
             let d_idx = self.d2i(init_d(w, rating));
-            total_cost += (self.cost_matrix[s_idx][d_idx][0]
+            total_cost += (self.cost_matrix[[s_idx, d_idx, 0]]
                 + self.state_rating_costs[LEARNING][rating - 1])
                 * self.first_rating_prob[rating - 1];
         }
