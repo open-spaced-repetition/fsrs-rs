@@ -4,7 +4,7 @@ use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
-use ndarray::{Array2, Array3};
+use ndarray::{Array1, Array2, Array3};
 use priority_queue::PriorityQueue;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
@@ -284,8 +284,8 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
 #[derive(Debug)]
 pub struct WorkloadEstimator {
     // State spaces
-    s_state: Vec<f32>,
-    d_state: Vec<f32>,
+    s_state: Array1<f32>,
+    d_state: Array1<f32>,
     s_size: usize,
     s_small_size: usize,
     s_large_size: usize,
@@ -319,36 +319,29 @@ impl WorkloadEstimator {
         let long_step = 10.0;
         let d_eps = 0.5;
 
-        let mut s_mid = (long_step / (1.0 - (-short_step).exp())).min(s_max);
-
         // Create stability state space
-        let mut s_state_small = Vec::new();
-        let mut log_s = S_MIN.ln();
-        while log_s < s_mid.ln() {
-            s_state_small.push(log_s.exp());
-            log_s += short_step;
-        }
-        s_mid = s_state_small.last().copied().unwrap_or(S_MIN);
-
-        let mut s_state_large = Vec::new();
-        let mut s_val = s_mid + long_step;
-        while s_val < s_max {
-            s_state_large.push(s_val);
-            s_val += long_step;
-        }
-
-        let mut s_state = s_state_small.clone();
-        s_state.extend_from_slice(&s_state_large);
-        let s_size = s_state.len();
+        let s_mid_target = (long_step / (1.0 - (-short_step).exp())).min(s_max);
+        let log_s_target = s_mid_target.ln();
+        let s_state_small = (0..)
+            .map(|i| S_MIN.ln() + short_step * i as f32)
+            .take_while(|&log_s| log_s < log_s_target)
+            .map(|log_s| log_s.exp())
+            .collect::<Vec<_>>();
         let s_small_size = s_state_small.len();
+        let s_mid = s_state_small[s_small_size - 1];
+        let s_state_large = (1..)
+            .map(|i| s_mid + long_step * i as f32)
+            .take_while(|&s| s < s_max)
+            .collect::<Vec<_>>();
         let s_large_size = s_state_large.len();
+        let s_state = Array1::from_iter(s_state_small.into_iter().chain(s_state_large));
+        let s_size = s_state.len();
 
         // Create difficulty state space
         let d_size = ((D_MAX - D_MIN) / d_eps + 1.0f32).ceil() as usize;
-        let mut d_state = Vec::new();
-        for i in 0..d_size {
-            d_state.push(D_MIN + (D_MAX - D_MIN) * i as f32 / (d_size - 1) as f32);
-        }
+        let d_state = Array1::from_iter(
+            (0..d_size).map(|i| D_MIN + (D_MAX - D_MIN) * i as f32 / (d_size - 1) as f32),
+        );
 
         let t_size = config.learn_span;
 
