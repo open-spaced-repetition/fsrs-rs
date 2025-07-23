@@ -297,15 +297,6 @@ pub struct WorkloadEstimator {
     long_step: f32,
     s_mid: f32,
 
-    // Cost matrix for dynamic programming
-    cost_matrix: Array3<f32>, // [s_idx][d_idx][t_idx] -> cost
-
-    // Cache precomputed values to avoid recalculating
-    next_intervals: Array3<usize>, // [rating][s_idx][d_idx] -> next_interval for next_s
-    transition_probs: Array2<f32>, // [rating][s_idx] -> transition probability
-    next_s_indices: Array3<usize>, // [rating][s_idx][d_idx] -> next_s_idx
-    next_d_indices: Array3<usize>, // [rating][s_idx][d_idx] -> next_d_idx
-
     // Review configuration
     first_rating_prob: [f32; 4],
     review_rating_prob: [f32; 3],
@@ -345,15 +336,6 @@ impl WorkloadEstimator {
 
         let t_size = config.learn_span;
 
-        // Initialize cost matrix using ndarray
-        let cost_matrix = Array3::zeros((s_size, d_size, t_size + 1));
-
-        // Cache precomputed values using ndarray
-        let next_intervals = Array3::zeros((4, s_size, d_size));
-        let transition_probs = Array2::zeros((4, s_size));
-        let next_s_indices = Array3::zeros((4, s_size, d_size));
-        let next_d_indices = Array3::zeros((4, s_size, d_size));
-
         Self {
             s_state,
             d_state,
@@ -365,11 +347,6 @@ impl WorkloadEstimator {
             short_step,
             long_step,
             s_mid,
-            cost_matrix,
-            next_intervals,
-            transition_probs,
-            next_s_indices,
-            next_d_indices,
             first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
@@ -393,13 +370,12 @@ impl WorkloadEstimator {
         index.min(self.d_size - 1)
     }
 
-    pub fn evaluate_desired_retention(&mut self, desired_retention: f32, w: &Parameters) -> f32 {
-        // Reset cost matrix - set all values at t_size to 0.0
-        for s_idx in 0..self.s_size {
-            for d_idx in 0..self.d_size {
-                self.cost_matrix[[s_idx, d_idx, self.t_size]] = 0.0;
-            }
-        }
+    pub fn evaluate_desired_retention(&self, desired_retention: f32, w: &Parameters) -> f32 {
+        // Cache precomputed values using ndarray
+        let mut transition_probs = Array2::zeros((4, self.s_size));
+        let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
+        let mut next_d_indices = Array3::zeros((4, self.s_size, self.d_size));
+        let mut next_intervals = Array3::zeros((4, self.s_size, self.d_size));
 
         // Precompute transitions for all state combinations
         for s_idx in 0..self.s_size {
@@ -409,10 +385,9 @@ impl WorkloadEstimator {
             let r = power_forgetting_curve(w, ivl, s);
             for rating in 1..=4 {
                 if rating == 1 {
-                    self.transition_probs[[rating - 1, s_idx]] = 1.0 - r;
+                    transition_probs[[rating - 1, s_idx]] = 1.0 - r;
                 } else {
-                    self.transition_probs[[rating - 1, s_idx]] =
-                        r * self.review_rating_prob[rating - 2];
+                    transition_probs[[rating - 1, s_idx]] = r * self.review_rating_prob[rating - 2];
                 }
             }
             for d_idx in 0..self.d_size {
@@ -426,31 +401,36 @@ impl WorkloadEstimator {
                     let next_d_val = next_d(w, d, rating);
                     let next_ivl =
                         next_interval(w, next_s, desired_retention).max(1.0).floor() as usize;
-                    self.next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
-                    self.next_d_indices[[rating - 1, s_idx, d_idx]] = self.d2i(next_d_val);
-                    self.next_intervals[[rating - 1, s_idx, d_idx]] = next_ivl;
+                    next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
+                    next_d_indices[[rating - 1, s_idx, d_idx]] = self.d2i(next_d_val);
+                    next_intervals[[rating - 1, s_idx, d_idx]] = next_ivl;
                 }
             }
         }
+        let transition_probs = transition_probs.view();
+        let next_s_indices = next_s_indices.view();
+        let next_d_indices = next_d_indices.view();
+        let next_intervals = next_intervals.view();
 
+        // Initialize cost matrix using ndarray
+        let mut cost_matrix = Array3::zeros((self.s_size, self.d_size, self.t_size + 1));
         // Dynamic programming backward pass
         for t in (0..self.t_size).rev() {
             for s_idx in 0..self.s_size {
                 for d_idx in 0..self.d_size {
                     let mut current_cost = 0.0;
                     for rating in 1..=4 {
-                        let next_s_idx = self.next_s_indices[[rating - 1, s_idx, d_idx]];
-                        let next_d_idx = self.next_d_indices[[rating - 1, s_idx, d_idx]];
-                        let next_ivl = self.next_intervals[[rating - 1, s_idx, d_idx]];
+                        let next_s_idx = next_s_indices[[rating - 1, s_idx, d_idx]];
+                        let next_d_idx = next_d_indices[[rating - 1, s_idx, d_idx]];
+                        let next_ivl = next_intervals[[rating - 1, s_idx, d_idx]];
                         let next_t_idx = (t + next_ivl).min(self.t_size);
-                        let future_cost = self.cost_matrix[[next_s_idx, next_d_idx, next_t_idx]];
-                        let transition_prob = self.transition_probs[[rating - 1, s_idx]];
+                        let future_cost = cost_matrix[[next_s_idx, next_d_idx, next_t_idx]];
+                        let transition_prob = transition_probs[[rating - 1, s_idx]];
 
                         current_cost += (self.state_rating_costs[REVIEW][rating - 1] + future_cost)
                             * transition_prob;
                     }
-
-                    self.cost_matrix[[s_idx, d_idx, t]] = current_cost;
+                    cost_matrix[[s_idx, d_idx, t]] = current_cost;
                 }
             }
         }
@@ -460,7 +440,7 @@ impl WorkloadEstimator {
         for rating in 1..=4 {
             let s_idx = self.s2i(init_s(w, rating));
             let d_idx = self.d2i(init_d(w, rating));
-            total_cost += (self.cost_matrix[[s_idx, d_idx, 0]]
+            total_cost += (cost_matrix[[s_idx, d_idx, 0]]
                 + self.state_rating_costs[LEARNING][rating - 1])
                 * self.first_rating_prob[rating - 1];
         }
@@ -476,7 +456,7 @@ pub fn expected_workload(
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
 
-    let mut estimator = WorkloadEstimator::new(config);
+    let estimator = WorkloadEstimator::new(config);
     let workload = estimator.evaluate_desired_retention(desired_retention, w);
     Ok(workload)
 }
