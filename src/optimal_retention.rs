@@ -151,19 +151,19 @@ impl Default for SimulatorConfig {
             post_scheduling_fn: None,
             review_priority_fn: None,
             learning_step_transitions: [
-                [0.3687, 0.0628, 0.5108, 0.0577],
-                [0.0441, 0.4553, 0.4457, 0.0549],
-                [0.0518, 0.0470, 0.8462, 0.0550],
+                [0.3686, 0.0628, 0.5108, 0.0577],
+                [0.0442, 0.4553, 0.4457, 0.0549],
+                [0.0519, 0.047, 0.8462, 0.055],
             ],
             relearning_step_transitions: [
-                [0.2157, 0.0643, 0.6595, 0.0605],
-                [0.0500, 0.4638, 0.4475, 0.0387],
-                [0.1056, 0.1434, 0.7266, 0.0244],
+                [0.2157, 0.0643, 0.6595, 0.0604],
+                [0.05, 0.4638, 0.4475, 0.0387],
+                [0.1057, 0.1434, 0.7266, 0.0244],
             ],
             state_rating_costs: [
-                [12.75, 12.26, 8.0, 6.38],
-                [13.05, 11.74, 7.42, 5.6],
-                [10.56, 10.0, 7.37, 5.4],
+                [19.58, 18.79, 13.78, 10.71],
+                [19.38, 17.59, 12.38, 8.94],
+                [16.44, 15.25, 12.32, 8.03],
             ],
             learning_step_count: 2,
             relearning_step_count: 1,
@@ -1027,21 +1027,10 @@ pub fn extract_simulator_config(
         }
     }
 
-    fn median(x: &mut [u32]) -> u32 {
-        x.sort_unstable();
-        let n = x.len();
-        if n % 2 == 0 {
-            (x[n / 2 - 1] + x[n / 2]) / 2
-        } else {
-            x[n / 2]
-        }
-    }
-
-    // Calculate median costs
+    // Calculate mean costs
     for ((state, rating), durations) in state_rating_durations.iter() {
-        let mut durations = durations.clone();
-        let median_duration = median(&mut durations);
-        state_rating_costs[*state][*rating] = median_duration as f32 / 1000.0;
+        let mean_duration = durations.iter().sum::<u32>() / durations.len() as u32;
+        state_rating_costs[*state][*rating] = mean_duration as f32 / 1000.0;
     }
 
     // Group data by card_id and real_days
@@ -1248,10 +1237,10 @@ mod tests {
 
         // Expected results for each init_rating
         let expected_results = [
-            (0.12584424, 8.779163, 41.5), // init_rating = 1
-            (1.3771622, 5.092413, 28.26), // init_rating = 2
-            (2.3065, 2.1112142, 16.0),    // init_rating = 3
-            (8.2956, 1.0, 6.38),          // init_rating = 4
+            (0.12584424, 8.779163, 66.72), // init_rating = 1
+            (1.3771622, 5.092413, 46.35),  // init_rating = 2
+            (2.3065, 2.1112142, 27.56),    // init_rating = 3
+            (8.2956, 1.0, 10.71),          // init_rating = 4
         ];
 
         // Test for each init_rating from 1 to 4
@@ -1292,7 +1281,7 @@ mod tests {
             config.relearning_step_count,
             &mut rng,
         );
-        assert_eq!(result, (1.4311036, 8.3286495, 7.37));
+        assert_eq!(result, (1.4311036, 8.3286495, 12.32));
     }
 
     #[test]
@@ -1304,7 +1293,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5361.807
+            3370.383
         );
         Ok(())
     }
@@ -1573,7 +1562,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            5299.486
+            3354.437
         );
         Ok(())
     }
@@ -1741,51 +1730,51 @@ mod tests {
             };
         }
         println!("Default behavior: low difficulty cards reviewed first.");
-        run_test!(None, 42.48303)?;
+        run_test!(None, 69.28404)?;
         println!("High difficulty cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, _w: &Parameters| -(card.difficulty * 100.0) as i32),
-            45.8228
+            74.6778
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, w: &Parameters| (card.retrievability(w) * 1000.0) as i32),
-            46.076054
+            74.90477
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, w: &Parameters| -(card.retrievability(w) * 1000.0) as i32),
-            42.734978
+            69.74799
         )?;
         println!("Low stability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, _w: &Parameters| (card.stability * 100.0) as i32),
-            45.67156
+            74.361115
         )?;
         println!("High stability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, _w: &Parameters| -(card.stability * 100.0) as i32),
-            42.09459
+            68.68905
         )?;
         println!("Long interval cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, _w: &Parameters| -card.interval as i32),
-            42.538654
+            69.376434
         )?;
         println!("Short interval cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, _w: &Parameters| card.interval as i32),
-            45.86658
+            74.64231
         )?;
         println!("Early scheduled due cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, _w: &Parameters| card.scheduled_due() as i32),
-            43.54182
+            70.820175
         )?;
         println!("Late scheduled due cards reviewed first.");
         run_test!(
             wrap!(|card: &Card, _w: &Parameters| -card.scheduled_due() as i32),
-            43.668358
+            71.20782
         )?;
         Ok(())
     }
@@ -1856,7 +1845,7 @@ mod tests {
         let optimal_retention = fsrs
             .optimal_retention(&config, &param, |_v| true, None, None)
             .unwrap();
-        [optimal_retention].assert_approx_eq([0.7603231]);
+        [optimal_retention].assert_approx_eq([0.75508595]);
         Ok(())
     }
 
@@ -1882,9 +1871,9 @@ mod tests {
                     [0.028571429, 0.007142857, 0.55, 0.41428572]
                 ],
                 state_rating_costs: [
-                    [9.922, 0.0, 7.524, 5.467],
-                    [9.318, 6.84, 5.83, 3.991],
-                    [9.912, 0.0, 4.671, 4.731]
+                    [11.961, 0.0, 9.515, 7.437],
+                    [11.075, 9.047, 7.774, 5.149],
+                    [10.607, 0.0, 6.942, 6.643]
                 ],
                 ..Default::default()
             }
@@ -1897,19 +1886,19 @@ mod tests {
                 first_rating_prob: [0.19413717, 0.0012997796, 0.1484375, 0.65612555],
                 review_rating_prob: [0.07409216, 0.900103, 0.025804851],
                 learning_step_transitions: [
-                    [0.12520419, 0.0045695365, 0.26328918, 0.6069371],
-                    [0.059351854, 0.44009256, 0.43120366, 0.06935185],
-                    [0.019313155, 0.0038998832, 0.5544936, 0.42229337]
+                    [0.12519868, 0.0045695365, 0.26328918, 0.6069371],
+                    [0.059444442, 0.44009256, 0.43120366, 0.06935185],
+                    [0.019318976, 0.0038998832, 0.5544936, 0.42229337]
                 ],
                 relearning_step_transitions: [
-                    [0.050443545, 0.004855989, 0.24766704, 0.6970334],
+                    [0.050443545, 0.004855989, 0.24766704, 0.6970276],
                     [0.06481481, 0.44796297, 0.43287036, 0.05435185],
-                    [0.048842106, 0.043, 0.5964737, 0.31168422]
+                    [0.04886842, 0.043, 0.5964737, 0.31168422]
                 ],
                 state_rating_costs: [
-                    [10.08, 12.26, 7.54, 5.47],
-                    [9.54, 7.08, 5.84, 4.2],
-                    [10.26, 10.0, 5.08, 4.76]
+                    [12.38, 18.79, 9.68, 7.46],
+                    [11.57, 9.47, 7.79, 5.65],
+                    [13.74, 15.25, 7.75, 6.7]
                 ],
                 ..Default::default()
             }
