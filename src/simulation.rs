@@ -298,8 +298,6 @@ pub struct WorkloadEstimator {
     cost_matrix: Vec<Vec<Vec<f32>>>, // [s_idx][d_idx][t_idx] -> cost
 
     // Cache precomputed values to avoid recalculating
-    intervals: Vec<Vec<f32>>,             // [s_idx][d_idx] -> interval
-    retrievabilities: Vec<Vec<f32>>,      // [s_idx][d_idx] -> retrievability
     next_intervals: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_interval for next_s
     transition_probs: Vec<Vec<f32>>,      // [rating][s_idx] -> transition probability
     next_s_indices: Vec<Vec<Vec<usize>>>, // [rating][s_idx][d_idx] -> next_s_idx
@@ -354,8 +352,6 @@ impl WorkloadEstimator {
         let cost_matrix = vec![vec![vec![0.0; t_size + 1]; d_size]; s_size];
 
         // Cache precomputed values to avoid recalculating
-        let intervals = vec![vec![0.0; d_size]; s_size];
-        let retrievabilities = vec![vec![0.0; d_size]; s_size];
         let next_intervals = vec![vec![vec![0; d_size]; s_size]; 4];
         let transition_probs = vec![vec![0.0; s_size]; 4];
         let next_s_indices = vec![vec![vec![0; d_size]; s_size]; 4];
@@ -375,8 +371,6 @@ impl WorkloadEstimator {
             d_min,
             d_max,
             cost_matrix,
-            intervals,
-            retrievabilities,
             next_intervals,
             transition_probs,
             next_s_indices,
@@ -417,23 +411,20 @@ impl WorkloadEstimator {
 
         // Precompute transitions for all state combinations
         for s_idx in 0..self.s_size {
-            for d_idx in 0..self.d_size {
-                let s = self.s_state[s_idx];
-                let d = self.d_state[d_idx];
-
-                // Calculate interval and retrievability once and cache them
-                let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
-                let r = power_forgetting_curve(w, ivl, s);
-
-                // Store in cache
-                self.intervals[s_idx][d_idx] = ivl;
-                self.retrievabilities[s_idx][d_idx] = r;
-                self.transition_probs[0][s_idx] = 1.0 - r; // Rating 1 (Again)
-                for rating in 2..=4 {
+            let s = self.s_state[s_idx];
+            // Calculate interval and retrievability once and cache them
+            let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
+            let r = power_forgetting_curve(w, ivl, s);
+            for rating in 1..=4 {
+                if rating == 1 {
+                    self.transition_probs[rating - 1][s_idx] = 1.0 - r;
+                } else {
                     self.transition_probs[rating - 1][s_idx] =
                         r * self.review_rating_prob[rating - 2];
                 }
-
+            }
+            for d_idx in 0..self.d_size {
+                let d = self.d_state[d_idx];
                 for rating in 1..=4 {
                     let next_s = if rating == 1 {
                         stability_after_failure(w, s, r, d)
@@ -441,10 +432,11 @@ impl WorkloadEstimator {
                         stability_after_success(w, s, r, d, rating)
                     };
                     let next_d_val = next_d(w, d, rating);
-                    self.next_intervals[rating - 1][s_idx][d_idx] =
+                    let next_ivl =
                         next_interval(w, next_s, desired_retention).max(1.0).floor() as usize;
                     self.next_s_indices[rating - 1][s_idx][d_idx] = self.s2i(next_s);
                     self.next_d_indices[rating - 1][s_idx][d_idx] = self.d2i(next_d_val);
+                    self.next_intervals[rating - 1][s_idx][d_idx] = next_ivl;
                 }
             }
         }
