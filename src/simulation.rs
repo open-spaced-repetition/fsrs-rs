@@ -1,6 +1,6 @@
 use crate::FSRS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{ItemProgress, Parameters, S_MAX, S_MIN};
+use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
@@ -38,6 +38,10 @@ impl Round for f32 {
     }
 }
 
+pub(crate) const S_MIN: f32 = 0.001;
+pub(crate) const S_MAX: f32 = 36500.0;
+pub(crate) const D_MIN: f32 = 1.0;
+pub(crate) const D_MAX: f32 = 10.0;
 const R_MIN: f32 = 0.70;
 const R_MAX: f32 = 0.95;
 const RATINGS: [usize; 4] = [1, 2, 3, 4];
@@ -242,7 +246,7 @@ fn memory_state_short_term(
             consecutive = 0;
         }
     }
-    (new_s.clamp(S_MIN, S_MAX), new_d.clamp(1.0, 10.0), cost)
+    (new_s.clamp(S_MIN, S_MAX), new_d.clamp(D_MIN, D_MAX), cost)
 }
 
 fn init_d(w: &[f32], rating: usize) -> f32 {
@@ -256,7 +260,7 @@ fn linear_damping(delta_d: f32, old_d: f32) -> f32 {
 fn next_d(w: &[f32], d: f32, rating: usize) -> f32 {
     let delta_d = -w[6] * (rating as f32 - 3.0);
     let new_d = d + linear_damping(delta_d, d);
-    mean_reversion(w, init_d(w, 4), new_d).clamp(1.0, 10.0)
+    mean_reversion(w, init_d(w, 4), new_d).clamp(D_MIN, D_MAX)
 }
 
 fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
@@ -283,6 +287,8 @@ pub struct WorkloadEstimator {
     s_state: Vec<f32>,
     d_state: Vec<f32>,
     s_size: usize,
+    s_small_size: usize,
+    s_large_size: usize,
     d_size: usize,
     t_size: usize,
 
@@ -290,10 +296,6 @@ pub struct WorkloadEstimator {
     short_step: f32,
     long_step: f32,
     s_mid: f32,
-    s_state_small: Vec<f32>,
-    s_state_large: Vec<f32>,
-    d_min: f32,
-    d_max: f32,
 
     // Cost matrix for dynamic programming
     cost_matrix: Array3<f32>, // [s_idx][d_idx][t_idx] -> cost
@@ -315,11 +317,9 @@ impl WorkloadEstimator {
         let s_max = 365.0;
         let short_step = 2.0f32.ln() / 5.0;
         let long_step = 10.0;
-        let d_min = 1.0;
-        let d_max = 10.0;
         let d_eps = 0.5;
 
-        let s_mid = (long_step / (1.0 - (-short_step).exp())).min(s_max);
+        let mut s_mid = (long_step / (1.0 - (-short_step).exp())).min(s_max);
 
         // Create stability state space
         let mut s_state_small = Vec::new();
@@ -328,9 +328,10 @@ impl WorkloadEstimator {
             s_state_small.push(log_s.exp());
             log_s += short_step;
         }
+        s_mid = s_state_small.last().copied().unwrap_or(S_MIN);
 
         let mut s_state_large = Vec::new();
-        let mut s_val = s_state_small.last().copied().unwrap_or(S_MIN) + long_step;
+        let mut s_val = s_mid + long_step;
         while s_val < s_max {
             s_state_large.push(s_val);
             s_val += long_step;
@@ -339,12 +340,14 @@ impl WorkloadEstimator {
         let mut s_state = s_state_small.clone();
         s_state.extend_from_slice(&s_state_large);
         let s_size = s_state.len();
+        let s_small_size = s_state_small.len();
+        let s_large_size = s_state_large.len();
 
         // Create difficulty state space
-        let d_size = ((d_max - d_min) / d_eps + 1.0f32).ceil() as usize;
+        let d_size = ((D_MAX - D_MIN) / d_eps + 1.0f32).ceil() as usize;
         let mut d_state = Vec::new();
         for i in 0..d_size {
-            d_state.push(d_min + (d_max - d_min) * i as f32 / (d_size - 1) as f32);
+            d_state.push(D_MIN + (D_MAX - D_MIN) * i as f32 / (d_size - 1) as f32);
         }
 
         let t_size = config.learn_span;
@@ -362,15 +365,13 @@ impl WorkloadEstimator {
             s_state,
             d_state,
             s_size,
+            s_small_size,
+            s_large_size,
             d_size,
             t_size,
             short_step,
             long_step,
             s_mid,
-            s_state_small,
-            s_state_large,
-            d_min,
-            d_max,
             cost_matrix,
             next_intervals,
             transition_probs,
@@ -386,19 +387,16 @@ impl WorkloadEstimator {
         if s <= self.s_mid {
             // Handle small values (logarithmic scale)
             let index = ((s.ln() - S_MIN.ln()) / self.short_step).ceil() as usize;
-            index.min(self.s_state_small.len() - 1)
+            index.min(self.s_small_size - 1)
         } else {
             // Handle large values (linear scale)
-            let index = ((s - self.s_state_small.last().copied().unwrap_or(S_MIN) - self.long_step)
-                / self.long_step)
-                .ceil() as usize;
-            self.s_state_small.len() + index.min(self.s_state_large.len() - 1)
+            let index = ((s - self.s_mid - self.long_step) / self.long_step).ceil() as usize;
+            self.s_small_size + index.min(self.s_large_size - 1)
         }
     }
 
     fn d2i(&self, d: f32) -> usize {
-        let index =
-            ((d - self.d_min) / (self.d_max - self.d_min) * self.d_size as f32).floor() as usize;
+        let index = ((d - D_MIN) / (D_MAX - D_MIN) * self.d_size as f32).floor() as usize;
         index.min(self.d_size - 1)
     }
 
@@ -685,7 +683,7 @@ pub fn simulate(
             // Initialize stability and difficulty for new cards
             let init_rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
             let init_stability = init_s(w, init_rating);
-            let init_difficulty = init_d(w, init_rating).clamp(1.0, 10.0);
+            let init_difficulty = init_d(w, init_rating).clamp(D_MIN, D_MAX);
             let (new_s, new_d, cost) = memory_state_short_term(
                 w,
                 init_stability,

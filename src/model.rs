@@ -1,7 +1,8 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters, S_MAX, S_MIN};
+use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters};
 use crate::parameter_clipper::clip_parameters;
+use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
 use burn::backend::NdArray;
 use burn::backend::ndarray::NdArrayDevice;
 use burn::{
@@ -162,7 +163,7 @@ impl<B: Backend> Model<B> {
             new_stability = new_stability.mask_where(delta_t.equal_elem(0), stability_short_term);
 
             let mut new_difficulty = self.next_difficulty(state.difficulty.clone(), rating.clone());
-            new_difficulty = self.mean_reversion(new_difficulty).clamp(1.0, 10.0);
+            new_difficulty = self.mean_reversion(new_difficulty).clamp(D_MIN, D_MAX);
             // mask padding zeros for rating
             new_stability = new_stability.mask_where(rating.clone().equal_elem(0), state.stability);
             new_difficulty = new_difficulty.mask_where(rating.equal_elem(0), state.difficulty);
@@ -170,7 +171,7 @@ impl<B: Backend> Model<B> {
         } else {
             (
                 self.init_stability(rating.clone()),
-                self.init_difficulty(rating).clamp(1.0, 10.0),
+                self.init_difficulty(rating).clamp(D_MIN, D_MAX),
             )
         };
         MemoryStateTensors {
