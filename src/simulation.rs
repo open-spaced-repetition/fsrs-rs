@@ -410,6 +410,7 @@ impl WorkloadEstimator {
 
         // Initialize cost matrix using ndarray
         let mut cost_matrix = Array3::zeros((self.s_size, self.d_size, self.t_size + 1));
+        let review_costs = self.state_rating_costs[REVIEW];
         // Dynamic programming backward pass
         for t in (0..self.t_size).rev() {
             for s_idx in 0..self.s_size {
@@ -420,13 +421,15 @@ impl WorkloadEstimator {
                         let next_d_idx = next_d_indices[[rating - 1, s_idx, d_idx]];
                         let next_ivl = next_intervals[[rating - 1, s_idx, d_idx]];
                         let next_t_idx = (t + next_ivl).min(self.t_size);
-                        let future_cost = cost_matrix[[next_s_idx, next_d_idx, next_t_idx]];
+                        let future_cost =
+                            unsafe { *cost_matrix.uget([next_s_idx, next_d_idx, next_t_idx]) };
                         let transition_prob = transition_probs[[rating - 1, s_idx]];
 
-                        current_cost += (self.state_rating_costs[REVIEW][rating - 1] + future_cost)
-                            * transition_prob;
+                        current_cost += (review_costs[rating - 1] + future_cost) * transition_prob;
                     }
-                    cost_matrix[[s_idx, d_idx, t]] = current_cost;
+                    unsafe {
+                        *cost_matrix.uget_mut([s_idx, d_idx, t]) = current_cost;
+                    }
                 }
             }
         }
