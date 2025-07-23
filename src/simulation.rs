@@ -287,15 +287,14 @@ pub struct WorkloadEstimator {
     s_state: Array1<f32>,
     d_state: Array1<f32>,
     s_size: usize,
-    s_small_size: usize,
-    s_large_size: usize,
     d_size: usize,
     t_size: usize,
+    s_mid: f32,
+    s_mid_size: usize,
 
     // Configuration
     short_step: f32,
     long_step: f32,
-    s_mid: f32,
 
     // Review configuration
     first_rating_prob: [f32; 4],
@@ -318,13 +317,12 @@ impl WorkloadEstimator {
             .take_while(|&log_s| log_s < log_s_target)
             .map(|log_s| log_s.exp())
             .collect::<Vec<_>>();
-        let s_small_size = s_state_small.len();
-        let s_mid = s_state_small[s_small_size - 1];
+        let s_mid_size = s_state_small.len();
+        let s_mid = s_state_small[s_mid_size - 1];
         let s_state_large = (1..)
             .map(|i| s_mid + long_step * i as f32)
             .take_while(|&s| s < s_max)
             .collect::<Vec<_>>();
-        let s_large_size = s_state_large.len();
         let s_state = Array1::from_iter(s_state_small.into_iter().chain(s_state_large));
         let s_size = s_state.len();
 
@@ -340,13 +338,12 @@ impl WorkloadEstimator {
             s_state,
             d_state,
             s_size,
-            s_small_size,
-            s_large_size,
             d_size,
             t_size,
+            s_mid,
+            s_mid_size,
             short_step,
             long_step,
-            s_mid,
             first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
@@ -354,15 +351,14 @@ impl WorkloadEstimator {
     }
 
     fn s2i(&self, s: f32) -> usize {
-        if s <= self.s_mid {
+        let index = if s <= self.s_mid {
             // Handle small values (logarithmic scale)
-            let index = ((s.ln() - S_MIN.ln()) / self.short_step).ceil() as usize;
-            index.min(self.s_small_size - 1)
+            ((s.ln() - S_MIN.ln()) / self.short_step).ceil() as usize
         } else {
             // Handle large values (linear scale)
-            let index = ((s - self.s_mid - self.long_step) / self.long_step).ceil() as usize;
-            self.s_small_size + index.min(self.s_large_size - 1)
-        }
+            self.s_mid_size - 1 + ((s - self.s_mid) / self.long_step).ceil() as usize
+        };
+        index.min(self.s_size - 1)
     }
 
     fn d2i(&self, d: f32) -> usize {
