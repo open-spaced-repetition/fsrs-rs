@@ -34,28 +34,11 @@ pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f32 {
 }
 
 pub(crate) fn run_expected_workload_for_30_retentions() {
-    let cost_success = 7.0;
-    let cost_failure = 23.0;
-    let cost_learn = 30.0;
-    let initial_pass_rate = 0.8;
-    let termination_prob = 0.0001;
-    let learn_day_limit = 100_000_000_usize;
+    let config = SimulatorConfig::default();
 
     for i in 0..30 {
         let desired_retention = 0.70 + (i as f32 * 0.01);
-        black_box(
-            expected_workload(
-                &DEFAULT_PARAMETERS,
-                desired_retention,
-                learn_day_limit,
-                cost_success,
-                cost_failure,
-                cost_learn,
-                initial_pass_rate,
-                termination_prob,
-            )
-            .unwrap(),
-        );
+        black_box(expected_workload(&DEFAULT_PARAMETERS, desired_retention, &config).unwrap());
     }
 }
 

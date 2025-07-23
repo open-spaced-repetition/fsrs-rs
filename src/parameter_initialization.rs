@@ -1,7 +1,7 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::FSRSItem;
 use crate::error::{FSRSError, Result};
-use crate::inference::S_MIN;
+use crate::simulation::S_MIN;
 use ndarray::Array1;
 use std::collections::HashMap;
 

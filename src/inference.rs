@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
 use crate::model::{FSRS, Get, MemoryStateTensors};
+use crate::simulation::{D_MAX, D_MIN, S_MIN};
 use crate::training::ComputeParametersInput;
 use burn::nn::loss::Reduction;
 use burn::tensor::cast::ToElement;
@@ -16,8 +17,6 @@ use crate::model::Model;
 use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem};
 use burn::tensor::ElementConversion;
-pub(crate) const S_MIN: f32 = 0.001;
-pub(crate) const S_MAX: f32 = 36500.0;
 /// This is a slice for efficiency, but should always be 21 in length.
 pub type Parameters = [f32];
 use itertools::izip;
@@ -190,7 +189,7 @@ impl<B: Backend> FSRS<B> {
         } else {
             Ok(MemoryState {
                 stability,
-                difficulty: difficulty.clamp(1.0, 10.0),
+                difficulty: difficulty.clamp(D_MIN, D_MAX),
             })
         }
     }
