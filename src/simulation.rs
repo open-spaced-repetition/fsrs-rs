@@ -300,6 +300,10 @@ pub struct WorkloadEstimator {
     first_rating_prob: [f32; 4],
     review_rating_prob: [f32; 3],
     state_rating_costs: [[f32; 4]; 3],
+    learning_step_transitions: [[f32; 4]; 3],
+    learning_step_count: usize,
+    relearning_step_transitions: [[f32; 4]; 3],
+    relearning_step_count: usize,
 }
 
 impl WorkloadEstimator {
@@ -347,6 +351,10 @@ impl WorkloadEstimator {
             first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
+            learning_step_transitions: config.learning_step_transitions,
+            learning_step_count: config.learning_step_count,
+            relearning_step_transitions: config.relearning_step_transitions,
+            relearning_step_count: config.relearning_step_count,
         }
     }
 
@@ -366,13 +374,277 @@ impl WorkloadEstimator {
         index.min(self.d_size - 1)
     }
 
+    fn initial_memory_state(&self, init_rating: usize, w: &Parameters) -> (f32, f32) {
+        let consecutive_max = if init_rating > 2 {
+            self.learning_step_count.saturating_sub(1)
+        } else {
+            self.learning_step_count
+        };
+
+        // --- Common Initialization ---
+        let init_s = init_s(w, init_rating);
+        let init_d = init_d(w, init_rating);
+
+        // --- DP for Stability (s) ---
+        let expected_s = {
+            // Shape: [4, consecutive_max + 1, s_size]
+            let mut dp_s = Array3::<f32>::zeros((4, consecutive_max + 1, self.s_size));
+            dp_s[[init_rating - 1, 0, self.s2i(init_s)]] = 1.0;
+
+            for _ in 0..MAX_STEPS {
+                let mut next_dp_s = Array3::<f32>::zeros((4, consecutive_max + 1, self.s_size));
+                for r in 1..=4 {
+                    for c in 0..=consecutive_max {
+                        for s_idx in 0..self.s_size {
+                            let prob = dp_s[[r - 1, c, s_idx]];
+                            if prob == 0.0 {
+                                continue;
+                            }
+
+                            if r == 4 || c >= consecutive_max {
+                                next_dp_s[[r - 1, c, s_idx]] += prob;
+                                continue;
+                            }
+
+                            let current_s = self.s_state[s_idx];
+                            for nr in 1..=4 {
+                                let transition_prob = self.learning_step_transitions[r - 1][nr - 1];
+                                let next_s_val = stability_short_term(w, current_s, nr);
+                                let nc = match nr {
+                                    1 => 0,
+                                    x if x > 2 => c + 1,
+                                    _ => c,
+                                };
+                                let next_s_idx = self.s2i(next_s_val);
+                                next_dp_s[[nr - 1, nc.min(consecutive_max), next_s_idx]] +=
+                                    prob * transition_prob;
+                            }
+                        }
+                    }
+                }
+                dp_s = next_dp_s;
+            }
+
+            let mut final_expected_s = 0.0;
+            for r in 1..=4 {
+                for c in 0..=consecutive_max {
+                    for s_idx in 0..self.s_size {
+                        let prob = dp_s[[r - 1, c, s_idx]];
+                        if prob > 0.0 {
+                            final_expected_s += prob * self.s_state[s_idx];
+                        }
+                    }
+                }
+            }
+            final_expected_s
+        };
+
+        // --- DP for Difficulty (d) ---
+        let expected_d = {
+            // Shape: [4, consecutive_max + 1, d_size]
+            let mut dp_d = Array3::<f32>::zeros((4, consecutive_max + 1, self.d_size));
+            dp_d[[init_rating - 1, 0, self.d2i(init_d)]] = 1.0;
+
+            for _ in 0..MAX_STEPS {
+                let mut next_dp_d = Array3::<f32>::zeros((4, consecutive_max + 1, self.d_size));
+                for r in 1..=4 {
+                    for c in 0..=consecutive_max {
+                        for d_idx in 0..self.d_size {
+                            let prob = dp_d[[r - 1, c, d_idx]];
+                            if prob == 0.0 {
+                                continue;
+                            }
+
+                            if r == 4 || c >= consecutive_max {
+                                next_dp_d[[r - 1, c, d_idx]] += prob;
+                                continue;
+                            }
+
+                            let current_d = self.d_state[d_idx];
+                            for nr in 1..=4 {
+                                let transition_prob = self.learning_step_transitions[r - 1][nr - 1];
+                                let next_d_val = next_d(w, current_d, nr);
+                                let nc = match nr {
+                                    1 => 0,
+                                    x if x > 2 => c + 1,
+                                    _ => c,
+                                };
+                                let next_d_idx = self.d2i(next_d_val);
+                                next_dp_d[[nr - 1, nc.min(consecutive_max), next_d_idx]] +=
+                                    prob * transition_prob;
+                            }
+                        }
+                    }
+                }
+                dp_d = next_dp_d;
+            }
+
+            let mut final_expected_d = 0.0;
+            for r in 1..=4 {
+                for c in 0..=consecutive_max {
+                    for d_idx in 0..self.d_size {
+                        let prob = dp_d[[r - 1, c, d_idx]];
+                        if prob > 0.0 {
+                            final_expected_d += prob * self.d_state[d_idx];
+                        }
+                    }
+                }
+            }
+            final_expected_d
+        };
+
+        (expected_s, expected_d)
+    }
+
+    fn precompute_relearning_memory_states(&self, w: &Parameters) -> (Array1<f32>, Array1<f32>) {
+        let consecutive_max = self.relearning_step_count;
+        let r_init = 1;
+
+        // --- Precompute for all initial s in s_state ---
+        let mut relearning_s = Array1::zeros(self.s_size);
+        for s_idx_init in 0..self.s_size {
+            // dp_s shape: [4, consecutive_max+1, self.s_size]
+            let mut dp_s = Array3::<f32>::zeros((4, consecutive_max + 1, self.s_size));
+            dp_s[[r_init - 1, 0, s_idx_init]] = 1.0;
+
+            for _ in 0..MAX_STEPS {
+                let mut next_dp_s = Array3::<f32>::zeros((4, consecutive_max + 1, self.s_size));
+                for r in 1..=4 {
+                    for c in 0..=consecutive_max {
+                        for s_idx in 0..self.s_size {
+                            let prob = dp_s[[r - 1, c, s_idx]];
+                            if prob == 0.0 {
+                                continue;
+                            }
+
+                            if r == 4 || c >= consecutive_max {
+                                next_dp_s[[r - 1, c, s_idx]] += prob;
+                                continue;
+                            }
+
+                            let current_s = self.s_state[s_idx];
+                            for nr in 1..=4 {
+                                let transition_prob =
+                                    self.relearning_step_transitions[r - 1][nr - 1];
+                                let next_s_val = stability_short_term(w, current_s, nr);
+                                let nc = match nr {
+                                    1 => 0,
+                                    x if x > 2 => c + 1,
+                                    _ => c,
+                                };
+                                let next_s_idx = self.s2i(next_s_val);
+                                next_dp_s[[nr - 1, nc.min(consecutive_max), next_s_idx]] +=
+                                    prob * transition_prob;
+                            }
+                        }
+                    }
+                }
+                dp_s = next_dp_s;
+            }
+
+            let mut final_expected_s = 0.0;
+            for r in 1..=4 {
+                for c in 0..=consecutive_max {
+                    for s_idx in 0..self.s_size {
+                        let p = dp_s[[r - 1, c, s_idx]];
+                        if p > 0.0 {
+                            final_expected_s += p * self.s_state[s_idx];
+                        }
+                    }
+                }
+            }
+            relearning_s[s_idx_init] = final_expected_s;
+        }
+
+        // --- Precompute for all initial d in d_state ---
+        let mut relearning_d = Array1::zeros(self.d_size);
+        for d_idx_init in 0..self.d_size {
+            // dp_d shape: [4, consecutive_max+1, self.d_size]
+            let mut dp_d = Array3::<f32>::zeros((4, consecutive_max + 1, self.d_size));
+            dp_d[[r_init - 1, 0, d_idx_init]] = 1.0;
+
+            for _ in 0..MAX_STEPS {
+                let mut next_dp_d = Array3::<f32>::zeros((4, consecutive_max + 1, self.d_size));
+                for r in 1..=4 {
+                    for c in 0..=consecutive_max {
+                        for d_idx in 0..self.d_size {
+                            let prob = dp_d[[r - 1, c, d_idx]];
+                            if prob == 0.0 {
+                                continue;
+                            }
+
+                            if r == 4 || c >= consecutive_max {
+                                next_dp_d[[r - 1, c, d_idx]] += prob;
+                                continue;
+                            }
+
+                            let current_d = self.d_state[d_idx];
+                            for nr in 1..=4 {
+                                let transition_prob =
+                                    self.relearning_step_transitions[r - 1][nr - 1];
+                                let next_d_val = next_d(w, current_d, nr);
+                                let nc = match nr {
+                                    1 => 0,
+                                    x if x > 2 => c + 1,
+                                    _ => c,
+                                };
+                                let next_d_idx = self.d2i(next_d_val);
+                                next_dp_d[[nr - 1, nc.min(consecutive_max), next_d_idx]] +=
+                                    prob * transition_prob;
+                            }
+                        }
+                    }
+                }
+                dp_d = next_dp_d;
+            }
+
+            let mut final_expected_d = 0.0;
+            for r in 1..=4 {
+                for c in 0..=consecutive_max {
+                    for d_idx in 0..self.d_size {
+                        let p = dp_d[[r - 1, c, d_idx]];
+                        if p > 0.0 {
+                            final_expected_d += p * self.d_state[d_idx];
+                        }
+                    }
+                }
+            }
+            relearning_d[d_idx_init] = final_expected_d;
+        }
+
+        (relearning_s, relearning_d)
+    }
+
     pub fn evaluate_desired_retention(&self, desired_retention: f32, w: &Parameters) -> f32 {
+        let learning_costs = (1..=4)
+            .map(|rating| {
+                expected_short_term_cost(
+                    Some(rating),
+                    &self.state_rating_costs[LEARNING],
+                    &self.learning_step_transitions,
+                    self.learning_step_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        let relearning_cost = if self.relearning_step_count > 0 {
+            expected_short_term_cost(
+                None,
+                &self.state_rating_costs[RELEARNING],
+                &self.relearning_step_transitions,
+                self.relearning_step_count,
+            )
+        } else {
+            0.0
+        };
+        let mut review_costs = self.state_rating_costs[REVIEW];
+        review_costs[0] += relearning_cost;
+
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
         let mut next_d_indices = Array3::zeros((4, self.s_size, self.d_size));
         let mut next_intervals = Array3::zeros((4, self.s_size, self.d_size));
-
+        let (relearning_s, relearning_d) = self.precompute_relearning_memory_states(w);
         // Precompute transitions for all state combinations
         for s_idx in 0..self.s_size {
             let s = self.s_state[s_idx];
@@ -390,11 +662,15 @@ impl WorkloadEstimator {
                 let d = self.d_state[d_idx];
                 for rating in 1..=4 {
                     let next_s = if rating == 1 {
-                        stability_after_failure(w, s, r, d)
+                        relearning_s[self.s2i(stability_after_failure(w, s, r, d))]
                     } else {
                         stability_after_success(w, s, r, d, rating)
                     };
-                    let next_d_val = next_d(w, d, rating);
+                    let next_d_val = if rating == 1 {
+                        relearning_d[self.d2i(next_d(w, d, 1))]
+                    } else {
+                        next_d(w, d, rating)
+                    };
                     let next_ivl =
                         next_interval(w, next_s, desired_retention).max(1.0).floor() as usize;
                     next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
@@ -410,7 +686,6 @@ impl WorkloadEstimator {
 
         // Initialize cost matrix using ndarray
         let mut cost_matrix = Array3::zeros((self.s_size, self.d_size, self.t_size + 1));
-        let review_costs = self.state_rating_costs[REVIEW];
         // Dynamic programming backward pass
         for t in (0..self.t_size).rev() {
             for s_idx in 0..self.s_size {
@@ -437,10 +712,10 @@ impl WorkloadEstimator {
         // Calculate initial cost for mixed initial states
         let mut total_cost = 0.0;
         for rating in 1..=4 {
-            let s_idx = self.s2i(init_s(w, rating));
-            let d_idx = self.d2i(init_d(w, rating));
-            total_cost += (cost_matrix[[s_idx, d_idx, 0]]
-                + self.state_rating_costs[LEARNING][rating - 1])
+            let (init_s_val, init_d_val) = self.initial_memory_state(rating, w);
+            let s_idx = self.s2i(init_s_val);
+            let d_idx = self.d2i(init_d_val);
+            total_cost += (cost_matrix[[s_idx, d_idx, 0]] + learning_costs[rating - 1])
                 * self.first_rating_prob[rating - 1];
         }
 
@@ -458,6 +733,95 @@ pub fn expected_workload(
     let estimator = WorkloadEstimator::new(config);
     let workload = estimator.evaluate_desired_retention(desired_retention, w);
     Ok(workload)
+}
+
+fn expected_short_term_cost(
+    init_rating: Option<usize>,
+    rating_costs: &[f32; 4],
+    step_transitions: &[[f32; 4]; 3],
+    step_count: usize,
+) -> f32 {
+    // `consecutive_max` depends on the initial rating and `step_count`, and remains
+    // constant throughout the process, consistent with the original function's logic.
+    let consecutive_max = if init_rating.map_or(false, |r| r > 2) {
+        step_count.saturating_sub(1)
+    } else {
+        step_count
+    };
+
+    // If consecutive_max is 0, any successful step will terminate the process.
+    // The DP handles this, but if it's 0 and the initial rating is already a "success" (>2),
+    // then no transitions are possible. However, the logic below handles all cases correctly.
+
+    // dp[k][r][c]: Expected future cost after k steps, with rating r, and consecutive successes c.
+    // Dimensions: (MAX_STEPS + 1) x (5 for ratings 0-4) x (consecutive_max + 1)
+    // We use rating 0 as a dummy, so ratings 1-4 map to indices 1-4.
+    let mut dp = vec![vec![vec![0.0; consecutive_max + 1]; 5]; MAX_STEPS + 1];
+
+    // Iterate backwards from the last possible step.
+    // k represents the number of steps already taken. The base case is at k = MAX_STEPS,
+    // where the future cost is 0, which the table is initialized to.
+    for k in (0..MAX_STEPS).rev() {
+        // Ratings 1, 2, 3 are non-terminal states from which transitions can occur.
+        // Rating 4 is a terminal state, its future cost is always 0.
+        for r in 1..=3 {
+            // Iterate over all possible non-terminating consecutive success counts.
+            // If c is already >= consecutive_max, it's a terminal state, so future cost is 0.
+            for c in 0..consecutive_max {
+                let mut expected_value_from_this_state = 0.0;
+
+                // Calculate the expected value by summing over all possible next states.
+                // nr represents the next_rating.
+                for nr in 1..=4 {
+                    let probability = step_transitions[r - 1][nr - 1];
+                    if probability == 0.0 {
+                        continue; // Skip transitions with zero probability.
+                    }
+
+                    // Cost of this specific transition is the cost of the resulting rating.
+                    let transition_cost = rating_costs[nr - 1];
+
+                    // Determine the new consecutive count based on the next rating.
+                    let nc = match nr {
+                        1 => 0,              // Failure resets the counter.
+                        x if x > 2 => c + 1, // Success (rating 3 or 4) increments the counter.
+                        _ => c,              // Neutral (rating 2) leaves the counter unchanged.
+                    };
+
+                    // Get the expected future cost from the next state (k+1, nr, nc).
+                    // If the next state is a terminal state, its future cost is 0.
+                    let future_cost = if nr == 4 || nc >= consecutive_max {
+                        0.0
+                    } else {
+                        dp[k + 1][nr][nc]
+                    };
+
+                    expected_value_from_this_state += probability * (transition_cost + future_cost);
+                }
+                dp[k][r][c] = expected_value_from_this_state;
+            }
+        }
+    }
+
+    // Calculate the final result based on the initial state.
+    match init_rating {
+        Some(r) => {
+            if !(1..=4).contains(&r) {
+                return 0.0; // Or handle as an error for invalid rating.
+            }
+            // Initial cost is the cost of the starting rating.
+            let initial_cost = rating_costs[r - 1];
+            // Future cost is the expected value starting from step 0 with the initial rating.
+            // If the initial state is already terminal, future cost is 0.
+            let future_expected_cost = if r >= 4 { 0.0 } else { dp[0][r][0] };
+            initial_cost + future_expected_cost
+        }
+        None => {
+            // Per the original logic, `None` implies no initial cost and starting at rating 1.
+            // The total cost is just the future cost starting from state (k=0, r=1, c=0).
+            dp[0][1][0]
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2004,6 +2368,136 @@ mod tests {
     }
 
     #[test]
+    fn test_expected_short_term_cost() {
+        // let config = SimulatorConfig::default();
+        let mut revlogs = read_collection().unwrap();
+        revlogs.sort_by_cached_key(|r| (r.cid, r.id));
+        let day_cutoff = 1720900800;
+        let config = extract_simulator_config(revlogs.clone(), day_cutoff, false);
+        dbg!(&config);
+        for learning_step_count in 0..=10 {
+            dbg!(learning_step_count);
+            for init_rating in 1..=4 {
+                dbg!(init_rating);
+
+                let analytical_cost = expected_short_term_cost(
+                    Some(init_rating),
+                    &config.state_rating_costs[LEARNING],
+                    &config.learning_step_transitions,
+                    learning_step_count,
+                );
+                dbg!(analytical_cost);
+
+                let num_simulations = 100_000;
+                let (_, _, simulated_cost) = simulate_memory_state_expected(
+                    &DEFAULT_PARAMETERS,
+                    init_s(&DEFAULT_PARAMETERS, init_rating),
+                    init_d(&DEFAULT_PARAMETERS, init_rating),
+                    Some(init_rating),
+                    &config.state_rating_costs[LEARNING],
+                    &config.learning_step_transitions,
+                    learning_step_count,
+                    num_simulations,
+                );
+                dbg!(simulated_cost);
+                assert!((analytical_cost - simulated_cost).abs() / simulated_cost < 0.01);
+            }
+        }
+    }
+
+    fn simulate_memory_state_expected(
+        w: &[f32],
+        s: f32,
+        d: f32,
+        init_rating: Option<usize>,
+        rating_costs: &[f32; 4],
+        step_transitions: &[[f32; 4]; 3],
+        step_count: usize,
+        num_simulations: u32,
+    ) -> (f32, f32, f32) {
+        if num_simulations == 0 {
+            // If no simulations are run, return the initial s, d, and the initial cost.
+            let initial_cost = match init_rating {
+                Some(r) if r > 0 && r <= 4 => rating_costs[r - 1],
+                _ => 0.0,
+            };
+            return (s, d, initial_cost);
+        }
+
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let mut total_s = 0.0;
+        let mut total_d = 0.0;
+        let mut total_cost = 0.0;
+
+        for _ in 0..num_simulations {
+            // For each simulation run, we start from the same initial s and d.
+            let (run_s, run_d, run_cost) = memory_state_short_term(
+                w,
+                s,
+                d,
+                init_rating,
+                rating_costs,
+                step_transitions,
+                step_count,
+                &mut rng,
+            );
+
+            total_s += run_s;
+            total_d += run_d;
+            total_cost += run_cost;
+        }
+
+        let num_simulations_f32 = num_simulations as f32;
+        let expected_s = total_s / num_simulations_f32;
+        let expected_d = total_d / num_simulations_f32;
+        let expected_cost = total_cost / num_simulations_f32;
+
+        (expected_s, expected_d, expected_cost)
+    }
+
+    #[test]
+    fn test_precompute_short_term_expectations() {
+        let mut config = SimulatorConfig::default();
+        config.relearning_step_count = 3;
+        let estimator = WorkloadEstimator::new(&config);
+        let (expected_s_vec, expected_d_vec) =
+            estimator.precompute_relearning_memory_states(&DEFAULT_PARAMETERS);
+        let mut s_vec = Vec::new();
+        let mut d_vec = Vec::new();
+        for s in estimator.s_state.iter() {
+            let (s, _, _) = simulate_memory_state_expected(
+                &DEFAULT_PARAMETERS,
+                *s,
+                5.0,
+                None,
+                &config.state_rating_costs[RELEARNING],
+                &config.relearning_step_transitions,
+                config.relearning_step_count,
+                1000,
+            );
+            s_vec.push(s);
+        }
+        for d in estimator.d_state.iter() {
+            let (_, d, _) = simulate_memory_state_expected(
+                &DEFAULT_PARAMETERS,
+                1.0,
+                *d,
+                None,
+                &config.state_rating_costs[RELEARNING],
+                &config.relearning_step_transitions,
+                config.relearning_step_count,
+                1000,
+            );
+            d_vec.push(d);
+        }
+        dbg!(&expected_s_vec);
+        dbg!(&s_vec);
+        dbg!(&expected_d_vec);
+        dbg!(&d_vec);
+    }
+
+    #[test]
     fn test_expected_workload() {
         let mut config = SimulatorConfig::default();
         config.learn_span = 365;
@@ -2018,8 +2512,6 @@ mod tests {
         //     [23.185, 0.0, 7.8454, 0.0],
         //     [0.0, 0.0, 0.0, 0.0],
         // ];
-        config.learning_step_count = 0;
-        config.relearning_step_count = 0;
         for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
             let start = Instant::now();
             let result_dp =
