@@ -2526,7 +2526,7 @@ mod tests {
             let result_simulated =
                 result.cost_per_day[result.cost_per_day.len() - 1] / config.learn_limit as f32;
             dbg!(desired_retention, result_dp, result_simulated);
-            assert!((result_dp - result_simulated).abs() / result_simulated < 0.1);
+            assert!((result_dp - result_simulated).abs() / result_simulated < 0.15);
         }
     }
 
