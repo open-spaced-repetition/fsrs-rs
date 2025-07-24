@@ -33,6 +33,7 @@ features = ["std", "train", "ndarray", "sqlite-bundled", "metrics"]
 itertools = "0.14.0"
 log = "0.4"
 ndarray = "0.16.1"
+ndarray-linalg = { version = "0.17.0", features = ["openblas-static"] }
 priority-queue = "=2.5.0"
 rand = "0.9.1"
 rayon = "1.8.0"

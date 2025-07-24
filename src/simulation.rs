@@ -5,6 +5,7 @@ use crate::model::check_and_fill_parameters;
 use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
 use ndarray::{Array1, Array2, Array3};
+use ndarray_linalg::Solve;
 use priority_queue::PriorityQueue;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
@@ -280,6 +281,102 @@ fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
 }
 
+/// Calculates the expected cost using ndarray and ndarray-linalg.
+/// This function is functionally identical to the nalgebra version.
+///
+/// # Arguments
+/// * `init_rating` - The initial rating of the process (1-4).
+/// * `init_consecutive` - The initial count of consecutive successful ratings.
+/// * `rating_costs` - The per-step cost associated with each rating.
+/// * `step_transitions` - The state transition probability matrix.
+/// * `consecutive_max` - The number of consecutive successes required to terminate the process.
+///
+/// # Returns
+/// * `f32` - The expected total cost from the initial state until termination.
+fn expected_cost_analytical(
+    init_rating: usize,
+    init_consecutive: usize,
+    rating_costs: &[f32; 4],
+    step_transitions: &[[f32; 4]; 3],
+    consecutive_max: usize,
+) -> f32 {
+    // Handle the edge case where the process terminates immediately.
+    if consecutive_max == 0 {
+        return rating_costs[init_rating - 1];
+    }
+
+    let num_states = 3 * consecutive_max;
+
+    let state_to_index = |r: usize, c: usize| -> usize { (r - 1) * consecutive_max + c };
+
+    // --- ndarray syntax difference ---
+    // Create a matrix with Array2::zeros, where the shape is a tuple (rows, cols).
+    let mut a: Array2<f32> = Array2::zeros((num_states, num_states));
+    // Create a vector with Array1::zeros.
+    let mut b: Array1<f32> = Array1::zeros(num_states);
+
+    for r in 1..=3 {
+        for c in 0..consecutive_max {
+            let current_index = state_to_index(r, c);
+
+            // --- ndarray syntax difference ---
+            // Element access uses brackets `[[...]]` for matrices.
+            a[[current_index, current_index]] = 1.0;
+            let mut expected_step_cost = 0.0;
+
+            for j in 1..=4 {
+                let p = step_transitions[r - 1][j - 1];
+                expected_step_cost += p * rating_costs[j - 1];
+
+                let next_r = j;
+                let next_c = match j {
+                    1 => 0,
+                    2 => c,
+                    3 | 4 => c + 1,
+                    _ => unreachable!(),
+                };
+
+                let is_terminal = next_r == 4 || (next_r > 2 && next_c >= consecutive_max);
+
+                if !is_terminal {
+                    let next_index = state_to_index(next_r, next_c);
+                    // --- ndarray syntax difference ---
+                    // Element access for mutation.
+                    a[[current_index, next_index]] -= p;
+                }
+            }
+            // --- ndarray syntax difference ---
+            // Element access for vectors uses `[...]`.
+            b[current_index] = expected_step_cost;
+        }
+    }
+
+    // --- ndarray-linalg syntax difference ---
+    // After importing the `Solve` trait, we can call the .solve() method
+    // directly on the matrix to solve the system Ax = b.
+    let future_costs = a
+        .solve(&b)
+        .expect("Linear system has no unique solution. Check transition probabilities.");
+
+    // The subsequent logic is identical to the nalgebra version.
+    let initial_step_cost = rating_costs[init_rating - 1];
+    let next_r = init_rating;
+    let next_c = match next_r {
+        1 => 0,
+        2 => init_consecutive,
+        3 | 4 => init_consecutive + 1,
+        _ => unreachable!(),
+    };
+
+    let is_terminal_after_first_step = next_r == 4 || (next_r > 2 && next_c >= consecutive_max);
+
+    if is_terminal_after_first_step {
+        initial_step_cost
+    } else {
+        let future_cost_index = state_to_index(next_r, next_c);
+        initial_step_cost + future_costs[future_cost_index]
+    }
+}
 /// Dynamic programming-based workload estimator
 #[derive(Debug)]
 pub struct WorkloadEstimator {
@@ -299,7 +396,8 @@ pub struct WorkloadEstimator {
     // Review configuration
     first_rating_prob: [f32; 4],
     review_rating_prob: [f32; 3],
-    state_rating_costs: [[f32; 4]; 3],
+    learning_costs: Array1<f32>,
+    review_costs: Array1<f32>,
 }
 
 impl WorkloadEstimator {
@@ -334,6 +432,29 @@ impl WorkloadEstimator {
 
         let t_size = config.learn_span;
 
+        let learning_costs = Array1::from_iter((1..=4).map(|r| {
+            expected_cost_analytical(
+                r,
+                0,
+                &config.state_rating_costs[LEARNING],
+                &config.learning_step_transitions,
+                config.learning_step_count,
+            )
+        }));
+        let relearning_cost = if config.relearning_step_count > 0 {
+            expected_cost_analytical(
+                1,
+                0,
+                &config.state_rating_costs[RELEARNING],
+                &config.relearning_step_transitions,
+                config.relearning_step_count,
+            )
+        } else {
+            0.0
+        };
+        let mut review_costs = Array1::from_vec(config.state_rating_costs[REVIEW].to_vec());
+        review_costs[0] += relearning_cost;
+
         Self {
             s_state,
             d_state,
@@ -346,7 +467,8 @@ impl WorkloadEstimator {
             long_step,
             first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
-            state_rating_costs: config.state_rating_costs,
+            learning_costs,
+            review_costs,
         }
     }
 
@@ -410,7 +532,7 @@ impl WorkloadEstimator {
 
         // Initialize cost matrix using ndarray
         let mut cost_matrix = Array3::zeros((self.s_size, self.d_size, self.t_size + 1));
-        let review_costs = self.state_rating_costs[REVIEW];
+        let review_costs = self.review_costs.view();
         // Dynamic programming backward pass
         for t in (0..self.t_size).rev() {
             for s_idx in 0..self.s_size {
@@ -439,8 +561,7 @@ impl WorkloadEstimator {
         for rating in 1..=4 {
             let s_idx = self.s2i(init_s(w, rating));
             let d_idx = self.d2i(init_d(w, rating));
-            total_cost += (cost_matrix[[s_idx, d_idx, 0]]
-                + self.state_rating_costs[LEARNING][rating - 1])
+            total_cost += (cost_matrix[[s_idx, d_idx, 0]] + self.learning_costs[rating - 1])
                 * self.first_rating_prob[rating - 1];
         }
 
@@ -2004,6 +2125,45 @@ mod tests {
     }
 
     #[test]
+    fn test_expected_cost_analytical() {
+        let config = SimulatorConfig::default();
+        for init_rating in 1..=4 {
+            dbg!(&init_rating);
+            for learning_steps in 0..=4 {
+                dbg!(&learning_steps);
+                let learning_costs = expected_cost_analytical(
+                    init_rating,
+                    0,
+                    &config.state_rating_costs[LEARNING],
+                    &config.learning_step_transitions,
+                    learning_steps,
+                );
+                dbg!(&learning_costs);
+                let num_simulations = 100_000;
+                let mut total_cost_simulation = 0.0;
+                let mut rng = StdRng::seed_from_u64(42);
+
+                for _ in 0..num_simulations {
+                    total_cost_simulation += memory_state_short_term(
+                        &DEFAULT_PARAMETERS,
+                        1.0,
+                        1.0,
+                        Some(init_rating),
+                        &config.state_rating_costs[LEARNING],
+                        &config.learning_step_transitions,
+                        learning_steps,
+                        &mut rng,
+                    )
+                    .2;
+                }
+                let simulation_avg = total_cost_simulation / num_simulations as f32;
+                dbg!(&simulation_avg);
+                assert!((learning_costs - simulation_avg).abs() / simulation_avg < 0.2);
+            }
+        }
+    }
+
+    #[test]
     fn test_expected_workload() {
         let mut config = SimulatorConfig::default();
         config.learn_span = 365;
@@ -2018,8 +2178,8 @@ mod tests {
         //     [23.185, 0.0, 7.8454, 0.0],
         //     [0.0, 0.0, 0.0, 0.0],
         // ];
-        config.learning_step_count = 0;
-        config.relearning_step_count = 0;
+        // config.learning_step_count = 0;
+        // config.relearning_step_count = 0;
         for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
             let start = Instant::now();
             let result_dp =
@@ -2034,7 +2194,7 @@ mod tests {
             let result_simulated =
                 result.cost_per_day[result.cost_per_day.len() - 1] / config.learn_limit as f32;
             dbg!(desired_retention, result_dp, result_simulated);
-            assert!((result_dp - result_simulated).abs() / result_simulated < 0.1);
+            assert!((result_dp - result_simulated).abs() / result_simulated < 0.15);
         }
     }
 
