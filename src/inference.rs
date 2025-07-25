@@ -3,6 +3,7 @@ use std::ops::{Add, Sub};
 use wasm_bindgen::prelude::*;
 
 use crate::model::{FSRS, Get, MemoryStateTensors};
+use crate::simulation::{D_MAX, D_MIN, S_MIN};
 use crate::training::ComputeParametersInput;
 use burn::nn::loss::Reduction;
 use burn::tensor::cast::ToElement;
@@ -17,8 +18,6 @@ use crate::model::Model;
 use crate::training::BCELoss;
 use crate::{FSRSError, FSRSItem};
 use burn::tensor::ElementConversion;
-pub(crate) const S_MIN: f32 = 0.001;
-pub(crate) const S_MAX: f32 = 36500.0;
 /// This is a slice for efficiency, but should always be 21 in length.
 pub type Parameters = [f32];
 use itertools::izip;
@@ -192,7 +191,7 @@ impl<B: Backend> FSRS<B> {
         } else {
             Ok(MemoryState {
                 stability,
-                difficulty: difficulty.clamp(1.0, 10.0),
+                difficulty: difficulty.clamp(D_MIN, D_MAX),
             })
         }
     }
@@ -859,11 +858,12 @@ mod tests {
     #[test]
     fn test_evaluate() -> Result<()> {
         let items = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+        let (mut dataset_for_initialization, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
-        let items = [pretrainset, trainset].concat();
+        (dataset_for_initialization, trainset) =
+            filter_outlier(dataset_for_initialization, trainset);
+        let items = [dataset_for_initialization, trainset].concat();
 
         let fsrs = FSRS::new(Some(&[
             0.335561,
@@ -939,11 +939,12 @@ mod tests {
     #[test]
     fn test_evaluate_with_time_series_splits() -> Result<()> {
         let items = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
+        let (mut dataset_for_initialization, mut trainset): (Vec<FSRSItem>, Vec<FSRSItem>) = items
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
-        let items = [pretrainset, trainset].concat();
+        (dataset_for_initialization, trainset) =
+            filter_outlier(dataset_for_initialization, trainset);
+        let items = [dataset_for_initialization, trainset].concat();
         let input = ComputeParametersInput {
             train_set: items.clone(),
             progress: None,

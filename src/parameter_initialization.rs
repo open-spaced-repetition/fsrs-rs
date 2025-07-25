@@ -1,7 +1,7 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::FSRSItem;
 use crate::error::{FSRSError, Result};
-use crate::inference::S_MIN;
+use crate::simulation::S_MIN;
 use ndarray::Array1;
 use std::collections::HashMap;
 
@@ -12,13 +12,13 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
     (4, DEFAULT_PARAMETERS[3]),
 ];
 
-pub fn pretrain(
+pub fn initialize_stability_parameters(
     fsrs_items: Vec<FSRSItem>,
     average_recall: f32,
 ) -> Result<([f32; 4], HashMap<u32, u32>)> {
-    let pretrainset = create_pretrain_data(fsrs_items);
-    let rating_count = total_rating_count(&pretrainset);
-    let mut rating_stability = search_parameters(pretrainset, average_recall);
+    let dataset_for_initialization = prepare_dataset_for_initialization(fsrs_items);
+    let rating_count = total_rating_count(&dataset_for_initialization);
+    let mut rating_stability = search_parameters(dataset_for_initialization, average_recall);
     Ok((
         smooth_and_fill(&mut rating_stability, &rating_count)?,
         rating_count,
@@ -28,7 +28,9 @@ pub fn pretrain(
 type FirstRating = u32;
 type Count = u32;
 
-fn create_pretrain_data(fsrs_items: Vec<FSRSItem>) -> HashMap<FirstRating, Vec<AverageRecall>> {
+fn prepare_dataset_for_initialization(
+    fsrs_items: Vec<FSRSItem>,
+) -> HashMap<FirstRating, Vec<AverageRecall>> {
     // filter FSRSItem instances with exactly 1 long term review.
     let items: Vec<_> = fsrs_items
         .into_iter()
@@ -84,9 +86,9 @@ struct AverageRecall {
 }
 
 fn total_rating_count(
-    pretrainset: &HashMap<FirstRating, Vec<AverageRecall>>,
+    dataset_for_initialization: &HashMap<FirstRating, Vec<AverageRecall>>,
 ) -> HashMap<FirstRating, Count> {
-    pretrainset
+    dataset_for_initialization
         .iter()
         .map(|(first_rating, data)| {
             let count = data.iter().map(|d| d.count).sum::<f64>() as u32;
@@ -120,13 +122,13 @@ fn loss(
 pub(crate) const INIT_S_MAX: f32 = 100.0;
 
 fn search_parameters(
-    mut pretrainset: HashMap<FirstRating, Vec<AverageRecall>>,
+    mut dataset_for_initialization: HashMap<FirstRating, Vec<AverageRecall>>,
     average_recall: f32,
 ) -> HashMap<u32, f32> {
     let mut optimal_stabilities = HashMap::new();
     let epsilon = f64::EPSILON;
 
-    for (first_rating, data) in &mut pretrainset {
+    for (first_rating, data) in &mut dataset_for_initialization {
         let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
         let default_s0 = r_s0_default[first_rating] as f64;
         let delta_t = Array1::from_iter(data.iter().map(|d| d.delta_t));
@@ -312,7 +314,7 @@ mod tests {
     #[test]
     fn test_search_parameters() {
         let first_rating = 1;
-        let pretrainset = HashMap::from([(
+        let dataset_for_initialization = HashMap::from([(
             first_rating,
             vec![
                 AverageRecall {
@@ -342,22 +344,23 @@ mod tests {
                 },
             ],
         )]);
-        let actual = search_parameters(pretrainset, 0.943_028_57);
+        let actual = search_parameters(dataset_for_initialization, 0.943_028_57);
         [*actual.get(&first_rating).unwrap()].assert_approx_eq([0.7355089]);
     }
 
     #[test]
-    fn test_pretrain() {
+    fn test_initialize_stability_parameters() {
         use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
         let items = anki21_sample_file_converted_to_fsrs();
-        let (mut pretrainset, mut trainset) = items
+        let (mut dataset_for_initialization, mut trainset) = items
             .into_iter()
             .partition(|item| item.long_term_review_cnt() == 1);
-        (pretrainset, trainset) = filter_outlier(pretrainset, trainset);
-        let items = [pretrainset.clone(), trainset].concat();
+        (dataset_for_initialization, trainset) =
+            filter_outlier(dataset_for_initialization, trainset);
+        let items = [dataset_for_initialization.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
 
-        pretrain(pretrainset, average_recall)
+        initialize_stability_parameters(dataset_for_initialization, average_recall)
             .unwrap()
             .0
             .assert_approx_eq([0.73550886, 2.1338913, 4.473312, 11.087741])

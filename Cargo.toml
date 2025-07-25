@@ -1,6 +1,6 @@
 [package]
 name = "fsrs"
-version = "4.1.1"
+version = "5.0.0"
 authors = ["Open Spaced Repetition"]
 categories = ["algorithms", "science"]
 edition = "2024"
@@ -40,7 +40,7 @@ serde = "1.0.219"
 snafu = "0.8.6"
 strum = { version = "0.27.1", features = ["derive"] }
 chrono = { version = "0.4.41", default-features = false, features = ["std", "clock"] }
-chrono-tz = "0.10.3"
+chrono-tz = "0.10.4"
 wasm-bindgen = "0.2.91"
 
 [dev-dependencies]

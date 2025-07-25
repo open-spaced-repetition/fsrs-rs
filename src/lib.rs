@@ -7,9 +7,10 @@ mod dataset;
 mod error;
 mod inference;
 mod model;
-mod optimal_retention;
 mod parameter_clipper;
-mod pre_training;
+mod parameter_initialization;
+mod simulation;
+#[cfg(test)]
 mod test_helpers;
 mod training;
 
@@ -21,7 +22,7 @@ pub use inference::{
     MemoryState, ModelEvaluation, NextStates, current_retrievability,
 };
 pub use model::FSRS;
-pub use optimal_retention::{
+pub use simulation::{
     CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind,
     SimulationResult, SimulatorConfig, expected_workload, extract_simulator_config, simulate,
 };
