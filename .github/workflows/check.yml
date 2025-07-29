@@ -21,9 +21,6 @@ jobs:
             ${{ runner.os }}-rust-release-v6
             ${{ runner.os }}-rust-release
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.10.22
-
       - name: Run checks
         run: .github/workflows/check.sh
 
