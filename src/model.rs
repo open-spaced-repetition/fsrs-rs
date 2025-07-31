@@ -273,7 +273,7 @@ pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<
     let mut model = Model::new(config.clone());
     model.w = Param::from_tensor(Tensor::from_floats(
         TensorData::new(
-            clip_parameters(parameters, config.num_relearning_steps),
+            clip_parameters(parameters, config.num_relearning_steps, Default::default()),
             Shape { dims: vec![21] },
         ),
         &B::Device::default(),
