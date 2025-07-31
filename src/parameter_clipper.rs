@@ -17,7 +17,7 @@ pub(crate) fn parameter_clipper<B: Backend>(
     let clipped = clip_parameters(
         &val.to_data().to_vec().unwrap(),
         num_relearning_steps,
-        Some(enable_short_term),
+        enable_short_term,
     );
     Param::initialized(
         id,
@@ -29,7 +29,7 @@ pub(crate) fn parameter_clipper<B: Backend>(
 pub(crate) fn clip_parameters(
     parameters: &Parameters,
     num_relearning_steps: usize,
-    enable_short_term: Option<bool>,
+    enable_short_term: bool,
 ) -> Vec<f32> {
     let mut parameters = parameters.to_vec();
     // PLS = w11 * D ^ -w12 * [(S + 1) ^ w13 - 1] * e ^ (w14 * (1 - R))
@@ -47,10 +47,7 @@ pub(crate) fn clip_parameters(
     } else {
         2.0
     };
-    let w19_floor = match enable_short_term {
-        Some(true) => 0.01,
-        Some(false) | None => 0.0,
-    };
+    let w19_floor = if enable_short_term { 0.01 } else { 0.0 };
     // https://regex101.com/r/21mXNI/1
     let clamps: [(f32, f32); 21] = [
         (S_MIN, INIT_S_MAX),
