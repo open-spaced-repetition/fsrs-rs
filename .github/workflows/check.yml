@@ -21,9 +21,6 @@ jobs:
             ${{ runner.os }}-rust-release-v6
             ${{ runner.os }}-rust-release
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.10.22
-
       - name: Run checks
         run: .github/workflows/check.sh
 
@@ -45,9 +42,6 @@ jobs:
             ${{ runner.os }}-rust-release-v5
             ${{ runner.os }}-rust-release
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.10.22
-
       - name: Run checks
         run: .github/workflows/check.sh
 
@@ -67,9 +61,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-release-v5
             ${{ runner.os }}-rust-release
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.10.22
 
       - name: install wget
         shell: bash

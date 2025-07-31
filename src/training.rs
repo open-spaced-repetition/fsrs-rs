@@ -503,7 +503,11 @@ fn train<B: AutodiffBackend>(
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
-            model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
+            model.w = parameter_clipper(
+                model.w,
+                config.model.num_relearning_steps,
+                !config.model.freeze_short_term_stability,
+            );
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
@@ -683,7 +687,11 @@ mod tests {
         let lr = 0.04;
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
+        model.w = parameter_clipper(
+            model.w,
+            config.model.num_relearning_steps,
+            !config.model.freeze_short_term_stability,
+        );
         model
             .w
             .val()
@@ -813,7 +821,11 @@ mod tests {
             ]);
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
-        model.w = parameter_clipper(model.w, config.model.num_relearning_steps);
+        model.w = parameter_clipper(
+            model.w,
+            config.model.num_relearning_steps,
+            !config.model.freeze_short_term_stability,
+        );
         model
             .w
             .val()

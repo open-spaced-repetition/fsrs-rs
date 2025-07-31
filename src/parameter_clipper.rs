@@ -11,9 +11,14 @@ use burn::{
 pub(crate) fn parameter_clipper<B: Backend>(
     parameters: Param<Tensor<B, 1>>,
     num_relearning_steps: usize,
+    enable_short_term: bool,
 ) -> Param<Tensor<B, 1>> {
     let (id, val) = parameters.consume();
-    let clipped = clip_parameters(&val.to_data().to_vec().unwrap(), num_relearning_steps);
+    let clipped = clip_parameters(
+        &val.to_data().to_vec().unwrap(),
+        num_relearning_steps,
+        enable_short_term,
+    );
     Param::initialized(
         id,
         Tensor::from_data(TensorData::new(clipped, val.shape()), &B::Device::default())
@@ -21,7 +26,11 @@ pub(crate) fn parameter_clipper<B: Backend>(
     )
 }
 
-pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usize) -> Vec<f32> {
+pub(crate) fn clip_parameters(
+    parameters: &Parameters,
+    num_relearning_steps: usize,
+    enable_short_term: bool,
+) -> Vec<f32> {
     let mut parameters = parameters.to_vec();
     // PLS = w11 * D ^ -w12 * [(S + 1) ^ w13 - 1] * e ^ (w14 * (1 - R))
     // PLS * e ^ (num_relearning_steps * w17 * w18) should be <= S
@@ -38,6 +47,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
     } else {
         2.0
     };
+    let w19_floor = if enable_short_term { 0.01 } else { 0.0 };
     // https://regex101.com/r/21mXNI/1
     let clamps: [(f32, f32); 21] = [
         (S_MIN, INIT_S_MAX),
@@ -59,7 +69,7 @@ pub(crate) fn clip_parameters(parameters: &Parameters, num_relearning_steps: usi
         (1.0, 6.0),
         (0.0, w17_w18_ceiling),
         (0.0, w17_w18_ceiling),
-        (0.0, 0.8),
+        (w19_floor, 0.8),
         (0.1, 0.8),
     ];
 
@@ -84,7 +94,7 @@ mod tests {
             &device,
         );
 
-        let param = parameter_clipper(Param::from_tensor(tensor), 1);
+        let param = parameter_clipper(Param::from_tensor(tensor), 1, true);
         let values = &param.to_data().to_vec::<f32>().unwrap();
 
         assert_eq!(
@@ -99,7 +109,7 @@ mod tests {
         let device = NdArrayDevice::Cpu;
         let tensor = Tensor::from_floats(DEFAULT_PARAMETERS, &device);
 
-        let param = parameter_clipper(Param::from_tensor(tensor), 2);
+        let param = parameter_clipper(Param::from_tensor(tensor), 2, true);
         let values = &param.to_data().to_vec::<f32>().unwrap();
 
         values[17..=19].assert_approx_eq([0.5425, 0.0912, 0.0658]);
