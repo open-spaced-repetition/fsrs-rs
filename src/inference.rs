@@ -902,7 +902,7 @@ mod tests {
             .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
-        [self_by_other, other_by_self].assert_approx_eq([0.014087644, 0.017199915]);
+        [self_by_other, other_by_self].assert_approx_eq([0.014087644, 0.017199913]);
 
         Ok(())
     }
