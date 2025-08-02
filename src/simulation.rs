@@ -297,9 +297,10 @@ pub struct WorkloadEstimator {
     long_step: f32,
 
     // Review configuration
-    first_rating_prob: [f32; 4],
     review_rating_prob: [f32; 3],
     state_rating_costs: [[f32; 4]; 3],
+
+    cost_matrix: Array3<f32>,
 }
 
 impl WorkloadEstimator {
@@ -333,6 +334,7 @@ impl WorkloadEstimator {
         );
 
         let t_size = config.learn_span;
+        let cost_matrix = Array3::zeros((s_size, d_size, t_size + 1));
 
         Self {
             s_state,
@@ -344,9 +346,9 @@ impl WorkloadEstimator {
             s_mid_size,
             short_step,
             long_step,
-            first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
+            cost_matrix,
         }
     }
 
@@ -366,7 +368,7 @@ impl WorkloadEstimator {
         index.min(self.d_size - 1)
     }
 
-    pub fn evaluate_desired_retention(&self, desired_retention: f32, w: &Parameters) -> f32 {
+    fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
@@ -433,18 +435,15 @@ impl WorkloadEstimator {
                 }
             }
         }
+        self.cost_matrix = cost_matrix;
+    }
 
-        // Calculate initial cost for mixed initial states
-        let mut total_cost = 0.0;
-        for rating in 1..=4 {
-            let s_idx = self.s2i(init_s(w, rating));
-            let d_idx = self.d2i(init_d(w, rating));
-            total_cost += (cost_matrix[[s_idx, d_idx, 0]]
-                + self.state_rating_costs[LEARNING][rating - 1])
-                * self.first_rating_prob[rating - 1];
-        }
-
-        total_cost
+    pub fn evaluate_card_cost(&self, card: &Card, rating: usize) -> f32 {
+        let s_idx = self.s2i(card.stability);
+        let d_idx = self.d2i(card.difficulty);
+        let t_idx = card.last_date as usize;
+        let cost = self.cost_matrix[[s_idx, d_idx, t_idx]];
+        cost + self.state_rating_costs[LEARNING][rating - 1]
     }
 }
 
@@ -455,8 +454,25 @@ pub fn expected_workload(
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
 
-    let estimator = WorkloadEstimator::new(config);
-    let workload = estimator.evaluate_desired_retention(desired_retention, w);
+    let mut estimator = WorkloadEstimator::new(config);
+    estimator.precompute_cost_matrix(desired_retention, w);
+    let cards = (1..=4)
+        .map(|rating| Card {
+            id: 0,
+            difficulty: init_d(parameters, rating),
+            stability: init_s(parameters, rating),
+            last_date: 0.0,
+            due: 0.0,
+            interval: 0.0,
+            lapses: 0,
+        })
+        .collect_vec();
+    let workload = cards
+        .iter()
+        .zip(config.first_rating_prob.iter())
+        .zip(1..=4)
+        .map(|((card, prob), rating)| estimator.evaluate_card_cost(card, rating) * prob)
+        .sum();
     Ok(workload)
 }
 
