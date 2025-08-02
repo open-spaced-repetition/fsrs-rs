@@ -299,7 +299,7 @@ pub struct WorkloadEstimator {
     // Review configuration
     review_rating_prob: [f32; 3],
     state_rating_costs: [[f32; 4]; 3],
-
+    desired_retention: f32,
     cost_matrix: Array3<f32>,
 }
 
@@ -349,6 +349,7 @@ impl WorkloadEstimator {
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
             cost_matrix,
+            desired_retention: 0.9,
         }
     }
 
@@ -369,6 +370,7 @@ impl WorkloadEstimator {
     }
 
     fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
+        self.desired_retention = desired_retention;
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
@@ -438,12 +440,16 @@ impl WorkloadEstimator {
         self.cost_matrix = cost_matrix;
     }
 
-    pub fn evaluate_new_card_cost(&self, card: &Card, rating: usize) -> f32 {
-        let s_idx = self.s2i(card.stability);
-        let d_idx = self.d2i(card.difficulty);
-        let t_idx = card.last_date as usize;
-        let cost = self.cost_matrix[[s_idx, d_idx, t_idx]];
-        cost + self.state_rating_costs[LEARNING][rating - 1]
+    pub fn evaluate_new_card_cost(&self, w: &Parameters, first_rating_probs: &[f32; 4]) -> f32 {
+        let mut total_cost = 0.0;
+        for rating in 1..=4 {
+            let s_idx = self.s2i(init_s(w, rating));
+            let d_idx = self.d2i(init_d(w, rating));
+            total_cost += (self.cost_matrix[[s_idx, d_idx, 0]]
+                + self.state_rating_costs[LEARNING][rating - 1])
+                * first_rating_probs[rating - 1];
+        }
+        total_cost
     }
 
     /// Calculate the expected cost for an in-flight card over a target period
@@ -512,8 +518,10 @@ impl WorkloadEstimator {
                 )
             };
 
+            let new_interval = next_interval(w, new_stability, self.desired_retention);
+
             // Calculate remaining days after the review
-            let remaining_days = target_days as f32 - delta_t_future;
+            let remaining_days = target_days as f32 - delta_t_future - new_interval;
 
             // Calculate future cost using precomputed cost matrix
             // V(s, d, k) = C(s, d, T_max - k) where T_max = t_size
@@ -544,25 +552,45 @@ pub fn expected_workload(
     config: &SimulatorConfig,
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
-
     let mut estimator = WorkloadEstimator::new(config);
     estimator.precompute_cost_matrix(desired_retention, w);
-    let cards = (1..=4)
-        .map(|rating| Card {
-            id: 0,
-            difficulty: init_d(parameters, rating),
-            stability: init_s(parameters, rating),
-            last_date: 0.0,
-            due: 0.0,
-            interval: 0.0,
+    let workload = estimator.evaluate_new_card_cost(w, &config.first_rating_prob);
+    Ok(workload)
+}
+
+pub fn expected_workload_with_existing_cards(
+    parameters: &Parameters,
+    desired_retention: f32,
+    config: &SimulatorConfig,
+    existing_cards: &[Card],
+) -> Result<f32> {
+    let w = &check_and_fill_parameters(parameters)?;
+    let mut estimator = WorkloadEstimator::new(config);
+    estimator.precompute_cost_matrix(desired_retention, w);
+    let mut cards = existing_cards.to_vec();
+
+    if config.learn_limit > 0 {
+        let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
+            id: -(i as i64),
+            difficulty: f32::NEG_INFINITY,
+            stability: f32::NEG_INFINITY,
+            last_date: f32::NEG_INFINITY,
+            due: (i / config.learn_limit) as f32,
+            interval: f32::NEG_INFINITY,
             lapses: 0,
-        })
-        .collect_vec();
+        });
+
+        cards.extend(init_ratings);
+    }
     let workload = cards
         .iter()
-        .zip(config.first_rating_prob.iter())
-        .zip(1..=4)
-        .map(|((card, prob), rating)| estimator.evaluate_new_card_cost(card, rating) * prob)
+        .map(|card| {
+            if card.stability > 1e-9 {
+                estimator.evaluate_in_flight_card_cost(card, w)
+            } else {
+                estimator.evaluate_new_card_cost(w, &config.first_rating_prob)
+            }
+        })
         .sum();
     Ok(workload)
 }
@@ -2149,39 +2177,44 @@ mod tests {
     fn test_evaluate_in_flight_card_cost() -> Result<()> {
         let w = &check_and_fill_parameters(&DEFAULT_PARAMETERS)?;
         let mut config = SimulatorConfig::default();
+        config.learn_span = 365;
         config.deck_size = 1;
         config.learn_limit = 0;
+        config.max_cost_perday = f32::INFINITY;
+        config.review_limit = usize::MAX;
         config.learning_step_count = 0;
         config.relearning_step_count = 0;
-        let desired_retention = 0.95;
-        let mut estimator = WorkloadEstimator::new(&config);
-        estimator.precompute_cost_matrix(desired_retention, w);
-        let card = Card {
-            id: 0,
-            difficulty: 5.0,
-            stability: 5.0,
-            last_date: -5.0,
-            due: 5.0,
-            interval: 10.0,
-            lapses: 0,
-        };
-        let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
-        dbg!(cost_dp);
-        let mut costs = Vec::new();
-        for seed in 0..100 {
-            let result = simulate(
-                &config,
-                w,
-                desired_retention,
-                Some(seed),
-                Some(vec![card.clone()]),
-            )?;
-            let cost_per_day = result.cost_per_day.iter().sum::<f32>();
-            costs.push(cost_per_day);
+        for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
+            dbg!(desired_retention);
+            let mut estimator = WorkloadEstimator::new(&config);
+            estimator.precompute_cost_matrix(desired_retention, w);
+            let card = Card {
+                id: 0,
+                difficulty: 5.0,
+                stability: 5.0,
+                last_date: -5.0,
+                due: 5.0,
+                interval: 10.0,
+                lapses: 0,
+            };
+            let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
+            dbg!(cost_dp);
+            let mut costs = Vec::new();
+            for seed in 0..400 {
+                let result = simulate(
+                    &config,
+                    w,
+                    desired_retention,
+                    Some(seed),
+                    Some(vec![card.clone()]),
+                )?;
+                let cost_per_day = result.cost_per_day.iter().sum::<f32>();
+                costs.push(cost_per_day);
+            }
+            let cost_simulated = costs.iter().sum::<f32>() / costs.len() as f32;
+            dbg!(cost_simulated);
+            assert!((cost_dp - cost_simulated).abs() / cost_simulated < 0.1);
         }
-        let cost_simulated = costs.iter().sum::<f32>() / costs.len() as f32;
-        dbg!(cost_simulated);
-        assert!((cost_dp - cost_simulated).abs() / cost_simulated < 0.1);
         Ok(())
     }
 
