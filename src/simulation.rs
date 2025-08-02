@@ -438,12 +438,103 @@ impl WorkloadEstimator {
         self.cost_matrix = cost_matrix;
     }
 
-    pub fn evaluate_card_cost(&self, card: &Card, rating: usize) -> f32 {
+    pub fn evaluate_new_card_cost(&self, card: &Card, rating: usize) -> f32 {
         let s_idx = self.s2i(card.stability);
         let d_idx = self.d2i(card.difficulty);
         let t_idx = card.last_date as usize;
         let cost = self.cost_matrix[[s_idx, d_idx, t_idx]];
         cost + self.state_rating_costs[LEARNING][rating - 1]
+    }
+
+    /// Calculate the expected cost for an in-flight card over a target period
+    ///
+    /// # Arguments
+    /// * `card` - Current card state (stability S, difficulty D)
+    /// * `w` - FSRS model parameters
+    ///
+    /// # Returns
+    /// Expected total cost over the target period
+    pub fn evaluate_in_flight_card_cost(&self, card: &Card, w: &Parameters) -> f32 {
+        let delta_t_future = card.due;
+        let target_days = self.t_size;
+        // If the upcoming review falls outside the target period, no cost is incurred
+        if delta_t_future > target_days as f32 {
+            return 0.0;
+        }
+
+        // Calculate total interval governing the upcoming review
+        let ivl = card.interval;
+
+        // Calculate retrievability at the time of upcoming review
+        let retrievability = power_forgetting_curve(w, ivl, card.stability);
+
+        // Calculate rating probabilities
+        let mut rating_probs = [0.0; 4];
+        // rating 1 (Again) - failed recall
+        rating_probs[0] = 1.0 - retrievability;
+        // ratings 2, 3, 4 (Hard, Good, Easy) - successful recall
+        for (i, &prob) in self.review_rating_prob.iter().enumerate() {
+            rating_probs[i + 1] = retrievability * prob;
+        }
+
+        let mut expected_cost = 0.0;
+
+        // Calculate expected cost over all possible review outcomes
+        for rating in 1..=4 {
+            let rating_idx = rating - 1;
+            let transition_prob = rating_probs[rating_idx];
+
+            if transition_prob <= 0.0 {
+                continue;
+            }
+
+            // Calculate immediate review cost
+            let immediate_cost = self.state_rating_costs[REVIEW][rating_idx];
+
+            // Calculate new stability and difficulty after review
+            let (new_stability, new_difficulty) = if rating == 1 {
+                // Failed recall - use failure transition
+                (
+                    stability_after_failure(w, card.stability, retrievability, card.difficulty),
+                    next_d(w, card.difficulty, rating),
+                )
+            } else {
+                // Successful recall - use success transition
+                (
+                    stability_after_success(
+                        w,
+                        card.stability,
+                        retrievability,
+                        card.difficulty,
+                        rating,
+                    ),
+                    next_d(w, card.difficulty, rating),
+                )
+            };
+
+            // Calculate remaining days after the review
+            let remaining_days = target_days as f32 - delta_t_future;
+
+            // Calculate future cost using precomputed cost matrix
+            // V(s, d, k) = C(s, d, T_max - k) where T_max = t_size
+            let future_cost = if remaining_days <= 0.0 {
+                0.0
+            } else {
+                let s_idx = self.s2i(new_stability);
+                let d_idx = self.d2i(new_difficulty);
+                let duration_days = remaining_days as usize;
+                let t_idx = if duration_days >= self.t_size {
+                    0 // If duration exceeds t_size, use t_idx = 0 (maximum remaining time)
+                } else {
+                    self.t_size - duration_days
+                };
+                self.cost_matrix[[s_idx, d_idx, t_idx]]
+            };
+
+            expected_cost += transition_prob * (immediate_cost + future_cost);
+        }
+
+        expected_cost
     }
 }
 
@@ -471,7 +562,7 @@ pub fn expected_workload(
         .iter()
         .zip(config.first_rating_prob.iter())
         .zip(1..=4)
-        .map(|((card, prob), rating)| estimator.evaluate_card_cost(card, rating) * prob)
+        .map(|((card, prob), rating)| estimator.evaluate_new_card_cost(card, rating) * prob)
         .sum();
     Ok(workload)
 }
@@ -2052,6 +2143,46 @@ mod tests {
             dbg!(desired_retention, result_dp, result_simulated);
             assert!((result_dp - result_simulated).abs() / result_simulated < 0.1);
         }
+    }
+
+    #[test]
+    fn test_evaluate_in_flight_card_cost() -> Result<()> {
+        let w = &check_and_fill_parameters(&DEFAULT_PARAMETERS)?;
+        let mut config = SimulatorConfig::default();
+        config.deck_size = 1;
+        config.learn_limit = 0;
+        config.learning_step_count = 0;
+        config.relearning_step_count = 0;
+        let desired_retention = 0.95;
+        let mut estimator = WorkloadEstimator::new(&config);
+        estimator.precompute_cost_matrix(desired_retention, w);
+        let card = Card {
+            id: 0,
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 5.0,
+            interval: 10.0,
+            lapses: 0,
+        };
+        let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
+        dbg!(cost_dp);
+        let mut costs = Vec::new();
+        for seed in 0..100 {
+            let result = simulate(
+                &config,
+                w,
+                desired_retention,
+                Some(seed),
+                Some(vec![card.clone()]),
+            )?;
+            let cost_per_day = result.cost_per_day.iter().sum::<f32>();
+            costs.push(cost_per_day);
+        }
+        let cost_simulated = costs.iter().sum::<f32>() / costs.len() as f32;
+        dbg!(cost_simulated);
+        assert!((cost_dp - cost_simulated).abs() / cost_simulated < 0.1);
+        Ok(())
     }
 
     #[test]
