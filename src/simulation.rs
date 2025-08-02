@@ -461,10 +461,8 @@ impl WorkloadEstimator {
     /// # Returns
     /// Expected total cost over the target period
     pub fn evaluate_in_flight_card_cost(&self, card: &Card, w: &Parameters) -> f32 {
-        let delta_t_future = card.due;
-        let target_days = self.t_size;
         // If the upcoming review falls outside the target period, no cost is incurred
-        if delta_t_future > target_days as f32 {
+        if card.due > self.t_size as f32 {
             return 0.0;
         }
 
@@ -517,25 +515,15 @@ impl WorkloadEstimator {
                     next_d(w, card.difficulty, rating),
                 )
             };
-
             let new_interval = next_interval(w, new_stability, self.desired_retention);
-
-            // Calculate remaining days after the review
-            let remaining_days = target_days as f32 - delta_t_future - new_interval;
-
+            let new_due = card.due + new_interval;
             // Calculate future cost using precomputed cost matrix
-            // V(s, d, k) = C(s, d, T_max - k) where T_max = t_size
-            let future_cost = if remaining_days <= 0.0 {
+            let future_cost = if new_due > self.t_size as f32 {
                 0.0
             } else {
                 let s_idx = self.s2i(new_stability);
                 let d_idx = self.d2i(new_difficulty);
-                let duration_days = remaining_days as usize;
-                let t_idx = if duration_days >= self.t_size {
-                    0 // If duration exceeds t_size, use t_idx = 0 (maximum remaining time)
-                } else {
-                    self.t_size - duration_days
-                };
+                let t_idx = (card.due + new_interval) as usize;
                 self.cost_matrix[[s_idx, d_idx, t_idx]]
             };
 
