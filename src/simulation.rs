@@ -466,8 +466,10 @@ impl WorkloadEstimator {
             return 0.0;
         }
 
+        let real_due = card.due.max(0.0);
+
         // Calculate total interval governing the upcoming review
-        let ivl = card.interval;
+        let ivl = real_due - card.last_date;
 
         // Calculate retrievability at the time of upcoming review
         let retrievability = power_forgetting_curve(w, ivl, card.stability);
@@ -516,14 +518,14 @@ impl WorkloadEstimator {
                 )
             };
             let new_interval = next_interval(w, new_stability, self.desired_retention);
-            let new_due = card.due + new_interval;
+            let new_due = real_due + new_interval;
             // Calculate future cost using precomputed cost matrix
             let future_cost = if new_due > self.t_size as f32 {
                 0.0
             } else {
                 let s_idx = self.s2i(new_stability);
                 let d_idx = self.d2i(new_difficulty);
-                let t_idx = (card.due + new_interval) as usize;
+                let t_idx = new_due as usize;
                 self.cost_matrix[[s_idx, d_idx, t_idx]]
             };
 
