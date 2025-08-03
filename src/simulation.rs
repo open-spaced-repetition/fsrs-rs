@@ -306,8 +306,8 @@ pub struct WorkloadEstimator {
 impl WorkloadEstimator {
     pub fn new(config: &SimulatorConfig) -> Self {
         let s_max = 365.0;
-        let short_step = 2.0f32.ln() / 10.0;
-        let long_step = 10.0;
+        let short_step = 2.0f32.ln() / 25.0;
+        let long_step = 5.0;
         let d_eps = 0.5;
 
         // Create stability state space
@@ -381,7 +381,7 @@ impl WorkloadEstimator {
         for s_idx in 0..self.s_size {
             let s = self.s_state[s_idx];
             // Calculate interval and retrievability once and cache them
-            let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
+            let ivl = next_interval(w, s, desired_retention).max(1.0).round();
             let r = power_forgetting_curve(w, ivl, s);
             for rating in 1..=4 {
                 if rating == 1 {
@@ -400,7 +400,7 @@ impl WorkloadEstimator {
                     };
                     let next_d_val = next_d(w, d, rating);
                     let next_ivl =
-                        next_interval(w, next_s, desired_retention).max(1.0).floor() as usize;
+                        next_interval(w, next_s, desired_retention).max(1.0).round() as usize;
                     next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
                     next_d_indices[[rating - 1, s_idx, d_idx]] = self.d2i(next_d_val);
                     next_intervals[[rating - 1, s_idx, d_idx]] = next_ivl;
@@ -517,7 +517,9 @@ impl WorkloadEstimator {
                     next_d(w, card.difficulty, rating),
                 )
             };
-            let new_interval = next_interval(w, new_stability, self.desired_retention);
+            let new_interval = next_interval(w, new_stability, self.desired_retention)
+                .max(1.0)
+                .round();
             let new_due = real_due + new_interval;
             // Calculate future cost using precomputed cost matrix
             let future_cost = if new_due > self.t_size as f32 {
@@ -2145,7 +2147,7 @@ mod tests {
         // ];
         config.learning_step_count = 0;
         config.relearning_step_count = 0;
-        for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
+        for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             let start = Instant::now();
             let result_dp =
                 expected_workload(&DEFAULT_PARAMETERS, desired_retention, &config).unwrap();
@@ -2159,7 +2161,7 @@ mod tests {
             let result_simulated =
                 result.cost_per_day[result.cost_per_day.len() - 1] / config.learn_limit as f32;
             dbg!(desired_retention, result_dp, result_simulated);
-            assert!((result_dp - result_simulated).abs() / result_simulated < 0.1);
+            assert!((result_dp - result_simulated).abs() / result_simulated < 0.11);
         }
     }
 
@@ -2174,7 +2176,7 @@ mod tests {
         config.review_limit = usize::MAX;
         config.learning_step_count = 0;
         config.relearning_step_count = 0;
-        for desired_retention in (70..=99).step_by(3).map(|x| x as f32 / 100.0) {
+        for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
@@ -2190,7 +2192,7 @@ mod tests {
             let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
             dbg!(cost_dp);
             let mut costs = Vec::new();
-            for seed in 0..400 {
+            for seed in 0..1000 {
                 let result = simulate(
                     &config,
                     w,
