@@ -306,7 +306,7 @@ pub struct WorkloadEstimator {
 impl WorkloadEstimator {
     pub fn new(config: &SimulatorConfig) -> Self {
         let s_max = 365.0;
-        let short_step = 2.0f32.ln() / 5.0;
+        let short_step = 2.0f32.ln() / 10.0;
         let long_step = 10.0;
         let d_eps = 0.5;
 
@@ -2174,7 +2174,7 @@ mod tests {
         config.review_limit = usize::MAX;
         config.learning_step_count = 0;
         config.relearning_step_count = 0;
-        for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
+        for desired_retention in (70..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
