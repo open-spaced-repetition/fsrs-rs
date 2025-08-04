@@ -457,7 +457,7 @@ impl WorkloadEstimator {
             let d_idx = self.d2i(d);
             let ivl = next_interval(w, s, self.desired_retention).max(1.0).round() as usize;
             let t_idx = (due + ivl).min(self.t_size);
-            total_cost += (self.cost_matrix[[s_idx, d_idx, t_idx]]
+            total_cost += (unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
                 + self.state_rating_costs[LEARNING][rating - 1])
                 * first_rating_probs[rating - 1];
         }
@@ -531,16 +531,16 @@ impl WorkloadEstimator {
             };
             let new_interval = next_interval(w, new_stability, self.desired_retention)
                 .max(1.0)
-                .round();
-            let new_due = real_due + new_interval;
+                .round() as usize;
+            let new_due = real_due as usize + new_interval;
             // Calculate future cost using precomputed cost matrix
-            let future_cost = if new_due > self.t_size as f32 {
+            let future_cost = if new_due > self.t_size {
                 0.0
             } else {
                 let s_idx = self.s2i(new_stability);
                 let d_idx = self.d2i(new_difficulty);
                 let t_idx = new_due as usize;
-                self.cost_matrix[[s_idx, d_idx, t_idx]]
+                unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
             };
 
             expected_cost += transition_prob * (immediate_cost + future_cost);
