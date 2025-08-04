@@ -44,9 +44,9 @@ pub(crate) fn run_expected_workload_for_30_retentions() {
 
 pub(crate) fn run_expected_workload_with_10000_existing_cards() {
     let config = SimulatorConfig {
-    deck_size: 46500,
-    learn_limit: 100,
-    ..Default::default()
+        deck_size: 46500,
+        learn_limit: 100,
+        ..Default::default()
     };
     let mut cards = Vec::with_capacity(10000);
     for i in 0..10000 {

@@ -2220,14 +2220,14 @@ mod tests {
     fn test_evaluate_in_flight_card_cost() -> Result<()> {
         let w = &check_and_fill_parameters(&DEFAULT_PARAMETERS)?;
         let config = SimulatorConfig {
-        learn_span : 365,
-        deck_size : 1,
-        learn_limit : 0,
-        max_cost_perday : f32::INFINITY,
-        review_limit : usize::MAX,
-        learning_step_count : 0,
-        relearning_step_count : 0,
-        ..Default::default()
+            learn_span: 365,
+            deck_size: 1,
+            learn_limit: 0,
+            max_cost_perday: f32::INFINITY,
+            review_limit: usize::MAX,
+            learning_step_count: 0,
+            relearning_step_count: 0,
+            ..Default::default()
         };
         for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
