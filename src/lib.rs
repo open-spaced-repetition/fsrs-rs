@@ -24,7 +24,8 @@ pub use inference::{
 pub use model::FSRS;
 pub use simulation::{
     CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind,
-    SimulationResult, SimulatorConfig, expected_workload, extract_simulator_config, simulate,
+    SimulationResult, SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
+    extract_simulator_config, simulate,
 };
 pub use training::{CombinedProgressState, ComputeParametersInput};
 pub use training::Progress;
