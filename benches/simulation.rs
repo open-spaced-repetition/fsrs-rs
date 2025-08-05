@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use fsrs::expected_workload;
+use fsrs::{Card, expected_workload, expected_workload_with_existing_cards};
 use fsrs::{DEFAULT_PARAMETERS, SimulationResult, SimulatorConfig, simulate};
 use fsrs::{FSRS, FSRSError};
 use rayon::iter::IntoParallelIterator;
@@ -42,6 +42,29 @@ pub(crate) fn run_expected_workload_for_30_retentions() {
     }
 }
 
+pub(crate) fn run_expected_workload_with_10000_existing_cards() {
+    let config = SimulatorConfig {
+        deck_size: 46500,
+        learn_limit: 100,
+        ..Default::default()
+    };
+    let mut cards = Vec::with_capacity(10000);
+    for i in 0..10000 {
+        cards.push(Card {
+            id: i,
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: 0.0,
+            due: 10.0,
+            interval: 10.0,
+            lapses: 0,
+        });
+    }
+    black_box(
+        expected_workload_with_existing_cards(&DEFAULT_PARAMETERS, 0.9, &config, &cards).unwrap(),
+    );
+}
+
 pub fn criterion_benchmark(c: &mut Criterion) {
     let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
     let config = SimulatorConfig {
@@ -60,6 +83,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("expected_workload_30_retentions", |b| {
         b.iter(run_expected_workload_for_30_retentions)
+    });
+    c.bench_function("expected_workload_with_10000_existing_cards", |b| {
+        b.iter(run_expected_workload_with_10000_existing_cards)
     });
 }
 

@@ -297,17 +297,18 @@ pub struct WorkloadEstimator {
     long_step: f32,
 
     // Review configuration
-    first_rating_prob: [f32; 4],
     review_rating_prob: [f32; 3],
     state_rating_costs: [[f32; 4]; 3],
+    desired_retention: f32,
+    cost_matrix: Array3<f32>,
 }
 
 impl WorkloadEstimator {
     pub fn new(config: &SimulatorConfig) -> Self {
         let s_max = 365.0;
-        let short_step = 2.0f32.ln() / 5.0;
-        let long_step = 10.0;
-        let d_eps = 0.5;
+        let short_step = 2.0f32.ln() / 25.0;
+        let long_step = 5.0;
+        let d_eps = 0.3;
 
         // Create stability state space
         let s_mid_target = (long_step / (1.0 - (-short_step).exp())).min(s_max);
@@ -333,6 +334,7 @@ impl WorkloadEstimator {
         );
 
         let t_size = config.learn_span;
+        let cost_matrix = Array3::zeros((s_size, d_size, t_size + 1));
 
         Self {
             s_state,
@@ -344,9 +346,10 @@ impl WorkloadEstimator {
             s_mid_size,
             short_step,
             long_step,
-            first_rating_prob: config.first_rating_prob,
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
+            cost_matrix,
+            desired_retention: 0.9,
         }
     }
 
@@ -366,7 +369,8 @@ impl WorkloadEstimator {
         index.min(self.d_size - 1)
     }
 
-    pub fn evaluate_desired_retention(&self, desired_retention: f32, w: &Parameters) -> f32 {
+    fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
+        self.desired_retention = desired_retention;
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
@@ -377,7 +381,7 @@ impl WorkloadEstimator {
         for s_idx in 0..self.s_size {
             let s = self.s_state[s_idx];
             // Calculate interval and retrievability once and cache them
-            let ivl = next_interval(w, s, desired_retention).max(1.0).floor();
+            let ivl = next_interval(w, s, desired_retention).max(1.0).round();
             let r = power_forgetting_curve(w, ivl, s);
             for rating in 1..=4 {
                 if rating == 1 {
@@ -396,7 +400,7 @@ impl WorkloadEstimator {
                     };
                     let next_d_val = next_d(w, d, rating);
                     let next_ivl =
-                        next_interval(w, next_s, desired_retention).max(1.0).floor() as usize;
+                        next_interval(w, next_s, desired_retention).max(1.0).round() as usize;
                     next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
                     next_d_indices[[rating - 1, s_idx, d_idx]] = self.d2i(next_d_val);
                     next_intervals[[rating - 1, s_idx, d_idx]] = next_ivl;
@@ -433,18 +437,116 @@ impl WorkloadEstimator {
                 }
             }
         }
+        self.cost_matrix = cost_matrix;
+    }
 
-        // Calculate initial cost for mixed initial states
+    pub fn evaluate_new_card_cost(
+        &self,
+        w: &Parameters,
+        first_rating_probs: &[f32; 4],
+        due: usize,
+    ) -> f32 {
+        if due > self.t_size {
+            return 0.0;
+        }
         let mut total_cost = 0.0;
         for rating in 1..=4 {
-            let s_idx = self.s2i(init_s(w, rating));
-            let d_idx = self.d2i(init_d(w, rating));
-            total_cost += (cost_matrix[[s_idx, d_idx, 0]]
+            let s = init_s(w, rating);
+            let d = init_d(w, rating);
+            let s_idx = self.s2i(s);
+            let d_idx = self.d2i(d);
+            let ivl = next_interval(w, s, self.desired_retention).max(1.0).round() as usize;
+            let t_idx = (due + ivl).min(self.t_size);
+            total_cost += (unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
                 + self.state_rating_costs[LEARNING][rating - 1])
-                * self.first_rating_prob[rating - 1];
+                * first_rating_probs[rating - 1];
+        }
+        total_cost
+    }
+
+    /// Calculate the expected cost for an in-flight card over a target period
+    ///
+    /// # Arguments
+    /// * `card` - Current card state (stability S, difficulty D)
+    /// * `w` - FSRS model parameters
+    ///
+    /// # Returns
+    /// Expected total cost over the target period
+    pub fn evaluate_in_flight_card_cost(&self, card: &Card, w: &Parameters) -> f32 {
+        // If the upcoming review falls outside the target period, no cost is incurred
+        if card.due > self.t_size as f32 {
+            return 0.0;
         }
 
-        total_cost
+        let real_due = card.due.max(0.0);
+
+        // Calculate total interval governing the upcoming review
+        let ivl = real_due - card.last_date;
+
+        // Calculate retrievability at the time of upcoming review
+        let retrievability = power_forgetting_curve(w, ivl, card.stability);
+
+        // Calculate rating probabilities
+        let mut rating_probs = [0.0; 4];
+        // rating 1 (Again) - failed recall
+        rating_probs[0] = 1.0 - retrievability;
+        // ratings 2, 3, 4 (Hard, Good, Easy) - successful recall
+        for (i, &prob) in self.review_rating_prob.iter().enumerate() {
+            rating_probs[i + 1] = retrievability * prob;
+        }
+
+        let mut expected_cost = 0.0;
+
+        // Calculate expected cost over all possible review outcomes
+        for rating in 1..=4 {
+            let rating_idx = rating - 1;
+            let transition_prob = rating_probs[rating_idx];
+
+            if transition_prob <= 0.0 {
+                continue;
+            }
+
+            // Calculate immediate review cost
+            let immediate_cost = self.state_rating_costs[REVIEW][rating_idx];
+
+            // Calculate new stability and difficulty after review
+            let (new_stability, new_difficulty) = if rating == 1 {
+                // Failed recall - use failure transition
+                (
+                    stability_after_failure(w, card.stability, retrievability, card.difficulty),
+                    next_d(w, card.difficulty, rating),
+                )
+            } else {
+                // Successful recall - use success transition
+                (
+                    stability_after_success(
+                        w,
+                        card.stability,
+                        retrievability,
+                        card.difficulty,
+                        rating,
+                    ),
+                    next_d(w, card.difficulty, rating),
+                )
+            };
+            let new_interval = next_interval(w, new_stability, self.desired_retention)
+                .max(1.0)
+                .round() as usize;
+            let new_due = real_due as usize + new_interval;
+            // Calculate future cost using precomputed cost matrix
+            let future_cost = if new_due > self.t_size {
+                0.0
+            } else {
+                let s_idx = self.s2i(new_stability);
+                let d_idx = self.d2i(new_difficulty);
+                let t_idx = new_due as usize;
+                unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
+            };
+
+            expected_cost += transition_prob * (immediate_cost + future_cost);
+        }
+
+        expected_cost
     }
 }
 
@@ -454,9 +556,46 @@ pub fn expected_workload(
     config: &SimulatorConfig,
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
+    let mut estimator = WorkloadEstimator::new(config);
+    estimator.precompute_cost_matrix(desired_retention, w);
+    let workload = estimator.evaluate_new_card_cost(w, &config.first_rating_prob, 0);
+    Ok(workload)
+}
 
-    let estimator = WorkloadEstimator::new(config);
-    let workload = estimator.evaluate_desired_retention(desired_retention, w);
+pub fn expected_workload_with_existing_cards(
+    parameters: &Parameters,
+    desired_retention: f32,
+    config: &SimulatorConfig,
+    existing_cards: &[Card],
+) -> Result<f32> {
+    let w = &check_and_fill_parameters(parameters)?;
+    let mut estimator = WorkloadEstimator::new(config);
+    estimator.precompute_cost_matrix(desired_retention, w);
+    let mut cards = existing_cards.to_vec();
+
+    if config.learn_limit > 0 {
+        let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
+            id: -(i as i64),
+            difficulty: f32::NEG_INFINITY,
+            stability: f32::NEG_INFINITY,
+            last_date: f32::NEG_INFINITY,
+            due: (i / config.learn_limit) as f32,
+            interval: f32::NEG_INFINITY,
+            lapses: 0,
+        });
+
+        cards.extend(init_ratings);
+    }
+    let workload = cards
+        .iter()
+        .map(|card| {
+            if card.stability > 1e-9 {
+                estimator.evaluate_in_flight_card_cost(card, w)
+            } else {
+                estimator.evaluate_new_card_cost(w, &config.first_rating_prob, card.due as usize)
+            }
+        })
+        .sum();
     Ok(workload)
 }
 
@@ -2004,6 +2143,40 @@ mod tests {
     }
 
     #[test]
+    fn test_evaluate_new_card_cost() {
+        let w = &check_and_fill_parameters(&DEFAULT_PARAMETERS).unwrap();
+        let introduce_span = 365;
+        let mut config = SimulatorConfig::default();
+        config.learn_span = 365;
+        config.learn_limit = 100;
+        config.deck_size = introduce_span * config.learn_limit;
+        config.max_cost_perday = f32::INFINITY;
+        config.review_limit = usize::MAX;
+        config.learning_step_count = 0;
+        config.relearning_step_count = 0;
+        for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
+            dbg!(desired_retention);
+            let mut estimator = WorkloadEstimator::new(&config);
+            estimator.precompute_cost_matrix(desired_retention, w);
+            let mut cost_dp = 0.0;
+            for due in 0..introduce_span {
+                let cost = estimator.evaluate_new_card_cost(w, &config.first_rating_prob, due);
+                cost_dp += cost;
+            }
+
+            let result = simulate(&config, w, desired_retention, None, None).unwrap();
+            let cost_simulated =
+                result.cost_per_day.iter().sum::<f32>() / config.learn_limit as f32;
+            let relative_error = (cost_dp - cost_simulated).abs() / cost_simulated;
+            println!(
+                "DP: {:.2}\tSimulated: {:.2}\tRelative Error: {:.2}",
+                cost_dp, cost_simulated, relative_error
+            );
+            assert!(relative_error < 0.1);
+        }
+    }
+
+    #[test]
     fn test_expected_workload() {
         let mut config = SimulatorConfig::default();
         config.learn_span = 365;
@@ -2020,22 +2193,77 @@ mod tests {
         // ];
         config.learning_step_count = 0;
         config.relearning_step_count = 0;
-        for desired_retention in (70..=95).step_by(5).map(|x| x as f32 / 100.0) {
+        for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
+            dbg!(desired_retention);
             let start = Instant::now();
             let result_dp =
                 expected_workload(&DEFAULT_PARAMETERS, desired_retention, &config).unwrap();
             let duration = start.elapsed();
-            dbg!(duration);
+            println!("DP Duration: {:?}", duration);
             let start = Instant::now();
             let result =
                 simulate(&config, &DEFAULT_PARAMETERS, desired_retention, None, None).unwrap();
             let duration = start.elapsed();
-            dbg!(duration);
+            println!("Simulated Duration: {:?}", duration);
             let result_simulated =
                 result.cost_per_day[result.cost_per_day.len() - 1] / config.learn_limit as f32;
-            dbg!(desired_retention, result_dp, result_simulated);
-            assert!((result_dp - result_simulated).abs() / result_simulated < 0.1);
+            let relative_error = (result_dp - result_simulated).abs() / result_simulated;
+            println!(
+                "DP: {:.2}\tSimulated: {:.2}\tRelative Error: {:.2}",
+                result_dp, result_simulated, relative_error
+            );
+            assert!(relative_error < 0.1);
         }
+    }
+
+    #[test]
+    fn test_evaluate_in_flight_card_cost() -> Result<()> {
+        let w = &check_and_fill_parameters(&DEFAULT_PARAMETERS)?;
+        let config = SimulatorConfig {
+            learn_span: 365,
+            deck_size: 1,
+            learn_limit: 0,
+            max_cost_perday: f32::INFINITY,
+            review_limit: usize::MAX,
+            learning_step_count: 0,
+            relearning_step_count: 0,
+            ..Default::default()
+        };
+        for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
+            dbg!(desired_retention);
+            let mut estimator = WorkloadEstimator::new(&config);
+            estimator.precompute_cost_matrix(desired_retention, w);
+            let card = Card {
+                id: 0,
+                difficulty: 5.0,
+                stability: 5.0,
+                last_date: -5.0,
+                due: 5.0,
+                interval: 10.0,
+                lapses: 0,
+            };
+            let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
+            let mut costs = Vec::new();
+            for seed in 0..1000 {
+                let result = simulate(
+                    &config,
+                    w,
+                    desired_retention,
+                    Some(seed),
+                    Some(vec![card.clone()]),
+                )?;
+                let cost_per_day = result.cost_per_day.iter().sum::<f32>();
+                costs.push(cost_per_day);
+            }
+            let cost_simulated = costs.iter().sum::<f32>() / costs.len() as f32;
+            let relative_error = (cost_dp - cost_simulated).abs() / cost_simulated;
+            println!(
+                "DP: {:.2}\tSimulated: {:.2}\tRelative Error: {:.2}",
+                cost_dp, cost_simulated, relative_error
+            );
+            assert!(relative_error < 0.1);
+        }
+        Ok(())
     }
 
     #[test]
