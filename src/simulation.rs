@@ -306,9 +306,9 @@ pub struct WorkloadEstimator {
 impl WorkloadEstimator {
     pub fn new(config: &SimulatorConfig) -> Self {
         let s_max = 365.0;
-        let short_step = 2.0f32.ln() / 30.0;
+        let short_step = 2.0f32.ln() / 25.0;
         let long_step = 5.0;
-        let d_eps = 0.2;
+        let d_eps = 0.3;
 
         // Create stability state space
         let s_mid_target = (long_step / (1.0 - (-short_step).exp())).min(s_max);
