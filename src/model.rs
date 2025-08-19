@@ -65,7 +65,7 @@ impl<B: Backend> Model<B> {
         stability / factor * (desired_retention.powf(decay.powi_scalar(-1)) - 1.0)
     }
 
-    fn stability_after_success(
+    pub(crate) fn stability_after_success(
         &self,
         last_s: Tensor<B, 1>,
         last_d: Tensor<B, 1>,

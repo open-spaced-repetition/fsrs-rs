@@ -194,6 +194,21 @@ impl<B: Backend> FSRS<B> {
         }
     }
 
+    /// Calculate the increase in stability after a successful review.
+    /// Parameters must have been provided when calling FSRS::new().
+    pub fn stability_increase(&self, memory_state: MemoryState, desired_retention: f32) -> f32 {
+        self.model()
+            .stability_after_success(
+                Tensor::from_floats([memory_state.stability], &self.device()),
+                Tensor::from_floats([memory_state.difficulty], &self.device()),
+                Tensor::from_floats([desired_retention], &self.device()),
+                Tensor::from_floats([3.0], &self.device()),
+            )
+            .div_scalar(memory_state.stability)
+            .into_scalar()
+            .elem()
+    }
+
     /// Calculate the next interval for the current memory state, for rescheduling. Stability
     /// should be provided except when the card is new. Rating is ignored except when card is new.
     /// Parameters must have been provided when calling FSRS::new().
@@ -1200,6 +1215,32 @@ mod tests {
             .stability
             / interval as f32;
         assert!((fsrs_factor - ease_factor).abs() < 0.01);
+        Ok(())
+    }
+
+    #[test]
+    fn stability_increase() -> Result<()> {
+        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let state = MemoryState {
+            stability: 10.0,
+            difficulty: 6.9140563,
+        };
+        [fsrs.stability_increase(state, 0.9)].assert_approx_eq([2.5]);
+        let state = MemoryState {
+            stability: 3.01572,
+            difficulty: 9.393428,
+        };
+        [fsrs.stability_increase(state, 0.8)].assert_approx_eq([2.5]);
+        let state = MemoryState {
+            stability: 24.841097,
+            difficulty: 1.2974405,
+        };
+        [fsrs.stability_increase(state, 0.95)].assert_approx_eq([2.5]);
+        let state = MemoryState {
+            stability: 20.0,
+            difficulty: 10.0,
+        };
+        [fsrs.stability_increase(state, 0.9)].assert_approx_eq([1.3270751]);
         Ok(())
     }
 }
