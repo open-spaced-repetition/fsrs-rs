@@ -181,9 +181,45 @@ impl<B: Backend> FSRS<B> {
         }
     }
 
-    pub fn memory_state_batch(&self, items: Vec<FSRSItem>) -> Result<Vec<MemoryState>> {
+    pub fn memory_state_batch(
+        &self,
+        items: Vec<FSRSItem>,
+        starting_states: Vec<Option<MemoryState>>,
+    ) -> Result<Vec<MemoryState>> {
         let (time_histories, rating_histories) = self.items_to_tensors(&items);
-        let state = self.model().forward(time_histories, rating_histories, None);
+        let (stabilities, difficulties) = starting_states
+            .iter()
+            .map(|starting_state| {
+                if let Some(state) = starting_state {
+                    (state.stability, state.difficulty)
+                } else {
+                    (0.0, 0.0)
+                }
+            })
+            .collect::<(Vec<f32>, Vec<f32>)>();
+        let starting_states = MemoryStateTensors {
+            stability: Tensor::from_data(
+                TensorData::new(
+                    stabilities.clone(),
+                    Shape {
+                        dims: vec![stabilities.len()],
+                    },
+                ),
+                &self.device(),
+            ),
+            difficulty: Tensor::from_data(
+                TensorData::new(
+                    difficulties.clone(),
+                    Shape {
+                        dims: vec![difficulties.len()],
+                    },
+                ),
+                &self.device(),
+            ),
+        };
+        let state = self
+            .model()
+            .forward(time_histories, rating_histories, Some(starting_states));
         let stability = state.stability.to_data().to_vec::<f32>().unwrap();
         let difficulty = state.difficulty.to_data().to_vec::<f32>().unwrap();
         Ok(stability

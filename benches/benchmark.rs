@@ -44,7 +44,7 @@ pub(crate) fn calc_mem_batch(inf: &FSRS, past_reviews: usize, card_cnt: usize) -
     })
     .take(card_cnt)
     .collect_vec();
-    inf.memory_state_batch(items).unwrap()
+    inf.memory_state_batch(items, vec![None; card_cnt]).unwrap()
 }
 
 pub(crate) fn next_states(inf: &FSRS) -> NextStates {
