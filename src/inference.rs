@@ -119,13 +119,12 @@ impl<B: Backend> FSRS<B> {
             .iter()
             .map(|x| x.reviews.len())
             .max()
-            .expect("FSRSItem is empty")
-            - 1;
+            .expect("FSRSItem is empty");
         let (time_histories, rating_histories) = items
             .iter()
             .map(|item| {
                 let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
-                    item.history().map(|r| (r.delta_t, r.rating)).unzip();
+                    item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
                 delta_t.resize(pad_size, 0);
                 rating.resize(pad_size, 0);
                 let delta_t = Tensor::<B, 2>::from_floats(
@@ -186,6 +185,9 @@ impl<B: Backend> FSRS<B> {
         items: Vec<FSRSItem>,
         starting_states: Vec<Option<MemoryState>>,
     ) -> Result<Vec<MemoryState>> {
+        if items.is_empty() {
+            return Ok(vec![]);
+        }
         let (time_histories, rating_histories) = self.items_to_tensors(&items);
         let (stabilities, difficulties) = starting_states
             .iter()
@@ -1031,6 +1033,138 @@ mod tests {
 
         let splits = TimeSeriesSplit::split(items[..6].to_vec(), 0);
         assert!(splits.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_memory_state_batch() -> Result<()> {
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
+
+        let items = vec![
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 3,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 3,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 8,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 21,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 2,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 2,
+                        delta_t: 2,
+                    },
+                ],
+            },
+        ];
+
+        // Test with no starting states (all None)
+        let starting_states = vec![None, None, None];
+        let batch_results = fsrs.memory_state_batch(items.clone(), starting_states)?;
+
+        // Compare with individual memory_state calls
+        let individual_results: Vec<MemoryState> = items
+            .iter()
+            .map(|item| fsrs.memory_state(item.clone(), None).unwrap())
+            .collect();
+
+        // Verify that batch results match individual results
+        assert_eq!(batch_results.len(), individual_results.len());
+        for (batch_result, individual_result) in batch_results.iter().zip(individual_results.iter())
+        {
+            assert_eq!(batch_result, individual_result);
+        }
+
+        // Test with some starting states
+        let starting_states = vec![
+            Some(MemoryState {
+                stability: 5.0,
+                difficulty: 6.0,
+            }),
+            None,
+            Some(MemoryState {
+                stability: 10.0,
+                difficulty: 7.0,
+            }),
+        ];
+        let batch_results_with_starting =
+            fsrs.memory_state_batch(items.clone(), starting_states.clone())?;
+
+        // Compare with individual calls using starting states
+        let individual_results_with_starting: Vec<MemoryState> = items
+            .iter()
+            .zip(starting_states.iter())
+            .map(|(item, starting_state)| fsrs.memory_state(item.clone(), *starting_state).unwrap())
+            .collect();
+
+        // Verify that batch results match individual results
+        assert_eq!(
+            batch_results_with_starting.len(),
+            individual_results_with_starting.len()
+        );
+        for (batch_result, individual_result) in batch_results_with_starting
+            .iter()
+            .zip(individual_results_with_starting.iter())
+        {
+            assert_eq!(batch_result, individual_result);
+        }
+
+        // Test with empty items list
+        let empty_result = fsrs.memory_state_batch(vec![], vec![])?;
+        assert_eq!(empty_result.len(), 0);
+
+        // Test with single item
+        let single_item = vec![items[0].clone()];
+        let single_starting = vec![None];
+        let single_batch_result =
+            fsrs.memory_state_batch(single_item.clone(), single_starting.clone())?;
+        let single_individual_result =
+            fsrs.memory_state(single_item[0].clone(), single_starting[0])?;
+
+        assert_eq!(single_batch_result.len(), 1);
+        assert_eq!(single_batch_result[0], single_individual_result);
 
         Ok(())
     }
