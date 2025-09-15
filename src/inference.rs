@@ -293,9 +293,9 @@ impl<B: Backend> FSRS<B> {
             &self.device(),
         );
         let (current_memory_state_tensors, nth) = if let Some(state) = current_memory_state {
-            (state.into(), 0)
+            (state.into(), 1)
         } else {
-            (MemoryStateTensors::zeros(1), 1)
+            (MemoryStateTensors::zeros(1), 0)
         };
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
