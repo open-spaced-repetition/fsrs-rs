@@ -206,21 +206,26 @@ impl<B: Backend> FSRS<B> {
         if let Some(starting_state) = starting_state {
             states.push(starting_state);
         }
-        let [seq_len, _batch_size] = time_history.dims();
-        let mut inner_state = starting_state.map(Into::into);
+        let [seq_len, batch_size] = time_history.dims();
+        let mut inner_state = if let Some(state) = starting_state {
+            state.into()
+        } else {
+            MemoryStateTensors {
+                stability: Tensor::zeros([batch_size], &B::Device::default()),
+                difficulty: Tensor::zeros([batch_size], &B::Device::default()),
+            }
+        };
         for i in 0..seq_len {
             let delta_t = time_history.get(i).squeeze(0);
             // [batch_size]
             let rating = rating_history.get(i).squeeze(0);
             // [batch_size]
-            inner_state = Some(self.model().step(delta_t, rating, inner_state.clone()));
-            if let Some(state) = inner_state.clone() {
-                let state: MemoryState = state.into();
-                if !state.stability.is_finite() || !state.difficulty.is_finite() {
-                    return Err(FSRSError::InvalidInput);
-                }
-                states.push(state);
+            inner_state = self.model().step(delta_t, rating, inner_state.clone());
+            let state: MemoryState = inner_state.clone().into();
+            if !state.stability.is_finite() || !state.difficulty.is_finite() {
+                return Err(FSRSError::InvalidInput);
             }
+            states.push(state);
         }
         Ok(states)
     }
@@ -290,7 +295,14 @@ impl<B: Backend> FSRS<B> {
             TensorData::new(vec![days_elapsed], Shape { dims: vec![1] }),
             &self.device(),
         );
-        let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
+        let current_memory_state_tensors = if let Some(state) = current_memory_state {
+            state.into()
+        } else {
+            MemoryStateTensors {
+                stability: Tensor::zeros([1], &B::Device::default()),
+                difficulty: Tensor::zeros([1], &B::Device::default()),
+            }
+        };
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
             Ok({

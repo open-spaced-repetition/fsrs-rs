@@ -140,40 +140,46 @@ impl<B: Backend> Model<B> {
         &self,
         delta_t: Tensor<B, 1>,
         rating: Tensor<B, 1>,
-        state: Option<MemoryStateTensors<B>>,
+        state: MemoryStateTensors<B>,
     ) -> MemoryStateTensors<B> {
-        let (new_s, new_d) = if let Some(state) = state {
-            let retrievability =
-                self.power_forgetting_curve(delta_t.clone(), state.stability.clone());
-            let stability_after_success = self.stability_after_success(
-                state.stability.clone(),
-                state.difficulty.clone(),
-                retrievability.clone(),
-                rating.clone(),
-            );
-            let stability_after_failure = self.stability_after_failure(
-                state.stability.clone(),
-                state.difficulty.clone(),
-                retrievability,
-            );
-            let stability_short_term =
-                self.stability_short_term(state.stability.clone(), rating.clone());
-            let mut new_stability = stability_after_success
-                .mask_where(rating.clone().equal_elem(1), stability_after_failure);
-            new_stability = new_stability.mask_where(delta_t.equal_elem(0), stability_short_term);
+        // Check if state.stability is all zeros
+        let is_initial = state.stability.clone().equal_elem(0.0);
+        let last_s = state.stability.clone().clamp(S_MIN, S_MAX);
+        let last_d = state.difficulty.clone().clamp(D_MIN, D_MAX);
+        // If initial, use init_stability/init_difficulty, else use normal update
+        let init_s = self.init_stability(rating.clone().clamp(1, 4));
+        let init_d = self
+            .init_difficulty(rating.clone().clamp(1, 4))
+            .clamp(D_MIN, D_MAX);
 
-            let mut new_difficulty = self.next_difficulty(state.difficulty.clone(), rating.clone());
-            new_difficulty = self.mean_reversion(new_difficulty).clamp(D_MIN, D_MAX);
-            // mask padding zeros for rating
-            new_stability = new_stability.mask_where(rating.clone().equal_elem(0), state.stability);
-            new_difficulty = new_difficulty.mask_where(rating.equal_elem(0), state.difficulty);
-            (new_stability, new_difficulty)
-        } else {
-            (
-                self.init_stability(rating.clone()),
-                self.init_difficulty(rating).clamp(D_MIN, D_MAX),
-            )
-        };
+        let retrievability = self.power_forgetting_curve(delta_t.clone(), last_s.clone());
+        let stability_after_success = self.stability_after_success(
+            last_s.clone(),
+            last_d.clone(),
+            retrievability.clone(),
+            rating.clone(),
+        );
+        let stability_after_failure = self.stability_after_failure(
+            last_s.clone(),
+            last_d.clone(),
+            retrievability,
+        );
+        let stability_short_term =
+            self.stability_short_term(last_s.clone(), rating.clone());
+        let mut new_s = stability_after_success
+            .mask_where(rating.clone().equal_elem(1), stability_after_failure);
+        new_s = new_s.mask_where(delta_t.equal_elem(0), stability_short_term);
+
+        let mut new_d = self.next_difficulty(last_d.clone(), rating.clone());
+        new_d = self.mean_reversion(new_d).clamp(D_MIN, D_MAX);
+
+        // mask padding zeros for rating
+        new_s = new_s.mask_where(rating.clone().equal_elem(0), last_s);
+        new_d = new_d.mask_where(rating.clone().equal_elem(0), last_d);
+
+        // If state.stability == 0, use init values, else use calculated
+        new_s = new_s.mask_where(is_initial.clone(), init_s);
+        new_d = new_d.mask_where(is_initial, init_d);
         MemoryStateTensors {
             stability: new_s.clamp(S_MIN, S_MAX),
             difficulty: new_d,
@@ -188,16 +194,23 @@ impl<B: Backend> Model<B> {
         ratings: Tensor<B, 2>,
         starting_state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
-        let [seq_len, _batch_size] = delta_ts.dims();
-        let mut state = starting_state;
+        let [seq_len, batch_size] = delta_ts.dims();
+        let mut state = if let Some(state) = starting_state {
+            state
+        } else {
+            MemoryStateTensors {
+                stability: Tensor::zeros([batch_size], &B::Device::default()),
+                difficulty: Tensor::zeros([batch_size], &B::Device::default()),
+            }
+        };
         for i in 0..seq_len {
             let delta_t = delta_ts.get(i).squeeze(0);
             // [batch_size]
             let rating = ratings.get(i).squeeze(0);
             // [batch_size]
-            state = Some(self.step(delta_t, rating, state));
+            state = self.step(delta_t, rating, state);
         }
-        state.unwrap()
+        state
     }
 }
 
