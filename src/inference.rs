@@ -217,7 +217,7 @@ impl<B: Backend> FSRS<B> {
             // [batch_size]
             let rating = rating_history.get(i).squeeze(0);
             // [batch_size]
-            inner_state = self.model().step(delta_t, rating, inner_state.clone());
+            inner_state = self.model().step(delta_t, rating, inner_state.clone(), i);
             let state: MemoryState = inner_state.clone().into();
             if !state.stability.is_finite() || !state.difficulty.is_finite() {
                 return Err(FSRSError::InvalidInput);
@@ -292,10 +292,10 @@ impl<B: Backend> FSRS<B> {
             TensorData::new(vec![days_elapsed], Shape { dims: vec![1] }),
             &self.device(),
         );
-        let current_memory_state_tensors = if let Some(state) = current_memory_state {
-            state.into()
+        let (current_memory_state_tensors, nth) = if let Some(state) = current_memory_state {
+            (state.into(), 0)
         } else {
-            MemoryStateTensors::zeros(1)
+            (MemoryStateTensors::zeros(1), 1)
         };
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
@@ -307,6 +307,7 @@ impl<B: Backend> FSRS<B> {
                         &self.device(),
                     ),
                     current_memory_state_tensors.clone(),
+                    nth,
                 ));
                 if !state.stability.is_finite() || !state.difficulty.is_finite() {
                     return Err(FSRSError::InvalidInput);

@@ -141,16 +141,10 @@ impl<B: Backend> Model<B> {
         delta_t: Tensor<B, 1>,
         rating: Tensor<B, 1>,
         state: MemoryStateTensors<B>,
+        nth: usize,
     ) -> MemoryStateTensors<B> {
-        // Check if state.stability is all zeros
-        let is_initial = state.stability.clone().equal_elem(0.0);
         let last_s = state.stability.clone().clamp(S_MIN, S_MAX);
         let last_d = state.difficulty.clone().clamp(D_MIN, D_MAX);
-        // If initial, use init_stability/init_difficulty, else use normal update
-        let init_s = self.init_stability(rating.clone().clamp(1, 4));
-        let init_d = self
-            .init_difficulty(rating.clone().clamp(1, 4))
-            .clamp(D_MIN, D_MAX);
 
         let retrievability = self.power_forgetting_curve(delta_t.clone(), last_s.clone());
         let stability_after_success = self.stability_after_success(
@@ -169,13 +163,22 @@ impl<B: Backend> Model<B> {
         let mut new_d = self.next_difficulty(last_d.clone(), rating.clone());
         new_d = self.mean_reversion(new_d).clamp(D_MIN, D_MAX);
 
+        if nth == 0 {
+            // Check if state.stability is all zeros
+            let is_initial = state.stability.equal_elem(0.0);
+            // If initial, use init_stability/init_difficulty, else use normal update
+            let init_s = self.init_stability(rating.clone().clamp(1, 4));
+            let init_d = self
+                .init_difficulty(rating.clone().clamp(1, 4))
+                .clamp(D_MIN, D_MAX);
+            // If state.stability == 0, use init values, else use calculated
+            new_s = new_s.mask_where(is_initial.clone(), init_s);
+            new_d = new_d.mask_where(is_initial, init_d);
+        }
+
         // mask padding zeros for rating
         new_s = new_s.mask_where(rating.clone().equal_elem(0), last_s);
-        new_d = new_d.mask_where(rating.clone().equal_elem(0), last_d);
-
-        // If state.stability == 0, use init values, else use calculated
-        new_s = new_s.mask_where(is_initial.clone(), init_s);
-        new_d = new_d.mask_where(is_initial, init_d);
+        new_d = new_d.mask_where(rating.equal_elem(0), last_d);
         MemoryStateTensors {
             stability: new_s.clamp(S_MIN, S_MAX),
             difficulty: new_d,
@@ -201,7 +204,7 @@ impl<B: Backend> Model<B> {
             // [batch_size]
             let rating = ratings.get(i).squeeze(0);
             // [batch_size]
-            state = self.step(delta_t, rating, state);
+            state = self.step(delta_t, rating, state, i);
         }
         state
     }
