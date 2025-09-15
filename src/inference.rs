@@ -210,10 +210,7 @@ impl<B: Backend> FSRS<B> {
         let mut inner_state = if let Some(state) = starting_state {
             state.into()
         } else {
-            MemoryStateTensors {
-                stability: Tensor::zeros([batch_size], &B::Device::default()),
-                difficulty: Tensor::zeros([batch_size], &B::Device::default()),
-            }
+            MemoryStateTensors::zeros(batch_size)
         };
         for i in 0..seq_len {
             let delta_t = time_history.get(i).squeeze(0);
@@ -298,10 +295,7 @@ impl<B: Backend> FSRS<B> {
         let current_memory_state_tensors = if let Some(state) = current_memory_state {
             state.into()
         } else {
-            MemoryStateTensors {
-                stability: Tensor::zeros([1], &B::Device::default()),
-                difficulty: Tensor::zeros([1], &B::Device::default()),
-            }
+            MemoryStateTensors::zeros(1)
         };
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {

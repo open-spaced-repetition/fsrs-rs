@@ -194,10 +194,7 @@ impl<B: Backend> Model<B> {
         let mut state = if let Some(state) = starting_state {
             state
         } else {
-            MemoryStateTensors {
-                stability: Tensor::zeros([batch_size], &B::Device::default()),
-                difficulty: Tensor::zeros([batch_size], &B::Device::default()),
-            }
+            MemoryStateTensors::zeros(batch_size)
         };
         for i in 0..seq_len {
             let delta_t = delta_ts.get(i).squeeze(0);
@@ -214,6 +211,15 @@ impl<B: Backend> Model<B> {
 pub(crate) struct MemoryStateTensors<B: Backend> {
     pub stability: Tensor<B, 1>,
     pub difficulty: Tensor<B, 1>,
+}
+
+impl<B: Backend> MemoryStateTensors<B> {
+    pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
+        MemoryStateTensors {
+            stability: Tensor::zeros([batch_size], &B::Device::default()),
+            difficulty: Tensor::zeros([batch_size], &B::Device::default()),
+        }
+    }
 }
 
 #[derive(Config, Debug, Default)]
