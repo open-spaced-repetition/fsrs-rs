@@ -20,7 +20,6 @@ pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize) -> Vec<MemoryState> {
     };
     let reviews = repeat(review).take(past_reviews + 1).collect_vec();
     (0..100)
-        .into_iter()
         .map(|_| {
             inf.memory_state(
                 FSRSItem {
