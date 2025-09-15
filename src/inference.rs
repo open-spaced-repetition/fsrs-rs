@@ -114,6 +114,50 @@ impl<B: Backend> FSRS<B> {
         (time_history, rating_history)
     }
 
+    fn items_to_tensors(&self, items: &[FSRSItem]) -> (Tensor<B, 2>, Tensor<B, 2>) {
+        let pad_size = items
+            .iter()
+            .map(|x| x.reviews.len())
+            .max()
+            .expect("FSRSItem is empty");
+        let (time_histories, rating_histories) = items
+            .iter()
+            .map(|item| {
+                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
+                    item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
+                delta_t.resize(pad_size, 0);
+                rating.resize(pad_size, 0);
+                let delta_t = Tensor::<B, 2>::from_floats(
+                    TensorData::new(
+                        delta_t,
+                        Shape {
+                            dims: vec![1, pad_size],
+                        },
+                    ),
+                    &self.device(),
+                );
+                let rating = Tensor::<B, 2>::from_data(
+                    TensorData::new(
+                        rating,
+                        Shape {
+                            dims: vec![1, pad_size],
+                        },
+                    ),
+                    &self.device(),
+                );
+                (delta_t, rating)
+            })
+            .unzip();
+
+        let t_historys = Tensor::cat(time_histories, 0)
+            .transpose()
+            .to_device(&self.device()); // [seq_len, batch_size]
+        let r_historys = Tensor::cat(rating_histories, 0)
+            .transpose()
+            .to_device(&self.device()); // [seq_len, batch_size]
+        (t_historys, r_historys)
+    }
+
     /// Calculate the current memory state for a given card's history of reviews.
     /// In the case of truncated reviews, `starting_state` can be set to the value of
     /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
@@ -136,6 +180,60 @@ impl<B: Backend> FSRS<B> {
         }
     }
 
+    pub fn memory_state_batch(
+        &self,
+        items: Vec<FSRSItem>,
+        starting_states: Vec<Option<MemoryState>>,
+    ) -> Result<Vec<MemoryState>> {
+        if items.is_empty() {
+            return Ok(vec![]);
+        }
+        let (time_histories, rating_histories) = self.items_to_tensors(&items);
+        let (stabilities, difficulties) = starting_states
+            .iter()
+            .map(|starting_state| {
+                if let Some(state) = starting_state {
+                    (state.stability, state.difficulty)
+                } else {
+                    (0.0, 0.0)
+                }
+            })
+            .collect::<(Vec<f32>, Vec<f32>)>();
+        let starting_states = MemoryStateTensors {
+            stability: Tensor::from_data(
+                TensorData::new(
+                    stabilities.clone(),
+                    Shape {
+                        dims: vec![stabilities.len()],
+                    },
+                ),
+                &self.device(),
+            ),
+            difficulty: Tensor::from_data(
+                TensorData::new(
+                    difficulties.clone(),
+                    Shape {
+                        dims: vec![difficulties.len()],
+                    },
+                ),
+                &self.device(),
+            ),
+        };
+        let state = self
+            .model()
+            .forward(time_histories, rating_histories, Some(starting_states));
+        let stability = state.stability.to_data().to_vec::<f32>().unwrap();
+        let difficulty = state.difficulty.to_data().to_vec::<f32>().unwrap();
+        Ok(stability
+            .into_iter()
+            .zip(difficulty)
+            .map(|(stability, difficulty)| MemoryState {
+                stability,
+                difficulty,
+            })
+            .collect())
+    }
+
     pub fn historical_memory_states(
         &self,
         item: FSRSItem,
@@ -146,21 +244,23 @@ impl<B: Backend> FSRS<B> {
         if let Some(starting_state) = starting_state {
             states.push(starting_state);
         }
-        let [seq_len, _batch_size] = time_history.dims();
-        let mut inner_state = starting_state.map(Into::into);
+        let [seq_len, batch_size] = time_history.dims();
+        let mut inner_state = if let Some(state) = starting_state {
+            state.into()
+        } else {
+            MemoryStateTensors::zeros(batch_size)
+        };
         for i in 0..seq_len {
             let delta_t = time_history.get(i).squeeze(0);
             // [batch_size]
             let rating = rating_history.get(i).squeeze(0);
             // [batch_size]
-            inner_state = Some(self.model().step(delta_t, rating, inner_state.clone()));
-            if let Some(state) = inner_state.clone() {
-                let state: MemoryState = state.into();
-                if !state.stability.is_finite() || !state.difficulty.is_finite() {
-                    return Err(FSRSError::InvalidInput);
-                }
-                states.push(state);
+            inner_state = self.model().step(delta_t, rating, inner_state.clone(), i);
+            let state: MemoryState = inner_state.clone().into();
+            if !state.stability.is_finite() || !state.difficulty.is_finite() {
+                return Err(FSRSError::InvalidInput);
             }
+            states.push(state);
         }
         Ok(states)
     }
@@ -230,7 +330,11 @@ impl<B: Backend> FSRS<B> {
             TensorData::new(vec![days_elapsed], Shape { dims: vec![1] }),
             &self.device(),
         );
-        let current_memory_state_tensors = current_memory_state.map(MemoryStateTensors::from);
+        let (current_memory_state_tensors, nth) = if let Some(state) = current_memory_state {
+            (state.into(), 1)
+        } else {
+            (MemoryStateTensors::zeros(1), 0)
+        };
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
             Ok({
@@ -241,6 +345,7 @@ impl<B: Backend> FSRS<B> {
                         &self.device(),
                     ),
                     current_memory_state_tensors.clone(),
+                    nth,
                 ));
                 if !state.stability.is_finite() || !state.difficulty.is_finite() {
                     return Err(FSRSError::InvalidInput);
@@ -928,6 +1033,138 @@ mod tests {
 
         let splits = TimeSeriesSplit::split(items[..6].to_vec(), 0);
         assert!(splits.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_memory_state_batch() -> Result<()> {
+        let fsrs = FSRS::new(Some(PARAMETERS))?;
+
+        let items = vec![
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 3,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 3,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 8,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 21,
+                    },
+                ],
+            },
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 2,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 4,
+                        delta_t: 1,
+                    },
+                    FSRSReview {
+                        rating: 2,
+                        delta_t: 2,
+                    },
+                ],
+            },
+        ];
+
+        // Test with no starting states (all None)
+        let starting_states = vec![None, None, None];
+        let batch_results = fsrs.memory_state_batch(items.clone(), starting_states)?;
+
+        // Compare with individual memory_state calls
+        let individual_results: Vec<MemoryState> = items
+            .iter()
+            .map(|item| fsrs.memory_state(item.clone(), None).unwrap())
+            .collect();
+
+        // Verify that batch results match individual results
+        assert_eq!(batch_results.len(), individual_results.len());
+        for (batch_result, individual_result) in batch_results.iter().zip(individual_results.iter())
+        {
+            assert_eq!(batch_result, individual_result);
+        }
+
+        // Test with some starting states
+        let starting_states = vec![
+            Some(MemoryState {
+                stability: 5.0,
+                difficulty: 6.0,
+            }),
+            None,
+            Some(MemoryState {
+                stability: 10.0,
+                difficulty: 7.0,
+            }),
+        ];
+        let batch_results_with_starting =
+            fsrs.memory_state_batch(items.clone(), starting_states.clone())?;
+
+        // Compare with individual calls using starting states
+        let individual_results_with_starting: Vec<MemoryState> = items
+            .iter()
+            .zip(starting_states.iter())
+            .map(|(item, starting_state)| fsrs.memory_state(item.clone(), *starting_state).unwrap())
+            .collect();
+
+        // Verify that batch results match individual results
+        assert_eq!(
+            batch_results_with_starting.len(),
+            individual_results_with_starting.len()
+        );
+        for (batch_result, individual_result) in batch_results_with_starting
+            .iter()
+            .zip(individual_results_with_starting.iter())
+        {
+            assert_eq!(batch_result, individual_result);
+        }
+
+        // Test with empty items list
+        let empty_result = fsrs.memory_state_batch(vec![], vec![])?;
+        assert_eq!(empty_result.len(), 0);
+
+        // Test with single item
+        let single_item = vec![items[0].clone()];
+        let single_starting = vec![None];
+        let single_batch_result =
+            fsrs.memory_state_batch(single_item.clone(), single_starting.clone())?;
+        let single_individual_result =
+            fsrs.memory_state(single_item[0].clone(), single_starting[0])?;
+
+        assert_eq!(single_batch_result.len(), 1);
+        assert_eq!(single_batch_result[0], single_individual_result);
 
         Ok(())
     }
