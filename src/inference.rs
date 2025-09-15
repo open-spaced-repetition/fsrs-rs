@@ -114,6 +114,51 @@ impl<B: Backend> FSRS<B> {
         (time_history, rating_history)
     }
 
+    fn items_to_tensors(&self, items: &[FSRSItem]) -> (Tensor<B, 2>, Tensor<B, 2>) {
+        let pad_size = items
+            .iter()
+            .map(|x| x.reviews.len())
+            .max()
+            .expect("FSRSItem is empty")
+            - 1;
+        let (time_histories, rating_histories) = items
+            .iter()
+            .map(|item| {
+                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
+                    item.history().map(|r| (r.delta_t, r.rating)).unzip();
+                delta_t.resize(pad_size, 0);
+                rating.resize(pad_size, 0);
+                let delta_t = Tensor::<B, 2>::from_floats(
+                    TensorData::new(
+                        delta_t,
+                        Shape {
+                            dims: vec![1, pad_size],
+                        },
+                    ),
+                    &self.device(),
+                );
+                let rating = Tensor::<B, 2>::from_data(
+                    TensorData::new(
+                        rating,
+                        Shape {
+                            dims: vec![1, pad_size],
+                        },
+                    ),
+                    &self.device(),
+                );
+                (delta_t, rating)
+            })
+            .unzip();
+
+        let t_historys = Tensor::cat(time_histories, 0)
+            .transpose()
+            .to_device(&self.device()); // [seq_len, batch_size]
+        let r_historys = Tensor::cat(rating_histories, 0)
+            .transpose()
+            .to_device(&self.device()); // [seq_len, batch_size]
+        (t_historys, r_historys)
+    }
+
     /// Calculate the current memory state for a given card's history of reviews.
     /// In the case of truncated reviews, `starting_state` can be set to the value of
     /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
@@ -134,6 +179,21 @@ impl<B: Backend> FSRS<B> {
         } else {
             Ok(state)
         }
+    }
+
+    pub fn memory_state_batch(&self, items: Vec<FSRSItem>) -> Result<Vec<MemoryState>> {
+        let (time_histories, rating_histories) = self.items_to_tensors(&items);
+        let state = self.model().forward(time_histories, rating_histories, None);
+        let stability = state.stability.to_data().to_vec::<f32>().unwrap();
+        let difficulty = state.difficulty.to_data().to_vec::<f32>().unwrap();
+        Ok(stability
+            .into_iter()
+            .zip(difficulty)
+            .map(|(stability, difficulty)| MemoryState {
+                stability,
+                difficulty,
+            })
+            .collect())
     }
 
     pub fn historical_memory_states(
