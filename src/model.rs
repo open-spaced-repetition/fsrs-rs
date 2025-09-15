@@ -159,13 +159,9 @@ impl<B: Backend> Model<B> {
             retrievability.clone(),
             rating.clone(),
         );
-        let stability_after_failure = self.stability_after_failure(
-            last_s.clone(),
-            last_d.clone(),
-            retrievability,
-        );
-        let stability_short_term =
-            self.stability_short_term(last_s.clone(), rating.clone());
+        let stability_after_failure =
+            self.stability_after_failure(last_s.clone(), last_d.clone(), retrievability);
+        let stability_short_term = self.stability_short_term(last_s.clone(), rating.clone());
         let mut new_s = stability_after_success
             .mask_where(rating.clone().equal_elem(1), stability_after_failure);
         new_s = new_s.mask_where(delta_t.equal_elem(0), stability_short_term);
