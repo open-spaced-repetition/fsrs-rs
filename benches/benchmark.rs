@@ -80,13 +80,22 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         2.6646678,
     ]))
     .unwrap();
-    c.bench_function("calc_mem", |b| {
-        b.iter(|| black_box(calc_mem(&fsrs, 100, 512)))
-    });
-    c.bench_function("calc_mem_batch", |b| {
-        b.iter(|| black_box(calc_mem_batch(&fsrs, 100, 512)))
-    });
     c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&fsrs))));
+    c.bench_function("calc_mem(10, 1000)", |b| {
+        b.iter(|| black_box(calc_mem(&fsrs, 10, 1000)))
+    });
+    c.bench_function("calc_mem_batch(10, 1000)", |b| {
+        b.iter(|| black_box(calc_mem_batch(&fsrs, 10, 1000)))
+    });
+    c.bench_function("calc_mem_batch(100, 1000)", |b| {
+        b.iter(|| black_box(calc_mem_batch(&fsrs, 100, 1000)))
+    });
+    c.bench_function("calc_mem_batch(10, 10000)", |b| {
+        b.iter(|| black_box(calc_mem_batch(&fsrs, 10, 10000)))
+    });
+    c.bench_function("calc_mem_batch(100, 10000)", |b| {
+        b.iter(|| black_box(calc_mem_batch(&fsrs, 100, 10000)))
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);
