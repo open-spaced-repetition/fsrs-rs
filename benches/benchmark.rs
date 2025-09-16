@@ -100,7 +100,13 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("calc_mem_batch");
 
     // Different combinations of past reviews and card counts
-    let configs = vec![(10, 1000), (100, 1000), (10, 10000), (100, 10000)];
+    let configs = vec![
+        (10, 1000),
+        (100, 1000),
+        (1000, 1000),
+        (10, 10000),
+        (100, 10000),
+    ];
 
     for (past_reviews, card_cnt) in configs {
         group.throughput(Throughput::Elements(card_cnt as u64));
