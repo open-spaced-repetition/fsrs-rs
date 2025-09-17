@@ -4,9 +4,9 @@
 use std::hint::black_box;
 use std::iter::repeat;
 
-use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
+use criterion::{Criterion, Throughput};
 use fsrs::FSRS;
 use fsrs::FSRSReview;
 use fsrs::NextStates;
@@ -80,13 +80,42 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         2.6646678,
     ]))
     .unwrap();
-    c.bench_function("calc_mem", |b| {
-        b.iter(|| black_box(calc_mem(&fsrs, 100, 512)))
-    });
-    c.bench_function("calc_mem_batch", |b| {
-        b.iter(|| black_box(calc_mem_batch(&fsrs, 100, 512)))
-    });
+
     c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&fsrs))));
+
+    {
+        let mut single_group = c.benchmark_group("calc_mem");
+        let n_cards = 1000;
+        let n_reviews = 10;
+        single_group.throughput(Throughput::Elements(n_cards));
+        single_group.bench_function(
+            format!("calc_mem n_cards={n_cards}, n_reviews={n_reviews}"),
+            |b| b.iter(|| black_box(calc_mem(&fsrs, n_reviews, n_cards.try_into().unwrap()))),
+        );
+        single_group.finish();
+    }
+
+    {
+        let mut batch_group = c.benchmark_group("calc_mem_batch");
+        for n_cards in [1000, 10_000] {
+            for n_reviews in [10, 100, 200] {
+                batch_group.throughput(Throughput::Elements(n_cards));
+                batch_group.bench_function(
+                    format!("calc_mem_batch n_cards={n_cards}, n_reviews={n_reviews}"),
+                    |b| {
+                        b.iter(|| {
+                            black_box(calc_mem_batch(
+                                &fsrs,
+                                n_reviews,
+                                n_cards.try_into().unwrap(),
+                            ))
+                        })
+                    },
+                );
+            }
+        }
+        batch_group.finish();
+    }
 }
 
 criterion_group!(benches, criterion_benchmark);
