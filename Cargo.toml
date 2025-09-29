@@ -1,6 +1,6 @@
 [package]
 name = "fsrs"
-version = "5.2.0"
+version = "6.0.0"
 authors = ["Open Spaced Repetition"]
 categories = ["algorithms", "science"]
 edition = "2024"
