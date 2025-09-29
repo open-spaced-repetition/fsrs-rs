@@ -19,8 +19,7 @@ pub use dataset::{FSRSItem, FSRSReview};
 pub use error::{FSRSError, Result};
 pub use inference::{
     DEFAULT_PARAMETERS, FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, ItemProgress, ItemState,
-    MemoryState, ModelEvaluation, NextStates, current_retrievability,
-};
+    MemoryState, ModelEvaluation, NextStates, current_retrievability};
 pub use model::FSRS;
 pub use simulation::{
     CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind,

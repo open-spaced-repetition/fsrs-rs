@@ -57,6 +57,15 @@ fn infer<B: Backend>(
     (state, retrievability)
 }
 
+/// Calculate the current retrievability for a memory state.
+///
+/// # Arguments
+/// * `state` - The memory state
+/// * `days_elapsed` - Days since last review
+/// * `decay` - Decay parameter for the forgetting curve
+///
+/// # Returns
+/// The retrievability (probability of recall)
 pub fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32) -> f32 {
     let factor = 0.9f32.powf(1.0 / -decay) - 1.0;
     (days_elapsed / state.stability * factor + 1.0).powf(-decay)
@@ -501,23 +510,6 @@ impl<B: Backend> FSRS<B> {
         evaluate::<B>(all_predictions)
     }
 
-    /// How well the user is likely to remember the item after `days_elapsed` since the previous
-    /// review.
-    pub fn current_retrievability(&self, state: MemoryState, days_elapsed: u32, decay: f32) -> f32 {
-        current_retrievability(state, days_elapsed as f32, decay)
-    }
-
-    /// How well the user is likely to remember the item after `seconds_elapsed` since the previous
-    /// review.
-    pub fn current_retrievability_seconds(
-        &self,
-        state: MemoryState,
-        seconds_elapsed: u32,
-        decay: f32,
-    ) -> f32 {
-        current_retrievability(state, seconds_elapsed as f32 / 86400.0, decay)
-    }
-
     /// Returns the universal metrics for the existing and provided parameters. If the first value
     /// is smaller than the second value, the existing parameters are better than the provided ones.
     pub fn universal_metrics<F>(
@@ -587,16 +579,13 @@ pub struct PredictedFSRSItem {
 /// # Arguments
 /// * `items` - The dataset to predict
 /// * `parameters` - The model parameters to use for prediction
-/// * `progress` - A callback function to report progress
 ///
 /// # Returns
 /// A vector of PredictedFSRSItem containing the original items and their predicted retrievability
 fn batch_predict<B: Backend>(
     items: Vec<FSRSItem>,
     parameters: &[f32],
-) -> Result<Vec<PredictedFSRSItem>>
-where
-{
+) -> Result<Vec<PredictedFSRSItem>> {
     if items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
@@ -627,7 +616,6 @@ where
 ///
 /// # Arguments
 /// * `predicted_items` - The items with their predicted retrievability values
-/// * `progress` - A callback function to report progress
 ///
 /// # Returns
 /// A ModelEvaluation containing log loss and RMSE metrics
@@ -767,14 +755,16 @@ impl TimeSeriesSplit {
             .collect()
     }
 }
-
+/// Get a binned index for comparison calculations
 fn get_bin(x: f32, bins: i32) -> i32 {
     let log_base = (bins.add(1) as f32).ln();
     let binned_x = (x * log_base).exp().floor().sub(1.0);
     (binned_x as i32).clamp(0, bins - 1)
 }
 
+/// Measure model performance in bins
 fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
+    use itertools::izip;
     let mut groups = HashMap::new();
     izip!(pred_a, pred_b, true_val).for_each(|(a, b, t)| {
         let bin = get_bin(*b, 20);
@@ -799,8 +789,8 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::{
-        FSRSReview, convertor_tests::anki21_sample_file_converted_to_fsrs, dataset::filter_outlier,
-        test_helpers::TestHelper,
+        FSRSReview, convertor_tests::anki21_sample_file_converted_to_fsrs, current_retrievability,
+        dataset::filter_outlier, test_helpers::TestHelper,
     };
 
     static PARAMETERS: &[f32] = &[
@@ -1371,39 +1361,15 @@ mod tests {
     }
 
     #[test]
-    fn current_retrievability() {
-        let fsrs = FSRS::new(None).unwrap();
+    fn test_current_retrievability() {
         let state = MemoryState {
             stability: 1.0,
             difficulty: 5.0,
         };
-        assert_eq!(fsrs.current_retrievability(state, 0, 0.2), 1.0);
-        assert_eq!(fsrs.current_retrievability(state, 1, 0.2), 0.9);
-        assert_eq!(fsrs.current_retrievability(state, 2, 0.2), 0.84028935);
-        assert_eq!(fsrs.current_retrievability(state, 3, 0.2), 0.7985001);
-    }
-
-    #[test]
-    fn current_retrievability_seconds() {
-        let fsrs = FSRS::new(None).unwrap();
-        let state = MemoryState {
-            stability: 1.0,
-            difficulty: 5.0,
-        };
-        assert_eq!(fsrs.current_retrievability_seconds(state, 0, 0.2), 1.0);
-        assert_eq!(
-            fsrs.current_retrievability_seconds(state, 1, 0.2),
-            0.9999984
-        );
-        assert_eq!(
-            fsrs.current_retrievability_seconds(state, 60, 0.2),
-            0.9999037
-        );
-        assert_eq!(
-            fsrs.current_retrievability_seconds(state, 3600, 0.2),
-            0.9943189
-        );
-        assert_eq!(fsrs.current_retrievability_seconds(state, 86400, 0.2), 0.9);
+        assert_eq!(current_retrievability(state, 0.0, 0.2), 1.0);
+        assert_eq!(current_retrievability(state, 1.0, 0.2), 0.9);
+        assert_eq!(current_retrievability(state, 2.0, 0.2), 0.84028935);
+        assert_eq!(current_retrievability(state, 3.0, 0.2), 0.7985001);
     }
 
     #[test]
