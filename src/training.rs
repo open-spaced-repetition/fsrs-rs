@@ -214,7 +214,7 @@ pub(crate) struct TrainingConfig {
     pub gamma: f64,
 }
 
-pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
+pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     let (total_recall, total_reviews) = items
         .iter()
         .map(|item| item.current())

@@ -201,7 +201,7 @@ impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     }
 }
 
-pub fn filter_outlier(
+pub(crate) fn filter_outlier(
     dataset_for_initialization: Vec<FSRSItem>,
     mut trainset: Vec<FSRSItem>,
 ) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
@@ -257,7 +257,7 @@ pub fn filter_outlier(
     (filtered_items, trainset)
 }
 
-pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
+pub(crate) fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
     let (mut dataset_for_initialization, mut trainset) = items
         .clone()
         .into_iter()
