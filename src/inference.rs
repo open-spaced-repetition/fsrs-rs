@@ -764,7 +764,6 @@ fn get_bin(x: f32, bins: i32) -> i32 {
 
 /// Measure model performance in bins
 fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
-    use itertools::izip;
     let mut groups = HashMap::new();
     izip!(pred_a, pred_b, true_val).for_each(|(a, b, t)| {
         let bin = get_bin(*b, 20);
