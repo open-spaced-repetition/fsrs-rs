@@ -810,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn training() {
+    fn test_training() {
         if std::env::var("SKIP_TRAINING").is_ok() {
             println!("Skipping test in CI");
             return;

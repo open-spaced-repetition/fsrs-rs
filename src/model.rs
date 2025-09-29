@@ -332,7 +332,7 @@ mod tests {
     use burn::tensor::{TensorData, Tolerance};
 
     #[test]
-    fn w() {
+    fn test_w() {
         let model = Model::new(ModelConfig::default());
         assert_eq!(
             model.w.val().to_data(),
@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_parameters() {
+    fn test_convert_parameters() {
         let fsrs4dot5_param = vec![
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn power_forgetting_curve() {
+    fn test_power_forgetting_curve() {
         let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
         let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn init_stability() {
+    fn test_init_stability() {
         let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
         let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
@@ -390,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn init_difficulty() {
+    fn test_init_difficulty() {
         let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
         let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn forward() {
+    fn test_forward() {
         let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
         let delta_ts = Tensor::from_floats(
@@ -446,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn next_difficulty() {
+    fn test_next_difficulty() {
         let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
         let difficulty = Tensor::from_floats([5.0; 4], &device);
@@ -470,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn next_stability() {
+    fn test_next_stability() {
         let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
         let stability = Tensor::from_floats([5.0; 4], &device);
@@ -516,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn fsrs() {
+    fn test_fsrs() {
         assert!(FSRS::new(Some(&[])).is_ok());
         assert!(FSRS::new(Some(&[1.])).is_err());
         assert!(FSRS::new(Some(DEFAULT_PARAMETERS.as_slice())).is_ok());

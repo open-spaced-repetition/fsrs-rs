@@ -303,7 +303,7 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
-    fn from_anki() {
+    fn test_from_anki() {
         use burn::data::dataloader::Dataset;
 
         let dataset = FSRSDataset::from(constant_weighted_fsrs_items(
@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn batcher() {
+    fn test_batcher() {
         use burn::backend::NdArray;
         use burn::backend::ndarray::NdArrayDevice;
         type Backend = NdArray<f32>;

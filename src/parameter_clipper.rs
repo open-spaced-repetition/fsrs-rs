@@ -87,7 +87,7 @@ mod tests {
     use burn::backend::ndarray::NdArrayDevice;
 
     #[test]
-    fn parameter_clipper_works() {
+    fn test_parameter_clipper_works() {
         let device = NdArrayDevice::Cpu;
         let tensor = Tensor::from_floats(
             [0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1],
@@ -104,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn parameter_clipper_works_with_num_relearning_steps() {
+    fn test_parameter_clipper_works_with_num_relearning_steps() {
         use crate::test_helpers::TestHelper;
         let device = NdArrayDevice::Cpu;
         let tensor = Tensor::from_floats(DEFAULT_PARAMETERS, &device);

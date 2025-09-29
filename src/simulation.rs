@@ -1516,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn simulator_memorization() -> Result<()> {
+    fn test_simulator_memorization() -> Result<()> {
         let config = SimulatorConfig::default();
         let SimulationResult {
             memorized_cnt_per_day,
@@ -1530,7 +1530,7 @@ mod tests {
     }
 
     #[test]
-    fn simulator_learn_review_costs() -> Result<()> {
+    fn test_simulator_learn_review_costs() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 1,
             learn_span: 1,
@@ -1565,7 +1565,7 @@ mod tests {
     }
 
     #[test]
-    fn changing_learn_span_should_get_same_review_cnt_per_day() -> Result<()> {
+    fn test_changing_learn_span_should_get_same_review_cnt_per_day() -> Result<()> {
         const LOWER: usize = 365;
         const DECK_SIZE: usize = 1000;
         const LEARN_LIMIT: usize = 10;
@@ -1601,7 +1601,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_existing_cards() -> Result<()> {
+    fn test_simulate_with_existing_cards() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1660,7 +1660,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_suspend_on_lapse_count() -> Result<()> {
+    fn test_simulate_suspend_on_lapse_count() -> Result<()> {
         let cards = vec![Card {
             id: 0,
             difficulty: 10.0,
@@ -1690,7 +1690,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_learn_limit() -> Result<()> {
+    fn test_simulate_with_learn_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_limit: 3,
             review_limit: 10,
@@ -1721,7 +1721,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_new_affects_review_limit() -> Result<()> {
+    fn test_simulate_with_new_affects_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_limit: 3,
             review_limit: 10,
@@ -1754,7 +1754,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_learn_review_limit() -> Result<()> {
+    fn test_simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1782,7 +1782,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_max_ivl() -> Result<()> {
+    fn test_simulate_with_max_ivl() -> Result<()> {
         let config = SimulatorConfig {
             max_ivl: 100.0,
             ..Default::default()
@@ -1799,7 +1799,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_zero_cards() -> Result<()> {
+    fn test_simulate_with_zero_cards() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 0,
             ..Default::default()
@@ -1810,7 +1810,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_returns_cards() -> Result<()> {
+    fn test_simulate_returns_cards() -> Result<()> {
         let w = DEFAULT_PARAMETERS;
 
         let config = SimulatorConfig {
@@ -1836,7 +1836,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_existing_cards_with_wrong_deck_size() -> Result<()> {
+    fn test_simulate_with_existing_cards_with_wrong_deck_size() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 1,
             ..Default::default()
@@ -1867,7 +1867,7 @@ mod tests {
     }
 
     #[test]
-    fn learn_does_not_affect_correct_count() -> Result<()> {
+    fn test_learn_does_not_affect_correct_count() -> Result<()> {
         let mut w = DEFAULT_PARAMETERS;
         w[3] = 10000.;
 
@@ -1905,7 +1905,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_post_scheduling_fn() -> Result<()> {
+    fn test_simulate_with_post_scheduling_fn() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 10,
             learn_span: 10,
@@ -1921,7 +1921,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_review_priority_fn() -> Result<()> {
+    fn test_simulate_with_review_priority_fn() -> Result<()> {
         fn calc_cost_per_memorization(
             memorized_cnt_per_day: &Parameters,
             cost_per_day: &Parameters,
@@ -2011,7 +2011,7 @@ mod tests {
     }
 
     #[test]
-    fn optimal_retention() -> Result<()> {
+    fn test_optimal_retention() -> Result<()> {
         let learn_span = 1000;
         let learn_limit = 10;
         let fsrs = FSRS::new(None)?;
@@ -2060,7 +2060,7 @@ mod tests {
     }
 
     #[test]
-    fn optimal_retention_with_old_parameters() -> Result<()> {
+    fn test_optimal_retention_with_old_parameters() -> Result<()> {
         let learn_span = 1000;
         let learn_limit = 10;
         let fsrs = FSRS::new(None)?;
@@ -2081,7 +2081,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_simulator_config_from_revlog() {
+    fn test_extract_simulator_config_from_revlog() {
         let mut revlogs = read_collection().unwrap();
         revlogs.sort_by_cached_key(|r| (r.cid, r.id));
         let day_cutoff = 1720900800;
@@ -2137,7 +2137,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_simulator_config_without_revlog() {
+    fn test_extract_simulator_config_without_revlog() {
         let simulator_config = extract_simulator_config(vec![], 0, true);
         assert_eq!(simulator_config, SimulatorConfig::default());
     }

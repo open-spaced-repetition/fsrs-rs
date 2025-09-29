@@ -1196,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn next_states() -> Result<()> {
+    fn test_next_states() -> Result<()> {
         let item = FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -1258,7 +1258,7 @@ mod tests {
 
     #[test]
     #[ignore = "just for exploration"]
-    fn short_term_stability() -> Result<()> {
+    fn test_short_term_stability() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let mut state = MemoryState {
             stability: 1.0,
@@ -1277,7 +1277,7 @@ mod tests {
 
     #[test]
     #[ignore = "just for exploration"]
-    fn good_again_loop_during_the_same_day() -> Result<()> {
+    fn test_good_again_loop_during_the_same_day() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let mut state = MemoryState {
             stability: 1.0,
@@ -1297,7 +1297,7 @@ mod tests {
 
     #[test]
     #[ignore = "just for exploration"]
-    fn stability_after_same_day_review_less_than_next_day_review() -> Result<()> {
+    fn test_stability_after_same_day_review_less_than_next_day_review() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let state = MemoryState {
             stability: 10.0,
@@ -1315,7 +1315,7 @@ mod tests {
 
     #[test]
     #[ignore = "just for exploration"]
-    fn init_stability_after_same_day_review_hard_vs_good_vs_easy() -> Result<()> {
+    fn test_init_stability_after_same_day_review_hard_vs_good_vs_easy() -> Result<()> {
         let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
         let item = FSRSItem {
             reviews: vec![
@@ -1373,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_from_sm2() -> Result<()> {
+    fn test_memory_from_sm2() -> Result<()> {
         let fsrs = FSRS::new(Some(&[]))?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
 
