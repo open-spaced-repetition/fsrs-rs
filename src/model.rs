@@ -293,7 +293,7 @@ impl<B: Backend> FSRS<B> {
     }
 
     pub(crate) fn device(&self) -> B::Device {
-        B::Device::default()
+        self.model().w.device()
     }
 }
 
