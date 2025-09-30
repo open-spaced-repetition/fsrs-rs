@@ -1,25 +1,26 @@
+use itertools::izip;
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
-
-use crate::model::{FSRS, Get, MemoryStateTensors};
-use crate::simulation::{D_MAX, D_MIN, S_MIN};
-use crate::training::ComputeParametersInput;
-use burn::nn::loss::Reduction;
-use burn::tensor::cast::ToElement;
-use burn::tensor::{Shape, Tensor, TensorData};
-use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 
 use crate::dataset::{
     FSRSBatch, FSRSBatcher, constant_weighted_fsrs_items, recency_weighted_fsrs_items,
 };
 use crate::error::Result;
 use crate::model::Model;
+use crate::model::{FSRS, Get, MemoryStateTensors};
+use crate::simulation::{D_MAX, D_MIN, S_MIN};
 use crate::training::BCELoss;
+use crate::training::{self, ComputeParametersInput};
 use crate::{FSRSError, FSRSItem};
+use burn::backend::NdArray;
+use burn::nn::loss::Reduction;
 use burn::tensor::ElementConversion;
+use burn::tensor::cast::ToElement;
+use burn::tensor::{Shape, Tensor, TensorData};
+use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 /// This is a slice for efficiency, but should always be 21 in length.
 pub type Parameters = [f32];
-use itertools::izip;
+type B = NdArray<f32>;
 
 pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
 pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
@@ -446,70 +447,6 @@ impl<B: Backend> FSRS<B> {
         })
     }
 
-    /// Determine how well the model and parameters predict performance using time series splits.
-    /// For each split:
-    /// 1. Use training data to compute parameters
-    /// 2. Use test data to make predictions
-    /// 3. Collect all predictions
-    ///
-    /// Finally, evaluate all predictions together
-    ///
-    /// # Arguments
-    /// * `items` - The dataset to evaluate
-    /// * `progress` - A callback function to report progress
-    ///
-    /// # Returns
-    /// A ModelEvaluation containing metrics for all predictions
-    pub fn evaluate_with_time_series_splits<F>(
-        &self,
-        ComputeParametersInput {
-            train_set,
-            enable_short_term,
-            num_relearning_steps,
-            ..
-        }: ComputeParametersInput,
-        mut progress: F,
-    ) -> Result<ModelEvaluation>
-    where
-        F: FnMut(ItemProgress) -> bool,
-    {
-        if train_set.is_empty() {
-            return Err(FSRSError::NotEnoughData);
-        }
-
-        let splits = TimeSeriesSplit::split(train_set, 5);
-        let mut all_predictions = Vec::new();
-        let mut progress_info = ItemProgress {
-            current: 0,
-            total: splits.len(),
-        };
-
-        for split in splits.into_iter() {
-            // Compute parameters on training data
-            let input = ComputeParametersInput {
-                train_set: split.train_items.clone(),
-                enable_short_term,
-                num_relearning_steps,
-                progress: None,
-            };
-            let parameters = self.compute_parameters(input)?;
-
-            // Make predictions on test data
-            let predictions = batch_predict::<B>(split.test_items, &parameters)?;
-
-            // Collect predictions
-            all_predictions.extend(predictions);
-
-            progress_info.current += 1;
-            if !progress(progress_info) {
-                return Err(FSRSError::Interrupted);
-            }
-        }
-
-        // Evaluate all predictions together
-        evaluate::<B>(all_predictions)
-    }
-
     /// Returns the universal metrics for the existing and provided parameters. If the first value
     /// is smaller than the second value, the existing parameters are better than the provided ones.
     pub fn universal_metrics<F>(
@@ -760,6 +697,67 @@ fn get_bin(x: f32, bins: i32) -> i32 {
     let log_base = (bins.add(1) as f32).ln();
     let binned_x = (x * log_base).exp().floor().sub(1.0);
     (binned_x as i32).clamp(0, bins - 1)
+}
+
+/// Evaluates the model using time series cross-validation.
+///
+/// This function performs time series cross-validation by splitting the dataset into training
+/// and testing sets based on time order. It trains the model on each training set and evaluates
+/// it on the corresponding test set. It uses the CPU device for computation.
+///
+/// # Arguments
+/// * `input` - Input parameters including the dataset and configuration
+/// * `progress` - A function to report progress
+///
+/// # Returns
+/// A `Result<ModelEvaluation>` containing the evaluation metrics
+pub fn evaluate_with_time_series_splits<F>(
+    ComputeParametersInput {
+        train_set,
+        enable_short_term,
+        num_relearning_steps,
+        ..
+    }: ComputeParametersInput,
+    mut progress: F,
+) -> Result<ModelEvaluation>
+where
+    F: FnMut(ItemProgress) -> bool,
+{
+    if train_set.is_empty() {
+        return Err(FSRSError::NotEnoughData);
+    }
+
+    let splits = TimeSeriesSplit::split(train_set, 5);
+    let mut all_predictions = Vec::new();
+    let mut progress_info = ItemProgress {
+        current: 0,
+        total: splits.len(),
+    };
+
+    for split in splits.into_iter() {
+        // Compute parameters on training data
+        let input = ComputeParametersInput {
+            train_set: split.train_items.clone(),
+            enable_short_term,
+            num_relearning_steps,
+            progress: None,
+        };
+        let parameters = training::compute_parameters(input)?;
+
+        // Make predictions on test data
+        let predictions = batch_predict::<B>(split.test_items, &parameters)?;
+
+        // Collect predictions
+        all_predictions.extend(predictions);
+
+        progress_info.current += 1;
+        if !progress(progress_info) {
+            return Err(FSRSError::Interrupted);
+        }
+    }
+
+    // Evaluate all predictions together
+    evaluate::<B>(all_predictions)
 }
 
 /// Measure model performance in bins
@@ -1174,14 +1172,11 @@ mod tests {
             num_relearning_steps: None,
         };
 
-        let fsrs = FSRS::new(None)?;
-        let metrics = fsrs
-            .evaluate_with_time_series_splits(input.clone(), |_| true)
-            .unwrap();
+        let metrics = evaluate_with_time_series_splits(input.clone(), |_| true).unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19692886, 0.025453836]);
 
-        let result = fsrs.evaluate_with_time_series_splits(
+        let result = evaluate_with_time_series_splits(
             ComputeParametersInput {
                 train_set: items[..5].to_vec(),
                 progress: None,

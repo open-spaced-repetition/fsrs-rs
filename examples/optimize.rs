@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use fsrs::{ComputeParametersInput, DEFAULT_PARAMETERS, FSRS, FSRSItem, FSRSReview};
+use fsrs::{ComputeParametersInput, FSRSItem, FSRSReview, compute_parameters};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create review histories for cards
@@ -13,12 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Size of FSRSItems: {}", fsrs_items.len());
 
-    // Create an FSRS instance with default parameters
-    let fsrs = FSRS::new(Some(&[]))?;
-    println!("Default parameters: {:?}", DEFAULT_PARAMETERS);
-
     // Optimize the FSRS model using the created items
-    let optimized_parameters = fsrs.compute_parameters(ComputeParametersInput {
+    let optimized_parameters = compute_parameters(ComputeParametersInput {
         train_set: fsrs_items,
         ..Default::default()
     })?;
