@@ -523,7 +523,7 @@ fn batch_predict(items: Vec<FSRSItem>, parameters: &[f32]) -> Result<Vec<Predict
     let device = NdArrayDevice::Cpu;
     let batcher = FSRSBatcher::new(device);
 
-    let fsrs = FSRS::<NdArray>::new_with_backend(parameters, NdArrayDevice::Cpu)?;
+    let fsrs = FSRS::<NdArray>::new_with_backend(parameters, device)?;
     let model = fsrs.model();
     let mut predicted_items = Vec::with_capacity(weighted_items.len());
 
