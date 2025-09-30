@@ -10,7 +10,7 @@ mod model;
 mod parameter_clipper;
 mod parameter_initialization;
 mod simulation;
-#[cfg(test)]
+//#[cfg(test)] this module is used in fsrs-browser
 mod test_helpers;
 mod training;
 
