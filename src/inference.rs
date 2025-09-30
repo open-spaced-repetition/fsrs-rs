@@ -1,3 +1,4 @@
+use burn::backend::ndarray::NdArrayDevice;
 use itertools::izip;
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
@@ -20,7 +21,6 @@ use burn::tensor::{Shape, Tensor, TensorData};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
 /// This is a slice for efficiency, but should always be 21 in length.
 pub type Parameters = [f32];
-type B = NdArray<f32>;
 
 pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
 pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
@@ -87,15 +87,6 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
     }
 }
 
-impl<B: Backend> From<MemoryState> for MemoryStateTensors<B> {
-    fn from(m: MemoryState) -> Self {
-        Self {
-            stability: Tensor::from_floats([m.stability], &B::Device::default()),
-            difficulty: Tensor::from_floats([m.difficulty], &B::Device::default()),
-        }
-    }
-}
-
 #[derive(Default)]
 struct RMatrixValue {
     predicted: f32,
@@ -106,18 +97,19 @@ struct RMatrixValue {
 
 impl<B: Backend> FSRS<B> {
     fn item_to_tensors(&self, item: &FSRSItem) -> (Tensor<B, 2>, Tensor<B, 2>) {
+        let device = self.device();
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
         let time_history = Tensor::<B, 1>::from_data(
             TensorData::new(time_history, Shape { dims: vec![size] }),
-            &self.device(),
+            &device,
         )
         .unsqueeze()
         .transpose();
         let rating_history = Tensor::<B, 1>::from_data(
             TensorData::new(rating_history, Shape { dims: vec![size] }),
-            &self.device(),
+            &device,
         )
         .unsqueeze()
         .transpose();
@@ -130,6 +122,7 @@ impl<B: Backend> FSRS<B> {
             .map(|x| x.reviews.len())
             .max()
             .expect("FSRSItem is empty");
+        let device = self.device();
         let (time_histories, rating_histories) = items
             .iter()
             .map(|item| {
@@ -144,7 +137,7 @@ impl<B: Backend> FSRS<B> {
                             dims: vec![1, pad_size],
                         },
                     ),
-                    &self.device(),
+                    &device,
                 );
                 let rating = Tensor::<B, 2>::from_data(
                     TensorData::new(
@@ -153,7 +146,7 @@ impl<B: Backend> FSRS<B> {
                             dims: vec![1, pad_size],
                         },
                     ),
-                    &self.device(),
+                    &device,
                 );
                 (delta_t, rating)
             })
@@ -161,10 +154,10 @@ impl<B: Backend> FSRS<B> {
 
         let t_historys = Tensor::cat(time_histories, 0)
             .transpose()
-            .to_device(&self.device()); // [seq_len, batch_size]
+            .to_device(&device); // [seq_len, batch_size]
         let r_historys = Tensor::cat(rating_histories, 0)
             .transpose()
-            .to_device(&self.device()); // [seq_len, batch_size]
+            .to_device(&device); // [seq_len, batch_size]
         (t_historys, r_historys)
     }
 
@@ -178,9 +171,11 @@ impl<B: Backend> FSRS<B> {
         starting_state: Option<MemoryState>,
     ) -> Result<MemoryState> {
         let (time_history, rating_history) = self.item_to_tensors(&item);
+        let starting_tensors =
+            starting_state.map(|s| MemoryStateTensors::from_state(s, &self.device()));
         let state: MemoryState = self
             .model()
-            .forward(time_history, rating_history, starting_state.map(Into::into))
+            .forward(time_history, rating_history, starting_tensors)
             .into();
         if !state.stability.is_finite() || !state.difficulty.is_finite() {
             Err(FSRSError::InvalidInput)
@@ -208,6 +203,7 @@ impl<B: Backend> FSRS<B> {
                 }
             })
             .collect::<(Vec<f32>, Vec<f32>)>();
+        let device = self.device();
         let starting_states = MemoryStateTensors {
             stability: Tensor::from_data(
                 TensorData::new(
@@ -216,7 +212,7 @@ impl<B: Backend> FSRS<B> {
                         dims: vec![stabilities.len()],
                     },
                 ),
-                &self.device(),
+                &device,
             ),
             difficulty: Tensor::from_data(
                 TensorData::new(
@@ -225,7 +221,7 @@ impl<B: Backend> FSRS<B> {
                         dims: vec![difficulties.len()],
                     },
                 ),
-                &self.device(),
+                &device,
             ),
         };
         let state = self
@@ -254,10 +250,11 @@ impl<B: Backend> FSRS<B> {
             states.push(starting_state);
         }
         let [seq_len, batch_size] = time_history.dims();
+        let device = self.device();
         let mut inner_state = if let Some(state) = starting_state {
-            state.into()
+            MemoryStateTensors::from_state(state, &device)
         } else {
-            MemoryStateTensors::zeros(batch_size)
+            MemoryStateTensors::zeros(batch_size, &device)
         };
         for i in 0..seq_len {
             let delta_t = time_history.get(i).squeeze(0);
@@ -311,15 +308,16 @@ impl<B: Backend> FSRS<B> {
         rating: u32,
     ) -> f32 {
         let model = self.model();
+        let device = self.device();
         let stability = stability.unwrap_or_else(|| {
             // get initial stability for new card
-            let rating = Tensor::from_floats([rating], &self.device());
+            let rating = Tensor::from_floats([rating], &device);
             model.init_stability(rating).into_scalar().elem()
         });
         model
             .next_interval(
-                Tensor::from_floats([stability], &self.device()),
-                Tensor::from_floats([desired_retention], &self.device()),
+                Tensor::from_floats([stability], &device),
+                Tensor::from_floats([desired_retention], &device),
             )
             .into_scalar()
             .elem()
@@ -332,14 +330,15 @@ impl<B: Backend> FSRS<B> {
         desired_retention: f32,
         days_elapsed: u32,
     ) -> Result<NextStates> {
+        let device = self.device();
         let delta_t = Tensor::from_data(
             TensorData::new(vec![days_elapsed], Shape { dims: vec![1] }),
-            &self.device(),
+            &device,
         );
         let (current_memory_state_tensors, nth) = if let Some(state) = current_memory_state {
-            (state.into(), 1)
+            (MemoryStateTensors::from_state(state, &device), 1)
         } else {
-            (MemoryStateTensors::zeros(1), 0)
+            (MemoryStateTensors::zeros(1, &device), 0)
         };
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
@@ -348,7 +347,7 @@ impl<B: Backend> FSRS<B> {
                     delta_t.clone(),
                     Tensor::from_data(
                         TensorData::new(vec![rating], Shape { dims: vec![1] }),
-                        &self.device(),
+                        &device,
                     ),
                     current_memory_state_tensors.clone(),
                     nth,
@@ -364,8 +363,8 @@ impl<B: Backend> FSRS<B> {
             let memory = next_memory_states.next().unwrap()?;
             let interval = model
                 .next_interval(
-                    Tensor::from_floats([memory.stability], &self.device()),
-                    Tensor::from_floats([desired_retention], &self.device()),
+                    Tensor::from_floats([memory.stability], &device),
+                    Tensor::from_floats([desired_retention], &device),
                 )
                 .into_scalar()
                 .elem();
@@ -389,7 +388,8 @@ impl<B: Backend> FSRS<B> {
             return Err(FSRSError::NotEnoughData);
         }
         let weighted_items = recency_weighted_fsrs_items(items);
-        let batcher = FSRSBatcher::new(self.device());
+        let device = self.device();
+        let batcher = FSRSBatcher::new(device.clone());
         let mut all_retrievability = vec![];
         let mut all_labels = vec![];
         let mut all_weights = vec![];
@@ -401,7 +401,7 @@ impl<B: Backend> FSRS<B> {
         let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
 
         for chunk in weighted_items.chunks(512) {
-            let batch = batcher.batch(chunk.to_vec(), &self.device());
+            let batch = batcher.batch(chunk.to_vec(), &device);
             let (_state, retrievability) = infer::<B>(model, batch.clone());
             let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
             let true_val = batch.labels.clone().to_data().to_vec::<i64>().unwrap();
@@ -457,7 +457,8 @@ impl<B: Backend> FSRS<B> {
             return Err(FSRSError::NotEnoughData);
         }
         let weighted_items = constant_weighted_fsrs_items(items);
-        let batcher = FSRSBatcher::new(self.device());
+        let device = self.device();
+        let batcher = FSRSBatcher::new(device.clone());
         let mut all_predictions_self = vec![];
         let mut all_predictions_other = vec![];
         let mut all_true_val = vec![];
@@ -466,10 +467,10 @@ impl<B: Backend> FSRS<B> {
             total: weighted_items.len(),
         };
         let model_self = self.model();
-        let fsrs_other = Self::new_with_backend(parameters, self.device())?;
+        let fsrs_other = Self::new_with_backend(parameters, device.clone())?;
         let model_other = fsrs_other.model();
         for chunk in weighted_items.chunks(512) {
-            let batch = batcher.batch(chunk.to_vec(), &self.device());
+            let batch = batcher.batch(chunk.to_vec(), &device);
 
             let (_state, retrievability) = infer::<B>(model_self, batch.clone());
             let pred = retrievability.clone().to_data().to_vec::<f32>().unwrap();
@@ -514,23 +515,21 @@ pub struct PredictedFSRSItem {
 ///
 /// # Returns
 /// A vector of PredictedFSRSItem containing the original items and their predicted retrievability
-fn batch_predict<B: Backend>(
-    items: Vec<FSRSItem>,
-    parameters: &[f32],
-) -> Result<Vec<PredictedFSRSItem>> {
+fn batch_predict(items: Vec<FSRSItem>, parameters: &[f32]) -> Result<Vec<PredictedFSRSItem>> {
     if items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
     let weighted_items = constant_weighted_fsrs_items(items);
-    let batcher = FSRSBatcher::new(B::Device::default());
+    let device = NdArrayDevice::Cpu;
+    let batcher = FSRSBatcher::new(device);
 
-    let fsrs = FSRS::<B>::new_with_backend(parameters, B::Device::default())?;
+    let fsrs = FSRS::<NdArray>::new_with_backend(parameters, NdArrayDevice::Cpu)?;
     let model = fsrs.model();
     let mut predicted_items = Vec::with_capacity(weighted_items.len());
 
     for chunk in weighted_items.chunks(512) {
-        let batch = batcher.batch(chunk.to_vec(), &B::Device::default());
-        let (_state, retrievability) = infer::<B>(model, batch.clone());
+        let batch = batcher.batch(chunk.to_vec(), &device);
+        let (_state, retrievability) = infer::<NdArray>(model, batch.clone());
         let pred = retrievability.to_data().to_vec::<f32>().unwrap();
 
         for (weighted_item, p) in chunk.iter().zip(pred) {
@@ -551,7 +550,8 @@ fn batch_predict<B: Backend>(
 ///
 /// # Returns
 /// A ModelEvaluation containing log loss and RMSE metrics
-fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<ModelEvaluation> {
+fn evaluate(predicted_items: Vec<PredictedFSRSItem>) -> Result<ModelEvaluation> {
+    use burn::backend::NdArray;
     if predicted_items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
@@ -580,6 +580,7 @@ fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<Model
         / r_matrix.values().map(|v| v.weight).sum::<f32>())
     .sqrt();
 
+    let device = NdArrayDevice::Cpu;
     let all_labels = Tensor::from_data(
         TensorData::new(
             all_labels.clone(),
@@ -587,17 +588,17 @@ fn evaluate<B: Backend>(predicted_items: Vec<PredictedFSRSItem>) -> Result<Model
                 dims: vec![all_labels.len()],
             },
         ),
-        &B::Device::default(),
+        &device,
     );
-    let all_weights = Tensor::ones(all_labels.shape(), &B::Device::default());
-    let all_retrievability: Tensor<B, 1> = Tensor::from_data(
+    let all_weights = Tensor::ones(all_labels.shape(), &device);
+    let all_retrievability: Tensor<NdArray, 1> = Tensor::from_data(
         TensorData::new(
             predicted_items.iter().map(|p| p.retrievability).collect(),
             Shape {
                 dims: vec![predicted_items.len()],
             },
         ),
-        &B::Device::default(),
+        &device,
     );
 
     let loss = BCELoss::new().forward(all_retrievability, all_labels, all_weights, Reduction::Auto);
@@ -740,7 +741,7 @@ where
         let parameters = training::compute_parameters(input)?;
 
         // Make predictions on test data
-        let predictions = batch_predict::<B>(split.test_items, &parameters)?;
+        let predictions = batch_predict(split.test_items, &parameters)?;
 
         // Collect predictions
         all_predictions.extend(predictions);
@@ -752,7 +753,7 @@ where
     }
 
     // Evaluate all predictions together
-    evaluate::<B>(all_predictions)
+    evaluate(all_predictions)
 }
 
 /// Measure model performance in bins

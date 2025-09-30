@@ -98,8 +98,8 @@ impl<B: Backend> Model<B> {
 impl<B: AutodiffBackend> Model<B> {
     fn freeze_initial_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
-        let updated_grad_tensor =
-            grad_tensor.slice_assign([0..4], Tensor::zeros([4], &B::Device::default()));
+        let device = grad_tensor.device();
+        let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4], &device));
 
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
@@ -108,8 +108,8 @@ impl<B: AutodiffBackend> Model<B> {
 
     fn free_short_term_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
-        let updated_grad_tensor =
-            grad_tensor.slice_assign([17..20], Tensor::zeros([3], &B::Device::default()));
+        let device = grad_tensor.device();
+        let updated_grad_tensor = grad_tensor.slice_assign([17..20], Tensor::zeros([3], &device));
 
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);

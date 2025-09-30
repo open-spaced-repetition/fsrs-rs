@@ -1,6 +1,6 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters};
+use crate::inference::{FSRS5_DEFAULT_DECAY, MemoryState, Parameters};
 use crate::parameter_clipper::clip_parameters;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
 use burn::backend::NdArray;
@@ -27,8 +27,11 @@ impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
 }
 
 impl<B: Backend> Model<B> {
-    #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
+        Self::new_with_device(config, &B::Device::default())
+    }
+
+    pub fn new_with_device(config: ModelConfig, device: &B::Device) -> Self {
         let mut initial_params: Vec<f32> = config
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
@@ -44,7 +47,7 @@ impl<B: Backend> Model<B> {
         Self {
             w: Param::from_tensor(Tensor::from_floats(
                 TensorData::new(initial_params, Shape { dims: vec![21] }),
-                &B::Device::default(),
+                device,
             )),
         }
     }
@@ -73,10 +76,11 @@ impl<B: Backend> Model<B> {
         rating: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
         let batch_size = rating.dims()[0];
-        let hard_penalty = Tensor::ones([batch_size], &B::Device::default())
+        let device = rating.device();
+        let hard_penalty = Tensor::ones([batch_size], &device)
             .mask_where(rating.clone().equal_elem(2), self.w.get(15));
-        let easy_bonus = Tensor::ones([batch_size], &B::Device::default())
-            .mask_where(rating.equal_elem(4), self.w.get(16));
+        let easy_bonus =
+            Tensor::ones([batch_size], &device).mask_where(rating.equal_elem(4), self.w.get(16));
 
         last_s.clone()
             * (self.w.get(8).exp()
@@ -115,7 +119,8 @@ impl<B: Backend> Model<B> {
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
-        let rating = Tensor::from_floats([4.0], &B::Device::default());
+        let device = new_d.device();
+        let rating = Tensor::from_floats([4.0], &device);
         self.w.get(7) * (self.init_difficulty(rating) - new_d.clone()) + new_d
     }
 
@@ -194,10 +199,11 @@ impl<B: Backend> Model<B> {
         starting_state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let [seq_len, batch_size] = delta_ts.dims();
+        let device = delta_ts.device();
         let mut state = if let Some(state) = starting_state {
             state
         } else {
-            MemoryStateTensors::zeros(batch_size)
+            MemoryStateTensors::zeros(batch_size, &device)
         };
         for i in 0..seq_len {
             let delta_t = delta_ts.get(i).squeeze(0);
@@ -217,10 +223,17 @@ pub(crate) struct MemoryStateTensors<B: Backend> {
 }
 
 impl<B: Backend> MemoryStateTensors<B> {
-    pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
+    pub(crate) fn zeros(batch_size: usize, device: &B::Device) -> MemoryStateTensors<B> {
         MemoryStateTensors {
-            stability: Tensor::zeros([batch_size], &B::Device::default()),
-            difficulty: Tensor::zeros([batch_size], &B::Device::default()),
+            stability: Tensor::zeros([batch_size], device),
+            difficulty: Tensor::zeros([batch_size], device),
+        }
+    }
+
+    pub(crate) fn from_state(state: MemoryState, device: &B::Device) -> Self {
+        Self {
+            stability: Tensor::from_floats([state.stability], device),
+            difficulty: Tensor::from_floats([state.difficulty], device),
         }
     }
 }
@@ -270,7 +283,7 @@ impl<B: Backend> FSRS<B> {
         device: B2::Device,
     ) -> Result<FSRS<B2>> {
         let parameters = check_and_fill_parameters(parameters)?;
-        let model = parameters_to_model::<B2>(&parameters);
+        let model = parameters_to_model::<B2>(&parameters, &device);
 
         Ok(FSRS { model, device })
     }
@@ -284,15 +297,18 @@ impl<B: Backend> FSRS<B> {
     }
 }
 
-pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
+pub(crate) fn parameters_to_model<B: Backend>(
+    parameters: &Parameters,
+    device: &B::Device,
+) -> Model<B> {
     let config = ModelConfig::default();
-    let mut model = Model::new(config.clone());
+    let mut model = Model::new_with_device(config.clone(), device);
     model.w = Param::from_tensor(Tensor::from_floats(
         TensorData::new(
             clip_parameters(parameters, config.num_relearning_steps, Default::default()),
             Shape { dims: vec![21] },
         ),
-        &B::Device::default(),
+        device,
     ));
     model
 }

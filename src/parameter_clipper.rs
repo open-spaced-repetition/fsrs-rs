@@ -21,8 +21,7 @@ pub(crate) fn parameter_clipper<B: Backend>(
     );
     Param::initialized(
         id,
-        Tensor::from_data(TensorData::new(clipped, val.shape()), &B::Device::default())
-            .require_grad(),
+        Tensor::from_data(TensorData::new(clipped, val.shape()), &val.device()).require_grad(),
     )
 }
 
