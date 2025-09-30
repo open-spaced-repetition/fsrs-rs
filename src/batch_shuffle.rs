@@ -17,7 +17,7 @@ pub(crate) struct BatchTensorDataset<B: Backend> {
 impl<B: Backend> BatchTensorDataset<B> {
     /// Creates a new shuffled dataset.
     pub fn new(dataset: FSRSDataset, batch_size: usize, device: B::Device) -> Self {
-        let batcher = FSRSBatcher::<B>::new(device.clone());
+        let batcher = FSRSBatcher::<B>::new();
         let dataset = dataset
             .items
             .chunks(batch_size)

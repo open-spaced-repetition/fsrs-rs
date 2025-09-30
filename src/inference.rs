@@ -389,7 +389,7 @@ impl<B: Backend> FSRS<B> {
         }
         let weighted_items = recency_weighted_fsrs_items(items);
         let device = self.device();
-        let batcher = FSRSBatcher::new(device.clone());
+        let batcher = FSRSBatcher::new();
         let mut all_retrievability = vec![];
         let mut all_labels = vec![];
         let mut all_weights = vec![];
@@ -458,7 +458,7 @@ impl<B: Backend> FSRS<B> {
         }
         let weighted_items = constant_weighted_fsrs_items(items);
         let device = self.device();
-        let batcher = FSRSBatcher::new(device.clone());
+        let batcher = FSRSBatcher::new();
         let mut all_predictions_self = vec![];
         let mut all_predictions_other = vec![];
         let mut all_true_val = vec![];
@@ -521,9 +521,9 @@ fn batch_predict(items: Vec<FSRSItem>, parameters: &[f32]) -> Result<Vec<Predict
     }
     let weighted_items = constant_weighted_fsrs_items(items);
     let device = NdArrayDevice::Cpu;
-    let batcher = FSRSBatcher::new(device);
+    let batcher = FSRSBatcher::new();
 
-    let fsrs = FSRS::<NdArray>::new_with_backend(parameters, device)?;
+    let fsrs = FSRS::new(parameters)?;
     let model = fsrs.model();
     let mut predicted_items = Vec::with_capacity(weighted_items.len());
 
@@ -551,7 +551,6 @@ fn batch_predict(items: Vec<FSRSItem>, parameters: &[f32]) -> Result<Vec<Predict
 /// # Returns
 /// A ModelEvaluation containing log loss and RMSE metrics
 fn evaluate(predicted_items: Vec<PredictedFSRSItem>) -> Result<ModelEvaluation> {
-    use burn::backend::NdArray;
     if predicted_items.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }

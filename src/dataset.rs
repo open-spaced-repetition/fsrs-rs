@@ -79,12 +79,14 @@ impl FSRSItem {
 
 #[derive(Clone)]
 pub(crate) struct FSRSBatcher<B: Backend> {
-    device: B::Device,
+    _backend: core::marker::PhantomData<B>,
 }
 
 impl<B: Backend> FSRSBatcher<B> {
-    pub const fn new(device: B::Device) -> Self {
-        Self { device }
+    pub const fn new() -> Self {
+        Self {
+            _backend: core::marker::PhantomData,
+        }
     }
 }
 
@@ -98,7 +100,7 @@ pub(crate) struct FSRSBatch<B: Backend> {
 }
 
 impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
-    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, _device: &B::Device) -> FSRSBatch<B> {
+    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, device: &B::Device) -> FSRSBatch<B> {
         let pad_size = weighted_items
             .iter()
             .map(|x| x.item.reviews.len())
@@ -123,7 +125,7 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                             dims: vec![1, pad_size],
                         },
                     ),
-                    &self.device,
+                    device,
                 );
                 let rating = Tensor::<B, 2>::from_data(
                     TensorData::new(
@@ -132,7 +134,7 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                             dims: vec![1, pad_size],
                         },
                     ),
-                    &self.device,
+                    device,
                 );
                 (delta_t, rating)
             })
@@ -142,28 +144,24 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .iter()
             .map(|weighted_item| {
                 let current = weighted_item.item.current();
-                let delta_t: Tensor<B, 1> =
-                    Tensor::from_floats([current.delta_t as f32], &self.device);
+                let delta_t: Tensor<B, 1> = Tensor::from_floats([current.delta_t as f32], device);
                 let label = match current.rating {
                     1 => 0,
                     _ => 1,
                 };
-                let label: Tensor<B, 1, Int> = Tensor::from_ints([label], &self.device);
-                let weight: Tensor<B, 1> =
-                    Tensor::from_floats([weighted_item.weight], &self.device);
+                let label: Tensor<B, 1, Int> = Tensor::from_ints([label], device);
+                let weight: Tensor<B, 1> = Tensor::from_floats([weighted_item.weight], device);
                 (delta_t, label, weight)
             })
             .multiunzip();
 
-        let t_historys = Tensor::cat(time_histories, 0)
-            .transpose()
-            .to_device(&self.device); // [seq_len, batch_size]
+        let t_historys = Tensor::cat(time_histories, 0).transpose().to_device(device); // [seq_len, batch_size]
         let r_historys = Tensor::cat(rating_histories, 0)
             .transpose()
-            .to_device(&self.device); // [seq_len, batch_size]
-        let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);
-        let labels = Tensor::cat(labels, 0).to_device(&self.device);
-        let weights = Tensor::cat(weights, 0).to_device(&self.device);
+            .to_device(device); // [seq_len, batch_size]
+        let delta_ts = Tensor::cat(delta_ts, 0).to_device(device);
+        let labels = Tensor::cat(labels, 0).to_device(device);
+        let weights = Tensor::cat(weights, 0).to_device(device);
 
         // dbg!(&items[0].t_history);
         // dbg!(&t_historys);
@@ -329,7 +327,7 @@ mod tests {
             }
         );
 
-        let batcher = FSRSBatcher::<Backend>::new(DEVICE);
+        let batcher = FSRSBatcher::<Backend>::new();
         use burn::data::dataloader::DataLoaderBuilder;
         let dataloader = DataLoaderBuilder::new(batcher)
             .batch_size(1)
@@ -347,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_batcher() {
-        let batcher = FSRSBatcher::<Backend>::new(DEVICE);
+        let batcher = FSRSBatcher::<Backend>::new();
         let items = [
             FSRSItem {
                 reviews: [(4, 0), (3, 5)]

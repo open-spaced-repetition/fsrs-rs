@@ -304,7 +304,7 @@ fn test_conversion_works() {
     let mut weighted_fsrs_items = constant_weighted_fsrs_items(fsrs_items);
 
     let device = NdArrayDevice::Cpu;
-    let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
+    let batcher = FSRSBatcher::<NdArrayAutodiff>::new();
     let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()], &device);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     assert_eq!(
