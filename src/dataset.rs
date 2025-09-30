@@ -298,6 +298,10 @@ pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedF
 #[cfg(test)]
 mod tests {
     use burn::tensor::Tolerance;
+    use burn::backend::ndarray::NdArrayDevice;
+    use burn::backend::NdArray;
+    type Backend = NdArray<f32>;
+    static DEVICE: NdArrayDevice = NdArrayDevice::Cpu;
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
@@ -325,11 +329,7 @@ mod tests {
             }
         );
 
-        use burn::backend::ndarray::NdArrayDevice;
-        let device = NdArrayDevice::Cpu;
-        use burn::backend::NdArray;
-        type Backend = NdArray<f32>;
-        let batcher = FSRSBatcher::<Backend>::new(device);
+        let batcher = FSRSBatcher::<Backend>::new(DEVICE);
         use burn::data::dataloader::DataLoaderBuilder;
         let dataloader = DataLoaderBuilder::new(batcher)
             .batch_size(1)
@@ -347,11 +347,7 @@ mod tests {
 
     #[test]
     fn test_batcher() {
-        use burn::backend::NdArray;
-        use burn::backend::ndarray::NdArrayDevice;
-        type Backend = NdArray<f32>;
-        let device = NdArrayDevice::Cpu;
-        let batcher = FSRSBatcher::<Backend>::new(device);
+        let batcher = FSRSBatcher::<Backend>::new(DEVICE);
         let items = [
             FSRSItem {
                 reviews: [(4, 0), (3, 5)]
@@ -406,7 +402,7 @@ mod tests {
             .into_iter()
             .map(|item| WeightedFSRSItem { weight: 1.0, item })
             .collect();
-        let batch = batcher.batch(items, &device);
+        let batch = batcher.batch(items, &DEVICE);
         batch.t_historys.to_data().assert_approx_eq::<f32>(
             &TensorData::from([
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],

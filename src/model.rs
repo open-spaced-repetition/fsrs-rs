@@ -328,6 +328,7 @@ mod tests {
     use crate::test_helpers::TestHelper;
     use crate::test_helpers::{Model, Tensor};
     use burn::tensor::{TensorData, Tolerance};
+    static DEVICE: burn::backend::ndarray::NdArrayDevice = NdArrayDevice::Cpu;
 
     #[test]
     fn test_w() {
@@ -356,10 +357,9 @@ mod tests {
 
     #[test]
     fn test_power_forgetting_curve() {
-        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
-        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &device);
+        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &DEVICE);
+        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &DEVICE);
         let retrievability = model.power_forgetting_curve(delta_t, stability);
 
         retrievability.to_data().assert_approx_eq::<f32>(
@@ -370,9 +370,8 @@ mod tests {
 
     #[test]
     fn test_init_stability() {
-        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &DEVICE);
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
@@ -389,9 +388,8 @@ mod tests {
 
     #[test]
     fn test_init_difficulty() {
-        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &DEVICE);
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
@@ -408,21 +406,20 @@ mod tests {
 
     #[test]
     fn test_forward() {
-        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
         let delta_ts = Tensor::from_floats(
             [
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
             ],
-            &device,
+            &DEVICE,
         );
         let ratings = Tensor::from_floats(
             [
                 [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
                 [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
             ],
-            &device,
+            &DEVICE,
         );
         let state = model.forward(delta_ts, ratings, None);
         let stability = state.stability.to_data();
@@ -445,10 +442,9 @@ mod tests {
 
     #[test]
     fn test_next_difficulty() {
-        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let difficulty = Tensor::from_floats([5.0; 4], &device);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
+        let difficulty = Tensor::from_floats([5.0; 4], &DEVICE);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
 
@@ -469,12 +465,11 @@ mod tests {
 
     #[test]
     fn test_next_stability() {
-        let device = NdArrayDevice::Cpu;
         let model = Model::new(ModelConfig::default());
-        let stability = Tensor::from_floats([5.0; 4], &device);
-        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
-        let retrievability = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &device);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
+        let stability = Tensor::from_floats([5.0; 4], &DEVICE);
+        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
+        let retrievability = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &DEVICE);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),

@@ -256,7 +256,6 @@ impl Default for ComputeParametersInput {
 /// Computes optimized parameters for the FSRS model based on training data.
 ///
 /// This function trains the model on the provided dataset and returns optimized parameters.
-/// It uses the CPU device for computation.
 ///
 /// # Arguments
 /// * `input` - Input parameters including the training dataset and configuration

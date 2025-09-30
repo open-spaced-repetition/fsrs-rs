@@ -85,13 +85,13 @@ mod tests {
     use super::*;
     use crate::{DEFAULT_PARAMETERS, test_helpers::Tensor};
     use burn::backend::ndarray::NdArrayDevice;
+    static DEVICE: NdArrayDevice = NdArrayDevice::Cpu;
 
     #[test]
     fn test_parameter_clipper_works() {
-        let device = NdArrayDevice::Cpu;
         let tensor = Tensor::from_floats(
             [0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1],
-            &device,
+            &DEVICE,
         );
 
         let param = parameter_clipper(Param::from_tensor(tensor), 1, true);
@@ -106,8 +106,7 @@ mod tests {
     #[test]
     fn test_parameter_clipper_works_with_num_relearning_steps() {
         use crate::test_helpers::TestHelper;
-        let device = NdArrayDevice::Cpu;
-        let tensor = Tensor::from_floats(DEFAULT_PARAMETERS, &device);
+        let tensor = Tensor::from_floats(DEFAULT_PARAMETERS, &DEVICE);
 
         let param = parameter_clipper(Param::from_tensor(tensor), 2, true);
         let values = &param.to_data().to_vec::<f32>().unwrap();

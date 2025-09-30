@@ -698,7 +698,7 @@ fn get_bin(x: f32, bins: i32) -> i32 {
 ///
 /// This function performs time series cross-validation by splitting the dataset into training
 /// and testing sets based on time order. It trains the model on each training set and evaluates
-/// it on the corresponding test set. It uses the CPU device for computation.
+/// it on the corresponding test set.
 ///
 /// # Arguments
 /// * `input` - Input parameters including the dataset and configuration
