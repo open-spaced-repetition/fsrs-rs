@@ -297,9 +297,9 @@ pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedF
 
 #[cfg(test)]
 mod tests {
-    use burn::tensor::Tolerance;
-    use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::NdArray;
+    use burn::backend::ndarray::NdArrayDevice;
+    use burn::tensor::Tolerance;
     type Backend = NdArray<f32>;
     static DEVICE: NdArrayDevice = NdArrayDevice::Cpu;
 
