@@ -199,15 +199,18 @@ impl<B: Backend> Model<B> {
         starting_state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let [seq_len, batch_size] = delta_ts.dims();
+        let device = delta_ts.device();
         let mut state = if let Some(state) = starting_state {
             state
         } else {
-            MemoryStateTensors::zeros(batch_size)
+            MemoryStateTensors::zeros(batch_size, &device)
         };
         for i in 0..seq_len {
-            let delta_t = delta_ts.get(i).squeeze(0);
+            // 使用Burn原生API替代自定义的get trait，以兼容WGPU backend
+            // slice返回[1, batch_size]，squeeze(0)降维为[batch_size]
+            let delta_t = delta_ts.clone().slice([i..i + 1, 0..batch_size]).squeeze(0);
             // [batch_size]
-            let rating = ratings.get(i).squeeze(0);
+            let rating = ratings.clone().slice([i..i + 1, 0..batch_size]).squeeze(0);
             // [batch_size]
             state = self.step(delta_t, rating, state, i);
         }
@@ -222,19 +225,17 @@ pub(crate) struct MemoryStateTensors<B: Backend> {
 }
 
 impl<B: Backend> MemoryStateTensors<B> {
-    pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
-        let device = B::Device::default();
+    pub(crate) fn zeros(batch_size: usize, device: &B::Device) -> MemoryStateTensors<B> {
         MemoryStateTensors {
-            stability: Tensor::zeros([batch_size], &device),
-            difficulty: Tensor::zeros([batch_size], &device),
+            stability: Tensor::zeros([batch_size], device),
+            difficulty: Tensor::zeros([batch_size], device),
         }
     }
 
-    pub(crate) fn from_state(state: MemoryState) -> Self {
-        let device = B::Device::default();
+    pub(crate) fn from_state(state: MemoryState, device: &B::Device) -> Self {
         Self {
-            stability: Tensor::from_floats([state.stability], &device),
-            difficulty: Tensor::from_floats([state.difficulty], &device),
+            stability: Tensor::from_floats([state.stability], device),
+            difficulty: Tensor::from_floats([state.difficulty], device),
         }
     }
 }

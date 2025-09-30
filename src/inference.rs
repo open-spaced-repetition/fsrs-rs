@@ -171,7 +171,8 @@ impl<B: Backend> FSRS<B> {
         starting_state: Option<MemoryState>,
     ) -> Result<MemoryState> {
         let (time_history, rating_history) = self.item_to_tensors(&item);
-        let starting_tensors = starting_state.map(|s| MemoryStateTensors::from_state(s));
+        let device = self.device();
+        let starting_tensors = starting_state.map(|s| MemoryStateTensors::from_state(s, &device));
         let state: MemoryState = self
             .model()
             .forward(time_history, rating_history, starting_tensors)
@@ -249,10 +250,11 @@ impl<B: Backend> FSRS<B> {
             states.push(starting_state);
         }
         let [seq_len, batch_size] = time_history.dims();
+        let device = self.device();
         let mut inner_state = if let Some(state) = starting_state {
-            MemoryStateTensors::from_state(state)
+            MemoryStateTensors::from_state(state, &device)
         } else {
-            MemoryStateTensors::zeros(batch_size)
+            MemoryStateTensors::zeros(batch_size, &device)
         };
         for i in 0..seq_len {
             let delta_t = time_history.get(i).squeeze(0);
@@ -334,9 +336,9 @@ impl<B: Backend> FSRS<B> {
             &device,
         );
         let (current_memory_state_tensors, nth) = if let Some(state) = current_memory_state {
-            (MemoryStateTensors::from_state(state), 1)
+            (MemoryStateTensors::from_state(state, &device), 1)
         } else {
-            (MemoryStateTensors::zeros(1), 0)
+            (MemoryStateTensors::zeros(1, &device), 0)
         };
         let model = self.model();
         let mut next_memory_states = (1..=4).map(|rating| {
