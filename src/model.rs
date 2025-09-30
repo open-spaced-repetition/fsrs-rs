@@ -1,6 +1,6 @@
 use crate::DEFAULT_PARAMETERS;
 use crate::error::{FSRSError, Result};
-use crate::inference::{FSRS5_DEFAULT_DECAY, Parameters};
+use crate::inference::{FSRS5_DEFAULT_DECAY, MemoryState, Parameters};
 use crate::parameter_clipper::clip_parameters;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
 use burn::backend::NdArray;
@@ -27,8 +27,11 @@ impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
 }
 
 impl<B: Backend> Model<B> {
-    #[allow(clippy::new_without_default)]
     pub fn new(config: ModelConfig) -> Self {
+        Self::new_with_device(config, &B::Device::default())
+    }
+
+    pub fn new_with_device(config: ModelConfig, device: &B::Device) -> Self {
         let mut initial_params: Vec<f32> = config
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
@@ -44,7 +47,7 @@ impl<B: Backend> Model<B> {
         Self {
             w: Param::from_tensor(Tensor::from_floats(
                 TensorData::new(initial_params, Shape { dims: vec![21] }),
-                &B::Device::default(),
+                device,
             )),
         }
     }
@@ -73,10 +76,11 @@ impl<B: Backend> Model<B> {
         rating: Tensor<B, 1>,
     ) -> Tensor<B, 1> {
         let batch_size = rating.dims()[0];
-        let hard_penalty = Tensor::ones([batch_size], &B::Device::default())
+        let device = rating.device();
+        let hard_penalty = Tensor::ones([batch_size], &device)
             .mask_where(rating.clone().equal_elem(2), self.w.get(15));
-        let easy_bonus = Tensor::ones([batch_size], &B::Device::default())
-            .mask_where(rating.equal_elem(4), self.w.get(16));
+        let easy_bonus =
+            Tensor::ones([batch_size], &device).mask_where(rating.equal_elem(4), self.w.get(16));
 
         last_s.clone()
             * (self.w.get(8).exp()
@@ -115,7 +119,8 @@ impl<B: Backend> Model<B> {
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
-        let rating = Tensor::from_floats([4.0], &B::Device::default());
+        let device = new_d.device();
+        let rating = Tensor::from_floats([4.0], &device);
         self.w.get(7) * (self.init_difficulty(rating) - new_d.clone()) + new_d
     }
 
@@ -218,9 +223,18 @@ pub(crate) struct MemoryStateTensors<B: Backend> {
 
 impl<B: Backend> MemoryStateTensors<B> {
     pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
+        let device = B::Device::default();
         MemoryStateTensors {
-            stability: Tensor::zeros([batch_size], &B::Device::default()),
-            difficulty: Tensor::zeros([batch_size], &B::Device::default()),
+            stability: Tensor::zeros([batch_size], &device),
+            difficulty: Tensor::zeros([batch_size], &device),
+        }
+    }
+
+    pub(crate) fn from_state(state: MemoryState) -> Self {
+        let device = B::Device::default();
+        Self {
+            stability: Tensor::from_floats([state.stability], &device),
+            difficulty: Tensor::from_floats([state.difficulty], &device),
         }
     }
 }
@@ -246,55 +260,55 @@ impl ModelConfig {
 /// for both parameter training, and for reviews.
 #[derive(Debug, Clone)]
 pub struct FSRS<B: Backend = NdArray> {
-    model: Option<Model<B>>,
-    device: B::Device,
+    model: Model<B>,
+}
+
+impl Default for FSRS<NdArray> {
+    fn default() -> Self {
+        Self::new(&[]).expect("Default parameters should be valid")
+    }
 }
 
 impl FSRS<NdArray> {
     /// - Parameters must be provided before running commands that need them.
     /// - Parameters may be an empty slice to use the default values instead.
-    pub fn new(parameters: Option<&Parameters>) -> Result<Self> {
-        Self::new_with_backend(parameters, NdArrayDevice::Cpu)
+    pub fn new(parameters: &Parameters) -> Result<Self> {
+        Self::new_with_backend(parameters, &NdArrayDevice::Cpu)
     }
 }
 
 impl<B: Backend> FSRS<B> {
     pub fn new_with_backend<B2: Backend>(
-        parameters: Option<&Parameters>,
-        device: B2::Device,
+        parameters: &Parameters,
+        device: &B2::Device,
     ) -> Result<FSRS<B2>> {
-        let model = match parameters {
-            Some(params) => {
-                let parameters = check_and_fill_parameters(params)?;
-                let model = parameters_to_model::<B2>(&parameters);
-                Some(model)
-            }
-            None => None,
-        };
+        let parameters = check_and_fill_parameters(parameters)?;
+        let model = parameters_to_model::<B2>(&parameters, device);
 
-        Ok(FSRS { model, device })
+        Ok(FSRS { model })
     }
 
     pub(crate) fn model(&self) -> &Model<B> {
-        self.model
-            .as_ref()
-            .expect("command requires parameters to be set on creation")
+        &self.model
     }
 
     pub(crate) fn device(&self) -> B::Device {
-        self.device.clone()
+        self.model().w.device()
     }
 }
 
-pub(crate) fn parameters_to_model<B: Backend>(parameters: &Parameters) -> Model<B> {
+pub(crate) fn parameters_to_model<B: Backend>(
+    parameters: &Parameters,
+    device: &B::Device,
+) -> Model<B> {
     let config = ModelConfig::default();
-    let mut model = Model::new(config.clone());
+    let mut model = Model::new_with_device(config.clone(), device);
     model.w = Param::from_tensor(Tensor::from_floats(
         TensorData::new(
             clip_parameters(parameters, config.num_relearning_steps, Default::default()),
             Shape { dims: vec![21] },
         ),
-        &B::Device::default(),
+        device,
     ));
     model
 }
@@ -330,9 +344,10 @@ mod tests {
     use crate::test_helpers::TestHelper;
     use crate::test_helpers::{Model, Tensor};
     use burn::tensor::{TensorData, Tolerance};
+    static DEVICE: burn::backend::ndarray::NdArrayDevice = NdArrayDevice::Cpu;
 
     #[test]
-    fn w() {
+    fn test_w() {
         let model = Model::new(ModelConfig::default());
         assert_eq!(
             model.w.val().to_data(),
@@ -341,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_parameters() {
+    fn test_convert_parameters() {
         let fsrs4dot5_param = vec![
             0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
             0.29, 2.61,
@@ -357,11 +372,10 @@ mod tests {
     }
 
     #[test]
-    fn power_forgetting_curve() {
-        let device = NdArrayDevice::Cpu;
+    fn test_power_forgetting_curve() {
         let model = Model::new(ModelConfig::default());
-        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
-        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &device);
+        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &DEVICE);
+        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &DEVICE);
         let retrievability = model.power_forgetting_curve(delta_t, stability);
 
         retrievability.to_data().assert_approx_eq::<f32>(
@@ -371,10 +385,9 @@ mod tests {
     }
 
     #[test]
-    fn init_stability() {
-        let device = NdArrayDevice::Cpu;
+    fn test_init_stability() {
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &DEVICE);
         let stability = model.init_stability(rating);
         assert_eq!(
             stability.to_data(),
@@ -390,10 +403,9 @@ mod tests {
     }
 
     #[test]
-    fn init_difficulty() {
-        let device = NdArrayDevice::Cpu;
+    fn test_init_difficulty() {
         let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &device);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &DEVICE);
         let difficulty = model.init_difficulty(rating);
         assert_eq!(
             difficulty.to_data(),
@@ -409,22 +421,21 @@ mod tests {
     }
 
     #[test]
-    fn forward() {
-        let device = NdArrayDevice::Cpu;
+    fn test_forward() {
         let model = Model::new(ModelConfig::default());
         let delta_ts = Tensor::from_floats(
             [
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [1.0, 1.0, 1.0, 1.0, 2.0, 2.0],
             ],
-            &device,
+            &DEVICE,
         );
         let ratings = Tensor::from_floats(
             [
                 [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
                 [1.0, 2.0, 3.0, 4.0, 1.0, 2.0],
             ],
-            &device,
+            &DEVICE,
         );
         let state = model.forward(delta_ts, ratings, None);
         let stability = state.stability.to_data();
@@ -446,11 +457,10 @@ mod tests {
     }
 
     #[test]
-    fn next_difficulty() {
-        let device = NdArrayDevice::Cpu;
+    fn test_next_difficulty() {
         let model = Model::new(ModelConfig::default());
-        let difficulty = Tensor::from_floats([5.0; 4], &device);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
+        let difficulty = Tensor::from_floats([5.0; 4], &DEVICE);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
         let next_difficulty = model.next_difficulty(difficulty, rating);
         next_difficulty.clone().backward();
 
@@ -470,13 +480,12 @@ mod tests {
     }
 
     #[test]
-    fn next_stability() {
-        let device = NdArrayDevice::Cpu;
+    fn test_next_stability() {
         let model = Model::new(ModelConfig::default());
-        let stability = Tensor::from_floats([5.0; 4], &device);
-        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
-        let retrievability = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &device);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &device);
+        let stability = Tensor::from_floats([5.0; 4], &DEVICE);
+        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
+        let retrievability = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &DEVICE);
+        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
         let s_recall = model.stability_after_success(
             stability.clone(),
             difficulty.clone(),
@@ -516,10 +525,17 @@ mod tests {
     }
 
     #[test]
-    fn fsrs() {
-        assert!(FSRS::new(Some(&[])).is_ok());
-        assert!(FSRS::new(Some(&[1.])).is_err());
-        assert!(FSRS::new(Some(DEFAULT_PARAMETERS.as_slice())).is_ok());
-        assert!(FSRS::new(Some(&DEFAULT_PARAMETERS[..17])).is_ok());
+    fn test_fsrs() {
+        FSRS::default()
+            .model()
+            .w
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq(DEFAULT_PARAMETERS);
+        assert!(FSRS::new(&[]).is_ok());
+        assert!(FSRS::new(&[1.]).is_err());
+        assert!(FSRS::new(DEFAULT_PARAMETERS.as_slice()).is_ok());
+        assert!(FSRS::new(&DEFAULT_PARAMETERS[..17]).is_ok());
     }
 }

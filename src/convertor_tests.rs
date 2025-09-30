@@ -238,7 +238,7 @@ pub(crate) fn read_collection() -> Result<Vec<RevlogEntry>> {
 // This test currently expects the following .anki21 file to be placed in tests/data/:
 // https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
 #[test]
-fn conversion_works() {
+fn test_conversion_works() {
     let revlogs = read_collection().unwrap();
     let single_card_revlog = vec![
         revlogs
@@ -304,7 +304,7 @@ fn conversion_works() {
     let mut weighted_fsrs_items = constant_weighted_fsrs_items(fsrs_items);
 
     let device = NdArrayDevice::Cpu;
-    let batcher = FSRSBatcher::<NdArrayAutodiff>::new(device);
+    let batcher = FSRSBatcher::<NdArrayAutodiff>::new();
     let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()], &device);
     assert_eq!(res.delta_ts.into_scalar(), 64.0);
     assert_eq!(
@@ -327,7 +327,7 @@ fn conversion_works() {
 }
 
 #[test]
-fn ordering_of_inputs_should_not_change() {
+fn test_ordering_of_inputs_should_not_change() {
     let revlogs = anki21_sample_file_converted_to_fsrs();
     assert_eq!(
         revlogs[0],
@@ -358,7 +358,7 @@ fn revlog(review_kind: RevlogReviewKind, days_ago: i64) -> RevlogEntry {
 }
 
 #[test]
-fn delta_t_is_correct() -> Result<()> {
+fn test_delta_t_is_correct() -> Result<()> {
     assert_eq!(
         convert_to_fsrs_items(
             vec![

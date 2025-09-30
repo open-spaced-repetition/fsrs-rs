@@ -1,12 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use fsrs::{
-    // dataset::prepare_training_data, // Will be inlined
-    // convertor_tests::anki21_sample_file_converted_to_fsrs, // Will be inlined
-    ComputeParametersInput,
-    DEFAULT_PARAMETERS,
-    FSRS,
-    FSRSItem,
-    FSRSReview,
+    ComputeParametersInput, FSRS, FSRSItem, FSRSReview, compute_parameters,
+    evaluate_with_time_series_splits,
 };
 // Add necessary imports for inlined code
 use chrono::prelude::*;
@@ -212,7 +207,7 @@ fn load_and_prepare_data() -> Vec<FSRSItem> {
 fn benchmark_evaluate(c: &mut Criterion) {
     let items = load_and_prepare_data();
     // Evaluate uses the FSRS instance's existing parameters.
-    let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
+    let fsrs = FSRS::default();
 
     let mut group = c.benchmark_group("parameters");
     group.sample_size(10); // Reduce sample size if benchmarks are too long
@@ -229,7 +224,6 @@ fn benchmark_evaluate(c: &mut Criterion) {
 fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
     let items = load_and_prepare_data();
     // evaluate_with_time_series_splits computes parameters internally for each split.
-    let fsrs = FSRS::new(None).unwrap();
     let input = ComputeParametersInput {
         train_set: items.clone(),
         progress: None,
@@ -242,8 +236,7 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
 
     group.bench_function("evaluate_with_time_series_splits", |b| {
         b.iter(|| {
-            fsrs.evaluate_with_time_series_splits(black_box(input.clone()), |_| true)
-                .unwrap();
+            evaluate_with_time_series_splits(black_box(input.clone()), |_| true).unwrap();
         })
     });
     group.finish();
@@ -251,8 +244,6 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
 
 fn benchmark_compute_parameters(c: &mut Criterion) {
     let items = load_and_prepare_data();
-    // compute_parameters computes new parameters, so initial FSRS parameters don't matter.
-    let fsrs = FSRS::new(None).unwrap();
     let input = ComputeParametersInput {
         train_set: items.clone(), // Using the full prepared dataset
         progress: None,
@@ -265,7 +256,7 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
 
     group.bench_function("compute_parameters", |b| {
         b.iter(|| {
-            fsrs.compute_parameters(black_box(input.clone())).unwrap();
+            compute_parameters(black_box(input.clone())).unwrap();
         })
     });
 

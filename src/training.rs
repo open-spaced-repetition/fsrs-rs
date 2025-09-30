@@ -7,16 +7,16 @@ use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
-use crate::{DEFAULT_PARAMETERS, FSRS, FSRSError};
+use crate::{DEFAULT_PARAMETERS, FSRSError};
 use burn::backend::Autodiff;
-use burn::tensor::cast::ToElement;
-
+use burn::backend::ndarray::NdArray;
 use burn::lr_scheduler::LrScheduler;
 use burn::module::AutodiffModule;
 use burn::nn::loss::Reduction;
 use burn::optim::Optimizer;
 use burn::optim::{AdamConfig, GradientsParams};
 use burn::tensor::backend::Backend;
+use burn::tensor::cast::ToElement;
 use burn::tensor::{Int, Tensor};
 use burn::train::TrainingInterrupter;
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
@@ -25,6 +25,8 @@ use core::marker::PhantomData;
 use log::info;
 
 use std::sync::{Arc, Mutex};
+
+type B = NdArray<f32>;
 
 static PARAMS_STDDEV: [f32; 21] = [
     6.43, 9.66, 17.58, 27.85, 0.57, 0.28, 0.6, 0.12, 0.39, 0.18, 0.33, 0.3, 0.09, 0.16, 0.57, 0.25,
@@ -96,8 +98,8 @@ impl<B: Backend> Model<B> {
 impl<B: AutodiffBackend> Model<B> {
     fn freeze_initial_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
-        let updated_grad_tensor =
-            grad_tensor.slice_assign([0..4], Tensor::zeros([4], &B::Device::default()));
+        let device = grad_tensor.device();
+        let updated_grad_tensor = grad_tensor.slice_assign([0..4], Tensor::zeros([4], &device));
 
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
@@ -106,8 +108,8 @@ impl<B: AutodiffBackend> Model<B> {
 
     fn free_short_term_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
-        let updated_grad_tensor =
-            grad_tensor.slice_assign([17..20], Tensor::zeros([3], &B::Device::default()));
+        let device = grad_tensor.device();
+        let updated_grad_tensor = grad_tensor.slice_assign([17..20], Tensor::zeros([3], &device));
 
         self.w.grad_remove(&mut grad);
         self.w.grad_replace(&mut grad, updated_grad_tensor);
@@ -214,7 +216,7 @@ pub(crate) struct TrainingConfig {
     pub gamma: f64,
 }
 
-pub fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
+pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     let (total_recall, total_reviews) = items
         .iter()
         .map(|item| item.current())
@@ -251,158 +253,158 @@ impl Default for ComputeParametersInput {
         }
     }
 }
-
-impl<B: Backend> FSRS<B> {
-    /// Calculate appropriate parameters for the provided review history.
-    pub fn compute_parameters(
-        &self,
-        ComputeParametersInput {
-            train_set,
-            progress,
-            enable_short_term,
-            num_relearning_steps,
-            ..
-        }: ComputeParametersInput,
-    ) -> Result<Vec<f32>> {
-        let finish_progress = || {
-            if let Some(progress) = &progress {
-                // The progress state at completion time may not indicate completion, because:
-                // - If there were fewer than 512 entries, render_train() will have never been called
-                // - One or more of the splits may have ignored later epochs, if accuracy went backwards
-                // Because of this, we need a separate finished flag.
-                progress.lock().unwrap().finished = true;
-            }
-        };
-
-        let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
-        let average_recall = calculate_average_recall(&train_set);
-        if train_set.len() < 8 {
-            finish_progress();
-            return Ok(DEFAULT_PARAMETERS.to_vec());
-        }
-
-        let (initial_stability, initial_rating_count) =
-            initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)
-                .inspect_err(|_e| {
-                    finish_progress();
-                })?;
-        let initialized_parameters: Vec<f32> = initial_stability
-            .into_iter()
-            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-            .collect();
-        if train_set.len() == dataset_for_initialization.len() || train_set.len() < 64 {
-            finish_progress();
-            return Ok(initialized_parameters);
-        }
-        let config = TrainingConfig::new(
-            ModelConfig {
-                freeze_initial_stability: !enable_short_term,
-                initial_stability: Some(initial_stability),
-                freeze_short_term_stability: !enable_short_term,
-                num_relearning_steps: num_relearning_steps.unwrap_or(1),
-            },
-            AdamConfig::new().with_epsilon(1e-8),
-        );
-        let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
-        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
-
+/// Computes optimized parameters for the FSRS model based on training data.
+///
+/// This function trains the model on the provided dataset and returns optimized parameters.
+///
+/// # Arguments
+/// * `input` - Input parameters including the training dataset and configuration
+///
+/// # Returns
+/// A `Result<Vec<f32>>` containing the optimized parameters
+pub fn compute_parameters(
+    ComputeParametersInput {
+        train_set,
+        progress,
+        enable_short_term,
+        num_relearning_steps,
+        ..
+    }: ComputeParametersInput,
+) -> Result<Vec<f32>> {
+    let finish_progress = || {
         if let Some(progress) = &progress {
-            let progress_state = ProgressState {
-                epoch_total: config.num_epochs,
-                items_total: weighted_train_set.len(),
-                epoch: 0,
-                items_processed: 0,
-            };
-            progress.lock().unwrap().splits = vec![progress_state];
+            // The progress state at completion time may not indicate completion, because:
+            // - If there were fewer than 512 entries, render_train() will have never been called
+            // - One or more of the splits may have ignored later epochs, if accuracy went backwards
+            // Because of this, we need a separate finished flag.
+            progress.lock().unwrap().finished = true;
         }
-        let model = train::<Autodiff<B>>(
-            weighted_train_set.clone(),
-            weighted_train_set,
-            &config,
-            self.device(),
-            progress.clone().map(|p| ProgressCollector::new(p, 0)),
-        );
+    };
 
-        let optimized_parameters = model
+    let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
+    let average_recall = calculate_average_recall(&train_set);
+    if train_set.len() < 8 {
+        finish_progress();
+        return Ok(DEFAULT_PARAMETERS.to_vec());
+    }
+
+    let (initial_stability, initial_rating_count) =
+        initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)
             .inspect_err(|_e| {
                 finish_progress();
-            })?
-            .w
-            .val()
-            .to_data()
-            .to_vec()
-            .unwrap();
-
+            })?;
+    let initialized_parameters: Vec<f32> = initial_stability
+        .into_iter()
+        .chain(DEFAULT_PARAMETERS[4..].iter().copied())
+        .collect();
+    if train_set.len() == dataset_for_initialization.len() || train_set.len() < 64 {
         finish_progress();
+        return Ok(initialized_parameters);
+    }
+    let config = TrainingConfig::new(
+        ModelConfig {
+            freeze_initial_stability: !enable_short_term,
+            initial_stability: Some(initial_stability),
+            freeze_short_term_stability: !enable_short_term,
+            num_relearning_steps: num_relearning_steps.unwrap_or(1),
+        },
+        AdamConfig::new().with_epsilon(1e-8),
+    );
+    let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+    weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
 
-        if optimized_parameters
-            .iter()
-            .any(|parameter: &f32| parameter.is_infinite())
-        {
-            return Err(FSRSError::InvalidInput);
-        }
+    if let Some(progress) = &progress {
+        let progress_state = ProgressState {
+            epoch_total: config.num_epochs,
+            items_total: weighted_train_set.len(),
+            epoch: 0,
+            items_processed: 0,
+        };
+        progress.lock().unwrap().splits = vec![progress_state];
+    }
+    let model = train::<Autodiff<B>>(
+        weighted_train_set.clone(),
+        weighted_train_set,
+        &config,
+        progress.clone().map(|p| ProgressCollector::new(p, 0)),
+    );
 
-        let mut optimized_initial_stability = optimized_parameters[0..4]
-            .iter()
-            .enumerate()
-            .map(|(i, &val)| (i as u32 + 1, val))
-            .collect();
-        let clamped_stability =
-            smooth_and_fill(&mut optimized_initial_stability, &initial_rating_count).unwrap();
-        let optimized_parameters = clamped_stability
-            .into_iter()
-            .chain(optimized_parameters[4..].iter().copied())
-            .collect();
+    let optimized_parameters = model
+        .inspect_err(|_e| {
+            finish_progress();
+        })?
+        .w
+        .val()
+        .to_data()
+        .to_vec()
+        .unwrap();
 
-        Ok(optimized_parameters)
+    finish_progress();
+
+    if optimized_parameters
+        .iter()
+        .any(|parameter: &f32| parameter.is_infinite())
+    {
+        return Err(FSRSError::InvalidInput);
     }
 
-    pub fn benchmark(
-        &self,
-        ComputeParametersInput {
-            train_set,
-            enable_short_term,
-            num_relearning_steps,
-            ..
-        }: ComputeParametersInput,
-    ) -> Vec<f32> {
-        let average_recall = calculate_average_recall(&train_set);
-        let (dataset_for_initialization, _next_train_set) = train_set
-            .clone()
-            .into_iter()
-            .partition(|item| item.long_term_review_cnt() == 1);
-        let initial_stability =
-            initialize_stability_parameters(dataset_for_initialization, average_recall)
-                .unwrap()
-                .0;
-        let config = TrainingConfig::new(
-            ModelConfig {
-                freeze_initial_stability: !enable_short_term,
-                initial_stability: Some(initial_stability),
-                freeze_short_term_stability: !enable_short_term,
-                num_relearning_steps: num_relearning_steps.unwrap_or(1),
-            },
-            AdamConfig::new().with_epsilon(1e-8),
-        );
-        let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
-        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
-        let model = train::<Autodiff<B>>(
-            weighted_train_set.clone(),
-            weighted_train_set,
-            &config,
-            self.device(),
-            None,
-        );
-        let parameters: Vec<f32> = model.unwrap().w.val().to_data().to_vec::<f32>().unwrap();
-        parameters
-    }
+    let mut optimized_initial_stability = optimized_parameters[0..4]
+        .iter()
+        .enumerate()
+        .map(|(i, &val)| (i as u32 + 1, val))
+        .collect();
+    let clamped_stability =
+        smooth_and_fill(&mut optimized_initial_stability, &initial_rating_count).unwrap();
+    let optimized_parameters = clamped_stability
+        .into_iter()
+        .chain(optimized_parameters[4..].iter().copied())
+        .collect();
+
+    Ok(optimized_parameters)
+}
+
+pub fn benchmark(
+    ComputeParametersInput {
+        train_set,
+        enable_short_term,
+        num_relearning_steps,
+        ..
+    }: ComputeParametersInput,
+) -> Vec<f32> {
+    let average_recall = calculate_average_recall(&train_set);
+    let (dataset_for_initialization, _next_train_set) = train_set
+        .clone()
+        .into_iter()
+        .partition(|item| item.long_term_review_cnt() == 1);
+    let initial_stability =
+        initialize_stability_parameters(dataset_for_initialization, average_recall)
+            .unwrap()
+            .0;
+    let config = TrainingConfig::new(
+        ModelConfig {
+            freeze_initial_stability: !enable_short_term,
+            initial_stability: Some(initial_stability),
+            freeze_short_term_stability: !enable_short_term,
+            num_relearning_steps: num_relearning_steps.unwrap_or(1),
+        },
+        AdamConfig::new().with_epsilon(1e-8),
+    );
+    let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+    weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+    let model = train::<Autodiff<B>>(
+        weighted_train_set.clone(),
+        weighted_train_set,
+        &config,
+        None,
+    );
+    let parameters: Vec<f32> = model.unwrap().w.val().to_data().to_vec::<f32>().unwrap();
+    parameters
 }
 
 fn train<B: AutodiffBackend>(
     train_set: Vec<WeightedFSRSItem>,
     test_set: Vec<WeightedFSRSItem>,
     config: &TrainingConfig,
-    device: B::Device,
     progress: Option<ProgressCollector>,
 ) -> Result<Model<B>> {
     B::seed(config.seed);
@@ -410,17 +412,13 @@ fn train<B: AutodiffBackend>(
     // Training data
     let total_size = train_set.len();
     let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
-    let batch_dataset = BatchTensorDataset::<B>::new(
-        FSRSDataset::from(train_set),
-        config.batch_size,
-        device.clone(),
-    );
+    let batch_dataset =
+        BatchTensorDataset::<B>::new(FSRSDataset::from(train_set), config.batch_size);
     let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
 
     let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
         FSRSDataset::from(test_set.clone()),
         config.batch_size,
-        device.clone(),
     );
     let dataloader_valid = ShuffleDataLoader::new(batch_dataset, config.seed);
 
@@ -436,7 +434,7 @@ fn train<B: AutodiffBackend>(
 
     let mut model: Model<B> = config.model.init();
     let init_w = model.w.val();
-    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
+    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &model.w.device());
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
     let mut best_loss = f64::INFINITY;
@@ -562,6 +560,7 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::convertor_tests::data_from_csv;
     use crate::dataset::FSRSBatch;
+    use crate::model::FSRS;
     use crate::test_helpers::TestHelper;
     use burn::backend::NdArray;
     use log::LevelFilter;
@@ -810,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn training() {
+    fn test_training() {
         if std::env::var("SKIP_TRAINING").is_ok() {
             println!("Skipping test in CI");
             return;
@@ -849,19 +848,17 @@ mod tests {
                     }
                 });
 
-                let fsrs = FSRS::new(Some(&[])).unwrap();
-                let parameters = fsrs
-                    .compute_parameters(ComputeParametersInput {
-                        train_set: items.clone(),
-                        progress: progress2,
-                        enable_short_term,
-                        num_relearning_steps: None,
-                    })
-                    .unwrap();
+                let parameters = compute_parameters(ComputeParametersInput {
+                    train_set: items.clone(),
+                    progress: progress2,
+                    enable_short_term,
+                    num_relearning_steps: None,
+                })
+                .unwrap();
                 dbg!(&parameters);
 
                 // evaluate
-                let model = FSRS::new(Some(&parameters)).unwrap();
+                let model = FSRS::new(&parameters).unwrap();
                 let metrics = model.evaluate(items.clone(), |_| true).unwrap();
                 dbg!(&metrics);
             }

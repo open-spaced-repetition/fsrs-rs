@@ -70,7 +70,7 @@ mod tests {
     use crate::test_helpers::TestHelper;
 
     #[test]
-    fn lr_scheduler() {
+    fn test_lr_scheduler() {
         let mut lr_scheduler = CosineAnnealingLR::init(5.0, 4e-2);
         let lrs = (1..=11)
             .map(|_| {

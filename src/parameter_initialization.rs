@@ -12,7 +12,7 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
     (4, DEFAULT_PARAMETERS[3]),
 ];
 
-pub fn initialize_stability_parameters(
+pub(crate) fn initialize_stability_parameters(
     fsrs_items: Vec<FSRSItem>,
     average_recall: f32,
 ) -> Result<([f32; 4], HashMap<u32, u32>)> {

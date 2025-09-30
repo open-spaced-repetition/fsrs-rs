@@ -2,7 +2,7 @@ use fsrs::{FSRS, FSRSItem, FSRSReview};
 
 fn migrate_with_full_history() -> Result<(), Box<dyn std::error::Error>> {
     // Create a new FSRS model
-    let fsrs = FSRS::new(Some(&[]))?;
+    let fsrs = FSRS::default();
 
     // Simulate a full review history for a card
     let reviews = vec![
@@ -35,7 +35,7 @@ fn migrate_with_full_history() -> Result<(), Box<dyn std::error::Error>> {
 
 fn migrate_with_partial_history() -> Result<(), Box<dyn std::error::Error>> {
     // Create a new FSRS model
-    let fsrs = FSRS::new(Some(&[]))?;
+    let fsrs = FSRS::default();
 
     // Set the true retention of the original algorithm
     let sm2_retention = 0.9;
@@ -76,7 +76,7 @@ fn migrate_with_partial_history() -> Result<(), Box<dyn std::error::Error>> {
 
 fn migrate_with_latest_state() -> Result<(), Box<dyn std::error::Error>> {
     // Create a new FSRS model
-    let fsrs = FSRS::new(Some(&[]))?;
+    let fsrs = FSRS::default();
 
     // Set the true retention of the original algorithm
     let sm2_retention = 0.9;

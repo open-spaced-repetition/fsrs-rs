@@ -1,8 +1,6 @@
-use crate::FSRS;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
-use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
 use ndarray::{Array1, Array2, Array3};
 use priority_queue::PriorityQueue;
@@ -42,13 +40,13 @@ pub(crate) const S_MIN: f32 = 0.001;
 pub(crate) const S_MAX: f32 = 36500.0;
 pub(crate) const D_MIN: f32 = 1.0;
 pub(crate) const D_MAX: f32 = 10.0;
-const R_MIN: f32 = 0.70;
-const R_MAX: f32 = 0.95;
-const RATINGS: [usize; 4] = [1, 2, 3, 4];
-const LEARNING: usize = 0;
-const REVIEW: usize = 1;
-const RELEARNING: usize = 2;
-const MAX_STEPS: usize = 5;
+pub(crate) const R_MIN: f32 = 0.70;
+pub(crate) const R_MAX: f32 = 0.95;
+pub(crate) const RATINGS: [usize; 4] = [1, 2, 3, 4];
+pub(crate) const LEARNING: usize = 0;
+pub(crate) const REVIEW: usize = 1;
+pub(crate) const RELEARNING: usize = 2;
+pub(crate) const MAX_STEPS: usize = 5;
 
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
@@ -962,182 +960,180 @@ where
     results.map(|v| v.iter().sum::<f32>() / n as f32)
 }
 
-impl<B: Backend> FSRS<B> {
-    /// For the given simulator parameters and parameters, determine the suggested `desired_retention`
-    /// value.
-    pub fn optimal_retention<F>(
-        &self,
-        config: &SimulatorConfig,
-        parameters: &Parameters,
-        mut progress: F,
-        cards: Option<Vec<Card>>,
-        target: Option<CMRRTargetFn>,
-    ) -> Result<f32>
-    where
-        F: FnMut(ItemProgress) -> bool + Send,
-    {
-        let mut progress_info = ItemProgress {
-            current: 0,
-            // not provided for this method
-            total: 0,
-        };
-        let inc_progress = move || {
-            progress_info.current += 1;
-            progress(progress_info)
-        };
+/// For the given simulator parameters and parameters, determine the suggested `desired_retention`
+/// value.
+pub fn optimal_retention<F>(
+    config: &SimulatorConfig,
+    parameters: &Parameters,
+    mut progress: F,
+    cards: Option<Vec<Card>>,
+    target: Option<CMRRTargetFn>,
+) -> Result<f32>
+where
+    F: FnMut(ItemProgress) -> bool + Send,
+{
+    let mut progress_info = ItemProgress {
+        current: 0,
+        // not provided for this method
+        total: 0,
+    };
+    let inc_progress = move || {
+        progress_info.current += 1;
+        progress(progress_info)
+    };
 
-        Self::brent(
+    brent(
+        config,
+        parameters,
+        cards,
+        inc_progress,
+        target.unwrap_or_default(),
+    )
+}
+
+/// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
+/// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
+fn brent<F>(
+    config: &SimulatorConfig,
+    parameters: &Parameters,
+    cards: Option<Vec<Card>>,
+    mut progress: F,
+    target: CMRRTargetFn,
+) -> Result<f32, FSRSError>
+where
+    F: FnMut() -> bool,
+{
+    let mintol = 1e-10;
+    let cg = 0.381_966;
+    let maxiter = 64;
+    let tol = 0.01f32;
+    let parameters = check_and_fill_parameters(parameters)?;
+
+    let default_sample_size = 16.0;
+    let sample_size = match config.learn_span {
+        ..=30 => 180,
+        31..365 => {
+            let (a1, a2, a3) = (8.20e-7, 2.41e-3, 1.30e-2);
+            let factor = (config.learn_span as f32)
+                .powf(2.0)
+                .mul_add(a1, config.learn_span as f32 * a2 + a3);
+            (default_sample_size / factor).round() as usize
+        }
+        365.. => default_sample_size as usize,
+    };
+
+    let (xb, fb) = (
+        R_MIN,
+        sample(
             config,
-            parameters,
-            cards,
-            inc_progress,
-            target.unwrap_or_default(),
-        )
-    }
-    /// https://argmin-rs.github.io/argmin/argmin/solver/brent/index.html
-    /// https://github.com/scipy/scipy/blob/5e4a5e3785f79dd4e8930eed883da89958860db2/scipy/optimize/_optimize.py#L2446
-    fn brent<F>(
-        config: &SimulatorConfig,
-        parameters: &Parameters,
-        cards: Option<Vec<Card>>,
-        mut progress: F,
-        target: CMRRTargetFn,
-    ) -> Result<f32, FSRSError>
-    where
-        F: FnMut() -> bool,
-    {
-        let mintol = 1e-10;
-        let cg = 0.381_966;
-        let maxiter = 64;
-        let tol = 0.01f32;
-        let parameters = check_and_fill_parameters(parameters)?;
-
-        let default_sample_size = 16.0;
-        let sample_size = match config.learn_span {
-            ..=30 => 180,
-            31..365 => {
-                let (a1, a2, a3) = (8.20e-7, 2.41e-3, 1.30e-2);
-                let factor = (config.learn_span as f32)
-                    .powf(2.0)
-                    .mul_add(a1, config.learn_span as f32 * a2 + a3);
-                (default_sample_size / factor).round() as usize
-            }
-            365.. => default_sample_size as usize,
-        };
-
-        let (xb, fb) = (
+            &parameters,
             R_MIN,
-            sample(
-                config,
-                &parameters,
-                R_MIN,
-                sample_size,
-                &mut progress,
-                &cards,
-                &target,
-            )?,
-        );
-        let (mut x, mut v, mut w) = (xb, xb, xb);
-        let (mut fx, mut fv, mut fw) = (fb, fb, fb);
-        let (mut a, mut b) = (R_MIN, R_MAX);
-        let mut deltax: f32 = 0.0;
-        let mut iter = 0;
-        let mut rat = 0.0;
-        let mut u;
+            sample_size,
+            &mut progress,
+            &cards,
+            &target,
+        )?,
+    );
+    let (mut x, mut v, mut w) = (xb, xb, xb);
+    let (mut fx, mut fv, mut fw) = (fb, fb, fb);
+    let (mut a, mut b) = (R_MIN, R_MAX);
+    let mut deltax: f32 = 0.0;
+    let mut iter = 0;
+    let mut rat = 0.0;
+    let mut u;
 
-        while iter < maxiter {
-            let tol1 = tol.mul_add(x.abs(), mintol);
-            let tol2 = 2.0 * tol1;
-            let xmid = 0.5 * (a + b);
-            // check for convergence
-            if (x - xmid).abs() < 0.5f32.mul_add(-(b - a), tol2) {
-                break;
+    while iter < maxiter {
+        let tol1 = tol.mul_add(x.abs(), mintol);
+        let tol2 = 2.0 * tol1;
+        let xmid = 0.5 * (a + b);
+        // check for convergence
+        if (x - xmid).abs() < 0.5f32.mul_add(-(b - a), tol2) {
+            break;
+        }
+        if deltax.abs() <= tol1 {
+            // do a golden section step
+            deltax = if x >= xmid { a } else { b } - x;
+            rat = cg * deltax;
+        } else {
+            // do a parabolic step
+            let tmp1 = (x - w) * (fx - fv);
+            let mut tmp2 = (x - v) * (fx - fw);
+            let mut p = (x - v).mul_add(tmp2, -(x - w) * tmp1);
+            tmp2 = 2.0 * (tmp2 - tmp1);
+            if tmp2 > 0.0 {
+                p = -p;
             }
-            if deltax.abs() <= tol1 {
-                // do a golden section step
+            tmp2 = tmp2.abs();
+            let deltax_tmp = deltax;
+            deltax = rat;
+            // check parabolic fit
+            if (p > tmp2 * (a - x))
+                && (p < tmp2 * (b - x))
+                && (p.abs() < (0.5 * tmp2 * deltax_tmp).abs())
+            {
+                // if parabolic step is useful
+                rat = p / tmp2;
+                u = x + rat;
+                if (u - a) < tol2 || (b - u) < tol2 {
+                    rat = if xmid - x >= 0.0 { tol1 } else { -tol1 };
+                }
+            } else {
+                // if it's not do a golden section step
                 deltax = if x >= xmid { a } else { b } - x;
                 rat = cg * deltax;
-            } else {
-                // do a parabolic step
-                let tmp1 = (x - w) * (fx - fv);
-                let mut tmp2 = (x - v) * (fx - fw);
-                let mut p = (x - v).mul_add(tmp2, -(x - w) * tmp1);
-                tmp2 = 2.0 * (tmp2 - tmp1);
-                if tmp2 > 0.0 {
-                    p = -p;
-                }
-                tmp2 = tmp2.abs();
-                let deltax_tmp = deltax;
-                deltax = rat;
-                // check parabolic fit
-                if (p > tmp2 * (a - x))
-                    && (p < tmp2 * (b - x))
-                    && (p.abs() < (0.5 * tmp2 * deltax_tmp).abs())
-                {
-                    // if parabolic step is useful
-                    rat = p / tmp2;
-                    u = x + rat;
-                    if (u - a) < tol2 || (b - u) < tol2 {
-                        rat = if xmid - x >= 0.0 { tol1 } else { -tol1 };
-                    }
-                } else {
-                    // if it's not do a golden section step
-                    deltax = if x >= xmid { a } else { b } - x;
-                    rat = cg * deltax;
-                }
             }
-            // update by at least tol1
-            u = x + if rat.abs() < tol1 {
-                tol1 * if rat >= 0.0 { 1.0 } else { -1.0 }
-            } else {
-                rat
-            };
-            // calculate new output value
-            let fu = sample(
-                config,
-                &parameters,
-                u,
-                sample_size,
-                &mut progress,
-                &cards,
-                &target,
-            )?;
-
-            // if it's bigger than current
-            if fu > fx {
-                if u < x {
-                    a = u;
-                } else {
-                    b = u;
-                }
-                if fu <= fw || w == x {
-                    (v, w) = (w, u);
-                    (fv, fw) = (fw, fu);
-                } else if fu <= fv || v == x || v == w {
-                    v = u;
-                    fv = fu;
-                }
-            } else {
-                // if it's smaller than current
-                if u >= x {
-                    a = x;
-                } else {
-                    b = x;
-                }
-                (v, w, x) = (w, x, u);
-                (fv, fw, fx) = (fw, fx, fu);
-            }
-            iter += 1;
         }
-        let xmin = x;
-        let success = iter < maxiter && (R_MIN..=R_MAX).contains(&xmin);
-        // dbg!(iter);
-
-        if success {
-            Ok(xmin)
+        // update by at least tol1
+        u = x + if rat.abs() < tol1 {
+            tol1 * if rat >= 0.0 { 1.0 } else { -1.0 }
         } else {
-            Err(FSRSError::OptimalNotFound)
+            rat
+        };
+        // calculate new output value
+        let fu = sample(
+            config,
+            &parameters,
+            u,
+            sample_size,
+            &mut progress,
+            &cards,
+            &target,
+        )?;
+
+        // if it's bigger than current
+        if fu > fx {
+            if u < x {
+                a = u;
+            } else {
+                b = u;
+            }
+            if fu <= fw || w == x {
+                (v, w) = (w, u);
+                (fv, fw) = (fw, fu);
+            } else if fu <= fv || v == x || v == w {
+                v = u;
+                fv = fu;
+            }
+        } else {
+            // if it's smaller than current
+            if u >= x {
+                a = x;
+            } else {
+                b = x;
+            }
+            (v, w, x) = (w, x, u);
+            (fv, fw, fx) = (fw, fx, fu);
         }
+        iter += 1;
+    }
+    let xmin = x;
+    let success = iter < maxiter && (R_MIN..=R_MAX).contains(&xmin);
+    // dbg!(iter);
+
+    if success {
+        Ok(xmin)
+    } else {
+        Err(FSRSError::OptimalNotFound)
     }
 }
 
@@ -1516,7 +1512,7 @@ mod tests {
     }
 
     #[test]
-    fn simulator_memorization() -> Result<()> {
+    fn test_simulator_memorization() -> Result<()> {
         let config = SimulatorConfig::default();
         let SimulationResult {
             memorized_cnt_per_day,
@@ -1530,7 +1526,7 @@ mod tests {
     }
 
     #[test]
-    fn simulator_learn_review_costs() -> Result<()> {
+    fn test_simulator_learn_review_costs() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 1,
             learn_span: 1,
@@ -1565,7 +1561,7 @@ mod tests {
     }
 
     #[test]
-    fn changing_learn_span_should_get_same_review_cnt_per_day() -> Result<()> {
+    fn test_changing_learn_span_should_get_same_review_cnt_per_day() -> Result<()> {
         const LOWER: usize = 365;
         const DECK_SIZE: usize = 1000;
         const LEARN_LIMIT: usize = 10;
@@ -1601,7 +1597,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_existing_cards() -> Result<()> {
+    fn test_simulate_with_existing_cards() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1660,7 +1656,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_suspend_on_lapse_count() -> Result<()> {
+    fn test_simulate_suspend_on_lapse_count() -> Result<()> {
         let cards = vec![Card {
             id: 0,
             difficulty: 10.0,
@@ -1690,7 +1686,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_learn_limit() -> Result<()> {
+    fn test_simulate_with_learn_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_limit: 3,
             review_limit: 10,
@@ -1721,7 +1717,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_new_affects_review_limit() -> Result<()> {
+    fn test_simulate_with_new_affects_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_limit: 3,
             review_limit: 10,
@@ -1754,7 +1750,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_learn_review_limit() -> Result<()> {
+    fn test_simulate_with_learn_review_limit() -> Result<()> {
         let config = SimulatorConfig {
             learn_span: 30,
             learn_limit: 60,
@@ -1782,7 +1778,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_max_ivl() -> Result<()> {
+    fn test_simulate_with_max_ivl() -> Result<()> {
         let config = SimulatorConfig {
             max_ivl: 100.0,
             ..Default::default()
@@ -1799,7 +1795,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_zero_cards() -> Result<()> {
+    fn test_simulate_with_zero_cards() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 0,
             ..Default::default()
@@ -1810,7 +1806,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_returns_cards() -> Result<()> {
+    fn test_simulate_returns_cards() -> Result<()> {
         let w = DEFAULT_PARAMETERS;
 
         let config = SimulatorConfig {
@@ -1836,7 +1832,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_existing_cards_with_wrong_deck_size() -> Result<()> {
+    fn test_simulate_with_existing_cards_with_wrong_deck_size() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 1,
             ..Default::default()
@@ -1867,7 +1863,7 @@ mod tests {
     }
 
     #[test]
-    fn learn_does_not_affect_correct_count() -> Result<()> {
+    fn test_learn_does_not_affect_correct_count() -> Result<()> {
         let mut w = DEFAULT_PARAMETERS;
         w[3] = 10000.;
 
@@ -1905,7 +1901,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_post_scheduling_fn() -> Result<()> {
+    fn test_simulate_with_post_scheduling_fn() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 10,
             learn_span: 10,
@@ -1921,7 +1917,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_with_review_priority_fn() -> Result<()> {
+    fn test_simulate_with_review_priority_fn() -> Result<()> {
         fn calc_cost_per_memorization(
             memorized_cnt_per_day: &Parameters,
             cost_per_day: &Parameters,
@@ -2011,10 +2007,9 @@ mod tests {
     }
 
     #[test]
-    fn optimal_retention() -> Result<()> {
+    fn test_optimal_retention() -> Result<()> {
         let learn_span = 1000;
         let learn_limit = 10;
-        let fsrs = FSRS::new(None)?;
         let deck_size = learn_span * learn_limit;
         let config = SimulatorConfig {
             deck_size,
@@ -2023,10 +2018,8 @@ mod tests {
             learn_limit,
             ..Default::default()
         };
-        let optimal_retention = fsrs
-            .optimal_retention(&config, &[], |_| true, None, None)
-            .unwrap();
-        dbg!(optimal_retention);
+        let retention_value = optimal_retention(&config, &[], |_| true, None, None).unwrap();
+        dbg!(retention_value);
         let card = Card {
             id: 0,
             difficulty: 5.0,
@@ -2036,11 +2029,10 @@ mod tests {
             interval: 5.0,
             lapses: 0,
         };
-        assert!((optimal_retention - 0.7).abs() < 0.01);
-        fsrs.optimal_retention(&config, &[1.], |_| true, None, None)
-            .unwrap_err();
+        assert!((retention_value - 0.7).abs() < 0.01);
+        optimal_retention(&config, &[1.], |_| true, None, None).unwrap_err();
         // Check that the cards are passed correctly to simulate
-        fsrs.optimal_retention(
+        optimal_retention(
             &config,
             &[],
             |_| true,
@@ -2048,7 +2040,7 @@ mod tests {
             None,
         )
         .unwrap();
-        fsrs.optimal_retention(
+        optimal_retention(
             &config,
             &[],
             |_| true,
@@ -2060,10 +2052,9 @@ mod tests {
     }
 
     #[test]
-    fn optimal_retention_with_old_parameters() -> Result<()> {
+    fn test_optimal_retention_with_old_parameters() -> Result<()> {
         let learn_span = 1000;
         let learn_limit = 10;
-        let fsrs = FSRS::new(None)?;
         let config = SimulatorConfig {
             deck_size: learn_span * learn_limit,
             learn_span,
@@ -2073,15 +2064,13 @@ mod tests {
         };
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
-        let optimal_retention = fsrs
-            .optimal_retention(&config, &param, |_v| true, None, None)
-            .unwrap();
-        [optimal_retention].assert_approx_eq([0.75508595]);
+        let retention_value = optimal_retention(&config, &param, |_v| true, None, None).unwrap();
+        [retention_value].assert_approx_eq([0.75508595]);
         Ok(())
     }
 
     #[test]
-    fn extract_simulator_config_from_revlog() {
+    fn test_extract_simulator_config_from_revlog() {
         let mut revlogs = read_collection().unwrap();
         revlogs.sort_by_cached_key(|r| (r.cid, r.id));
         let day_cutoff = 1720900800;
@@ -2137,7 +2126,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_simulator_config_without_revlog() {
+    fn test_extract_simulator_config_without_revlog() {
         let simulator_config = extract_simulator_config(vec![], 0, true);
         assert_eq!(simulator_config, SimulatorConfig::default());
     }

@@ -79,12 +79,14 @@ impl FSRSItem {
 
 #[derive(Clone)]
 pub(crate) struct FSRSBatcher<B: Backend> {
-    device: B::Device,
+    _backend: core::marker::PhantomData<B>,
 }
 
 impl<B: Backend> FSRSBatcher<B> {
-    pub const fn new(device: B::Device) -> Self {
-        Self { device }
+    pub const fn new() -> Self {
+        Self {
+            _backend: core::marker::PhantomData,
+        }
     }
 }
 
@@ -98,7 +100,7 @@ pub(crate) struct FSRSBatch<B: Backend> {
 }
 
 impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
-    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, _device: &B::Device) -> FSRSBatch<B> {
+    fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, device: &B::Device) -> FSRSBatch<B> {
         let pad_size = weighted_items
             .iter()
             .map(|x| x.item.reviews.len())
@@ -123,7 +125,7 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                             dims: vec![1, pad_size],
                         },
                     ),
-                    &self.device,
+                    device,
                 );
                 let rating = Tensor::<B, 2>::from_data(
                     TensorData::new(
@@ -132,7 +134,7 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
                             dims: vec![1, pad_size],
                         },
                     ),
-                    &self.device,
+                    device,
                 );
                 (delta_t, rating)
             })
@@ -142,28 +144,24 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .iter()
             .map(|weighted_item| {
                 let current = weighted_item.item.current();
-                let delta_t: Tensor<B, 1> =
-                    Tensor::from_floats([current.delta_t as f32], &self.device);
+                let delta_t: Tensor<B, 1> = Tensor::from_floats([current.delta_t as f32], device);
                 let label = match current.rating {
                     1 => 0,
                     _ => 1,
                 };
-                let label: Tensor<B, 1, Int> = Tensor::from_ints([label], &self.device);
-                let weight: Tensor<B, 1> =
-                    Tensor::from_floats([weighted_item.weight], &self.device);
+                let label: Tensor<B, 1, Int> = Tensor::from_ints([label], device);
+                let weight: Tensor<B, 1> = Tensor::from_floats([weighted_item.weight], device);
                 (delta_t, label, weight)
             })
             .multiunzip();
 
-        let t_historys = Tensor::cat(time_histories, 0)
-            .transpose()
-            .to_device(&self.device); // [seq_len, batch_size]
+        let t_historys = Tensor::cat(time_histories, 0).transpose().to_device(device); // [seq_len, batch_size]
         let r_historys = Tensor::cat(rating_histories, 0)
             .transpose()
-            .to_device(&self.device); // [seq_len, batch_size]
-        let delta_ts = Tensor::cat(delta_ts, 0).to_device(&self.device);
-        let labels = Tensor::cat(labels, 0).to_device(&self.device);
-        let weights = Tensor::cat(weights, 0).to_device(&self.device);
+            .to_device(device); // [seq_len, batch_size]
+        let delta_ts = Tensor::cat(delta_ts, 0).to_device(device);
+        let labels = Tensor::cat(labels, 0).to_device(device);
+        let weights = Tensor::cat(weights, 0).to_device(device);
 
         // dbg!(&items[0].t_history);
         // dbg!(&t_historys);
@@ -201,7 +199,7 @@ impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     }
 }
 
-pub fn filter_outlier(
+pub(crate) fn filter_outlier(
     dataset_for_initialization: Vec<FSRSItem>,
     mut trainset: Vec<FSRSItem>,
 ) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
@@ -257,7 +255,7 @@ pub fn filter_outlier(
     (filtered_items, trainset)
 }
 
-pub fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
+pub(crate) fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
     let (mut dataset_for_initialization, mut trainset) = items
         .clone()
         .into_iter()
@@ -297,13 +295,17 @@ pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedF
 
 #[cfg(test)]
 mod tests {
+    use burn::backend::NdArray;
+    use burn::backend::ndarray::NdArrayDevice;
     use burn::tensor::Tolerance;
+    type Backend = NdArray<f32>;
+    static DEVICE: NdArrayDevice = NdArrayDevice::Cpu;
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
 
     #[test]
-    fn from_anki() {
+    fn test_from_anki() {
         use burn::data::dataloader::Dataset;
 
         let dataset = FSRSDataset::from(constant_weighted_fsrs_items(
@@ -325,11 +327,7 @@ mod tests {
             }
         );
 
-        use burn::backend::ndarray::NdArrayDevice;
-        let device = NdArrayDevice::Cpu;
-        use burn::backend::NdArray;
-        type Backend = NdArray<f32>;
-        let batcher = FSRSBatcher::<Backend>::new(device);
+        let batcher = FSRSBatcher::<Backend>::new();
         use burn::data::dataloader::DataLoaderBuilder;
         let dataloader = DataLoaderBuilder::new(batcher)
             .batch_size(1)
@@ -346,12 +344,8 @@ mod tests {
     }
 
     #[test]
-    fn batcher() {
-        use burn::backend::NdArray;
-        use burn::backend::ndarray::NdArrayDevice;
-        type Backend = NdArray<f32>;
-        let device = NdArrayDevice::Cpu;
-        let batcher = FSRSBatcher::<Backend>::new(device);
+    fn test_batcher() {
+        let batcher = FSRSBatcher::<Backend>::new();
         let items = [
             FSRSItem {
                 reviews: [(4, 0), (3, 5)]
@@ -406,7 +400,7 @@ mod tests {
             .into_iter()
             .map(|item| WeightedFSRSItem { weight: 1.0, item })
             .collect();
-        let batch = batcher.batch(items, &device);
+        let batch = batcher.batch(items, &DEVICE);
         batch.t_historys.to_data().assert_approx_eq::<f32>(
             &TensorData::from([
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
