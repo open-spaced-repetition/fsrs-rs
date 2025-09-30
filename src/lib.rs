@@ -28,4 +28,4 @@ pub use simulation::{
     SimulationResult, SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
     extract_simulator_config, optimal_retention, simulate,
 };
-pub use training::{CombinedProgressState, ComputeParametersInput, compute_parameters};
+pub use training::{CombinedProgressState, ComputeParametersInput, benchmark, compute_parameters};

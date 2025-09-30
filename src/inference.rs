@@ -172,7 +172,6 @@ impl<B: Backend> FSRS<B> {
     /// In the case of truncated reviews, `starting_state` can be set to the value of
     /// [FSRS::memory_state_from_sm2] for the first review (which should not be included
     /// in FSRSItem). If not provided, the card starts as new.
-    /// Parameters must have been provided when calling FSRS::new().
     pub fn memory_state(
         &self,
         item: FSRSItem,
@@ -277,7 +276,6 @@ impl<B: Backend> FSRS<B> {
 
     /// If a card has incomplete learning history, memory state can be approximated from
     /// current sm2 values.
-    /// Parameters must have been provided when calling FSRS::new().
     pub fn memory_state_from_sm2(
         &self,
         ease_factor: f32,
@@ -306,7 +304,6 @@ impl<B: Backend> FSRS<B> {
 
     /// Calculate the next interval for the current memory state, for rescheduling. Stability
     /// should be provided except when the card is new. Rating is ignored except when card is new.
-    /// Parameters must have been provided when calling FSRS::new().
     pub fn next_interval(
         &self,
         stability: Option<f32>,
@@ -329,7 +326,6 @@ impl<B: Backend> FSRS<B> {
     }
 
     /// The intervals and memory states for each answer button.
-    /// Parameters must have been provided when calling FSRS::new().
     pub fn next_states(
         &self,
         current_memory_state: Option<MemoryState>,
@@ -385,7 +381,6 @@ impl<B: Backend> FSRS<B> {
     }
 
     /// Determine how well the model and parameters predict performance.
-    /// Parameters must have been provided when calling FSRS::new().
     pub fn evaluate<F>(&self, items: Vec<FSRSItem>, mut progress: F) -> Result<ModelEvaluation>
     where
         F: FnMut(ItemProgress) -> bool,

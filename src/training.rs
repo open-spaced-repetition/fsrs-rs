@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::model::{Model, ModelConfig};
 use crate::parameter_clipper::parameter_clipper;
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
-use crate::{DEFAULT_PARAMETERS, FSRS, FSRSError};
+use crate::{DEFAULT_PARAMETERS, FSRSError};
 use burn::backend::Autodiff;
 use burn::backend::ndarray::NdArray;
 use burn::lr_scheduler::LrScheduler;
@@ -364,45 +364,42 @@ pub fn compute_parameters(
     Ok(optimized_parameters)
 }
 
-impl<B: Backend> FSRS<B> {
-    pub fn benchmark(
-        &self,
-        ComputeParametersInput {
-            train_set,
-            enable_short_term,
-            num_relearning_steps,
-            ..
-        }: ComputeParametersInput,
-    ) -> Vec<f32> {
-        let average_recall = calculate_average_recall(&train_set);
-        let (dataset_for_initialization, _next_train_set) = train_set
-            .clone()
-            .into_iter()
-            .partition(|item| item.long_term_review_cnt() == 1);
-        let initial_stability =
-            initialize_stability_parameters(dataset_for_initialization, average_recall)
-                .unwrap()
-                .0;
-        let config = TrainingConfig::new(
-            ModelConfig {
-                freeze_initial_stability: !enable_short_term,
-                initial_stability: Some(initial_stability),
-                freeze_short_term_stability: !enable_short_term,
-                num_relearning_steps: num_relearning_steps.unwrap_or(1),
-            },
-            AdamConfig::new().with_epsilon(1e-8),
-        );
-        let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
-        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
-        let model = train::<Autodiff<B>>(
-            weighted_train_set.clone(),
-            weighted_train_set,
-            &config,
-            None,
-        );
-        let parameters: Vec<f32> = model.unwrap().w.val().to_data().to_vec::<f32>().unwrap();
-        parameters
-    }
+pub fn benchmark(
+    ComputeParametersInput {
+        train_set,
+        enable_short_term,
+        num_relearning_steps,
+        ..
+    }: ComputeParametersInput,
+) -> Vec<f32> {
+    let average_recall = calculate_average_recall(&train_set);
+    let (dataset_for_initialization, _next_train_set) = train_set
+        .clone()
+        .into_iter()
+        .partition(|item| item.long_term_review_cnt() == 1);
+    let initial_stability =
+        initialize_stability_parameters(dataset_for_initialization, average_recall)
+            .unwrap()
+            .0;
+    let config = TrainingConfig::new(
+        ModelConfig {
+            freeze_initial_stability: !enable_short_term,
+            initial_stability: Some(initial_stability),
+            freeze_short_term_stability: !enable_short_term,
+            num_relearning_steps: num_relearning_steps.unwrap_or(1),
+        },
+        AdamConfig::new().with_epsilon(1e-8),
+    );
+    let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+    weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+    let model = train::<Autodiff<B>>(
+        weighted_train_set.clone(),
+        weighted_train_set,
+        &config,
+        None,
+    );
+    let parameters: Vec<f32> = model.unwrap().w.val().to_data().to_vec::<f32>().unwrap();
+    parameters
 }
 
 fn train<B: AutodiffBackend>(
@@ -569,6 +566,7 @@ mod tests {
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::convertor_tests::data_from_csv;
     use crate::dataset::FSRSBatch;
+    use crate::model::FSRS;
     use crate::test_helpers::TestHelper;
     use burn::backend::NdArray;
     use log::LevelFilter;
