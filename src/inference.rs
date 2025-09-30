@@ -929,7 +929,7 @@ mod tests {
 
     #[test]
     fn test_next_interval() {
-        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let fsrs = FSRS::default();
         let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
         let intervals = desired_retentions
             .iter()
@@ -1248,7 +1248,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_short_term_stability() -> Result<()> {
-        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let fsrs = FSRS::default();
         let mut state = MemoryState {
             stability: 1.0,
             difficulty: 5.0,
@@ -1267,7 +1267,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_good_again_loop_during_the_same_day() -> Result<()> {
-        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let fsrs = FSRS::default();
         let mut state = MemoryState {
             stability: 1.0,
             difficulty: 5.0,
@@ -1287,7 +1287,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_stability_after_same_day_review_less_than_next_day_review() -> Result<()> {
-        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let fsrs = FSRS::default();
         let state = MemoryState {
             stability: 10.0,
             difficulty: 5.0,
@@ -1305,7 +1305,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_init_stability_after_same_day_review_hard_vs_good_vs_easy() -> Result<()> {
-        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let fsrs = FSRS::default();
         let item = FSRSItem {
             reviews: vec![
                 FSRSReview {

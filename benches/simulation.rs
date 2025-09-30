@@ -65,7 +65,7 @@ pub(crate) fn run_expected_workload_with_10000_existing_cards() {
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
-    let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+    let fsrs = FSRS::default();
     let config = SimulatorConfig {
         deck_size: 36500,
         learn_span: 90,
