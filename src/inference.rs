@@ -471,7 +471,7 @@ impl<B: Backend> FSRS<B> {
             total: weighted_items.len(),
         };
         let model_self = self.model();
-        let fsrs_other = Self::new_with_backend(Some(parameters), self.device())?;
+        let fsrs_other = Self::new_with_backend(parameters, self.device())?;
         let model_other = fsrs_other.model();
         for chunk in weighted_items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec(), &self.device());
@@ -529,7 +529,7 @@ fn batch_predict<B: Backend>(
     let weighted_items = constant_weighted_fsrs_items(items);
     let batcher = FSRSBatcher::new(B::Device::default());
 
-    let fsrs = FSRS::<B>::new_with_backend(Some(parameters), B::Device::default())?;
+    let fsrs = FSRS::<B>::new_with_backend(parameters, B::Device::default())?;
     let model = fsrs.model();
     let mut predicted_items = Vec::with_capacity(weighted_items.len());
 
@@ -853,7 +853,7 @@ mod tests {
                 },
             ],
         };
-        let fsrs = FSRS::new(Some(PARAMETERS))?;
+        let fsrs = FSRS::new(PARAMETERS)?;
         assert_eq!(
             fsrs.memory_state(item, None).unwrap(),
             MemoryState {
@@ -884,7 +884,7 @@ mod tests {
 
     fn assert_memory_state(w: &[f32], expected_stability: f32, expected_difficulty: f32) {
         let desired_retention = 0.9;
-        let fsrs = FSRS::new(Some(w)).unwrap();
+        let fsrs = FSRS::new(w).unwrap();
         let ratings: [u32; 6] = [1, 3, 3, 3, 3, 3];
         let intervals: [u32; 6] = [0, 0, 1, 3, 8, 21];
 
@@ -934,7 +934,7 @@ mod tests {
 
     #[test]
     fn test_next_interval() {
-        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
         let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
         let intervals = desired_retentions
             .iter()
@@ -953,7 +953,7 @@ mod tests {
             filter_outlier(dataset_for_initialization, trainset);
         let items = [dataset_for_initialization, trainset].concat();
 
-        let fsrs = FSRS::new(Some(&[
+        let fsrs = FSRS::new(&[
             0.335561,
             1.6840581,
             5.166598,
@@ -975,17 +975,17 @@ mod tests {
             0.09714265,
             0.106824234,
             0.20447432,
-        ]))?;
+        ])?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20580745, 0.026005825]);
 
-        let fsrs = FSRS::new(Some(&[]))?;
+        let fsrs = FSRS::new(&[])?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20967911, 0.030774858]);
 
-        let fsrs = FSRS::new(Some(PARAMETERS))?;
+        let fsrs = FSRS::new(PARAMETERS)?;
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.208_657_4, 0.030_946_612]);
@@ -1026,7 +1026,7 @@ mod tests {
 
     #[test]
     fn test_memory_state_batch() -> Result<()> {
-        let fsrs = FSRS::new(Some(PARAMETERS))?;
+        let fsrs = FSRS::new(PARAMETERS)?;
 
         let items = vec![
             FSRSItem {
@@ -1211,7 +1211,7 @@ mod tests {
                 },
             ],
         };
-        let fsrs = FSRS::new(Some(PARAMETERS))?;
+        let fsrs = FSRS::new(PARAMETERS)?;
         let state = fsrs.memory_state(item, None).unwrap();
         assert_eq!(
             fsrs.next_states(Some(state), 0.9, 21).unwrap(),
@@ -1253,7 +1253,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_short_term_stability() -> Result<()> {
-        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
         let mut state = MemoryState {
             stability: 1.0,
             difficulty: 5.0,
@@ -1272,7 +1272,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_good_again_loop_during_the_same_day() -> Result<()> {
-        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
         let mut state = MemoryState {
             stability: 1.0,
             difficulty: 5.0,
@@ -1292,7 +1292,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_stability_after_same_day_review_less_than_next_day_review() -> Result<()> {
-        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
         let state = MemoryState {
             stability: 10.0,
             difficulty: 5.0,
@@ -1310,7 +1310,7 @@ mod tests {
     #[test]
     #[ignore = "just for exploration"]
     fn test_init_stability_after_same_day_review_hard_vs_good_vs_easy() -> Result<()> {
-        let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS))?;
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
         let item = FSRSItem {
             reviews: vec![
                 FSRSReview {
@@ -1368,7 +1368,7 @@ mod tests {
 
     #[test]
     fn test_memory_from_sm2() -> Result<()> {
-        let fsrs = FSRS::new(Some(&[]))?;
+        let fsrs = FSRS::new(&[])?;
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
 
         [memory_state.stability, memory_state.difficulty].assert_approx_eq([10.0, 6.9140563]);

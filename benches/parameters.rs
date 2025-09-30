@@ -207,7 +207,7 @@ fn load_and_prepare_data() -> Vec<FSRSItem> {
 fn benchmark_evaluate(c: &mut Criterion) {
     let items = load_and_prepare_data();
     // Evaluate uses the FSRS instance's existing parameters.
-    let fsrs = FSRS::new(Some(&DEFAULT_PARAMETERS)).unwrap();
+    let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
 
     let mut group = c.benchmark_group("parameters");
     group.sample_size(10); // Reduce sample size if benchmarks are too long

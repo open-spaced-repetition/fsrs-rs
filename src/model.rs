@@ -246,39 +246,31 @@ impl ModelConfig {
 /// for both parameter training, and for reviews.
 #[derive(Debug, Clone)]
 pub struct FSRS<B: Backend = NdArray> {
-    model: Option<Model<B>>,
+    model: Model<B>,
     device: B::Device,
 }
 
 impl FSRS<NdArray> {
     /// - Parameters must be provided before running commands that need them.
     /// - Parameters may be an empty slice to use the default values instead.
-    pub fn new(parameters: Option<&Parameters>) -> Result<Self> {
+    pub fn new(parameters: &Parameters) -> Result<Self> {
         Self::new_with_backend(parameters, NdArrayDevice::Cpu)
     }
 }
 
 impl<B: Backend> FSRS<B> {
     pub fn new_with_backend<B2: Backend>(
-        parameters: Option<&Parameters>,
+        parameters: &Parameters,
         device: B2::Device,
     ) -> Result<FSRS<B2>> {
-        let model = match parameters {
-            Some(params) => {
-                let parameters = check_and_fill_parameters(params)?;
-                let model = parameters_to_model::<B2>(&parameters);
-                Some(model)
-            }
-            None => None,
-        };
+        let parameters = check_and_fill_parameters(parameters)?;
+        let model = parameters_to_model::<B2>(&parameters);
 
         Ok(FSRS { model, device })
     }
 
     pub(crate) fn model(&self) -> &Model<B> {
-        self.model
-            .as_ref()
-            .expect("command requires parameters to be set on creation")
+        &self.model
     }
 
     pub(crate) fn device(&self) -> B::Device {
@@ -517,9 +509,9 @@ mod tests {
 
     #[test]
     fn test_fsrs() {
-        assert!(FSRS::new(Some(&[])).is_ok());
-        assert!(FSRS::new(Some(&[1.])).is_err());
-        assert!(FSRS::new(Some(DEFAULT_PARAMETERS.as_slice())).is_ok());
-        assert!(FSRS::new(Some(&DEFAULT_PARAMETERS[..17])).is_ok());
+        assert!(FSRS::new(&[]).is_ok());
+        assert!(FSRS::new(&[1.]).is_err());
+        assert!(FSRS::new(DEFAULT_PARAMETERS.as_slice()).is_ok());
+        assert!(FSRS::new(&DEFAULT_PARAMETERS[..17]).is_ok());
     }
 }
