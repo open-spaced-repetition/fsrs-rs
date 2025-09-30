@@ -39,11 +39,12 @@ rayon = "1.11.0"
 serde = "1.0.228"
 snafu = "0.8.9"
 strum = { version = "0.27.2", features = ["derive"] }
+# don't move chrono to dev-dependencies because it's used in fsrs-browser
+chrono = { version = "0.4.42", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10.4"
 wasm-bindgen = "0.2.91"
 
 [dev-dependencies]
-chrono = { version = "0.4.42", default-features = false, features = ["std", "clock"] }
 criterion = { version = "0.7.0" }
 csv = "1.3.0"
 fern = "0.7.1"
