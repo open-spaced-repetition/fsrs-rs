@@ -4,22 +4,47 @@
 use std::hint::black_box;
 use std::iter::repeat;
 
-use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
+use criterion::{Criterion, Throughput};
 use fsrs::FSRS;
 use fsrs::FSRSReview;
 use fsrs::NextStates;
 use fsrs::{FSRSItem, MemoryState};
 use itertools::Itertools;
 
-pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize) -> MemoryState {
+pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<MemoryState> {
     let review = FSRSReview {
         rating: 3,
         delta_t: 21,
     };
     let reviews = repeat(review).take(past_reviews + 1).collect_vec();
-    inf.memory_state(FSRSItem { reviews }, None).unwrap()
+    (0..card_cnt)
+        .map(|_| {
+            inf.memory_state(
+                FSRSItem {
+                    reviews: reviews.clone(),
+                },
+                None,
+            )
+            .unwrap()
+        })
+        .collect_vec()
+}
+
+pub(crate) fn calc_mem_batch(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<MemoryState> {
+    let reviews = repeat(FSRSReview {
+        rating: 3,
+        delta_t: 21,
+    })
+    .take(past_reviews)
+    .collect_vec();
+    let items = repeat(FSRSItem {
+        reviews: reviews.clone(),
+    })
+    .take(card_cnt)
+    .collect_vec();
+    inf.memory_state_batch(items, vec![None; card_cnt]).unwrap()
 }
 
 pub(crate) fn next_states(inf: &FSRS) -> NextStates {
@@ -55,8 +80,42 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         2.6646678,
     ]))
     .unwrap();
-    c.bench_function("calc_mem", |b| b.iter(|| black_box(calc_mem(&fsrs, 100))));
+
     c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&fsrs))));
+
+    {
+        let mut single_group = c.benchmark_group("calc_mem");
+        let n_cards = 1000;
+        let n_reviews = 10;
+        single_group.throughput(Throughput::Elements(n_cards));
+        single_group.bench_function(
+            format!("calc_mem n_cards={n_cards}, n_reviews={n_reviews}"),
+            |b| b.iter(|| black_box(calc_mem(&fsrs, n_reviews, n_cards.try_into().unwrap()))),
+        );
+        single_group.finish();
+    }
+
+    {
+        let mut batch_group = c.benchmark_group("calc_mem_batch");
+        for n_cards in [1000, 10_000] {
+            for n_reviews in [10, 100, 200] {
+                batch_group.throughput(Throughput::Elements(n_cards));
+                batch_group.bench_function(
+                    format!("calc_mem_batch n_cards={n_cards}, n_reviews={n_reviews}"),
+                    |b| {
+                        b.iter(|| {
+                            black_box(calc_mem_batch(
+                                &fsrs,
+                                n_reviews,
+                                n_cards.try_into().unwrap(),
+                            ))
+                        })
+                    },
+                );
+            }
+        }
+        batch_group.finish();
+    }
 }
 
 criterion_group!(benches, criterion_benchmark);
