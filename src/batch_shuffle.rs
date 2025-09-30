@@ -16,7 +16,8 @@ pub(crate) struct BatchTensorDataset<B: Backend> {
 
 impl<B: Backend> BatchTensorDataset<B> {
     /// Creates a new shuffled dataset.
-    pub fn new(dataset: FSRSDataset, batch_size: usize, device: B::Device) -> Self {
+    pub fn new(dataset: FSRSDataset, batch_size: usize) -> Self {
+        let device = B::Device::default();
         let batcher = FSRSBatcher::<B>::new();
         let dataset = dataset
             .items
@@ -102,10 +103,7 @@ impl<B: Backend> ShuffleDataLoader<B> {
 
 #[cfg(test)]
 mod tests {
-    use burn::{
-        backend::{NdArray, ndarray::NdArrayDevice},
-        tensor::Shape,
-    };
+    use burn::{backend::NdArray, tensor::Shape};
     use itertools::Itertools;
 
     use super::*;
@@ -124,10 +122,9 @@ mod tests {
         let dataset = FSRSDataset::from(constant_weighted_fsrs_items(train_set));
         let batch_size = 512;
         let seed = 114514;
-        let device = NdArrayDevice::Cpu;
         type Backend = NdArray<f32>;
 
-        let dataset = BatchTensorDataset::<Backend>::new(dataset, batch_size, device);
+        let dataset = BatchTensorDataset::<Backend>::new(dataset, batch_size);
         let dataloader = ShuffleDataLoader::new(dataset, seed);
         let mut iterator = dataloader.iter();
         // dbg!(&iterator.indices);

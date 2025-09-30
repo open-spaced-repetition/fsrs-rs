@@ -199,11 +199,10 @@ impl<B: Backend> Model<B> {
         starting_state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let [seq_len, batch_size] = delta_ts.dims();
-        let device = delta_ts.device();
         let mut state = if let Some(state) = starting_state {
             state
         } else {
-            MemoryStateTensors::zeros(batch_size, &device)
+            MemoryStateTensors::zeros(batch_size)
         };
         for i in 0..seq_len {
             let delta_t = delta_ts.get(i).squeeze(0);
@@ -223,17 +222,19 @@ pub(crate) struct MemoryStateTensors<B: Backend> {
 }
 
 impl<B: Backend> MemoryStateTensors<B> {
-    pub(crate) fn zeros(batch_size: usize, device: &B::Device) -> MemoryStateTensors<B> {
+    pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
+        let device = B::Device::default();
         MemoryStateTensors {
-            stability: Tensor::zeros([batch_size], device),
-            difficulty: Tensor::zeros([batch_size], device),
+            stability: Tensor::zeros([batch_size], &device),
+            difficulty: Tensor::zeros([batch_size], &device),
         }
     }
 
-    pub(crate) fn from_state(state: MemoryState, device: &B::Device) -> Self {
+    pub(crate) fn from_state(state: MemoryState) -> Self {
+        let device = B::Device::default();
         Self {
-            stability: Tensor::from_floats([state.stability], device),
-            difficulty: Tensor::from_floats([state.difficulty], device),
+            stability: Tensor::from_floats([state.stability], &device),
+            difficulty: Tensor::from_floats([state.difficulty], &device),
         }
     }
 }
@@ -260,7 +261,6 @@ impl ModelConfig {
 #[derive(Debug, Clone)]
 pub struct FSRS<B: Backend = NdArray> {
     model: Model<B>,
-    device: B::Device,
 }
 
 impl Default for FSRS<NdArray> {
@@ -285,7 +285,7 @@ impl<B: Backend> FSRS<B> {
         let parameters = check_and_fill_parameters(parameters)?;
         let model = parameters_to_model::<B2>(&parameters, &device);
 
-        Ok(FSRS { model, device })
+        Ok(FSRS { model })
     }
 
     pub(crate) fn model(&self) -> &Model<B> {
@@ -293,7 +293,7 @@ impl<B: Backend> FSRS<B> {
     }
 
     pub(crate) fn device(&self) -> B::Device {
-        self.device.clone()
+        B::Device::default()
     }
 }
 

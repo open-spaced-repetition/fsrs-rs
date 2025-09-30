@@ -408,22 +408,17 @@ fn train<B: AutodiffBackend>(
     progress: Option<ProgressCollector>,
 ) -> Result<Model<B>> {
     B::seed(config.seed);
-    let device = B::Device::default();
 
     // Training data
     let total_size = train_set.len();
     let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
-    let batch_dataset = BatchTensorDataset::<B>::new(
-        FSRSDataset::from(train_set),
-        config.batch_size,
-        device.clone(),
-    );
+    let batch_dataset =
+        BatchTensorDataset::<B>::new(FSRSDataset::from(train_set), config.batch_size);
     let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
 
     let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
         FSRSDataset::from(test_set.clone()),
         config.batch_size,
-        device.clone(),
     );
     let dataloader_valid = ShuffleDataLoader::new(batch_dataset, config.seed);
 
@@ -439,6 +434,7 @@ fn train<B: AutodiffBackend>(
 
     let mut model: Model<B> = config.model.init();
     let init_w = model.w.val();
+    let device = B::Device::default();
     let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
