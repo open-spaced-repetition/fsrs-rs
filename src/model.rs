@@ -250,6 +250,12 @@ pub struct FSRS<B: Backend = NdArray> {
     device: B::Device,
 }
 
+impl Default for FSRS<NdArray> {
+    fn default() -> Self {
+        Self::new(&[]).expect("Default parameters should be valid")
+    }
+}
+
 impl FSRS<NdArray> {
     /// - Parameters must be provided before running commands that need them.
     /// - Parameters may be an empty slice to use the default values instead.
@@ -509,6 +515,13 @@ mod tests {
 
     #[test]
     fn test_fsrs() {
+        FSRS::default()
+            .model()
+            .w
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .assert_approx_eq(DEFAULT_PARAMETERS);
         assert!(FSRS::new(&[]).is_ok());
         assert!(FSRS::new(&[1.]).is_err());
         assert!(FSRS::new(DEFAULT_PARAMETERS.as_slice()).is_ok());

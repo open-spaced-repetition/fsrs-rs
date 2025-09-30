@@ -980,7 +980,7 @@ mod tests {
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20580745, 0.026005825]);
 
-        let fsrs = FSRS::new(&[])?;
+        let fsrs = FSRS::default();
         let metrics = fsrs.evaluate(items.clone(), |_| true).unwrap();
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.20967911, 0.030774858]);
@@ -1368,7 +1368,7 @@ mod tests {
 
     #[test]
     fn test_memory_from_sm2() -> Result<()> {
-        let fsrs = FSRS::new(&[])?;
+        let fsrs = FSRS::default();
         let memory_state = fsrs.memory_state_from_sm2(2.5, 10.0, 0.9).unwrap();
 
         [memory_state.stability, memory_state.difficulty].assert_approx_eq([10.0, 6.9140563]);

@@ -27,7 +27,7 @@ fn schedule_new_card() -> Result<(), Box<dyn std::error::Error>> {
     let desired_retention = 0.9;
 
     // Create a new FSRS model
-    let fsrs = FSRS::new(&[])?;
+    let fsrs = FSRS::default();
 
     // Get next states for a new card
     let next_states = fsrs.next_states(card.memory_state, desired_retention, 0)?;
@@ -81,7 +81,7 @@ fn schedule_existing_card() -> Result<(), Box<dyn std::error::Error>> {
     let desired_retention = 0.9;
 
     // Create a new FSRS model
-    let fsrs = FSRS::new(&[])?;
+    let fsrs = FSRS::default();
 
     // Calculate the elapsed time since the last review
     let elapsed_days = (Utc::now() - card.last_review.unwrap()).num_days() as u32;

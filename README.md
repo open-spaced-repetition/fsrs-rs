@@ -20,7 +20,7 @@ Read [this](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Optimal
 // Pick whichever percentage is to your liking (see above)
 let optimal_retention = 0.75;
 // Use default parameters/weights for the scheduler
-let fsrs = FSRS::new(&[])?;
+let fsrs = FSRS::default();
 
 // Create a completely new card
 let day1_states = fsrs.next_states(None, optimal_retention, 0)?;
