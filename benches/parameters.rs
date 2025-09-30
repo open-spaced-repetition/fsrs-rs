@@ -1,11 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use fsrs::{
-    ComputeParametersInput,
-    DEFAULT_PARAMETERS,
-    FSRS,
-    FSRSItem,
-    FSRSReview,
-    compute_parameters,
+    ComputeParametersInput, DEFAULT_PARAMETERS, FSRS, FSRSItem, FSRSReview, compute_parameters,
     evaluate_with_time_series_splits,
 };
 // Add necessary imports for inlined code
