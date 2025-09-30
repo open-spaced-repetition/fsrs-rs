@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use fsrs::{Card, expected_workload, expected_workload_with_existing_cards};
-use fsrs::{DEFAULT_PARAMETERS, SimulationResult, SimulatorConfig, simulate};
+use fsrs::{DEFAULT_PARAMETERS, SimulationResult, SimulatorConfig, optimal_retention, simulate};
 use fsrs::{FSRS, FSRSError};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
@@ -28,9 +28,8 @@ pub(crate) fn parallel_simulate(config: &SimulatorConfig) -> Result<Vec<f32>, FS
         .collect()
 }
 
-pub(crate) fn optimal_retention(inf: &FSRS, config: &SimulatorConfig) -> f32 {
-    inf.optimal_retention(config, &[], |_v| true, None, None)
-        .unwrap()
+pub(crate) fn bench_optimal_retention(_inf: &FSRS, config: &SimulatorConfig) -> f32 {
+    optimal_retention(config, &[], |_v| true, None, None).unwrap()
 }
 
 pub(crate) fn run_expected_workload_for_30_retentions() {
@@ -79,7 +78,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| black_box(parallel_simulate(&config)))
     });
     c.bench_function("optimal_retention", |b| {
-        b.iter(|| black_box(optimal_retention(&fsrs, &config)))
+        b.iter(|| black_box(bench_optimal_retention(&fsrs, &config)))
     });
     c.bench_function("expected_workload_30_retentions", |b| {
         b.iter(run_expected_workload_for_30_retentions)
