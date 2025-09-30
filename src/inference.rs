@@ -465,7 +465,7 @@ impl<B: Backend> FSRS<B> {
             total: weighted_items.len(),
         };
         let model_self = self.model();
-        let fsrs_other = Self::new_with_backend(parameters, device.clone())?;
+        let fsrs_other = Self::new_with_backend(parameters, &device)?;
         let model_other = fsrs_other.model();
         for chunk in weighted_items.chunks(512) {
             let batch = batcher.batch(chunk.to_vec(), &device);

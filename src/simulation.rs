@@ -1,8 +1,6 @@
-use crate::FSRS;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
-use burn::tensor::backend::Backend;
 use itertools::{Itertools, izip};
 use ndarray::{Array1, Array2, Array3};
 use priority_queue::PriorityQueue;
@@ -1138,8 +1136,6 @@ where
         Err(FSRSError::OptimalNotFound)
     }
 }
-
-impl<B: Backend> FSRS<B> {}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RevlogReviewKind {

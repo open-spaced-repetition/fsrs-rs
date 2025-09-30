@@ -273,17 +273,17 @@ impl FSRS<NdArray> {
     /// - Parameters must be provided before running commands that need them.
     /// - Parameters may be an empty slice to use the default values instead.
     pub fn new(parameters: &Parameters) -> Result<Self> {
-        Self::new_with_backend(parameters, NdArrayDevice::Cpu)
+        Self::new_with_backend(parameters, &NdArrayDevice::Cpu)
     }
 }
 
 impl<B: Backend> FSRS<B> {
     pub fn new_with_backend<B2: Backend>(
         parameters: &Parameters,
-        device: B2::Device,
+        device: &B2::Device,
     ) -> Result<FSRS<B2>> {
         let parameters = check_and_fill_parameters(parameters)?;
-        let model = parameters_to_model::<B2>(&parameters, &device);
+        let model = parameters_to_model::<B2>(&parameters, device);
 
         Ok(FSRS { model })
     }

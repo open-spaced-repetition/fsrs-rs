@@ -434,8 +434,7 @@ fn train<B: AutodiffBackend>(
 
     let mut model: Model<B> = config.model.init();
     let init_w = model.w.val();
-    let device = B::Device::default();
-    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &device);
+    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &model.w.device());
     let mut optim = config.optimizer.init::<B, Model<B>>();
 
     let mut best_loss = f64::INFINITY;
