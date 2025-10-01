@@ -1,5 +1,6 @@
 use burn::backend::ndarray::NdArrayDevice;
 use itertools::izip;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
@@ -72,7 +73,7 @@ pub fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32)
     (days_elapsed / state.stability * factor + 1.0).powf(-decay)
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize)]
 pub struct MemoryState {
     pub stability: f32,
     pub difficulty: f32,
