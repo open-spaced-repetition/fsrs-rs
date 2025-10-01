@@ -612,7 +612,7 @@ pub struct ModelEvaluation {
     pub rmse_bins: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NextStates {
     pub again: ItemState,
     pub hard: ItemState,
