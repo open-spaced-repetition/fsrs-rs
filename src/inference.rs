@@ -620,7 +620,7 @@ pub struct NextStates {
     pub easy: ItemState,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub struct ItemState {
     pub memory: MemoryState,
     pub interval: f32,
