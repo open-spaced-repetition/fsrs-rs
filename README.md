@@ -18,7 +18,7 @@ Add FSRS to your project:
 
 ```toml
 [dependencies]
-fsrs = "6.0.0"
+fsrs = "5.2.0"
 ```
 
 The scheduling example below also uses `chrono` to track review times:
