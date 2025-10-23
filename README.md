@@ -2,11 +2,9 @@
 
 [![crates.io](https://img.shields.io/crates/v/fsrs.svg)](https://crates.io/crates/fsrs) ![](https://github.com/open-spaced-repetition/fsrs-rs/actions/workflows/check.yml/badge.svg)
 
-This crate contains a Rust API for training FSRS parameters, and for using them to schedule cards.
+The Free Spaced Repetition Scheduler ([FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm)) is a modern spaced repetition algorithm. It springs from [MaiMemo's DHP model](https://www.maimemo.com/paper/), which is a variant of the [DSR model](https://supermemo.guru/wiki/Three_component_model_of_memory) proposed by [Piotr Wozniak](https://supermemo.guru/wiki/Piotr_Wozniak).
 
-The Free Spaced Repetition Scheduler ([FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm)) is a modern spaced repetition algorithm. It springs from [MaiMemo's DHP model](https://www.maimemo.com/paper/), which is a variant of the [DSR model](https://supermemo.guru/wiki/Three_component_model_of_memory) proposed by [Piotr Wozniak](https://supermemo.guru/wiki/Piotr_Wozniak), the creator of SuperMemo.
-
-FSRS-rs is a Rust implementation of FSRS. It is designed to be used in [Anki](https://apps.ankiweb.net/), a popular spaced repetition software. [Anki 23.10](https://github.com/ankitects/anki/releases/tag/23.10) has already integrated FSRS as an alternative scheduler.
+FSRS-rs is a Rust implementation of FSRS with full training support using [Burn](https://github.com/tracel-ai/burn). It also provides simulation capabilities and basic scheduling functionality.
 
 For more information about the algorithm, please refer to [the wiki page of FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm).
 
@@ -14,28 +12,100 @@ For more information about the algorithm, please refer to [the wiki page of FSRS
 
 ## Quickstart
 
-Read [this](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Optimal-Retention) for an explanation of how to determine the optimal retention for your use case.
+### Add the crate
+
+Add FSRS to your project:
+
+```toml
+[dependencies]
+fsrs = "5.2.0"
+```
+
+The scheduling example below also uses `chrono` to track review times:
+
+```toml
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+```
+
+Run `cargo run --example <name>` to see the complete samples ([`schedule`](examples/schedule.rs), [`migrate`](examples/migrate.rs), [`optimize`](examples/optimize.rs)).
+
+### Schedule reviews
 
 ```rust
-// Pick whichever percentage is to your liking (see above)
-let optimal_retention = 0.75;
-// Use default parameters/weights for the scheduler
+use chrono::{Duration, Utc};
+use fsrs::{FSRS, MemoryState};
+
 let fsrs = FSRS::default();
+let desired_retention = 0.9;
+let previous_state: Option<MemoryState> = None;
+let elapsed_days = 0;
 
-// Create a completely new card
-let day1_states = fsrs.next_states(None, optimal_retention, 0)?;
+let next_states = fsrs.next_states(previous_state, desired_retention, elapsed_days)?;
+let review = next_states.good;
 
-// Rate as `hard` on the first day
-let day1 = day1_states.hard;
-dbg!(&day1); // scheduled as `in 4 days`
-
-// Now we review the card 2 days later
-let day3_states = fsrs.next_states(Some(day1.memory), optimal_retention, 2)?;
-
-// Rate as `good` this time
-let day3 = day3_states.good;
-dbg!(day3);
+let interval_days = review.interval.round().max(1.0) as u32;
+let due = Utc::now() + Duration::days(interval_days as i64);
 ```
+
+Replace `previous_state`/`elapsed_days` with a stored `MemoryState` and the number of days since the prior review when scheduling existing cards. Full example: [`examples/schedule.rs`](examples/schedule.rs).
+
+### Optimize parameters from review logs
+
+```rust
+use chrono::NaiveDate;
+use fsrs::{ComputeParametersInput, FSRSItem, FSRSReview, compute_parameters};
+
+let history = vec![
+    (NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 3),
+    (NaiveDate::from_ymd_opt(2023, 1, 5).unwrap(), 4),
+];
+
+let mut accumulated = Vec::new();
+let mut items = Vec::new();
+let mut last = history[0].0;
+
+for (date, rating) in history {
+    let delta_t = (date - last).num_days() as u32;
+    accumulated.push(FSRSReview { rating, delta_t });
+    items.push(FSRSItem {
+        reviews: accumulated.clone(),
+    });
+    last = date;
+}
+
+let parameters = compute_parameters(ComputeParametersInput {
+    // For best results, `train_set` should contain review histories from many cards.
+    train_set: items,
+    ..Default::default()
+})?;
+```
+
+Feed the optimizer a vector of `FSRSItem` instances built from your review history; the returned parameters can then be persisted or supplied to schedulers. Full example: [`examples/optimize.rs`](examples/optimize.rs).
+
+### Migrate from SM-2 style data
+
+```rust
+use fsrs::{FSRS, FSRSItem, FSRSReview};
+
+let fsrs = FSRS::default();
+let sm2_retention = 0.9;
+let ease_factor = 2.5;
+let interval = 10.0;
+
+let initial_state = fsrs.memory_state_from_sm2(ease_factor, interval, sm2_retention)?;
+
+let reviews = vec![
+    FSRSReview { rating: 3, delta_t: 5 },
+    FSRSReview { rating: 4, delta_t: 10 },
+];
+
+let memory_state = fsrs.memory_state(
+    FSRSItem { reviews },
+    Some(initial_state),
+)?;
+```
+
+Use `memory_state_from_sm2` when you only have the latest SM-2 ease/interval; pass the result as the starting point while you replay any partial review history. Full example: [`examples/migrate.rs`](examples/migrate.rs).
 
 ## Online development
 
