@@ -91,7 +91,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         };
         b.iter(|| {
             black_box(current_retrievability(
-                state,
+                black_box(state),
                 black_box(21.0),
                 black_box(FSRS6_DEFAULT_DECAY),
             ))
