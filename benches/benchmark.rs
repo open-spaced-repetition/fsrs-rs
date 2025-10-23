@@ -10,6 +10,7 @@ use criterion::{Criterion, Throughput};
 use fsrs::FSRS;
 use fsrs::FSRSReview;
 use fsrs::NextStates;
+use fsrs::{FSRS6_DEFAULT_DECAY, current_retrievability};
 use fsrs::{FSRSItem, MemoryState};
 use itertools::Itertools;
 
@@ -82,6 +83,20 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     .unwrap();
 
     c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&fsrs))));
+
+    c.bench_function("current_retrievability", |b| {
+        let state = MemoryState {
+            stability: 51.344814,
+            difficulty: 7.005062,
+        };
+        b.iter(|| {
+            black_box(current_retrievability(
+                black_box(state),
+                black_box(21.0),
+                black_box(FSRS6_DEFAULT_DECAY),
+            ))
+        })
+    });
 
     {
         let mut single_group = c.benchmark_group("calc_mem");
