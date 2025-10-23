@@ -11,6 +11,7 @@ use fsrs::FSRS;
 use fsrs::FSRSReview;
 use fsrs::NextStates;
 use fsrs::{FSRSItem, MemoryState};
+use fsrs::{current_retrievability, FSRS6_DEFAULT_DECAY};
 use itertools::Itertools;
 
 pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<MemoryState> {
@@ -82,6 +83,20 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     .unwrap();
 
     c.bench_function("next_states", |b| b.iter(|| black_box(next_states(&fsrs))));
+
+    c.bench_function("current_retrievability", |b| {
+        let state = MemoryState {
+            stability: 51.344814,
+            difficulty: 7.005062,
+        };
+        b.iter(|| {
+            black_box(current_retrievability(
+                state,
+                black_box(21.0),
+                black_box(FSRS6_DEFAULT_DECAY),
+            ))
+        })
+    });
 
     {
         let mut single_group = c.benchmark_group("calc_mem");
