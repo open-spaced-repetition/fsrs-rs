@@ -74,6 +74,7 @@ for (date, rating) in history {
 }
 
 let parameters = compute_parameters(ComputeParametersInput {
+    // For best results, `train_set` should contain review histories from many cards.
     train_set: items,
     ..Default::default()
 })?;
