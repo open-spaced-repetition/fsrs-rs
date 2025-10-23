@@ -107,7 +107,6 @@ let memory_state = fsrs.memory_state(
 
 Use `memory_state_from_sm2` when you only have the latest SM-2 ease/interval; pass the result as the starting point while you replay any partial review history. Full example: [`examples/migrate.rs`](examples/migrate.rs).
 
-
 ## Online development
 
 You can use <https://idx.google.com/import>.
