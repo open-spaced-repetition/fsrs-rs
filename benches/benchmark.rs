@@ -10,8 +10,8 @@ use criterion::{Criterion, Throughput};
 use fsrs::FSRS;
 use fsrs::FSRSReview;
 use fsrs::NextStates;
+use fsrs::{FSRS6_DEFAULT_DECAY, current_retrievability};
 use fsrs::{FSRSItem, MemoryState};
-use fsrs::{current_retrievability, FSRS6_DEFAULT_DECAY};
 use itertools::Itertools;
 
 pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<MemoryState> {
