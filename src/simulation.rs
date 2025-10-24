@@ -136,6 +136,7 @@ pub struct SimulatorConfig {
     pub state_rating_costs: [[f32; 4]; 3],
     pub learning_step_count: usize,
     pub relearning_step_count: usize,
+    pub default_desired_retention: f32,
 }
 
 impl Default for SimulatorConfig {
@@ -170,6 +171,7 @@ impl Default for SimulatorConfig {
             ],
             learning_step_count: 2,
             relearning_step_count: 1,
+            default_desired_retention: 0.9,
         }
     }
 }
@@ -297,7 +299,7 @@ pub struct WorkloadEstimator {
     // Review configuration
     review_rating_prob: [f32; 3],
     state_rating_costs: [[f32; 4]; 3],
-    desired_retention: f32,
+    default_desired_retention: f32,
     cost_matrix: Array3<f32>,
 }
 
@@ -347,7 +349,7 @@ impl WorkloadEstimator {
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
             cost_matrix,
-            desired_retention: 0.9,
+            default_desired_retention: config.default_desired_retention,
         }
     }
 
@@ -368,7 +370,7 @@ impl WorkloadEstimator {
     }
 
     fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
-        self.desired_retention = desired_retention;
+        self.default_desired_retention = desired_retention;
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
@@ -453,7 +455,9 @@ impl WorkloadEstimator {
             let d = init_d(w, rating);
             let s_idx = self.s2i(s);
             let d_idx = self.d2i(d);
-            let ivl = next_interval(w, s, self.desired_retention).max(1.0).round() as usize;
+            let ivl = next_interval(w, s, self.default_desired_retention)
+                .max(1.0)
+                .round() as usize;
             let t_idx = (due + ivl).min(self.t_size);
             total_cost += (unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
                 + self.state_rating_costs[LEARNING][rating - 1])
@@ -527,7 +531,7 @@ impl WorkloadEstimator {
                     next_d(w, card.difficulty, rating),
                 )
             };
-            let new_interval = next_interval(w, new_stability, self.desired_retention)
+            let new_interval = next_interval(w, new_stability, self.default_desired_retention)
                 .max(1.0)
                 .round() as usize;
             let new_due = real_due as usize + new_interval;
@@ -548,27 +552,22 @@ impl WorkloadEstimator {
     }
 }
 
-pub fn expected_workload(
-    parameters: &Parameters,
-    desired_retention: f32,
-    config: &SimulatorConfig,
-) -> Result<f32> {
+pub fn expected_workload(parameters: &Parameters, config: &SimulatorConfig) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
     let mut estimator = WorkloadEstimator::new(config);
-    estimator.precompute_cost_matrix(desired_retention, w);
+    estimator.precompute_cost_matrix(config.default_desired_retention, w);
     let workload = estimator.evaluate_new_card_cost(w, &config.first_rating_prob, 0);
     Ok(workload)
 }
 
 pub fn expected_workload_with_existing_cards(
     parameters: &Parameters,
-    desired_retention: f32,
     config: &SimulatorConfig,
     existing_cards: &[Card],
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
     let mut estimator = WorkloadEstimator::new(config);
-    estimator.precompute_cost_matrix(desired_retention, w);
+    estimator.precompute_cost_matrix(config.default_desired_retention, w);
     let mut cards = existing_cards.to_vec();
 
     if config.learn_limit > 0 {
@@ -580,6 +579,7 @@ pub fn expected_workload_with_existing_cards(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
+            desired_retention: config.default_desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -608,6 +608,7 @@ pub struct Card {
     pub due: f32,
     pub interval: f32,
     pub lapses: u32,
+    pub desired_retention: f32,
 }
 
 impl Card {
@@ -631,7 +632,6 @@ impl Card {
 pub fn simulate(
     config: &SimulatorConfig,
     w: &Parameters,
-    desired_retention: f32,
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
@@ -699,6 +699,7 @@ pub fn simulate(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
+            desired_retention: config.default_desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -886,7 +887,7 @@ pub fn simulate(
             card.difficulty = new_d;
         }
 
-        let mut ivl = next_interval(w, card.stability, desired_retention)
+        let mut ivl = next_interval(w, card.stability, card.desired_retention)
             .round()
             .clamp(1.0, config.max_ivl);
 
@@ -931,7 +932,6 @@ pub fn simulate(
 fn sample<F>(
     config: &SimulatorConfig,
     parameters: &Parameters,
-    desired_retention: f32,
     n: usize,
     progress: &mut F,
     cards: &Option<Vec<Card>>,
@@ -949,7 +949,6 @@ where
             let result = simulate(
                 config,
                 parameters,
-                desired_retention,
                 Some((i + 42).try_into().unwrap()),
                 cards.clone(),
             )?;
@@ -1027,7 +1026,6 @@ where
         sample(
             config,
             &parameters,
-            R_MIN,
             sample_size,
             &mut progress,
             &cards,
@@ -1093,7 +1091,6 @@ where
         let fu = sample(
             config,
             &parameters,
-            u,
             sample_size,
             &mut progress,
             &cards,
@@ -1517,7 +1514,7 @@ mod tests {
         let SimulationResult {
             memorized_cnt_per_day,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             3370.383
@@ -1544,18 +1541,19 @@ mod tests {
             due: 0.0,
             interval: 5.0,
             lapses: 0,
+            desired_retention: 0.9,
         }];
 
         let SimulationResult {
             cost_per_day: cost_per_day_learn,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
         assert_eq!(cost_per_day_learn[0], LEARN_COST);
 
         let SimulationResult {
             cost_per_day: cost_per_day_review,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, Some(cards))?;
         assert_eq!(cost_per_day_review[0], REVIEW_COST);
         Ok(())
     }
@@ -1574,7 +1572,7 @@ mod tests {
         let SimulationResult {
             review_cnt_per_day: review_cnt_per_day_lower,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
         let config = SimulatorConfig {
             learn_span: LOWER + 10,
             learn_limit: LEARN_LIMIT,
@@ -1584,7 +1582,7 @@ mod tests {
         let SimulationResult {
             review_cnt_per_day: review_cnt_per_day_higher,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
         // Compare first LOWER items of review_cnt_per_day arrays
         for i in 0..LOWER {
             assert_eq!(
@@ -1614,6 +1612,7 @@ mod tests {
                 due: 0.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1623,6 +1622,7 @@ mod tests {
                 due: 0.0,
                 interval: 2.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1632,6 +1632,7 @@ mod tests {
                 due: 1.0,
                 interval: 3.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1641,6 +1642,7 @@ mod tests {
                 due: -1.0,
                 interval: 7.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
         ];
         let SimulationResult {
@@ -1648,7 +1650,7 @@ mod tests {
             review_cnt_per_day,
             learn_cnt_per_day,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, Some(cards))?;
         assert_eq!(memorized_cnt_per_day[0], 63.9);
         assert_eq!(review_cnt_per_day[0], 3);
         assert_eq!(learn_cnt_per_day[0], 60);
@@ -1665,6 +1667,7 @@ mod tests {
             due: 0.0,
             interval: 5.0,
             lapses: 0,
+            desired_retention: 0.9,
         }];
 
         let config = SimulatorConfig {
@@ -1678,7 +1681,7 @@ mod tests {
 
         let SimulationResult {
             review_cnt_per_day, ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, Some(cards))?;
 
         assert_eq!(1, review_cnt_per_day.iter().sum::<usize>());
 
@@ -1702,14 +1705,15 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0
+                lapses: 0,
+                desired_retention: 0.9,
             };
             9
         ];
 
         let SimulationResult {
             learn_cnt_per_day, ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, Some(cards))?;
 
         assert_eq!(learn_cnt_per_day.to_vec(), vec![3, 3, 3]);
 
@@ -1735,14 +1739,15 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0
+                lapses: 0,
+                desired_retention: 0.9,
             };
             9
         ];
 
         let SimulationResult {
             learn_cnt_per_day, ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, Some(cards))?;
 
         assert_eq!(learn_cnt_per_day.to_vec(), vec![1, 3, 3]);
 
@@ -1762,7 +1767,7 @@ mod tests {
             review_cnt_per_day,
             learn_cnt_per_day,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
         assert_eq!(
             review_cnt_per_day.to_vec(),
             vec![
@@ -1786,7 +1791,7 @@ mod tests {
         let SimulationResult {
             memorized_cnt_per_day,
             ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
             3354.437
@@ -1800,7 +1805,7 @@ mod tests {
             deck_size: 0,
             ..Default::default()
         };
-        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None);
+        let results = simulate(&config, &DEFAULT_PARAMETERS, None, None);
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
         Ok(())
     }
@@ -1818,8 +1823,7 @@ mod tests {
             ..Default::default()
         };
 
-        let SimulationResult { cards, .. } =
-            simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        let SimulationResult { cards, .. } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
 
         assert_eq!(cards.len(), 1);
         let card = &cards[0];
@@ -1846,6 +1850,7 @@ mod tests {
                 due: 0.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1855,9 +1860,10 @@ mod tests {
                 due: 0.0,
                 interval: 2.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
         ];
-        let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
+        let results = simulate(&config, &DEFAULT_PARAMETERS, None, Some(cards));
         assert_eq!(results.unwrap_err(), FSRSError::InvalidDeckSize);
         Ok(())
     }
@@ -1883,6 +1889,7 @@ mod tests {
                 due: 1.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             };
             5
         ];
@@ -1891,7 +1898,7 @@ mod tests {
             correct_cnt_per_day,
             review_cnt_per_day,
             ..
-        } = simulate(&config, &w, 0.9, None, Some(cards))?;
+        } = simulate(&config, &w, None, Some(cards))?;
 
         assert_eq!(correct_cnt_per_day[0], 0);
         assert_eq!(review_cnt_per_day[1], 5);
@@ -1911,7 +1918,7 @@ mod tests {
         };
         let SimulationResult {
             review_cnt_per_day, ..
-        } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
         assert_eq!(&review_cnt_per_day, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9,]);
         Ok(())
     }
@@ -1931,6 +1938,7 @@ mod tests {
             learn_span: 100,
             learn_limit: 10,
             review_limit: 5,
+            default_desired_retention: 0.8,
             ..Default::default()
         };
 
@@ -1942,7 +1950,7 @@ mod tests {
                     memorized_cnt_per_day,
                     cost_per_day,
                     ..
-                } = simulate(&config, &DEFAULT_PARAMETERS, 0.8, None, None)?;
+                } = simulate(&config, &DEFAULT_PARAMETERS, None, None)?;
                 let cost_per_memorization =
                     calc_cost_per_memorization(&memorized_cnt_per_day, &cost_per_day);
                 println!("cost_per_memorization: {}", cost_per_memorization);
@@ -2028,8 +2036,9 @@ mod tests {
             due: 1.0,
             interval: 5.0,
             lapses: 0,
+            desired_retention: 0.9,
         };
-        assert!((retention_value - 0.7).abs() < 0.01);
+        assert!((retention_value - 0.9367321).abs() < 0.01);
         optimal_retention(&config, &[1.], |_| true, None, None).unwrap_err();
         // Check that the cards are passed correctly to simulate
         optimal_retention(
@@ -2065,7 +2074,7 @@ mod tests {
         let mut param = DEFAULT_PARAMETERS[..17].to_vec();
         param.extend_from_slice(&[0.0, 0.0]);
         let retention_value = optimal_retention(&config, &param, |_v| true, None, None).unwrap();
-        [retention_value].assert_approx_eq([0.75508595]);
+        [retention_value].assert_approx_eq([0.9367321]);
         Ok(())
     }
 
@@ -2145,6 +2154,7 @@ mod tests {
         config.relearning_step_count = 0;
         for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
+            config.default_desired_retention = desired_retention;
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
             let mut cost_dp = 0.0;
@@ -2153,7 +2163,7 @@ mod tests {
                 cost_dp += cost;
             }
 
-            let result = simulate(&config, w, desired_retention, None, None).unwrap();
+            let result = simulate(&config, w, None, None).unwrap();
             let cost_simulated =
                 result.cost_per_day.iter().sum::<f32>() / config.learn_limit as f32;
             let relative_error = (cost_dp - cost_simulated).abs() / cost_simulated;
@@ -2184,14 +2194,13 @@ mod tests {
         config.relearning_step_count = 0;
         for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
+            config.default_desired_retention = desired_retention;
             let start = Instant::now();
-            let result_dp =
-                expected_workload(&DEFAULT_PARAMETERS, desired_retention, &config).unwrap();
+            let result_dp = expected_workload(&DEFAULT_PARAMETERS, &config).unwrap();
             let duration = start.elapsed();
             println!("DP Duration: {:?}", duration);
             let start = Instant::now();
-            let result =
-                simulate(&config, &DEFAULT_PARAMETERS, desired_retention, None, None).unwrap();
+            let result = simulate(&config, &DEFAULT_PARAMETERS, None, None).unwrap();
             let duration = start.elapsed();
             println!("Simulated Duration: {:?}", duration);
             let result_simulated =
@@ -2208,7 +2217,7 @@ mod tests {
     #[test]
     fn test_evaluate_in_flight_card_cost() -> Result<()> {
         let w = &check_and_fill_parameters(&DEFAULT_PARAMETERS)?;
-        let config = SimulatorConfig {
+        let mut config = SimulatorConfig {
             learn_span: 365,
             deck_size: 1,
             learn_limit: 0,
@@ -2220,6 +2229,7 @@ mod tests {
         };
         for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
+            config.default_desired_retention = desired_retention;
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
             let card = Card {
@@ -2230,17 +2240,12 @@ mod tests {
                 due: 5.0,
                 interval: 10.0,
                 lapses: 0,
+                desired_retention,
             };
             let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
             let mut costs = Vec::new();
             for seed in 0..1000 {
-                let result = simulate(
-                    &config,
-                    w,
-                    desired_retention,
-                    Some(seed),
-                    Some(vec![card.clone()]),
-                )?;
+                let result = simulate(&config, w, Some(seed), Some(vec![card.clone()]))?;
                 let cost_per_day = result.cost_per_day.iter().sum::<f32>();
                 costs.push(cost_per_day);
             }
@@ -2267,6 +2272,7 @@ mod tests {
                 due: 5.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 // New, to be learned on day 0
@@ -2277,6 +2283,7 @@ mod tests {
                 due: 0.0,
                 interval: f32::NEG_INFINITY,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 // Already introduced
@@ -2287,6 +2294,7 @@ mod tests {
                 due: 6.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 // New, to be learned on day 1
@@ -2297,6 +2305,7 @@ mod tests {
                 due: 1.0,
                 interval: f32::NEG_INFINITY,
                 lapses: 0,
+                desired_retention: 0.9,
             },
         ];
 
@@ -2313,13 +2322,7 @@ mod tests {
         let SimulationResult {
             introduced_cnt_per_day,
             ..
-        } = simulate(
-            &config,
-            &DEFAULT_PARAMETERS,
-            0.9,
-            Some(0),
-            Some(existing_cards),
-        )?;
+        } = simulate(&config, &DEFAULT_PARAMETERS, Some(0), Some(existing_cards))?;
 
         assert_eq!(
             introduced_cnt_per_day,
