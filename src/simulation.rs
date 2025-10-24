@@ -136,7 +136,7 @@ pub struct SimulatorConfig {
     pub state_rating_costs: [[f32; 4]; 3],
     pub learning_step_count: usize,
     pub relearning_step_count: usize,
-    pub default_desired_retention: f32,
+    pub desired_retention: f32,
 }
 
 impl Default for SimulatorConfig {
@@ -171,7 +171,7 @@ impl Default for SimulatorConfig {
             ],
             learning_step_count: 2,
             relearning_step_count: 1,
-            default_desired_retention: 0.9,
+            desired_retention: 0.9,
         }
     }
 }
@@ -349,7 +349,7 @@ impl WorkloadEstimator {
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
             cost_matrix,
-            desired_retention: config.default_desired_retention,
+            desired_retention: config.desired_retention,
         }
     }
 
@@ -555,7 +555,7 @@ impl WorkloadEstimator {
 pub fn expected_workload(parameters: &Parameters, config: &SimulatorConfig) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
     let mut estimator = WorkloadEstimator::new(config);
-    estimator.precompute_cost_matrix(config.default_desired_retention, w);
+    estimator.precompute_cost_matrix(config.desired_retention, w);
     let workload = estimator.evaluate_new_card_cost(w, &config.first_rating_prob, 0);
     Ok(workload)
 }
@@ -567,7 +567,7 @@ pub fn expected_workload_with_existing_cards(
 ) -> Result<f32> {
     let w = &check_and_fill_parameters(parameters)?;
     let mut estimator = WorkloadEstimator::new(config);
-    estimator.precompute_cost_matrix(config.default_desired_retention, w);
+    estimator.precompute_cost_matrix(config.desired_retention, w);
     let mut cards = existing_cards.to_vec();
 
     if config.learn_limit > 0 {
@@ -579,7 +579,7 @@ pub fn expected_workload_with_existing_cards(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
-            desired_retention: config.default_desired_retention,
+            desired_retention: config.desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -699,7 +699,7 @@ pub fn simulate(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
-            desired_retention: config.default_desired_retention,
+            desired_retention: config.desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -1938,7 +1938,7 @@ mod tests {
             learn_span: 100,
             learn_limit: 10,
             review_limit: 5,
-            default_desired_retention: 0.8,
+            desired_retention: 0.8,
             ..Default::default()
         };
 
@@ -2154,7 +2154,7 @@ mod tests {
         config.relearning_step_count = 0;
         for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
-            config.default_desired_retention = desired_retention;
+            config.desired_retention = desired_retention;
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
             let mut cost_dp = 0.0;
@@ -2194,7 +2194,7 @@ mod tests {
         config.relearning_step_count = 0;
         for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
-            config.default_desired_retention = desired_retention;
+            config.desired_retention = desired_retention;
             let start = Instant::now();
             let result_dp = expected_workload(&DEFAULT_PARAMETERS, &config).unwrap();
             let duration = start.elapsed();
@@ -2229,7 +2229,7 @@ mod tests {
         };
         for desired_retention in (72..=99).step_by(3).map(|x| x as f32 / 100.0) {
             dbg!(desired_retention);
-            config.default_desired_retention = desired_retention;
+            config.desired_retention = desired_retention;
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
             let card = Card {
