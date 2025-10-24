@@ -2332,4 +2332,44 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_per_card_desired_retention() -> Result<()> {
+        let dr_card = |dr: f32| Card {
+            id: 2,
+            difficulty: 5.0,
+            stability: 1000.0,
+            last_date: -5.0,
+            due: 0.0,
+            interval: 5.0,
+            lapses: 0,
+            desired_retention: dr,
+        };
+
+        let cards = vec![dr_card(0.8), dr_card(0.9), dr_card(0.9)];
+
+        let config = SimulatorConfig {
+            deck_size: cards.len(),
+            learn_span: 100,
+            review_rating_prob: [0.0, 1.0, 0.0], // always good
+            ..Default::default()
+        };
+
+        let result = simulate(&config, &DEFAULT_PARAMETERS, Some(42), Some(cards))?;
+
+        let card1 = &result.cards[0];
+        let card2 = &result.cards[1];
+        let card3 = &result.cards[2];
+
+        assert!(
+            card1.interval > card2.interval,
+            "Card with lower desired retention should have a longer interval."
+        );
+        assert!(
+            card3.interval == card2.interval,
+            "Card with same desired retention should the same interval."
+        );
+
+        Ok(())
+    }
 }
