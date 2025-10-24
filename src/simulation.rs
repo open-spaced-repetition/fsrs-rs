@@ -299,7 +299,7 @@ pub struct WorkloadEstimator {
     // Review configuration
     review_rating_prob: [f32; 3],
     state_rating_costs: [[f32; 4]; 3],
-    default_desired_retention: f32,
+    desired_retention: f32,
     cost_matrix: Array3<f32>,
 }
 
@@ -349,7 +349,7 @@ impl WorkloadEstimator {
             review_rating_prob: config.review_rating_prob,
             state_rating_costs: config.state_rating_costs,
             cost_matrix,
-            default_desired_retention: config.default_desired_retention,
+            desired_retention: config.default_desired_retention,
         }
     }
 
@@ -370,7 +370,7 @@ impl WorkloadEstimator {
     }
 
     fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
-        self.default_desired_retention = desired_retention;
+        self.desired_retention = desired_retention;
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
@@ -455,7 +455,7 @@ impl WorkloadEstimator {
             let d = init_d(w, rating);
             let s_idx = self.s2i(s);
             let d_idx = self.d2i(d);
-            let ivl = next_interval(w, s, self.default_desired_retention)
+            let ivl = next_interval(w, s, self.desired_retention)
                 .max(1.0)
                 .round() as usize;
             let t_idx = (due + ivl).min(self.t_size);
@@ -531,7 +531,7 @@ impl WorkloadEstimator {
                     next_d(w, card.difficulty, rating),
                 )
             };
-            let new_interval = next_interval(w, new_stability, self.default_desired_retention)
+            let new_interval = next_interval(w, new_stability, self.desired_retention)
                 .max(1.0)
                 .round() as usize;
             let new_due = real_due as usize + new_interval;
