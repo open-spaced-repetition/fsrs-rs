@@ -527,7 +527,7 @@ impl WorkloadEstimator {
                     next_d(w, card.difficulty, rating),
                 )
             };
-            let new_interval = next_interval(w, new_stability, self.desired_retention)
+            let new_interval = next_interval(w, new_stability, card.desired_retention)
                 .max(1.0)
                 .round() as usize;
             let new_due = real_due as usize + new_interval;
