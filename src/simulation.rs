@@ -580,6 +580,7 @@ pub fn expected_workload_with_existing_cards(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
+            desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -608,6 +609,7 @@ pub struct Card {
     pub due: f32,
     pub interval: f32,
     pub lapses: u32,
+    pub desired_retention: f32,
 }
 
 impl Card {
@@ -699,6 +701,7 @@ pub fn simulate(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
+            desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -886,7 +889,7 @@ pub fn simulate(
             card.difficulty = new_d;
         }
 
-        let mut ivl = next_interval(w, card.stability, desired_retention)
+        let mut ivl = next_interval(w, card.stability, card.desired_retention)
             .round()
             .clamp(1.0, config.max_ivl);
 
@@ -1544,6 +1547,7 @@ mod tests {
             due: 0.0,
             interval: 5.0,
             lapses: 0,
+            desired_retention: 0.9,
         }];
 
         let SimulationResult {
@@ -1614,6 +1618,7 @@ mod tests {
                 due: 0.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1623,6 +1628,7 @@ mod tests {
                 due: 0.0,
                 interval: 2.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1632,6 +1638,7 @@ mod tests {
                 due: 1.0,
                 interval: 3.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1641,6 +1648,7 @@ mod tests {
                 due: -1.0,
                 interval: 7.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
         ];
         let SimulationResult {
@@ -1665,6 +1673,7 @@ mod tests {
             due: 0.0,
             interval: 5.0,
             lapses: 0,
+            desired_retention: 0.9,
         }];
 
         let config = SimulatorConfig {
@@ -1702,7 +1711,8 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0
+                lapses: 0,
+                desired_retention: 0.9,
             };
             9
         ];
@@ -1735,7 +1745,8 @@ mod tests {
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0
+                lapses: 0,
+                desired_retention: 0.9,
             };
             9
         ];
@@ -1846,6 +1857,7 @@ mod tests {
                 due: 0.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 id: 0,
@@ -1855,6 +1867,7 @@ mod tests {
                 due: 0.0,
                 interval: 2.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
@@ -1883,6 +1896,7 @@ mod tests {
                 due: 1.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             };
             5
         ];
@@ -2028,6 +2042,7 @@ mod tests {
             due: 1.0,
             interval: 5.0,
             lapses: 0,
+            desired_retention: 0.9,
         };
         assert!((retention_value - 0.7).abs() < 0.01);
         optimal_retention(&config, &[1.], |_| true, None, None).unwrap_err();
@@ -2230,6 +2245,7 @@ mod tests {
                 due: 5.0,
                 interval: 10.0,
                 lapses: 0,
+                desired_retention,
             };
             let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
             let mut costs = Vec::new();
@@ -2267,6 +2283,7 @@ mod tests {
                 due: 5.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 // New, to be learned on day 0
@@ -2277,6 +2294,7 @@ mod tests {
                 due: 0.0,
                 interval: f32::NEG_INFINITY,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 // Already introduced
@@ -2287,6 +2305,7 @@ mod tests {
                 due: 6.0,
                 interval: 5.0,
                 lapses: 0,
+                desired_retention: 0.9,
             },
             Card {
                 // New, to be learned on day 1
@@ -2297,6 +2316,7 @@ mod tests {
                 due: 1.0,
                 interval: f32::NEG_INFINITY,
                 lapses: 0,
+                desired_retention: 0.9,
             },
         ];
 
@@ -2325,6 +2345,46 @@ mod tests {
             introduced_cnt_per_day,
             vec![3, 4, 5, 6],
             "introduced_cnt_per_day mismatch"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_per_card_desired_retention() -> Result<()> {
+        let dr_card = |dr: f32| Card {
+            id: 2,
+            difficulty: 5.0,
+            stability: 1000.0,
+            last_date: -5.0,
+            due: 0.0,
+            interval: 5.0,
+            lapses: 0,
+            desired_retention: dr,
+        };
+
+        let cards = vec![dr_card(0.8), dr_card(0.9), dr_card(0.9)];
+
+        let config = SimulatorConfig {
+            deck_size: cards.len(),
+            learn_span: 100,
+            review_rating_prob: [0.0, 1.0, 0.0], // always good
+            ..Default::default()
+        };
+
+        let result = simulate(&config, &DEFAULT_PARAMETERS, 0.9, Some(42), Some(cards))?;
+
+        let card1 = &result.cards[0];
+        let card2 = &result.cards[1];
+        let card3 = &result.cards[2];
+
+        assert!(
+            card1.interval > card2.interval,
+            "Cards with a lower desired retention should have a longer interval."
+        );
+        assert!(
+            card3.interval == card2.interval,
+            "Cards with the same desired retention should have the same interval."
         );
 
         Ok(())
