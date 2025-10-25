@@ -2380,11 +2380,11 @@ mod tests {
 
         assert!(
             card1.interval > card2.interval,
-            "Card with lower desired retention should have a longer interval."
+            "Cards with a lower desired retention should have a longer interval."
         );
         assert!(
             card3.interval == card2.interval,
-            "Card with same desired retention should the same interval."
+            "Cards with the same desired retention should have the same interval."
         );
 
         Ok(())
