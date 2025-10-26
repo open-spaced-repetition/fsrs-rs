@@ -580,6 +580,7 @@ pub fn expected_workload_with_existing_cards(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
+            desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -608,6 +609,7 @@ pub struct Card {
     pub due: f32,
     pub interval: f32,
     pub lapses: u32,
+    pub desired_retention: f32,
 }
 
 impl Card {
@@ -625,6 +627,21 @@ impl Card {
 
     pub fn scheduled_due(&self) -> f32 {
         self.last_date + self.interval
+    }
+}
+
+impl Default for Card {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            difficulty: f32::NEG_INFINITY,
+            stability: f32::NEG_INFINITY,
+            last_date: f32::NEG_INFINITY,
+            due: f32::NEG_INFINITY,
+            interval: f32::NEG_INFINITY,
+            lapses: 0,
+            desired_retention: 0.9,
+        }
     }
 }
 
@@ -699,6 +716,7 @@ pub fn simulate(
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
             lapses: 0,
+            desired_retention,
         });
 
         cards.extend(init_ratings);
@@ -886,7 +904,7 @@ pub fn simulate(
             card.difficulty = new_d;
         }
 
-        let mut ivl = next_interval(w, card.stability, desired_retention)
+        let mut ivl = next_interval(w, card.stability, card.desired_retention)
             .round()
             .clamp(1.0, config.max_ivl);
 
@@ -1537,13 +1555,12 @@ mod tests {
         };
 
         let cards = vec![Card {
-            id: 0,
             difficulty: 5.0,
             stability: 5.0,
             last_date: -5.0,
             due: 0.0,
             interval: 5.0,
-            lapses: 0,
+            ..Default::default()
         }];
 
         let SimulationResult {
@@ -1607,40 +1624,36 @@ mod tests {
         };
         let cards = vec![
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0,
+                ..Default::default()
             },
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 0.0,
                 interval: 2.0,
-                lapses: 0,
+                ..Default::default()
             },
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 1.0,
                 interval: 3.0,
-                lapses: 0,
+                ..Default::default()
             },
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 2.0,
                 last_date: -8.0,
                 due: -1.0,
                 interval: 7.0,
-                lapses: 0,
+                ..Default::default()
             },
         ];
         let SimulationResult {
@@ -1658,13 +1671,12 @@ mod tests {
     #[test]
     fn test_simulate_suspend_on_lapse_count() -> Result<()> {
         let cards = vec![Card {
-            id: 0,
             difficulty: 10.0,
             stability: f32::EPSILON,
             last_date: -5.0,
             due: 0.0,
             interval: 5.0,
-            lapses: 0,
+            ..Default::default()
         }];
 
         let config = SimulatorConfig {
@@ -1696,13 +1708,12 @@ mod tests {
 
         let cards = vec![
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0
+                ..Default::default()
             };
             9
         ];
@@ -1729,13 +1740,12 @@ mod tests {
 
         let cards = vec![
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 500.0,
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0
+                ..Default::default()
             };
             9
         ];
@@ -1839,22 +1849,20 @@ mod tests {
         };
         let cards = vec![
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0,
+                ..Default::default()
             },
             Card {
-                id: 0,
-                difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 0.0,
                 interval: 2.0,
                 lapses: 0,
+                ..Default::default()
             },
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
@@ -1876,13 +1884,12 @@ mod tests {
 
         let cards = vec![
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: f32::INFINITY,
                 last_date: -5.0,
                 due: 1.0,
                 interval: 5.0,
-                lapses: 0,
+                ..Default::default()
             };
             5
         ];
@@ -2021,13 +2028,12 @@ mod tests {
         let retention_value = optimal_retention(&config, &[], |_| true, None, None).unwrap();
         dbg!(retention_value);
         let card = Card {
-            id: 0,
             difficulty: 5.0,
             stability: 5.0,
             last_date: -5.0,
             due: 1.0,
             interval: 5.0,
-            lapses: 0,
+            ..Default::default()
         };
         assert!((retention_value - 0.7).abs() < 0.01);
         optimal_retention(&config, &[1.], |_| true, None, None).unwrap_err();
@@ -2223,13 +2229,13 @@ mod tests {
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
             let card = Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 5.0,
                 interval: 10.0,
-                lapses: 0,
+                desired_retention,
+                ..Default::default()
             };
             let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
             let mut costs = Vec::new();
@@ -2260,13 +2266,12 @@ mod tests {
         let existing_cards = vec![
             Card {
                 // Already introduced
-                id: 1,
                 stability: 5.0,
                 difficulty: 5.0,
                 last_date: 0.0,
                 due: 5.0,
                 interval: 5.0,
-                lapses: 0,
+                ..Default::default()
             },
             Card {
                 // New, to be learned on day 0
@@ -2276,27 +2281,25 @@ mod tests {
                 last_date: f32::NEG_INFINITY,
                 due: 0.0,
                 interval: f32::NEG_INFINITY,
-                lapses: 0,
+                ..Default::default()
             },
             Card {
                 // Already introduced
-                id: 3,
                 stability: 5.0,
                 difficulty: 5.0,
                 last_date: 1.0,
                 due: 6.0,
                 interval: 5.0,
-                lapses: 0,
+                ..Default::default()
             },
             Card {
                 // New, to be learned on day 1
-                id: 4,
                 stability: f32::NEG_INFINITY,
                 difficulty: f32::NEG_INFINITY,
                 last_date: f32::NEG_INFINITY,
                 due: 1.0,
                 interval: f32::NEG_INFINITY,
-                lapses: 0,
+                ..Default::default()
             },
         ];
 
@@ -2325,6 +2328,45 @@ mod tests {
             introduced_cnt_per_day,
             vec![3, 4, 5, 6],
             "introduced_cnt_per_day mismatch"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_per_card_desired_retention() -> Result<()> {
+        let dr_card = |dr: f32| Card {
+            difficulty: 5.0,
+            stability: 1000.0,
+            last_date: -5.0,
+            due: 0.0,
+            interval: 5.0,
+            desired_retention: dr,
+            ..Default::default()
+        };
+
+        let cards = vec![dr_card(0.8), dr_card(0.9), dr_card(0.9)];
+
+        let config = SimulatorConfig {
+            deck_size: cards.len(),
+            learn_span: 100,
+            review_rating_prob: [0.0, 1.0, 0.0], // always good
+            ..Default::default()
+        };
+
+        let result = simulate(&config, &DEFAULT_PARAMETERS, 0.9, Some(42), Some(cards))?;
+
+        let card1 = &result.cards[0];
+        let card2 = &result.cards[1];
+        let card3 = &result.cards[2];
+
+        assert!(
+            card1.interval > card2.interval,
+            "Cards with a lower desired retention should have a longer interval."
+        );
+        assert!(
+            card3.interval == card2.interval,
+            "Cards with the same desired retention should have the same interval."
         );
 
         Ok(())
