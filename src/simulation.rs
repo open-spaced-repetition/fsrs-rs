@@ -1849,24 +1849,20 @@ mod tests {
         };
         let cards = vec![
             Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 0.0,
                 interval: 5.0,
-                lapses: 0,
-                desired_retention: 0.9,
+                ..Default::default()
             },
             Card {
-                id: 0,
-                difficulty: 5.0,
                 stability: 2.0,
                 last_date: -2.0,
                 due: 0.0,
                 interval: 2.0,
                 lapses: 0,
-                desired_retention: 0.9,
+                ..Default::default()
             },
         ];
         let results = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards));
@@ -2233,14 +2229,13 @@ mod tests {
             let mut estimator = WorkloadEstimator::new(&config);
             estimator.precompute_cost_matrix(desired_retention, w);
             let card = Card {
-                id: 0,
                 difficulty: 5.0,
                 stability: 5.0,
                 last_date: -5.0,
                 due: 5.0,
                 interval: 10.0,
-                lapses: 0,
                 desired_retention,
+                ..Default::default()
             };
             let cost_dp = estimator.evaluate_in_flight_card_cost(&card, w);
             let mut costs = Vec::new();
@@ -2271,14 +2266,12 @@ mod tests {
         let existing_cards = vec![
             Card {
                 // Already introduced
-                id: 1,
                 stability: 5.0,
                 difficulty: 5.0,
                 last_date: 0.0,
                 due: 5.0,
                 interval: 5.0,
-                lapses: 0,
-                desired_retention: 0.9,
+                ..Default::default()
             },
             Card {
                 // New, to be learned on day 0
@@ -2288,30 +2281,25 @@ mod tests {
                 last_date: f32::NEG_INFINITY,
                 due: 0.0,
                 interval: f32::NEG_INFINITY,
-                lapses: 0,
-                desired_retention: 0.9,
+                ..Default::default()
             },
             Card {
                 // Already introduced
-                id: 3,
                 stability: 5.0,
                 difficulty: 5.0,
                 last_date: 1.0,
                 due: 6.0,
                 interval: 5.0,
-                lapses: 0,
-                desired_retention: 0.9,
+                ..Default::default()
             },
             Card {
                 // New, to be learned on day 1
-                id: 4,
                 stability: f32::NEG_INFINITY,
                 difficulty: f32::NEG_INFINITY,
                 last_date: f32::NEG_INFINITY,
                 due: 1.0,
                 interval: f32::NEG_INFINITY,
-                lapses: 0,
-                desired_retention: 0.9,
+                ..Default::default()
             },
         ];
 
@@ -2348,14 +2336,13 @@ mod tests {
     #[test]
     fn test_per_card_desired_retention() -> Result<()> {
         let dr_card = |dr: f32| Card {
-            id: 2,
             difficulty: 5.0,
             stability: 1000.0,
             last_date: -5.0,
             due: 0.0,
             interval: 5.0,
-            lapses: 0,
             desired_retention: dr,
+            ..Default::default()
         };
 
         let cards = vec![dr_card(0.8), dr_card(0.9), dr_card(0.9)];

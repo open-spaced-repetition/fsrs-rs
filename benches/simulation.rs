@@ -56,8 +56,7 @@ pub(crate) fn run_expected_workload_with_10000_existing_cards() {
             last_date: 0.0,
             due: 10.0,
             interval: 10.0,
-            lapses: 0,
-            desired_retention: 0.9,
+            ..Default::default()
         });
     }
     black_box(
