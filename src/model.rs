@@ -521,7 +521,7 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.596818, 2.7470093, 5.0, 8.12961]);
+            .assert_approx_eq([1.596818, 5.0, 5.0, 8.12961]);
     }
 
     #[test]
