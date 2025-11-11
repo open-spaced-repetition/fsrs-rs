@@ -115,7 +115,7 @@ impl<B: Backend> Model<B> {
         last_s
             * sinc
                 .clone()
-                .mask_where(rating.greater_equal_elem(3), sinc.clamp_min(1.0))
+                .mask_where(rating.greater_equal_elem(2), sinc.clamp_min(1.0))
     }
 
     fn mean_reversion(&self, new_d: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -521,7 +521,7 @@ mod tests {
             .to_data()
             .to_vec::<f32>()
             .unwrap()
-            .assert_approx_eq([1.596818, 2.7470093, 5.0, 8.12961]);
+            .assert_approx_eq([1.596818, 5.0, 5.0, 8.12961]);
     }
 
     #[test]
