@@ -2380,10 +2380,8 @@ mod tests {
             let parameters = Arc::new(w.to_vec());
             Card {
                 difficulty: 5.0,
-                stability: 1000.0,
-                last_date: -5.0,
-                due: 0.0,
-                interval: 5.0,
+                stability: 2e-9, // not-filtered
+                due: 0.,
                 desired_retention: 0.9,
                 parameters: parameters.clone(),
                 ..Default::default()
@@ -2395,7 +2393,8 @@ mod tests {
         let config = SimulatorConfig {
             deck_size: cards.len(),
             learn_span: 1,
-            review_rating_prob: [0.0, 1.0, 0.0], // always good
+            learning_step_count: 1,
+            first_rating_prob: [0.0, 0.0, 1.0, 0.0], // always good
             ..Default::default()
         };
 
