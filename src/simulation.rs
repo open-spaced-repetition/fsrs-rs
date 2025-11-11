@@ -2376,7 +2376,7 @@ mod tests {
     #[test]
     fn test_per_card_parameters() -> Result<()> {
         let good_card = |initial_good: f32| {
-            let mut w = DEFAULT_PARAMETERS.clone();
+            let mut w = DEFAULT_PARAMETERS;
             w[2] = initial_good;
             let parameters = Arc::new(w.to_vec());
             Card {
