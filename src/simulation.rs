@@ -617,6 +617,7 @@ pub struct Card {
     pub interval: f32,
     pub lapses: u32,
     pub desired_retention: f32,
+    // check_and_fill_parameters needs to be called manually on the parameters provided to the card.
     pub parameters: Arc<Vec<f32>>,
 }
 
