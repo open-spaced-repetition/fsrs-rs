@@ -592,13 +592,9 @@ pub fn expected_workload_with_existing_cards(
         .iter()
         .map(|card| {
             if card.stability > 1e-9 {
-                estimator.evaluate_in_flight_card_cost(card, &card.parameters)
+                estimator.evaluate_in_flight_card_cost(card, &w)
             } else {
-                estimator.evaluate_new_card_cost(
-                    &card.parameters,
-                    &config.first_rating_prob,
-                    card.due as usize,
-                )
+                estimator.evaluate_new_card_cost(&w, &config.first_rating_prob, card.due as usize)
             }
         })
         .sum();
