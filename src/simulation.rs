@@ -561,6 +561,10 @@ pub fn expected_workload(
     Ok(workload)
 }
 
+/// Evaluate expected workload when there are already in-flight cards.
+///
+/// Note: per-card parameters on `existing_cards` are ignored—this function always
+/// uses the provided global `parameters` slice.
 pub fn expected_workload_with_existing_cards(
     parameters: &Parameters,
     desired_retention: f32,
