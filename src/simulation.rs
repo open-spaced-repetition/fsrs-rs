@@ -1,3 +1,4 @@
+use crate::DEFAULT_PARAMETERS;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
@@ -12,7 +13,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 #[derive(Debug)]
 pub struct SimulationResult {
@@ -72,7 +73,7 @@ impl std::fmt::Debug for PostSchedulingFn {
 /// and returns a priority value (lower value means higher priority)
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
-pub struct ReviewPriorityFn(pub Arc<dyn Fn(&Card, &Parameters) -> i32 + Sync + Send>);
+pub struct ReviewPriorityFn(pub Arc<dyn Fn(&Card) -> i32 + Sync + Send>);
 
 impl PartialEq for ReviewPriorityFn {
     fn eq(&self, _: &Self) -> bool {
@@ -88,7 +89,7 @@ impl std::fmt::Debug for ReviewPriorityFn {
 
 impl Default for ReviewPriorityFn {
     fn default() -> Self {
-        Self(Arc::new(|card, _w| (card.difficulty * 100.0) as i32))
+        Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
     }
 }
 
@@ -560,16 +561,21 @@ pub fn expected_workload(
     Ok(workload)
 }
 
+/// Evaluate expected workload when there are already in-flight cards.
+///
+/// Note: per-card parameters in `existing_cards` are ignored. This function always
+/// uses the provided global `parameters` slice.
 pub fn expected_workload_with_existing_cards(
     parameters: &Parameters,
     desired_retention: f32,
     config: &SimulatorConfig,
     existing_cards: &[Card],
 ) -> Result<f32> {
-    let w = &check_and_fill_parameters(parameters)?;
+    let w = check_and_fill_parameters(parameters)?;
     let mut estimator = WorkloadEstimator::new(config);
-    estimator.precompute_cost_matrix(desired_retention, w);
+    estimator.precompute_cost_matrix(desired_retention, &w);
     let mut cards = existing_cards.to_vec();
+    let w = Arc::new(w);
 
     if config.learn_limit > 0 {
         let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
@@ -581,6 +587,7 @@ pub fn expected_workload_with_existing_cards(
             interval: f32::NEG_INFINITY,
             lapses: 0,
             desired_retention,
+            parameters: w.clone(),
         });
 
         cards.extend(init_ratings);
@@ -589,9 +596,9 @@ pub fn expected_workload_with_existing_cards(
         .iter()
         .map(|card| {
             if card.stability > 1e-9 {
-                estimator.evaluate_in_flight_card_cost(card, w)
+                estimator.evaluate_in_flight_card_cost(card, &w)
             } else {
-                estimator.evaluate_new_card_cost(w, &config.first_rating_prob, card.due as usize)
+                estimator.evaluate_new_card_cost(&w, &config.first_rating_prob, card.due as usize)
             }
         })
         .sum();
@@ -610,6 +617,8 @@ pub struct Card {
     pub interval: f32,
     pub lapses: u32,
     pub desired_retention: f32,
+    // check_and_fill_parameters needs to be called manually on the parameters provided to the card.
+    pub parameters: Arc<Vec<f32>>,
 }
 
 impl Card {
@@ -617,12 +626,12 @@ impl Card {
         power_forgetting_curve(w, t, self.stability)
     }
 
-    pub fn retention_on(&self, w: &[f32], date: f32) -> f32 {
-        self.power_forgetting_curve(w, date - self.last_date)
+    pub fn retention_on(&self, date: f32) -> f32 {
+        self.power_forgetting_curve(&self.parameters, date - self.last_date)
     }
 
-    pub fn retrievability(&self, w: &[f32]) -> f32 {
-        self.retention_on(w, self.due)
+    pub fn retrievability(&self) -> f32 {
+        self.retention_on(self.due)
     }
 
     pub fn scheduled_due(&self) -> f32 {
@@ -632,6 +641,8 @@ impl Card {
 
 impl Default for Card {
     fn default() -> Self {
+        static DEFAULT_PARAMETERS_ARC: LazyLock<Arc<Vec<f32>>> =
+            LazyLock::new(|| Arc::new(DEFAULT_PARAMETERS.to_vec()));
         Self {
             id: 0,
             difficulty: f32::NEG_INFINITY,
@@ -641,6 +652,7 @@ impl Default for Card {
             interval: f32::NEG_INFINITY,
             lapses: 0,
             desired_retention: 0.9,
+            parameters: DEFAULT_PARAMETERS_ARC.clone(),
         }
     }
 }
@@ -652,7 +664,7 @@ pub fn simulate(
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
-    let w = &check_and_fill_parameters(w)?;
+    let w = Arc::new(check_and_fill_parameters(w)?);
     if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
@@ -717,6 +729,7 @@ pub fn simulate(
             interval: f32::NEG_INFINITY,
             lapses: 0,
             desired_retention,
+            parameters: w.clone(),
         });
 
         cards.extend(init_ratings);
@@ -730,10 +743,9 @@ pub fn simulate(
     fn card_priority(
         card: &Card,
         learn: bool,
-        w: &Parameters,
         ReviewPriorityFn(cb): &ReviewPriorityFn,
     ) -> Reverse<(i32, bool, i32)> {
-        let priority = cb(card, w);
+        let priority = cb(card);
         // high priority for early due, review, custom priority
         Reverse((card.due as i32, learn, priority))
     }
@@ -744,7 +756,6 @@ pub fn simulate(
             card_priority(
                 card,
                 card.last_date == f32::NEG_INFINITY,
-                w,
                 &review_priority_fn,
             ),
         );
@@ -771,7 +782,7 @@ pub fn simulate(
                     .skip(last_date_index)
                     .take(delta_t)
                 {
-                    *day += card.retention_on(w, i as f32);
+                    *day += card.retention_on(i as f32);
                 }
             }
             card_priorities.pop();
@@ -799,7 +810,7 @@ pub fn simulate(
             card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(
                 &card_index,
-                card_priority(card, is_learn, w, &review_priority_fn),
+                card_priority(card, is_learn, &review_priority_fn),
             );
             continue;
         }
@@ -809,10 +820,10 @@ pub fn simulate(
             // For learning cards
             // Initialize stability and difficulty for new cards
             let init_rating = first_rating_choices[first_rating_dist.sample(&mut rng)];
-            let init_stability = init_s(w, init_rating);
-            let init_difficulty = init_d(w, init_rating).clamp(D_MIN, D_MAX);
+            let init_stability = init_s(&card.parameters, init_rating);
+            let init_difficulty = init_d(&card.parameters, init_rating).clamp(D_MIN, D_MAX);
             let (new_s, new_d, cost) = memory_state_short_term(
-                w,
+                &card.parameters,
                 init_stability,
                 init_difficulty,
                 Some(init_rating),
@@ -836,7 +847,7 @@ pub fn simulate(
             let last_stability = card.stability;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability = card.retrievability(w);
+            let retrievability = card.retrievability();
 
             // Create 'forget' mask
             let forget = !rng.random_bool(retrievability as f64);
@@ -854,11 +865,15 @@ pub fn simulate(
             //dbg!(&card, &rating);
 
             let (new_s, new_d, cost) = if forget {
-                let post_lapse_stability =
-                    stability_after_failure(w, last_stability, retrievability, card.difficulty);
-                let post_lapse_difficulty = next_d(w, card.difficulty, rating);
+                let post_lapse_stability = stability_after_failure(
+                    &card.parameters,
+                    last_stability,
+                    retrievability,
+                    card.difficulty,
+                );
+                let post_lapse_difficulty = next_d(&card.parameters, card.difficulty, rating);
                 let (new_s, new_d, cost) = memory_state_short_term(
-                    w,
+                    &card.parameters,
                     post_lapse_stability,
                     post_lapse_difficulty,
                     None,
@@ -875,13 +890,13 @@ pub fn simulate(
             } else {
                 (
                     stability_after_success(
-                        w,
+                        &card.parameters,
                         last_stability,
                         retrievability,
                         card.difficulty,
                         rating,
                     ),
-                    next_d(w, card.difficulty, rating),
+                    next_d(&card.parameters, card.difficulty, rating),
                     config.state_rating_costs[REVIEW][rating - 1],
                 )
             };
@@ -897,14 +912,14 @@ pub fn simulate(
                 .take(day_index)
                 .skip(last_date_index)
             {
-                *day += card.retention_on(w, i as f32);
+                *day += card.retention_on(i as f32);
             }
 
             card.stability = new_s;
             card.difficulty = new_d;
         }
 
-        let mut ivl = next_interval(w, card.stability, card.desired_retention)
+        let mut ivl = next_interval(&card.parameters, card.stability, card.desired_retention)
             .round()
             .clamp(1.0, config.max_ivl);
 
@@ -922,10 +937,8 @@ pub fn simulate(
             due_cnt_per_day[card.due as usize] += 1;
         }
 
-        card_priorities.change_priority(
-            &card_index,
-            card_priority(card, false, w, &review_priority_fn),
-        );
+        card_priorities
+            .change_priority(&card_index, card_priority(card, false, &review_priority_fn));
     }
 
     /*dbg!((
@@ -1967,49 +1980,37 @@ mod tests {
         run_test!(None, 69.28404)?;
         println!("High difficulty cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, _w: &Parameters| -(card.difficulty * 100.0) as i32),
+            wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
             74.6778
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| (card.retrievability(w) * 1000.0) as i32),
+            wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
             74.90477
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, w: &Parameters| -(card.retrievability(w) * 1000.0) as i32),
+            wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
             69.74799
         )?;
         println!("Low stability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, _w: &Parameters| (card.stability * 100.0) as i32),
+            wrap!(|card: &Card| (card.stability * 100.0) as i32),
             74.361115
         )?;
         println!("High stability cards reviewed first.");
         run_test!(
-            wrap!(|card: &Card, _w: &Parameters| -(card.stability * 100.0) as i32),
+            wrap!(|card: &Card| -(card.stability * 100.0) as i32),
             68.68905
         )?;
         println!("Long interval cards reviewed first.");
-        run_test!(
-            wrap!(|card: &Card, _w: &Parameters| -card.interval as i32),
-            69.376434
-        )?;
+        run_test!(wrap!(|card: &Card| -card.interval as i32), 69.376434)?;
         println!("Short interval cards reviewed first.");
-        run_test!(
-            wrap!(|card: &Card, _w: &Parameters| card.interval as i32),
-            74.64231
-        )?;
+        run_test!(wrap!(|card: &Card| card.interval as i32), 74.64231)?;
         println!("Early scheduled due cards reviewed first.");
-        run_test!(
-            wrap!(|card: &Card, _w: &Parameters| card.scheduled_due() as i32),
-            70.820175
-        )?;
+        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 70.820175)?;
         println!("Late scheduled due cards reviewed first.");
-        run_test!(
-            wrap!(|card: &Card, _w: &Parameters| -card.scheduled_due() as i32),
-            71.20782
-        )?;
+        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 71.20782)?;
         Ok(())
     }
 
@@ -2368,6 +2369,45 @@ mod tests {
             card3.interval == card2.interval,
             "Cards with the same desired retention should have the same interval."
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_per_card_parameters() -> Result<()> {
+        let good_card = |initial_good: f32| {
+            let mut w = DEFAULT_PARAMETERS;
+            w[2] = initial_good;
+            let parameters = Arc::new(w.to_vec());
+            Card {
+                difficulty: 5.0,
+                stability: 2e-9, // not-filtered
+                due: 0.,
+                desired_retention: 0.9,
+                parameters: parameters.clone(),
+                ..Default::default()
+            }
+        };
+
+        let cards = vec![good_card(5.), good_card(6.), good_card(7.)];
+
+        let config = SimulatorConfig {
+            deck_size: cards.len(),
+            learn_span: 1,
+            learning_step_count: 1,
+            first_rating_prob: [0.0, 0.0, 1.0, 0.0], // always good
+            ..Default::default()
+        };
+
+        let result = simulate(&config, &DEFAULT_PARAMETERS, 0.9, Some(42), Some(cards))?;
+
+        let card1 = &result.cards[0];
+        let card2 = &result.cards[1];
+        let card3 = &result.cards[2];
+
+        assert_eq!(card1.interval, 5.,);
+        assert_eq!(card2.interval, 6.,);
+        assert_eq!(card3.interval, 7.,);
 
         Ok(())
     }
