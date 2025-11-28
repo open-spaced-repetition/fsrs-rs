@@ -14,6 +14,7 @@ use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
+use std::ops::Deref;
 
 #[derive(Debug)]
 pub struct SimulationResult {
