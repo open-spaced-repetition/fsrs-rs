@@ -13,8 +13,8 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
 use std::ops::Deref;
+use std::sync::{Arc, LazyLock};
 
 #[derive(Debug)]
 pub struct SimulationResult {
@@ -54,7 +54,8 @@ pub(crate) const MAX_STEPS: usize = 5;
 /// current day index, due counts per day, and a random number generator,
 /// and returns a new interval.
 #[allow(clippy::type_complexity)]
-pub struct PostSchedulingFn(Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
+pub struct PostSchedulingFn(
+    Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
 );
 
 impl Deref for PostSchedulingFn {
@@ -764,11 +765,7 @@ pub fn simulate(
 
     let review_priority_fn = config.review_priority_fn.clone().unwrap_or_default();
 
-    fn card_priority(
-        card: &Card,
-        learn: bool,
-        cb: &ReviewPriorityFn,
-    ) -> Reverse<(i32, bool, i32)> {
+    fn card_priority(card: &Card, learn: bool, cb: &ReviewPriorityFn) -> Reverse<(i32, bool, i32)> {
         let priority = cb(card);
         // high priority for early due, review, custom priority
         Reverse((card.due as i32, learn, priority))
