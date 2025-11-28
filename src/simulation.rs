@@ -53,9 +53,16 @@ pub(crate) const MAX_STEPS: usize = 5;
 /// current day index, due counts per day, and a random number generator,
 /// and returns a new interval.
 #[allow(clippy::type_complexity)]
-pub struct PostSchedulingFn(
-    pub Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
+pub struct PostSchedulingFn(Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
 );
+
+impl Deref for PostSchedulingFn {
+    type Target = dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
 
 impl PartialEq for PostSchedulingFn {
     fn eq(&self, _: &Self) -> bool {
@@ -73,11 +80,19 @@ impl std::fmt::Debug for PostSchedulingFn {
 /// and returns a priority value (lower value means higher priority)
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
-pub struct ReviewPriorityFn(pub Arc<dyn Fn(&Card) -> i32 + Sync + Send>);
+pub struct ReviewPriorityFn(Arc<dyn Fn(&Card) -> i32 + Sync + Send>);
 
 impl PartialEq for ReviewPriorityFn {
     fn eq(&self, _: &Self) -> bool {
         true
+    }
+}
+
+impl Deref for ReviewPriorityFn {
+    type Target = dyn Fn(&Card) -> i32 + Sync + Send;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
     }
 }
 
@@ -94,7 +109,15 @@ impl Default for ReviewPriorityFn {
 }
 
 #[allow(clippy::type_complexity)]
-pub struct CMRRTargetFn(pub Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
+pub struct CMRRTargetFn(Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
+
+impl Deref for CMRRTargetFn {
+    type Target = dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
 
 impl std::fmt::Debug for CMRRTargetFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -743,7 +766,7 @@ pub fn simulate(
     fn card_priority(
         card: &Card,
         learn: bool,
-        ReviewPriorityFn(cb): &ReviewPriorityFn,
+        cb: &ReviewPriorityFn,
     ) -> Reverse<(i32, bool, i32)> {
         let priority = cb(card);
         // high priority for early due, review, custom priority
@@ -927,7 +950,7 @@ pub fn simulate(
         card.interval = ivl;
         card.due = day_index as f32 + ivl;
 
-        if let Some(PostSchedulingFn(cb)) = &config.post_scheduling_fn {
+        if let Some(cb) = &config.post_scheduling_fn {
             ivl = cb(card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
             card.interval = ivl;
             card.due = day_index as f32 + ivl;
@@ -966,7 +989,7 @@ fn sample<F>(
     n: usize,
     progress: &mut F,
     cards: &Option<Vec<Card>>,
-    CMRRTargetFn(target): &CMRRTargetFn,
+    target: &CMRRTargetFn,
 ) -> Result<f32, FSRSError>
 where
     F: FnMut() -> bool,
