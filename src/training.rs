@@ -106,7 +106,7 @@ impl<B: AutodiffBackend> Model<B> {
         grad
     }
 
-    fn free_short_term_stability(&self, mut grad: B::Gradients) -> B::Gradients {
+    fn freeze_short_term_stability(&self, mut grad: B::Gradients) -> B::Gradients {
         let grad_tensor = self.w.grad(&grad).unwrap();
         let device = grad_tensor.device();
         let updated_grad_tensor = grad_tensor.slice_assign([17..20], Tensor::zeros([3], &device));
@@ -467,7 +467,7 @@ fn train<B: AutodiffBackend>(
                 gradients = model.freeze_initial_stability(gradients);
             }
             if config.model.freeze_short_term_stability {
-                gradients = model.free_short_term_stability(gradients);
+                gradients = model.freeze_short_term_stability(gradients);
             }
             let grads = GradientsParams::from_grads(gradients, &model);
             model = optim.step(lr, model, grads);
