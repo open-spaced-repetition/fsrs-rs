@@ -199,7 +199,7 @@ impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     }
 }
 
-pub(crate) fn filter_outlier(
+pub fn filter_outlier(
     dataset_for_initialization: Vec<FSRSItem>,
     mut trainset: Vec<FSRSItem>,
 ) -> (Vec<FSRSItem>, Vec<FSRSItem>) {

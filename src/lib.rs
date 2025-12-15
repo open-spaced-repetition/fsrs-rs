@@ -15,7 +15,7 @@ mod simulation;
 mod test_helpers;
 mod training;
 
-pub use dataset::{FSRSItem, FSRSReview};
+pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
 pub use error::{FSRSError, Result};
 pub use inference::{
     DEFAULT_PARAMETERS, FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, ItemProgress, ItemState,
