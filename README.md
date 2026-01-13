@@ -151,3 +151,13 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
   Before this crate was made, `go-fsrs` and other libraries already existed, so the name `rs-fsrs` was chosen.
 
   Then we wanted to port the torch version to Rust so that everyone could optimize on their own devices (tch-rs uses libtorch which is too heavy). Since the algorithm is called `fsrs`, we add an `-rs` on the end.
+
+## Acknowledgements
+
+Thank you to everyone who has contributed time, ideas, and care to this project. Especial thanks to:
+
+- Jarrett Ye — core algorithm, training, benchmarking, and documentation.
+- Damien Elmes — training API robustness, progress handling, and dependency upkeep.
+- Luc Mcgrady — simulator features, per-card parameters, and scheduling enhancements.
+- Asuka Minato — CI/tooling, bindings, and documentation updates.
+- Expertium — scheduler/simulator tuning and parameter naming refinements.
