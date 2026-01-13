@@ -154,7 +154,7 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 
 ## Acknowledgements
 
-Thank you to everyone who has contributed time, ideas, and care to this project. Especial thanks to:
+Thank you to everyone who has contributed time, ideas, and care to this project. Special thanks to:
 
 - Jarrett Ye — core algorithm, training, benchmarking, and documentation.
 - Damien Elmes — training API robustness, progress handling, and dependency upkeep.
