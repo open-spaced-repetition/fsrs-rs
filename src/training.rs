@@ -210,7 +210,7 @@ pub(crate) struct TrainingConfig {
     pub seed: u64,
     #[config(default = 4e-2)]
     pub learning_rate: f64,
-    #[config(default = 64)]
+    #[config(default = 1024)]
     pub max_seq_len: usize,
     #[config(default = 1.0)]
     pub gamma: f64,
