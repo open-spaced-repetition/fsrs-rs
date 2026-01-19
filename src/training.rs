@@ -210,7 +210,7 @@ pub(crate) struct TrainingConfig {
     pub seed: u64,
     #[config(default = 4e-2)]
     pub learning_rate: f64,
-    #[config(default = 64)]
+    #[config(default = 1024)]
     pub max_seq_len: usize,
     #[config(default = 1.0)]
     pub gamma: f64,
@@ -380,7 +380,7 @@ pub fn benchmark(
         initialize_stability_parameters(dataset_for_initialization, average_recall)
             .unwrap()
             .0;
-    let config = TrainingConfig::new(
+    let mut config = TrainingConfig::new(
         ModelConfig {
             freeze_initial_stability: !enable_short_term,
             initial_stability: Some(initial_stability),
@@ -389,6 +389,8 @@ pub fn benchmark(
         },
         AdamConfig::new().with_epsilon(1e-8),
     );
+    // save RAM and speed up training
+    config.max_seq_len = 64;
     let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
     let model = train::<Autodiff<B>>(
