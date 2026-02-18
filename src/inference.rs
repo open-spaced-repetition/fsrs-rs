@@ -297,18 +297,18 @@ impl<B: Backend> FSRS<B> {
         let mut inner_state = MemoryStateTensors {
             stability: Tensor::from_data(
                 TensorData::new(
-                    stabilities.clone(),
+                    stabilities,
                     Shape {
-                        dims: vec![stabilities.len()],
+                        dims: vec![items.len()],
                     },
                 ),
                 &device,
             ),
             difficulty: Tensor::from_data(
                 TensorData::new(
-                    difficulties.clone(),
+                    difficulties,
                     Shape {
-                        dims: vec![difficulties.len()],
+                        dims: vec![items.len()],
                     },
                 ),
                 &device,
