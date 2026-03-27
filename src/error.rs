@@ -4,6 +4,7 @@ use snafu::Snafu;
 pub enum FSRSError {
     NotEnoughData,
     Interrupted,
+    IncompatibleCheckpoint,
     InvalidParameters,
     OptimalNotFound,
     InvalidInput,

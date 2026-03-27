@@ -6,6 +6,7 @@ use burn::prelude::Backend;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 
 use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
 
@@ -38,40 +39,74 @@ impl<B: Backend> BatchTensorDataset<B> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) enum ShuffleStream {
+    Train,
+    Validate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ShuffleState {
+    pub base_seed: u64,
+    pub stream: ShuffleStream,
+    pub epoch: usize,
+    pub indices: Vec<usize>,
+    pub current_index: usize,
+}
+
+impl ShuffleState {
+    pub(crate) fn items_total(&self) -> usize {
+        self.indices.len()
+    }
+}
+
 pub struct ShuffleDataLoader<B: Backend> {
     dataset: BatchTensorDataset<B>,
-    rng: Mutex<StdRng>,
+    base_seed: u64,
+    stream: ShuffleStream,
+    #[cfg_attr(not(test), allow(dead_code))]
+    next_epoch: Mutex<usize>,
 }
 
 impl<B: Backend> ShuffleDataLoader<B> {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(dataset: BatchTensorDataset<B>, seed: u64) -> Self {
+        Self::new_with_stream(dataset, seed, ShuffleStream::Train)
+    }
+
+    pub(crate) fn new_with_stream(
+        dataset: BatchTensorDataset<B>,
+        seed: u64,
+        stream: ShuffleStream,
+    ) -> Self {
         Self {
             dataset,
-            rng: Mutex::new(StdRng::seed_from_u64(seed)),
+            base_seed: seed,
+            stream,
+            next_epoch: Mutex::new(1),
         }
     }
 }
 
 pub(crate) struct ShuffleDataLoaderIterator<B: Backend> {
-    current_index: usize,
-    indices: Vec<usize>,
+    state: ShuffleState,
     dataset: BatchTensorDataset<B>,
 }
 
 impl<B: Backend> ShuffleDataLoaderIterator<B> {
-    pub(crate) fn new(dataset: BatchTensorDataset<B>, indices: Vec<usize>) -> Self {
-        Self {
-            current_index: 0,
-            indices,
-            dataset,
-        }
+    pub(crate) fn new(dataset: BatchTensorDataset<B>, state: ShuffleState) -> Self {
+        Self { state, dataset }
     }
 
     pub(crate) fn progress(&self) -> Progress {
         Progress {
-            items_processed: self.current_index,
+            items_processed: self.state.current_index,
             items_total: self.dataset.len(),
         }
+    }
+
+    pub(crate) fn state(&self) -> ShuffleState {
+        self.state.clone()
     }
 }
 
@@ -79,8 +114,8 @@ impl<B: Backend> Iterator for ShuffleDataLoaderIterator<B> {
     type Item = FSRSBatch<B>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(index) = self.indices.get(self.current_index) {
-            self.current_index += 1;
+        if let Some(index) = self.state.indices.get(self.state.current_index) {
+            self.state.current_index += 1;
             return self.dataset.get(*index);
         }
         None
@@ -89,15 +124,52 @@ impl<B: Backend> Iterator for ShuffleDataLoaderIterator<B> {
 
 impl<B: Backend> DataLoaderIterator<FSRSBatch<B>> for ShuffleDataLoaderIterator<B> {
     fn progress(&self) -> Progress {
-        Progress::new(self.current_index, self.dataset.len())
+        Progress::new(self.state.current_index, self.dataset.len())
     }
 }
 
 impl<B: Backend> ShuffleDataLoader<B> {
-    pub(crate) fn iter(&self) -> ShuffleDataLoaderIterator<B> {
+    fn mixed_seed(&self, epoch: usize) -> u64 {
+        const EPOCH_MAGIC: u64 = 0x9E37_79B9_7F4A_7C15;
+        const TRAIN_MAGIC: u64 = 0xA24B_1C62_4B27_F1A5;
+        const VALIDATE_MAGIC: u64 = 0xC2B2_AE35_79D9_82EF;
+
+        let stream_magic = match self.stream {
+            ShuffleStream::Train => TRAIN_MAGIC,
+            ShuffleStream::Validate => VALIDATE_MAGIC,
+        };
+
+        self.base_seed ^ stream_magic ^ (epoch as u64).wrapping_mul(EPOCH_MAGIC)
+    }
+
+    pub(crate) fn state_for_epoch(&self, epoch: usize) -> ShuffleState {
         let mut indices: Vec<_> = (0..self.dataset.len()).collect();
-        indices.shuffle(&mut *self.rng.lock().unwrap());
-        ShuffleDataLoaderIterator::new(self.dataset.clone(), indices)
+        indices.shuffle(&mut StdRng::seed_from_u64(self.mixed_seed(epoch)));
+        ShuffleState {
+            base_seed: self.base_seed,
+            stream: self.stream,
+            epoch,
+            indices,
+            current_index: 0,
+        }
+    }
+
+    pub(crate) fn is_compatible_state(&self, state: &ShuffleState) -> bool {
+        state.base_seed == self.base_seed
+            && state.stream == self.stream
+            && state.indices.len() == self.dataset.len()
+    }
+
+    pub(crate) fn iter_from_state(&self, state: ShuffleState) -> ShuffleDataLoaderIterator<B> {
+        ShuffleDataLoaderIterator::new(self.dataset.clone(), state)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn iter(&self) -> ShuffleDataLoaderIterator<B> {
+        let mut next_epoch = self.next_epoch.lock().unwrap();
+        let state = self.state_for_epoch(*next_epoch);
+        *next_epoch += 1;
+        self.iter_from_state(state)
     }
 }
 
@@ -127,7 +199,6 @@ mod tests {
         let dataset = BatchTensorDataset::<Backend>::new(dataset, batch_size);
         let dataloader = ShuffleDataLoader::new(dataset, seed);
         let mut iterator = dataloader.iter();
-        // dbg!(&iterator.indices);
         let batch = iterator.next().unwrap();
         assert_eq!(
             batch.t_historys.shape(),
@@ -154,7 +225,6 @@ mod tests {
         );
 
         let mut iterator = dataloader.iter();
-        // dbg!(&iterator.indices);
         let batch = iterator.next().unwrap();
         assert_eq!(
             batch.t_historys.shape(),
@@ -179,5 +249,133 @@ mod tests {
                 11, 4, 5, 3, 1, 3, 13, 5, 4, 6, 2, 6, 19, 6, 3, 7, 4, 3, 48, 9, 5, 8, 5, 4, 3, 7
             ]
         );
+    }
+
+    #[test]
+    fn test_state_round_trip() {
+        let dataset = FSRSDataset::from(constant_weighted_fsrs_items(vec![
+            crate::FSRSItem {
+                reviews: vec![
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 4,
+                        delta_t: 1,
+                    },
+                ],
+            },
+            crate::FSRSItem {
+                reviews: vec![
+                    crate::FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 4,
+                        delta_t: 2,
+                    },
+                ],
+            },
+            crate::FSRSItem {
+                reviews: vec![
+                    crate::FSRSReview {
+                        rating: 2,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                    crate::FSRSReview {
+                        rating: 4,
+                        delta_t: 5,
+                    },
+                ],
+            },
+            crate::FSRSItem {
+                reviews: vec![
+                    crate::FSRSReview {
+                        rating: 4,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 3,
+                    },
+                ],
+            },
+            crate::FSRSItem {
+                reviews: vec![
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 2,
+                        delta_t: 1,
+                    },
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 2,
+                    },
+                    crate::FSRSReview {
+                        rating: 4,
+                        delta_t: 8,
+                    },
+                ],
+            },
+            crate::FSRSItem {
+                reviews: vec![
+                    crate::FSRSReview {
+                        rating: 1,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 0,
+                    },
+                    crate::FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                    crate::FSRSReview {
+                        rating: 4,
+                        delta_t: 6,
+                    },
+                ],
+            },
+        ]));
+        type Backend = NdArray<f32>;
+
+        let dataset = BatchTensorDataset::<Backend>::new(dataset, 2);
+        let dataloader =
+            ShuffleDataLoader::new_with_stream(dataset, 114514, ShuffleStream::Validate);
+        let mut iterator = dataloader.iter();
+        iterator.next();
+        iterator.next();
+        let state = iterator.state();
+
+        assert!(dataloader.is_compatible_state(&state));
+
+        let resumed_lengths = dataloader
+            .iter_from_state(state)
+            .map(|batch| batch.t_historys.shape().dims[0])
+            .collect::<Vec<_>>();
+        let fresh_lengths = dataloader
+            .iter_from_state({
+                let mut state = dataloader.state_for_epoch(1);
+                state.current_index = 2;
+                state
+            })
+            .map(|batch| batch.t_historys.shape().dims[0])
+            .collect::<Vec<_>>();
+
+        assert_eq!(resumed_lengths, fresh_lengths);
     }
 }

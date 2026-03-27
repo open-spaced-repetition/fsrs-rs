@@ -1,4 +1,12 @@
-use burn::{LearningRate, lr_scheduler::LrScheduler, tensor::backend::Backend};
+use burn::{LearningRate, lr_scheduler::LrScheduler, record::Record, tensor::backend::Backend};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Deserialize, Record, Serialize)]
+pub(crate) struct CosineAnnealingRecord {
+    step_count: f64,
+    current_lr: LearningRate,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CosineAnnealingLR {
     t_max: f64,
@@ -21,7 +29,7 @@ impl CosineAnnealingLR {
 }
 
 impl LrScheduler for CosineAnnealingLR {
-    type Record<B: Backend> = usize;
+    type Record<B: Backend> = CosineAnnealingRecord;
 
     fn step(&mut self) -> LearningRate {
         self.step_count += 1.0;
@@ -55,11 +63,15 @@ impl LrScheduler for CosineAnnealingLR {
     }
 
     fn to_record<B: Backend>(&self) -> Self::Record<B> {
-        self.step_count as usize
+        CosineAnnealingRecord {
+            step_count: self.step_count,
+            current_lr: self.current_lr,
+        }
     }
 
     fn load_record<B: Backend>(mut self, record: Self::Record<B>) -> Self {
-        self.step_count = record as LearningRate;
+        self.step_count = record.step_count;
+        self.current_lr = record.current_lr;
         self
     }
 }

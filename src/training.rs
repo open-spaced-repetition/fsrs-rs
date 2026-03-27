@@ -1,5 +1,5 @@
-use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader};
-use crate::cosine_annealing::CosineAnnealingLR;
+use crate::batch_shuffle::{BatchTensorDataset, ShuffleDataLoader, ShuffleState, ShuffleStream};
+use crate::cosine_annealing::{CosineAnnealingLR, CosineAnnealingRecord};
 use crate::dataset::{
     FSRSDataset, FSRSItem, WeightedFSRSItem, prepare_training_data, recency_weighted_fsrs_items,
 };
@@ -11,10 +11,11 @@ use crate::{DEFAULT_PARAMETERS, FSRSError};
 use burn::backend::Autodiff;
 use burn::backend::ndarray::NdArray;
 use burn::lr_scheduler::LrScheduler;
-use burn::module::AutodiffModule;
+use burn::module::{AutodiffModule, Module};
 use burn::nn::loss::Reduction;
-use burn::optim::Optimizer;
-use burn::optim::{AdamConfig, GradientsParams};
+use burn::optim::adaptor::OptimizerAdaptor;
+use burn::optim::{Adam, AdamConfig, GradientsParams, Optimizer};
+use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
 use burn::tensor::backend::Backend;
 use burn::tensor::cast::ToElement;
 use burn::tensor::{Int, Tensor};
@@ -23,10 +24,18 @@ use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
 use burn::{config::Config, tensor::backend::AutodiffBackend};
 use core::marker::PhantomData;
 use log::info;
+use serde::{Deserialize, Serialize};
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 type B = NdArray<f32>;
+type TrainBackend = Autodiff<B>;
+type TrainModel = Model<TrainBackend>;
+type TrainOptimizer = OptimizerAdaptor<Adam, TrainModel, TrainBackend>;
+type CheckpointRecorder = BinBytesRecorder<FullPrecisionSettings>;
+
+const OPTIMIZATION_CHECKPOINT_VERSION: u32 = 1;
 
 static PARAMS_STDDEV: [f32; 21] = [
     6.43, 9.66, 17.58, 27.85, 0.57, 0.28, 0.6, 0.12, 0.39, 0.18, 0.33, 0.3, 0.09, 0.16, 0.57, 0.25,
@@ -195,7 +204,11 @@ impl MetricsRenderer for ProgressCollector {
         }
     }
 
-    fn render_valid(&mut self, _item: TrainingProgress) {}
+    fn render_valid(&mut self, _item: TrainingProgress) {
+        if self.state.lock().unwrap().want_abort {
+            self.interrupter.stop();
+        }
+    }
 }
 
 #[derive(Config)]
@@ -214,6 +227,110 @@ pub(crate) struct TrainingConfig {
     pub max_seq_len: usize,
     #[config(default = 1.0)]
     pub gamma: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ModelConfigSnapshot {
+    freeze_initial_stability: bool,
+    initial_stability: Option<[f32; 4]>,
+    freeze_short_term_stability: bool,
+    num_relearning_steps: usize,
+}
+
+impl From<&ModelConfig> for ModelConfigSnapshot {
+    fn from(value: &ModelConfig) -> Self {
+        Self {
+            freeze_initial_stability: value.freeze_initial_stability,
+            initial_stability: value.initial_stability,
+            freeze_short_term_stability: value.freeze_short_term_stability,
+            num_relearning_steps: value.num_relearning_steps,
+        }
+    }
+}
+
+impl From<ModelConfigSnapshot> for ModelConfig {
+    fn from(value: ModelConfigSnapshot) -> Self {
+        Self {
+            freeze_initial_stability: value.freeze_initial_stability,
+            initial_stability: value.initial_stability,
+            freeze_short_term_stability: value.freeze_short_term_stability,
+            num_relearning_steps: value.num_relearning_steps,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TrainingConfigSnapshot {
+    model: ModelConfigSnapshot,
+    num_epochs: usize,
+    batch_size: usize,
+    seed: u64,
+    learning_rate: f64,
+    max_seq_len: usize,
+    gamma: f64,
+}
+
+impl From<&TrainingConfig> for TrainingConfigSnapshot {
+    fn from(value: &TrainingConfig) -> Self {
+        Self {
+            model: (&value.model).into(),
+            num_epochs: value.num_epochs,
+            batch_size: value.batch_size,
+            seed: value.seed,
+            learning_rate: value.learning_rate,
+            max_seq_len: value.max_seq_len,
+            gamma: value.gamma,
+        }
+    }
+}
+
+impl TrainingConfigSnapshot {
+    fn into_config(self) -> TrainingConfig {
+        let mut config = TrainingConfig::new(self.model.into(), default_optimizer_config());
+        config.num_epochs = self.num_epochs;
+        config.batch_size = self.batch_size;
+        config.seed = self.seed;
+        config.learning_rate = self.learning_rate;
+        config.max_seq_len = self.max_seq_len;
+        config.gamma = self.gamma;
+        config
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct FrozenTrainingRun {
+    train_set: Vec<WeightedFSRSItem>,
+    test_set: Vec<WeightedFSRSItem>,
+    initial_rating_count: HashMap<u32, u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+enum TrainingPhase {
+    Train,
+    Validate,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OptimizationCheckpoint {
+    version: u32,
+    config: TrainingConfigSnapshot,
+    frozen: FrozenTrainingRun,
+    phase: TrainingPhase,
+    epoch: usize,
+    train_shuffle: ShuffleState,
+    valid_shuffle: ShuffleState,
+    model_record: Vec<u8>,
+    best_model_record: Vec<u8>,
+    optimizer_record: Vec<u8>,
+    lr_scheduler_record: CosineAnnealingRecord,
+    best_loss: f64,
+    validation_loss_sum: f64,
+}
+
+#[derive(Clone, Debug)]
+pub enum OptimizationOutcome {
+    Completed(Vec<f32>),
+    Interrupted(OptimizationCheckpoint),
 }
 
 pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -253,94 +370,62 @@ impl Default for ComputeParametersInput {
         }
     }
 }
-/// Computes optimized parameters for the FSRS model based on training data.
-///
-/// This function trains the model on the provided dataset and returns optimized parameters.
-///
-/// # Arguments
-/// * `input` - Input parameters including the training dataset and configuration
-///
-/// # Returns
-/// A `Result<Vec<f32>>` containing the optimized parameters
-pub fn compute_parameters(
-    ComputeParametersInput {
-        train_set,
-        progress,
-        enable_short_term,
-        num_relearning_steps,
-        ..
-    }: ComputeParametersInput,
-) -> Result<Vec<f32>> {
-    let finish_progress = || {
-        if let Some(progress) = &progress {
-            // The progress state at completion time may not indicate completion, because:
-            // - If there were fewer than 512 entries, render_train() will have never been called
-            // - One or more of the splits may have ignored later epochs, if accuracy went backwards
-            // Because of this, we need a separate finished flag.
-            progress.lock().unwrap().finished = true;
-        }
-    };
+fn default_optimizer_config() -> AdamConfig {
+    AdamConfig::new().with_epsilon(1e-8)
+}
 
-    let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
-    let average_recall = calculate_average_recall(&train_set);
-    if train_set.len() < 8 {
-        finish_progress();
-        return Ok(DEFAULT_PARAMETERS.to_vec());
+fn checkpoint_recorder() -> CheckpointRecorder {
+    CheckpointRecorder::default()
+}
+
+fn recorder_error() -> FSRSError {
+    FSRSError::IncompatibleCheckpoint
+}
+
+fn model_to_bytes(model: &TrainModel) -> Result<Vec<u8>> {
+    checkpoint_recorder()
+        .record(model.clone().into_record(), ())
+        .map_err(|_| recorder_error())
+}
+
+fn optimizer_to_bytes(optimizer: &TrainOptimizer) -> Result<Vec<u8>> {
+    checkpoint_recorder()
+        .record(optimizer.to_record(), ())
+        .map_err(|_| recorder_error())
+}
+
+fn finish_progress(progress: &Option<Arc<Mutex<CombinedProgressState>>>) {
+    if let Some(progress) = progress {
+        progress.lock().unwrap().finished = true;
     }
+}
 
-    let (initial_stability, initial_rating_count) =
-        initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)
-            .inspect_err(|_e| {
-                finish_progress();
-            })?;
-    let initialized_parameters: Vec<f32> = initial_stability
-        .into_iter()
-        .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-        .collect();
-    if train_set.len() == dataset_for_initialization.len() || train_set.len() < 64 {
-        finish_progress();
-        return Ok(initialized_parameters);
-    }
-    let config = TrainingConfig::new(
-        ModelConfig {
-            freeze_initial_stability: !enable_short_term,
-            initial_stability: Some(initial_stability),
-            freeze_short_term_stability: !enable_short_term,
-            num_relearning_steps: num_relearning_steps.unwrap_or(1),
-        },
-        AdamConfig::new().with_epsilon(1e-8),
-    );
-    let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
-    weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
-
-    if let Some(progress) = &progress {
-        let progress_state = ProgressState {
-            epoch_total: config.num_epochs,
-            items_total: weighted_train_set.len(),
-            epoch: 0,
-            items_processed: 0,
+fn initialize_progress(
+    progress: &Option<Arc<Mutex<CombinedProgressState>>>,
+    session: &OptimizationSession,
+) {
+    if let Some(progress) = progress {
+        let items_total = session.train_shuffle.items_total();
+        let items_processed = match session.phase {
+            TrainingPhase::Train => session.train_shuffle.current_index,
+            TrainingPhase::Validate => items_total,
         };
-        progress.lock().unwrap().splits = vec![progress_state];
+        let mut guard = progress.lock().unwrap();
+        guard.finished = false;
+        guard.want_abort = false;
+        guard.splits = vec![ProgressState {
+            epoch: session.epoch,
+            epoch_total: session.config.num_epochs,
+            items_processed,
+            items_total,
+        }];
     }
-    let model = train::<Autodiff<B>>(
-        weighted_train_set.clone(),
-        weighted_train_set,
-        &config,
-        progress.clone().map(|p| ProgressCollector::new(p, 0)),
-    );
+}
 
-    let optimized_parameters = model
-        .inspect_err(|_e| {
-            finish_progress();
-        })?
-        .w
-        .val()
-        .to_data()
-        .to_vec()
-        .unwrap();
-
-    finish_progress();
-
+fn finalize_parameters(
+    optimized_parameters: Vec<f32>,
+    initial_rating_count: &HashMap<u32, u32>,
+) -> Result<Vec<f32>> {
     if optimized_parameters
         .iter()
         .any(|parameter: &f32| parameter.is_infinite())
@@ -354,13 +439,451 @@ pub fn compute_parameters(
         .map(|(i, &val)| (i as u32 + 1, val))
         .collect();
     let clamped_stability =
-        smooth_and_fill(&mut optimized_initial_stability, &initial_rating_count).unwrap();
-    let optimized_parameters = clamped_stability
+        smooth_and_fill(&mut optimized_initial_stability, initial_rating_count).unwrap();
+    Ok(clamped_stability
         .into_iter()
         .chain(optimized_parameters[4..].iter().copied())
-        .collect();
+        .collect())
+}
 
-    Ok(optimized_parameters)
+enum PreparedOptimization {
+    Completed(Vec<f32>),
+    Session(OptimizationSession),
+}
+
+struct OptimizationSession {
+    frozen: FrozenTrainingRun,
+    config: TrainingConfig,
+    phase: TrainingPhase,
+    epoch: usize,
+    train_shuffle: ShuffleState,
+    valid_shuffle: ShuffleState,
+    train_loader: ShuffleDataLoader<TrainBackend>,
+    valid_loader: ShuffleDataLoader<B>,
+    model: TrainModel,
+    best_model: TrainModel,
+    optimizer: TrainOptimizer,
+    lr_scheduler: CosineAnnealingLR,
+    best_loss: f64,
+    validation_loss_sum: f64,
+}
+
+impl OptimizationSession {
+    fn build_loaders(
+        frozen: &FrozenTrainingRun,
+        config: &TrainingConfig,
+    ) -> (ShuffleDataLoader<TrainBackend>, ShuffleDataLoader<B>, usize) {
+        let batch_dataset = BatchTensorDataset::<TrainBackend>::new(
+            FSRSDataset::from(frozen.train_set.clone()),
+            config.batch_size,
+        );
+        let train_loader =
+            ShuffleDataLoader::new_with_stream(batch_dataset, config.seed, ShuffleStream::Train);
+
+        let batch_dataset = BatchTensorDataset::<B>::new(
+            FSRSDataset::from(frozen.test_set.clone()),
+            config.batch_size,
+        );
+        let valid_loader =
+            ShuffleDataLoader::new_with_stream(batch_dataset, config.seed, ShuffleStream::Validate);
+
+        (train_loader, valid_loader, frozen.train_set.len())
+    }
+
+    fn iterations(config: &TrainingConfig, total_size: usize) -> usize {
+        (total_size / config.batch_size + 1) * config.num_epochs
+    }
+
+    fn fresh(frozen: FrozenTrainingRun, config: TrainingConfig) -> Result<Self> {
+        let (train_loader, valid_loader, total_size) = Self::build_loaders(&frozen, &config);
+        let model = config.model.init::<TrainBackend>();
+        let best_model = model.clone();
+        let optimizer = default_optimizer_config().init::<TrainBackend, TrainModel>();
+        let lr_scheduler = CosineAnnealingLR::init(
+            Self::iterations(&config, total_size) as f64,
+            config.learning_rate,
+        );
+        Ok(Self {
+            train_shuffle: train_loader.state_for_epoch(1),
+            valid_shuffle: valid_loader.state_for_epoch(1),
+            frozen,
+            config,
+            phase: TrainingPhase::Train,
+            epoch: 1,
+            train_loader,
+            valid_loader,
+            model,
+            best_model,
+            optimizer,
+            lr_scheduler,
+            best_loss: f64::INFINITY,
+            validation_loss_sum: 0.0,
+        })
+    }
+
+    fn from_checkpoint(checkpoint: OptimizationCheckpoint) -> Result<Self> {
+        if checkpoint.version != OPTIMIZATION_CHECKPOINT_VERSION {
+            return Err(FSRSError::IncompatibleCheckpoint);
+        }
+
+        let config = checkpoint.config.clone().into_config();
+        let (train_loader, valid_loader, total_size) =
+            Self::build_loaders(&checkpoint.frozen, &config);
+        if !train_loader.is_compatible_state(&checkpoint.train_shuffle)
+            || !valid_loader.is_compatible_state(&checkpoint.valid_shuffle)
+        {
+            return Err(FSRSError::IncompatibleCheckpoint);
+        }
+
+        let device = Default::default();
+        let recorder = checkpoint_recorder();
+        let model = config.model.init::<TrainBackend>().load_record(
+            recorder
+                .load(checkpoint.model_record.clone(), &device)
+                .map_err(|_| recorder_error())?,
+        );
+        let best_model = config.model.init::<TrainBackend>().load_record(
+            recorder
+                .load(checkpoint.best_model_record.clone(), &device)
+                .map_err(|_| recorder_error())?,
+        );
+        let optimizer = default_optimizer_config()
+            .init::<TrainBackend, TrainModel>()
+            .load_record(
+                recorder
+                    .load(checkpoint.optimizer_record.clone(), &device)
+                    .map_err(|_| recorder_error())?,
+            );
+        let lr_scheduler = CosineAnnealingLR::init(
+            Self::iterations(&config, total_size) as f64,
+            config.learning_rate,
+        )
+        .load_record::<TrainBackend>(checkpoint.lr_scheduler_record);
+
+        Ok(Self {
+            frozen: checkpoint.frozen,
+            config,
+            phase: checkpoint.phase,
+            epoch: checkpoint.epoch,
+            train_shuffle: checkpoint.train_shuffle,
+            valid_shuffle: checkpoint.valid_shuffle,
+            train_loader,
+            valid_loader,
+            model,
+            best_model,
+            optimizer,
+            lr_scheduler,
+            best_loss: checkpoint.best_loss,
+            validation_loss_sum: checkpoint.validation_loss_sum,
+        })
+    }
+
+    fn to_checkpoint(&self) -> Result<OptimizationCheckpoint> {
+        Ok(OptimizationCheckpoint {
+            version: OPTIMIZATION_CHECKPOINT_VERSION,
+            config: (&self.config).into(),
+            frozen: self.frozen.clone(),
+            phase: self.phase.clone(),
+            epoch: self.epoch,
+            train_shuffle: self.train_shuffle.clone(),
+            valid_shuffle: self.valid_shuffle.clone(),
+            model_record: model_to_bytes(&self.model)?,
+            best_model_record: model_to_bytes(&self.best_model)?,
+            optimizer_record: optimizer_to_bytes(&self.optimizer)?,
+            lr_scheduler_record: self.lr_scheduler.to_record::<TrainBackend>(),
+            best_loss: self.best_loss,
+            validation_loss_sum: self.validation_loss_sum,
+        })
+    }
+}
+
+fn prepare_optimization(
+    train_set: Vec<FSRSItem>,
+    enable_short_term: bool,
+    num_relearning_steps: Option<usize>,
+) -> Result<PreparedOptimization> {
+    let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
+    let average_recall = calculate_average_recall(&train_set);
+    if train_set.len() < 8 {
+        return Ok(PreparedOptimization::Completed(DEFAULT_PARAMETERS.to_vec()));
+    }
+
+    let (initial_stability, initial_rating_count) =
+        initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)?;
+    let initialized_parameters: Vec<f32> = initial_stability
+        .into_iter()
+        .chain(DEFAULT_PARAMETERS[4..].iter().copied())
+        .collect();
+    if train_set.len() == dataset_for_initialization.len() || train_set.len() < 64 {
+        return Ok(PreparedOptimization::Completed(initialized_parameters));
+    }
+
+    let config = TrainingConfig::new(
+        ModelConfig {
+            freeze_initial_stability: !enable_short_term,
+            initial_stability: Some(initial_stability),
+            freeze_short_term_stability: !enable_short_term,
+            num_relearning_steps: num_relearning_steps.unwrap_or(1),
+        },
+        default_optimizer_config(),
+    );
+    let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
+    weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+
+    Ok(PreparedOptimization::Session(OptimizationSession::fresh(
+        FrozenTrainingRun {
+            train_set: weighted_train_set.clone(),
+            test_set: weighted_train_set,
+            initial_rating_count,
+        },
+        config,
+    )?))
+}
+
+enum SessionOutcome {
+    Completed(TrainModel, HashMap<u32, u32>),
+    Interrupted(OptimizationCheckpoint),
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Copy)]
+enum AbortAfter {
+    TrainBatch(usize),
+    ValidationBatch(usize),
+}
+
+fn run_session(
+    mut session: OptimizationSession,
+    progress: Option<ProgressCollector>,
+    abort_after: Option<AbortAfter>,
+) -> Result<SessionOutcome> {
+    TrainBackend::seed(session.config.seed);
+
+    let total_size = session.frozen.train_set.len();
+    let iterations = OptimizationSession::iterations(&session.config, total_size);
+    let init_w = session.config.model.init::<TrainBackend>().w.val();
+    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &session.model.w.device());
+    let interrupter = TrainingInterrupter::new();
+    let mut renderer: Box<dyn MetricsRenderer> = match progress {
+        Some(mut progress) => {
+            progress.interrupter = interrupter.clone();
+            Box::new(progress)
+        }
+        None => Box::new(NoProgress {}),
+    };
+
+    while session.epoch <= session.config.num_epochs {
+        if session.phase == TrainingPhase::Train {
+            let mut iterator = session
+                .train_loader
+                .iter_from_state(session.train_shuffle.clone());
+            while let Some(item) = iterator.next() {
+                let real_batch_size = item.delta_ts.shape().dims[0];
+                let lr = LrScheduler::step(&mut session.lr_scheduler);
+                let progress = iterator.progress();
+                let penalty = session.model.l2_regularization(
+                    init_w.clone(),
+                    params_stddev.clone(),
+                    real_batch_size,
+                    total_size,
+                    session.config.gamma,
+                );
+                let loss = session.model.forward_classification(
+                    item.t_historys,
+                    item.r_historys,
+                    item.delta_ts,
+                    item.labels,
+                    item.weights,
+                    Reduction::Sum,
+                );
+                let mut gradients = (loss + penalty).backward();
+                if session.config.model.freeze_initial_stability {
+                    gradients = session.model.freeze_initial_stability(gradients);
+                }
+                if session.config.model.freeze_short_term_stability {
+                    gradients = session.model.freeze_short_term_stability(gradients);
+                }
+                let grads = GradientsParams::from_grads(gradients, &session.model);
+                session.model = session.optimizer.step(lr, session.model, grads);
+                session.model.w = parameter_clipper(
+                    session.model.w,
+                    session.config.model.num_relearning_steps,
+                    !session.config.model.freeze_short_term_stability,
+                );
+                session.train_shuffle = iterator.state();
+
+                renderer.render_train(TrainingProgress {
+                    progress,
+                    epoch: session.epoch,
+                    epoch_total: session.config.num_epochs,
+                    iteration: session.train_shuffle.current_index,
+                });
+
+                if matches!(
+                    abort_after,
+                    Some(AbortAfter::TrainBatch(target))
+                        if session.epoch == 1 && session.train_shuffle.current_index >= target
+                ) {
+                    return Ok(SessionOutcome::Interrupted(session.to_checkpoint()?));
+                }
+                if interrupter.should_stop() {
+                    return Ok(SessionOutcome::Interrupted(session.to_checkpoint()?));
+                }
+            }
+
+            session.phase = TrainingPhase::Validate;
+            session.valid_shuffle = session.valid_loader.state_for_epoch(session.epoch);
+            session.validation_loss_sum = 0.0;
+        }
+
+        let model_valid = session.model.valid();
+        let mut iterator = session
+            .valid_loader
+            .iter_from_state(session.valid_shuffle.clone());
+        while let Some(batch) = iterator.next() {
+            let real_batch_size = batch.delta_ts.shape().dims[0];
+            let penalty = model_valid.l2_regularization(
+                init_w.valid(),
+                params_stddev.valid(),
+                real_batch_size,
+                total_size,
+                session.config.gamma,
+            );
+            let loss = model_valid.forward_classification(
+                batch.t_historys,
+                batch.r_historys,
+                batch.delta_ts,
+                batch.labels,
+                batch.weights,
+                Reduction::Sum,
+            );
+            session.validation_loss_sum +=
+                loss.into_scalar().to_f64() + penalty.into_scalar().to_f64();
+            session.valid_shuffle = iterator.state();
+            renderer.render_valid(TrainingProgress {
+                progress: iterator.progress(),
+                epoch: session.epoch,
+                epoch_total: session.config.num_epochs,
+                iteration: session.valid_shuffle.current_index,
+            });
+
+            if matches!(
+                abort_after,
+                Some(AbortAfter::ValidationBatch(target))
+                    if session.epoch == 1 && session.valid_shuffle.current_index >= target
+            ) {
+                return Ok(SessionOutcome::Interrupted(session.to_checkpoint()?));
+            }
+            if interrupter.should_stop() {
+                return Ok(SessionOutcome::Interrupted(session.to_checkpoint()?));
+            }
+        }
+
+        let loss_valid = session.validation_loss_sum / session.frozen.test_set.len() as f64;
+        info!(
+            "epoch: {:?}/{:?} loss: {:?}",
+            session.epoch, session.config.num_epochs, loss_valid
+        );
+        if loss_valid < session.best_loss {
+            session.best_loss = loss_valid;
+            session.best_model = session.model.clone();
+        }
+
+        if session.epoch == session.config.num_epochs {
+            break;
+        }
+
+        session.epoch += 1;
+        session.phase = TrainingPhase::Train;
+        session.train_shuffle = session.train_loader.state_for_epoch(session.epoch);
+        session.valid_shuffle = session.valid_loader.state_for_epoch(session.epoch);
+        session.validation_loss_sum = 0.0;
+        session.lr_scheduler =
+            CosineAnnealingLR::init(iterations as f64, session.config.learning_rate)
+                .load_record::<TrainBackend>(session.lr_scheduler.to_record::<TrainBackend>());
+    }
+
+    info!("best_loss: {:?}", session.best_loss);
+
+    Ok(SessionOutcome::Completed(
+        session.best_model,
+        session.frozen.initial_rating_count,
+    ))
+}
+
+pub fn compute_parameters_resumable(
+    ComputeParametersInput {
+        train_set,
+        progress,
+        enable_short_term,
+        num_relearning_steps,
+        ..
+    }: ComputeParametersInput,
+) -> Result<OptimizationOutcome> {
+    let outcome = match prepare_optimization(train_set, enable_short_term, num_relearning_steps)? {
+        PreparedOptimization::Completed(parameters) => OptimizationOutcome::Completed(parameters),
+        PreparedOptimization::Session(session) => {
+            initialize_progress(&progress, &session);
+            match run_session(
+                session,
+                progress.clone().map(|p| ProgressCollector::new(p, 0)),
+                None,
+            )? {
+                SessionOutcome::Completed(model, initial_rating_count) => {
+                    let optimized_parameters = model.w.val().to_data().to_vec::<f32>().unwrap();
+                    OptimizationOutcome::Completed(finalize_parameters(
+                        optimized_parameters,
+                        &initial_rating_count,
+                    )?)
+                }
+                SessionOutcome::Interrupted(checkpoint) => {
+                    OptimizationOutcome::Interrupted(checkpoint)
+                }
+            }
+        }
+    };
+    finish_progress(&progress);
+    Ok(outcome)
+}
+
+pub fn resume_compute_parameters(
+    checkpoint: OptimizationCheckpoint,
+    progress: Option<Arc<Mutex<CombinedProgressState>>>,
+) -> Result<OptimizationOutcome> {
+    let session = OptimizationSession::from_checkpoint(checkpoint)?;
+    initialize_progress(&progress, &session);
+    let outcome = match run_session(
+        session,
+        progress.clone().map(|p| ProgressCollector::new(p, 0)),
+        None,
+    )? {
+        SessionOutcome::Completed(model, initial_rating_count) => {
+            let optimized_parameters = model.w.val().to_data().to_vec::<f32>().unwrap();
+            OptimizationOutcome::Completed(finalize_parameters(
+                optimized_parameters,
+                &initial_rating_count,
+            )?)
+        }
+        SessionOutcome::Interrupted(checkpoint) => OptimizationOutcome::Interrupted(checkpoint),
+    };
+    finish_progress(&progress);
+    Ok(outcome)
+}
+
+/// Computes optimized parameters for the FSRS model based on training data.
+///
+/// This function trains the model on the provided dataset and returns optimized parameters.
+///
+/// # Arguments
+/// * `input` - Input parameters including the training dataset and configuration
+///
+/// # Returns
+/// A `Result<Vec<f32>>` containing the optimized parameters
+pub fn compute_parameters(input: ComputeParametersInput) -> Result<Vec<f32>> {
+    match compute_parameters_resumable(input)? {
+        OptimizationOutcome::Completed(parameters) => Ok(parameters),
+        OptimizationOutcome::Interrupted(_) => Err(FSRSError::Interrupted),
+    }
 }
 
 pub fn benchmark(
@@ -387,156 +910,24 @@ pub fn benchmark(
             freeze_short_term_stability: !enable_short_term,
             num_relearning_steps: num_relearning_steps.unwrap_or(1),
         },
-        AdamConfig::new().with_epsilon(1e-8),
+        default_optimizer_config(),
     );
-    // save RAM and speed up training
     config.max_seq_len = 64;
     let mut weighted_train_set = recency_weighted_fsrs_items(train_set);
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
-    let model = train::<Autodiff<B>>(
-        weighted_train_set.clone(),
-        weighted_train_set,
-        &config,
-        None,
-    );
-    let parameters: Vec<f32> = model.unwrap().w.val().to_data().to_vec::<f32>().unwrap();
-    parameters
-}
-
-fn train<B: AutodiffBackend>(
-    train_set: Vec<WeightedFSRSItem>,
-    test_set: Vec<WeightedFSRSItem>,
-    config: &TrainingConfig,
-    progress: Option<ProgressCollector>,
-) -> Result<Model<B>> {
-    B::seed(config.seed);
-
-    // Training data
-    let total_size = train_set.len();
-    let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
-    let batch_dataset =
-        BatchTensorDataset::<B>::new(FSRSDataset::from(train_set), config.batch_size);
-    let dataloader_train = ShuffleDataLoader::new(batch_dataset, config.seed);
-
-    let batch_dataset = BatchTensorDataset::<B::InnerBackend>::new(
-        FSRSDataset::from(test_set.clone()),
-        config.batch_size,
-    );
-    let dataloader_valid = ShuffleDataLoader::new(batch_dataset, config.seed);
-
-    let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
-    let interrupter = TrainingInterrupter::new();
-    let mut renderer: Box<dyn MetricsRenderer> = match progress {
-        Some(mut progress) => {
-            progress.interrupter = interrupter.clone();
-            Box::new(progress)
-        }
-        None => Box::new(NoProgress {}),
-    };
-
-    let mut model: Model<B> = config.model.init();
-    let init_w = model.w.val();
-    let params_stddev = Tensor::from_floats(PARAMS_STDDEV, &model.w.device());
-    let mut optim = config.optimizer.init::<B, Model<B>>();
-
-    let mut best_loss = f64::INFINITY;
-    let mut best_model = model.clone();
-    for epoch in 1..=config.num_epochs {
-        let mut iterator = dataloader_train.iter();
-        let mut iteration = 0;
-        while let Some(item) = iterator.next() {
-            iteration += 1;
-            let real_batch_size = item.delta_ts.shape().dims[0];
-            let lr = LrScheduler::step(&mut lr_scheduler);
-            let progress = iterator.progress();
-            let penalty = model.l2_regularization(
-                init_w.clone(),
-                params_stddev.clone(),
-                real_batch_size,
-                total_size,
-                config.gamma,
-            );
-            let loss = model.forward_classification(
-                item.t_historys,
-                item.r_historys,
-                item.delta_ts,
-                item.labels,
-                item.weights,
-                Reduction::Sum,
-            );
-            let mut gradients = (loss + penalty).backward();
-            if config.model.freeze_initial_stability {
-                gradients = model.freeze_initial_stability(gradients);
-            }
-            if config.model.freeze_short_term_stability {
-                gradients = model.freeze_short_term_stability(gradients);
-            }
-            let grads = GradientsParams::from_grads(gradients, &model);
-            model = optim.step(lr, model, grads);
-            model.w = parameter_clipper(
-                model.w,
-                config.model.num_relearning_steps,
-                !config.model.freeze_short_term_stability,
-            );
-            // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
-            renderer.render_train(TrainingProgress {
-                progress,
-                epoch,
-                epoch_total: config.num_epochs,
-                iteration,
-            });
-
-            if interrupter.should_stop() {
-                break;
-            }
-        }
-
-        if interrupter.should_stop() {
-            break;
-        }
-
-        let model_valid = model.valid();
-        let mut loss_valid = 0.0;
-        for batch in dataloader_valid.iter() {
-            let real_batch_size = batch.delta_ts.shape().dims[0];
-            let penalty = model_valid.l2_regularization(
-                init_w.valid(),
-                params_stddev.valid(),
-                real_batch_size,
-                total_size,
-                config.gamma,
-            );
-            let loss = model_valid.forward_classification(
-                batch.t_historys,
-                batch.r_historys,
-                batch.delta_ts,
-                batch.labels,
-                batch.weights,
-                Reduction::Sum,
-            );
-            let loss = loss.into_scalar().to_f64();
-            let penalty = penalty.into_scalar().to_f64();
-            loss_valid += loss + penalty;
-
-            if interrupter.should_stop() {
-                break;
-            }
-        }
-        loss_valid /= test_set.len() as f64;
-        info!("epoch: {:?} loss: {:?}", epoch, loss_valid);
-        if loss_valid < best_loss {
-            best_loss = loss_valid;
-            best_model = model.clone();
-        }
+    let session = OptimizationSession::fresh(
+        FrozenTrainingRun {
+            train_set: weighted_train_set.clone(),
+            test_set: weighted_train_set,
+            initial_rating_count: HashMap::new(),
+        },
+        config,
+    )
+    .unwrap();
+    match run_session(session, None, None).unwrap() {
+        SessionOutcome::Completed(model, _) => model.w.val().to_data().to_vec::<f32>().unwrap(),
+        SessionOutcome::Interrupted(_) => unreachable!("benchmark should not be interrupted"),
     }
-
-    info!("best_loss: {:?}", best_loss);
-
-    if interrupter.should_stop() {
-        return Err(FSRSError::Interrupted);
-    }
-
-    Ok(best_model)
 }
 
 struct NoProgress {}
@@ -865,5 +1256,159 @@ mod tests {
                 dbg!(&metrics);
             }
         }
+    }
+
+    fn history_to_items(history: &[(u32, u32)]) -> Vec<FSRSItem> {
+        let mut reviews = Vec::new();
+        let mut items = Vec::new();
+        for &(rating, delta_t) in history {
+            reviews.push(crate::FSRSReview { rating, delta_t });
+            if reviews.iter().any(|review| review.delta_t > 0) {
+                items.push(FSRSItem {
+                    reviews: reviews.clone(),
+                });
+            }
+        }
+        items
+    }
+
+    fn synthetic_training_items() -> Vec<FSRSItem> {
+        let histories = [
+            vec![(3, 0), (4, 1), (3, 3), (4, 7), (3, 16), (4, 35)],
+            vec![(2, 0), (3, 1), (4, 2), (3, 6), (4, 13), (3, 29)],
+            vec![(1, 0), (3, 0), (3, 1), (4, 4), (3, 10), (4, 24)],
+            vec![(4, 0), (4, 2), (3, 8), (4, 18), (3, 40)],
+            vec![(3, 0), (2, 1), (3, 2), (4, 5), (3, 12), (4, 28)],
+            vec![(1, 0), (2, 0), (3, 1), (3, 3), (4, 9), (3, 21), (4, 45)],
+        ];
+
+        histories
+            .iter()
+            .cycle()
+            .take(48)
+            .flat_map(|history| history_to_items(history))
+            .collect()
+    }
+
+    fn interrupted_checkpoint(
+        items: Vec<FSRSItem>,
+        abort_after: AbortAfter,
+    ) -> OptimizationCheckpoint {
+        let initial_stability: [f32; 4] = DEFAULT_PARAMETERS[0..4].try_into().unwrap();
+        let initial_rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
+        let config = TrainingConfig::new(
+            ModelConfig {
+                freeze_initial_stability: false,
+                initial_stability: Some(initial_stability),
+                freeze_short_term_stability: false,
+                num_relearning_steps: 1,
+            },
+            default_optimizer_config(),
+        );
+        let mut config = config;
+        config.batch_size = 32;
+        config.num_epochs = 3;
+        let mut weighted_train_set = recency_weighted_fsrs_items(items);
+        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+        let session = OptimizationSession::fresh(
+            FrozenTrainingRun {
+                train_set: weighted_train_set.clone(),
+                test_set: weighted_train_set,
+                initial_rating_count,
+            },
+            config,
+        )
+        .unwrap();
+
+        match run_session(session, None, Some(abort_after)).unwrap() {
+            SessionOutcome::Interrupted(checkpoint) => checkpoint,
+            SessionOutcome::Completed(_, _) => panic!("expected interrupted optimization"),
+        }
+    }
+
+    fn baseline_parameters(items: Vec<FSRSItem>) -> Vec<f32> {
+        let initial_stability: [f32; 4] = DEFAULT_PARAMETERS[0..4].try_into().unwrap();
+        let initial_rating_count = HashMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]);
+        let config = TrainingConfig::new(
+            ModelConfig {
+                freeze_initial_stability: false,
+                initial_stability: Some(initial_stability),
+                freeze_short_term_stability: false,
+                num_relearning_steps: 1,
+            },
+            default_optimizer_config(),
+        );
+        let mut config = config;
+        config.batch_size = 32;
+        config.num_epochs = 3;
+        let mut weighted_train_set = recency_weighted_fsrs_items(items);
+        weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+        let session = OptimizationSession::fresh(
+            FrozenTrainingRun {
+                train_set: weighted_train_set.clone(),
+                test_set: weighted_train_set,
+                initial_rating_count,
+            },
+            config,
+        )
+        .unwrap();
+
+        match run_session(session, None, None).unwrap() {
+            SessionOutcome::Completed(model, initial_rating_count) => finalize_parameters(
+                model.w.val().to_data().to_vec::<f32>().unwrap(),
+                &initial_rating_count,
+            )
+            .unwrap(),
+            SessionOutcome::Interrupted(_) => panic!("baseline should not interrupt"),
+        }
+    }
+
+    #[test]
+    fn test_resume_after_train_interrupt_matches_baseline() {
+        use burn::tensor::{TensorData, Tolerance};
+
+        let items = synthetic_training_items();
+        let baseline = baseline_parameters(items.clone());
+
+        let checkpoint = interrupted_checkpoint(items, AbortAfter::TrainBatch(2));
+        let resumed = resume_compute_parameters(checkpoint, None).unwrap();
+
+        let OptimizationOutcome::Completed(parameters) = resumed else {
+            panic!("resume should complete");
+        };
+        TensorData::from(parameters.as_slice()).assert_approx_eq::<f32>(
+            &TensorData::from(baseline.as_slice()),
+            Tolerance::absolute(1e-4),
+        );
+    }
+
+    #[test]
+    fn test_resume_after_validation_interrupt_matches_baseline() {
+        use burn::tensor::{TensorData, Tolerance};
+
+        let items = synthetic_training_items();
+        let baseline = baseline_parameters(items.clone());
+
+        let checkpoint = interrupted_checkpoint(items, AbortAfter::ValidationBatch(1));
+        let resumed = resume_compute_parameters(checkpoint, None).unwrap();
+
+        let OptimizationOutcome::Completed(parameters) = resumed else {
+            panic!("resume should complete");
+        };
+        TensorData::from(parameters.as_slice()).assert_approx_eq::<f32>(
+            &TensorData::from(baseline.as_slice()),
+            Tolerance::absolute(1e-4),
+        );
+    }
+
+    #[test]
+    fn test_resume_rejects_incompatible_checkpoint() {
+        let checkpoint =
+            interrupted_checkpoint(synthetic_training_items(), AbortAfter::TrainBatch(1));
+        let mut checkpoint = checkpoint;
+        checkpoint.version += 1;
+
+        let err = resume_compute_parameters(checkpoint, None).unwrap_err();
+        assert_eq!(err, FSRSError::IncompatibleCheckpoint);
     }
 }

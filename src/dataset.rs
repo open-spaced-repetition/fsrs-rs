@@ -19,7 +19,7 @@ pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) struct WeightedFSRSItem {
     pub weight: f32,
     pub item: FSRSItem,
