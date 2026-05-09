@@ -33,7 +33,7 @@ fn synthetic_items() -> Vec<FSRSItem> {
                 let delta_t = day - last_day;
                 reviews.push(FSRSReview {
                     rating: *rating,
-                    delta_t,
+                    delta_t: delta_t as f32,
                 });
                 items.push(FSRSItem {
                     reviews: reviews.clone(),
@@ -56,6 +56,7 @@ fn benchmark_compute_parameters_fsrs7_penalty(c: &mut Criterion) {
         progress: None,
         enable_short_term: true,
         num_relearning_steps: None,
+        ..Default::default()
     };
 
     let mut group = c.benchmark_group("fsrs7_penalty");

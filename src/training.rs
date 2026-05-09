@@ -312,7 +312,15 @@ fn normalize_for_model_version(
                 item
             })
             .collect(),
-        ComputeParametersVersion::Fsrs7 => train_set,
+        ComputeParametersVersion::Fsrs7 => train_set
+            .into_iter()
+            .map(|mut item| {
+                for review in &mut item.reviews {
+                    review.delta_t = review.delta_t.max(0.0);
+                }
+                item
+            })
+            .collect(),
     }
 }
 /// Computes optimized parameters for the FSRS model based on training data.
@@ -713,7 +721,7 @@ mod tests {
         let fsrs6_days: Vec<f32> = fsrs6[0].reviews.iter().map(|r| r.delta_t).collect();
         let fsrs7_days: Vec<f32> = fsrs7[0].reviews.iter().map(|r| r.delta_t).collect();
         assert_eq!(fsrs6_days, vec![0.0, 0.0, 1.0]);
-        assert_eq!(fsrs7_days, vec![-0.2, 0.49, 0.51]);
+        assert_eq!(fsrs7_days, vec![0.0, 0.49, 0.51]);
     }
 
     #[test]

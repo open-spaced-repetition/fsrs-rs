@@ -65,7 +65,7 @@ let mut items = Vec::new();
 let mut last = history[0].0;
 
 for (date, rating) in history {
-    let delta_t = (date - last).num_days() as u32;
+    let delta_t = (date - last).num_days() as f32;
     accumulated.push(FSRSReview { rating, delta_t });
     items.push(FSRSItem {
         reviews: accumulated.clone(),
@@ -95,8 +95,8 @@ let interval = 10.0;
 let initial_state = fsrs.memory_state_from_sm2(ease_factor, interval, sm2_retention)?;
 
 let reviews = vec![
-    FSRSReview { rating: 3, delta_t: 5 },
-    FSRSReview { rating: 4, delta_t: 10 },
+    FSRSReview { rating: 3, delta_t: 5.0 },
+    FSRSReview { rating: 4, delta_t: 10.0 },
 ];
 
 let memory_state = fsrs.memory_state(

@@ -98,6 +98,12 @@ impl Deref for ReviewPriorityFn {
     }
 }
 
+impl ReviewPriorityFn {
+    pub fn new(f: impl Fn(&Card) -> i32 + Sync + Send + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+}
+
 impl std::fmt::Debug for ReviewPriorityFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Wrap(<function>)")
@@ -107,6 +113,36 @@ impl std::fmt::Debug for ReviewPriorityFn {
 impl Default for ReviewPriorityFn {
     fn default() -> Self {
         Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
+    }
+}
+
+#[derive(Clone)]
+#[allow(clippy::type_complexity)]
+pub struct ReviewRatingCostFn(Arc<dyn Fn(&Card, usize, f32) -> f32 + Sync + Send>);
+
+impl PartialEq for ReviewRatingCostFn {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Deref for ReviewRatingCostFn {
+    type Target = dyn Fn(&Card, usize, f32) -> f32 + Sync + Send;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl ReviewRatingCostFn {
+    pub fn new(f: impl Fn(&Card, usize, f32) -> f32 + Sync + Send + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+}
+
+impl std::fmt::Debug for ReviewRatingCostFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
     }
 }
 
@@ -157,6 +193,7 @@ pub struct SimulatorConfig {
     pub suspend_after_lapses: Option<u32>,
     pub post_scheduling_fn: Option<PostSchedulingFn>,
     pub review_priority_fn: Option<ReviewPriorityFn>,
+    pub review_rating_cost_fn: Option<ReviewRatingCostFn>,
     pub learning_step_transitions: [[f32; 4]; 3],
     pub relearning_step_transitions: [[f32; 4]; 3],
     pub state_rating_costs: [[f32; 4]; 3],
@@ -179,6 +216,7 @@ impl Default for SimulatorConfig {
             suspend_after_lapses: None,
             post_scheduling_fn: None,
             review_priority_fn: None,
+            review_rating_cost_fn: None,
             learning_step_transitions: [
                 [0.3686, 0.0628, 0.5108, 0.0577],
                 [0.0442, 0.4553, 0.4457, 0.0549],
@@ -986,10 +1024,14 @@ pub fn simulate(
 
     let review_priority_fn = config.review_priority_fn.clone().unwrap_or_default();
 
+    fn effective_due_day(card: &Card) -> i32 {
+        card.due.max(0.0) as i32
+    }
+
     fn card_priority(card: &Card, learn: bool, cb: &ReviewPriorityFn) -> Reverse<(i32, bool, i32)> {
         let priority = cb(card);
         // high priority for early due, review, custom priority
-        Reverse((card.due as i32, learn, priority))
+        Reverse((effective_due_day(card), learn, priority))
     }
 
     for (i, card) in cards.iter().enumerate() {
@@ -1008,7 +1050,7 @@ pub fn simulate(
         let card = &mut cards[card_index];
         let fsrs = simulated_fsrs(&card.parameters);
 
-        let day_index = card.due as usize;
+        let day_index = card.due.max(0.0) as usize;
 
         let is_learn = card.last_date == f32::NEG_INFINITY;
 
@@ -1095,7 +1137,7 @@ pub fn simulate(
         } else {
             // For review cards
             let last_stability = card.stability;
-            let ivl = card.due - card.last_date;
+            let ivl = day_index as f32 - card.last_date;
 
             // Calculate retrievability for entries where has_learned is true
             let retrievability =
@@ -1123,7 +1165,7 @@ pub fn simulate(
                     last_stability,
                     retrievability,
                     card.difficulty,
-                    card.due - card.last_date,
+                    ivl,
                 );
                 let post_lapse_difficulty =
                     next_d_with_fsrs(fsrs, &card.parameters, card.difficulty, rating);
@@ -1138,12 +1180,18 @@ pub fn simulate(
                     config.relearning_step_count,
                     &mut rng,
                 );
-                (
-                    new_s,
-                    new_d,
-                    config.state_rating_costs[REVIEW][rating - 1] + cost,
-                )
+                let review_cost = config
+                    .review_rating_cost_fn
+                    .as_ref()
+                    .map(|cost_fn| cost_fn(card, rating, retrievability))
+                    .unwrap_or(config.state_rating_costs[REVIEW][rating - 1]);
+                (new_s, new_d, review_cost + cost)
             } else {
+                let review_cost = config
+                    .review_rating_cost_fn
+                    .as_ref()
+                    .map(|cost_fn| cost_fn(card, rating, retrievability))
+                    .unwrap_or(config.state_rating_costs[REVIEW][rating - 1]);
                 (
                     stability_after_success_with_fsrs(
                         fsrs,
@@ -1155,7 +1203,7 @@ pub fn simulate(
                         ivl,
                     ),
                     next_d_with_fsrs(fsrs, &card.parameters, card.difficulty, rating),
-                    config.state_rating_costs[REVIEW][rating - 1],
+                    review_cost,
                 )
             };
 
@@ -2081,7 +2129,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            3354.437
+            3379.6497
         );
         Ok(())
     }
@@ -2280,6 +2328,40 @@ mod tests {
         run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 70.820175)?;
         println!("Late scheduled due cards reviewed first.");
         run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 71.20782)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_review_rating_cost_fn_uses_actual_retrievability() -> Result<()> {
+        let card = Card {
+            id: 1,
+            difficulty: 5.0,
+            stability: 20.0,
+            last_date: -20.0,
+            due: -10.0,
+            interval: 10.0,
+            lapses: 0,
+            desired_retention: 0.9,
+            parameters: Arc::new(DEFAULT_PARAMETERS.to_vec()),
+        };
+        let scheduled_cost = card.retention_on(card.due) * 1000.0;
+        let actual_cost = card.retention_on(0.0) * 1000.0;
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_span: 1,
+            learn_limit: 0,
+            review_limit: 1,
+            state_rating_costs: [[0.0; 4]; 3],
+            review_rating_cost_fn: Some(ReviewRatingCostFn::new(
+                |_card, _rating, retrievability| retrievability * 1000.0,
+            )),
+            ..Default::default()
+        };
+
+        let result = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(vec![card]))?;
+
+        assert!((result.cost_per_day[0] - actual_cost).abs() < 0.001);
+        assert!((result.cost_per_day[0] - scheduled_cost).abs() > 1.0);
         Ok(())
     }
 

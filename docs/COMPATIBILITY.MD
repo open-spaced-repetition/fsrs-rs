@@ -42,6 +42,8 @@
 
 - FSRS-7 parameter clipping is NaN-safe: non-finite values are converted to
   finite bounds before clamping.
+- Negative elapsed days are normalized to `0.0` before FSRS-7 training and
+  state updates, matching the existing public retrievability behavior.
 - Outlier filtering no longer assumes every training item has a long-term
   review (`delta_t >= 1.0`), so same-day-only items no longer panic.
 - Long-term `delta_t` grouping used by outlier filtering/initialization is

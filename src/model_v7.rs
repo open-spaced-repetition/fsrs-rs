@@ -45,6 +45,7 @@ impl<B: Backend> VersionOps<B> for Fsrs7Ops {
         last_s: Tensor<B, 1>,
         last_d: Tensor<B, 1>,
     ) -> MemoryStateTensors<B> {
+        let delta_t = delta_t.clamp_min(0.0);
         let retrievability = power_forgetting_curve(model, delta_t.clone(), last_s.clone());
         let new_s_long_term = stability_for_set(
             model,
@@ -346,7 +347,7 @@ pub(super) fn power_forgetting_curve<B: Backend>(
     t: Tensor<B, 1>,
     s: Tensor<B, 1>,
 ) -> Tensor<B, 1> {
-    let t_over_s = t / s.clone();
+    let t_over_s = t.clamp_min(0.0) / s.clone();
 
     let decay1 = -model.w.get(27);
     let decay2 = -model.w.get(28);
@@ -603,6 +604,33 @@ mod tests {
             .into_scalar();
         assert!(interval.is_finite());
         assert!(interval >= 0.0);
+    }
+
+    #[test]
+    fn test_fsrs7_negative_elapsed_days_match_zero_elapsed_days() {
+        let model = Model::new(ModelConfig::default());
+        let rating = Tensor::from_floats([3.0], &DEVICE);
+        let state = MemoryStateTensors {
+            stability: Tensor::from_floats([5.0], &DEVICE),
+            difficulty: Tensor::from_floats([6.0], &DEVICE),
+        };
+
+        let negative = model.step(
+            Tensor::from_floats([-0.25], &DEVICE),
+            rating.clone(),
+            state.clone(),
+            1,
+        );
+        let zero = model.step(Tensor::from_floats([0.0], &DEVICE), rating, state, 1);
+
+        negative
+            .stability
+            .to_data()
+            .assert_approx_eq::<f32>(&zero.stability.to_data(), Tolerance::absolute(1e-6));
+        negative
+            .difficulty
+            .to_data()
+            .assert_approx_eq::<f32>(&zero.difficulty.to_data(), Tolerance::absolute(1e-6));
     }
 
     #[test]

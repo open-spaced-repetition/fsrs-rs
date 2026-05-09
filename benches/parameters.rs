@@ -122,12 +122,12 @@ fn convert_to_fsrs_items(
                     .take(idx + 1)
                     .map(|r| FSRSReview {
                         rating: r.button_chosen as u32,
-                        delta_t: r.last_interval.max(0) as u32,
+                        delta_t: r.last_interval.max(0) as f32,
                     })
                     .collect();
                 (entry.id, FSRSItem { reviews })
             })
-            .filter(|(_, item)| item.reviews.last().is_some_and(|r| r.delta_t > 0)) // Ensure last review has delta_t > 0
+            .filter(|(_, item)| item.reviews.last().is_some_and(|r| r.delta_t > 0.0)) // Ensure last review has delta_t > 0
             .collect(),
     )
 }
@@ -185,7 +185,7 @@ fn prepare_training_data_inline(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSR
     let filtered_items: Vec<FSRSItem> = items
         .into_iter()
         .filter(|item| {
-            !item.reviews.is_empty() && item.reviews.len() > 1 && item.reviews[0].delta_t == 0
+            !item.reviews.is_empty() && item.reviews.len() > 1 && item.reviews[0].delta_t == 0.0
         })
         .collect();
 
@@ -229,6 +229,7 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
+        ..Default::default()
     };
 
     let mut group = c.benchmark_group("parameters");
@@ -249,6 +250,7 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
+        ..Default::default()
     };
 
     let mut group = c.benchmark_group("parameters");
