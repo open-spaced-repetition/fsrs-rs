@@ -1,9 +1,7 @@
 use crate::FSRS6_DEFAULT_PARAMETERS;
-#[cfg(test)]
 use crate::FSRSItem;
 use crate::error::{FSRSError, Result};
 use crate::simulation::S_MIN;
-#[cfg(test)]
 use ndarray::Array1;
 use std::collections::HashMap;
 
@@ -14,7 +12,6 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
     (4, FSRS6_DEFAULT_PARAMETERS[3]),
 ];
 
-#[cfg(test)]
 pub(crate) fn initialize_stability_parameters(
     fsrs_items: Vec<FSRSItem>,
     average_recall: f32,
@@ -28,12 +25,9 @@ pub(crate) fn initialize_stability_parameters(
     ))
 }
 
-#[cfg(test)]
 type FirstRating = u32;
-#[cfg(test)]
 type Count = u32;
 
-#[cfg(test)]
 fn prepare_dataset_for_initialization(
     fsrs_items: Vec<FSRSItem>,
 ) -> HashMap<FirstRating, Vec<AverageRecall>> {
@@ -87,14 +81,12 @@ fn prepare_dataset_for_initialization(
 }
 
 /// The average pass rate & count for a single delta_t for a given first rating.
-#[cfg(test)]
 struct AverageRecall {
     delta_t: f64,
     recall: f64,
     count: f64,
 }
 
-#[cfg(test)]
 fn total_rating_count(
     dataset_for_initialization: &HashMap<FirstRating, Vec<AverageRecall>>,
 ) -> HashMap<FirstRating, Count> {
@@ -107,14 +99,12 @@ fn total_rating_count(
         .collect()
 }
 
-#[cfg(test)]
 fn power_forgetting_curve(t: &Array1<f64>, s: f64) -> Array1<f64> {
     let decay = -FSRS6_DEFAULT_PARAMETERS[20] as f64;
     let factor = 0.9f64.powf(1.0 / decay) - 1.0;
     (t / s * factor + 1.0).mapv(|v| v.powf(decay))
 }
 
-#[cfg(test)]
 fn loss(
     delta_t: &Array1<f64>,
     recall: &Array1<f64>,
@@ -133,7 +123,6 @@ fn loss(
 
 pub(crate) const INIT_S_MAX: f32 = 100.0;
 
-#[cfg(test)]
 fn search_parameters(
     mut dataset_for_initialization: HashMap<FirstRating, Vec<AverageRecall>>,
     average_recall: f32,

@@ -23,10 +23,14 @@ while keeping shared model state/config logic in `src/model.rs`.
   - `src/inference_v6.rs` (FSRS-6 defaults/constants)
   - `src/inference_v7.rs` (FSRS-7 defaults)
   - shared API/orchestration in `src/inference.rs`
-- Training schedule-penalty split by version:
-  - `src/training_v6.rs` (FSRS-6 no-op penalty path)
+- Training penalty split by version:
+  - `src/training_v6.rs` (FSRS-6 L2 regularization; schedule penalty remains
+    no-op)
   - `src/training_v7.rs` (FSRS-7 penalty math/gradients)
   - shared training loop/objective composition in `src/training.rs`
+- Training initial-stability normalization is version-specific:
+  - FSRS-6 uses the legacy data-derived initializer and `smooth_and_fill()`.
+  - FSRS-7 uses its FSRS-7 initializer/fill logic for params `0..3`.
 
 ## Dispatch Strategy
 
@@ -52,6 +56,8 @@ while keeping shared model state/config logic in `src/model.rs`.
   - runtime tensors (`delta_t`, `rating`, `stability`, `difficulty`)
 - Data updated:
   - next-step `MemoryStateTensors` during `Model::step()`
+  - optimized initial-stability params `0..3` after training, normalized by the
+    selected model version before return
 - Data storage:
   - no new persistence; all values remain in-memory
   - FSRS-7 S90 LUT cache remains process-local memory only

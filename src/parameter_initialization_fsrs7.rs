@@ -295,6 +295,15 @@ fn fill_initial_stabilities_fsrs7(rating_stability: &HashMap<u32, f32>) -> Resul
     Ok(values.map(|v| v.clamp(S_MIN, INIT_S_MAX)))
 }
 
+pub(crate) fn smooth_initial_stabilities_fsrs7(initial_stability: [f32; 4]) -> Result<[f32; 4]> {
+    fill_initial_stabilities_fsrs7(&HashMap::from([
+        (1, initial_stability[0]),
+        (2, initial_stability[1]),
+        (3, initial_stability[2]),
+        (4, initial_stability[3]),
+    ]))
+}
+
 pub(crate) fn initialize_parameters_fsrs7(
     fsrs_items: Vec<FSRSItem>,
     average_recall: f32,
@@ -321,4 +330,21 @@ pub(crate) fn initialize_parameters_fsrs7(
 
     let initial_stability = fill_initial_stabilities_fsrs7(&best_stability)?;
     Ok((initial_stability, best_curve, best_rating_count))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_smooth_initial_stabilities_fsrs7_is_monotonic() {
+        let actual = smooth_initial_stabilities_fsrs7([4.0, 3.0, 2.0, 1.0]).unwrap();
+        assert_eq!(actual, [4.0, 4.0, 4.0, 4.0]);
+    }
+
+    #[test]
+    fn test_smooth_initial_stabilities_fsrs7_clamps_bounds() {
+        let actual = smooth_initial_stabilities_fsrs7([0.0, 0.00005, 0.001, 200.0]).unwrap();
+        assert_eq!(actual, [0.0001, 0.0001, 0.001, 100.0]);
+    }
 }

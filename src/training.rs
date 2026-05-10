@@ -6,8 +6,10 @@ use crate::dataset::{
 use crate::error::Result;
 use crate::model::{Model, ModelConfig, ModelVersion, parameters_to_model};
 use crate::parameter_clipper::parameter_clipper;
-use crate::parameter_initialization::smooth_and_fill;
-use crate::parameter_initialization_fsrs7::initialize_parameters_fsrs7;
+use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
+use crate::parameter_initialization_fsrs7::{
+    initialize_parameters_fsrs7, smooth_initial_stabilities_fsrs7,
+};
 use crate::{DEFAULT_PARAMETERS, FSRS6_DEFAULT_PARAMETERS, FSRSError};
 use burn::backend::Autodiff;
 use burn::backend::ndarray::NdArray;
@@ -364,10 +366,21 @@ pub fn compute_parameters(
         });
     }
 
-    let (initialized_parameters, initial_rating_count) = match model_version {
-        ComputeParametersVersion::Fsrs6 => (FSRS6_DEFAULT_PARAMETERS.to_vec(), None),
+    let (initialized_parameters, fsrs6_initial_rating_count) = match model_version {
+        ComputeParametersVersion::Fsrs6 => {
+            let (initial_stability, initial_rating_count) =
+                initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)
+                    .inspect_err(|_e| {
+                        finish_progress();
+                    })?;
+            let initialized_parameters = initial_stability
+                .into_iter()
+                .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
+                .collect();
+            (initialized_parameters, Some(initial_rating_count))
+        }
         ComputeParametersVersion::Fsrs7 => {
-            let (initial_stability, initial_forgetting_curve, initial_rating_count) =
+            let (initial_stability, initial_forgetting_curve, _initial_rating_count) =
                 initialize_parameters_fsrs7(dataset_for_initialization.clone(), average_recall)
                     .inspect_err(|_e| {
                         finish_progress();
@@ -375,7 +388,7 @@ pub fn compute_parameters(
             let mut initialized_parameters = DEFAULT_PARAMETERS.to_vec();
             initialized_parameters[0..4].copy_from_slice(&initial_stability);
             initialized_parameters[27..35].copy_from_slice(&initial_forgetting_curve);
-            (initialized_parameters, Some(initial_rating_count))
+            (initialized_parameters, None)
         }
     };
     if train_set.len() == dataset_for_initialization.len() || train_set.len() < 64 {
@@ -435,21 +448,24 @@ pub fn compute_parameters(
         return Err(FSRSError::InvalidInput);
     }
 
-    if let Some(initial_rating_count) = initial_rating_count {
-        let mut optimized_initial_stability = optimized_parameters[0..4]
-            .iter()
-            .enumerate()
-            .map(|(i, &val)| (i as u32 + 1, val))
-            .collect::<HashMap<_, _>>();
-        let clamped_stability =
-            smooth_and_fill(&mut optimized_initial_stability, &initial_rating_count).unwrap();
-        Ok(clamped_stability
-            .into_iter()
-            .chain(optimized_parameters[4..].iter().copied())
-            .collect())
-    } else {
-        Ok(optimized_parameters)
-    }
+    let clamped_stability = match model_version {
+        ComputeParametersVersion::Fsrs6 => {
+            let initial_rating_count = fsrs6_initial_rating_count.expect("FSRS-6 rating count");
+            let mut optimized_initial_stability = optimized_parameters[0..4]
+                .iter()
+                .enumerate()
+                .map(|(i, &val)| (i as u32 + 1, val))
+                .collect::<HashMap<_, _>>();
+            smooth_and_fill(&mut optimized_initial_stability, &initial_rating_count)?
+        }
+        ComputeParametersVersion::Fsrs7 => {
+            smooth_initial_stabilities_fsrs7(optimized_parameters[0..4].try_into().unwrap())?
+        }
+    };
+    Ok(clamped_stability
+        .into_iter()
+        .chain(optimized_parameters[4..].iter().copied())
+        .collect())
 }
 
 pub fn benchmark(
@@ -469,7 +485,15 @@ pub fn benchmark(
         .into_iter()
         .partition(|item| item.long_term_review_cnt() == 1);
     let initialized_parameters = match model_version {
-        ComputeParametersVersion::Fsrs6 => FSRS6_DEFAULT_PARAMETERS.to_vec(),
+        ComputeParametersVersion::Fsrs6 => {
+            let (initial_stability, _rating_count) =
+                initialize_stability_parameters(dataset_for_initialization, average_recall)
+                    .unwrap();
+            initial_stability
+                .into_iter()
+                .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
+                .collect()
+        }
         ComputeParametersVersion::Fsrs7 => {
             let (initial_stability, initial_forgetting_curve, _rating_count) =
                 initialize_parameters_fsrs7(dataset_for_initialization, average_recall).unwrap();
@@ -920,8 +944,30 @@ mod tests {
             L2_PENALTY_WEIGHT,
             &training_v7::PARAMS_STDDEV,
         );
-        assert_eq!(penalty_value, 0.0);
-        assert_eq!(grad_vec, vec![0.0; w_vec.len()]);
+        assert!((penalty_value - 0.16927784).abs() < 1e-6);
+        grad_vec.assert_approx_eq([
+            0.0004953454,
+            0.00021947007,
+            0.00006626537,
+            -0.000026404574,
+            -0.06303472,
+            0.26122463,
+            -0.056888837,
+            1.4222223,
+            -0.13464814,
+            0.63209885,
+            -0.18806253,
+            0.22755535,
+            -2.5283923,
+            0.79999983,
+            0.06303435,
+            0.3276802,
+            -0.019304348,
+            -0.21311146,
+            0.19999984,
+            1.0448979,
+            -0.28093278,
+        ]);
 
         let item = FSRSBatch {
             t_historys: Tensor::from_floats(
