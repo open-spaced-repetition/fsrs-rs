@@ -237,16 +237,18 @@ pub(crate) struct TrainingConfig {
     pub optimizer: AdamConfig,
     #[config(default = true)]
     pub enable_sched_penalties: bool,
-    #[config(default = 8)]
+    #[config(default = 10)]
     pub num_epochs: usize,
-    #[config(default = 1024)]
+    #[config(default = 2048)]
     pub batch_size: usize,
     #[config(default = 2023)]
     pub seed: u64,
-    #[config(default = 2e-2)]
+    #[config(default = 4e-2)]
     pub learning_rate: f64,
-    #[config(default = 1024)]
+    #[config(default = 64)]
     pub max_seq_len: usize,
+    #[config(default = 10)]
+    pub validation_interval: usize,
 }
 
 pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -637,6 +639,10 @@ fn train<B: AutodiffBackend>(
             break;
         }
 
+        if epoch % config.validation_interval != 0 && epoch != config.num_epochs {
+            continue;
+        }
+
         let model_valid = model.valid();
         let mut loss_valid = 0.0;
         for batch in dataloader_valid.iter() {
@@ -714,6 +720,17 @@ mod tests {
     use crate::{DEFAULT_PARAMETERS, FSRS6_DEFAULT_PARAMETERS};
     use burn::backend::NdArray;
     use log::LevelFilter;
+
+    #[test]
+    fn test_training_config_uses_tuned_defaults() {
+        let config = TrainingConfig::new(ModelConfig::default(), AdamConfig::new());
+
+        assert_eq!(config.num_epochs, 10);
+        assert_eq!(config.batch_size, 2048);
+        assert_eq!(config.learning_rate, 4e-2);
+        assert_eq!(config.max_seq_len, 64);
+        assert_eq!(config.validation_interval, 10);
+    }
 
     #[test]
     fn test_calculate_average_recall() {
