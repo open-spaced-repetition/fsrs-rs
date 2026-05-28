@@ -17,7 +17,7 @@ use itertools::Itertools;
 pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<MemoryState> {
     let review = FSRSReview {
         rating: 3,
-        delta_t: 21,
+        delta_t: 21.0,
     };
     let reviews = repeat(review).take(past_reviews + 1).collect_vec();
     (0..card_cnt)
@@ -36,7 +36,7 @@ pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<
 pub(crate) fn calc_mem_batch(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<MemoryState> {
     let reviews = repeat(FSRSReview {
         rating: 3,
-        delta_t: 21,
+        delta_t: 21.0,
     })
     .take(past_reviews)
     .collect_vec();

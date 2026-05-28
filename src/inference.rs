@@ -10,7 +10,7 @@ use crate::dataset::{
 use crate::error::Result;
 use crate::model::Model;
 use crate::model::{FSRS, Get, MemoryStateTensors};
-use crate::simulation::{D_MAX, D_MIN, S_MIN};
+use crate::simulation::S_MIN;
 use crate::training::BCELoss;
 use crate::training::{self, ComputeParametersInput};
 use crate::{FSRSError, FSRSItem};
@@ -20,35 +20,16 @@ use burn::tensor::ElementConversion;
 use burn::tensor::cast::ToElement;
 use burn::tensor::{Shape, Tensor, TensorData};
 use burn::{data::dataloader::batcher::Batcher, tensor::backend::Backend};
-/// This is a slice for efficiency, but should always be 21 in length.
+
+#[path = "inference_v6.rs"]
+pub(crate) mod inference_v6;
+#[path = "inference_v7.rs"]
+pub(crate) mod inference_v7;
+
+pub use inference_v6::{FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, FSRS6_DEFAULT_PARAMETERS};
+pub use inference_v7::DEFAULT_PARAMETERS;
+/// This is a slice for efficiency, and may be 17/19/21/35 in length.
 pub type Parameters = [f32];
-
-pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
-pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
-
-pub static DEFAULT_PARAMETERS: [f32; 21] = [
-    0.212,
-    1.2931,
-    2.3065,
-    8.2956,
-    6.4133,
-    0.8334,
-    3.0194,
-    0.001,
-    1.8722,
-    0.1666,
-    0.796,
-    1.4835,
-    0.0614,
-    0.2629,
-    1.6483,
-    0.6014,
-    1.8729,
-    0.5425,
-    0.0912,
-    0.0658,
-    FSRS6_DEFAULT_DECAY,
-];
 
 fn infer<B: Backend>(
     model: &Model<B>,
@@ -102,7 +83,7 @@ impl<B: Backend> FSRS<B> {
         let (time_history, rating_history) =
             item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
         let size = item.reviews.len();
-        let time_history = Tensor::<B, 1>::from_data(
+        let time_history = Tensor::<B, 1>::from_floats(
             TensorData::new(time_history, Shape { dims: vec![size] }),
             &device,
         )
@@ -129,7 +110,7 @@ impl<B: Backend> FSRS<B> {
             .map(|item| {
                 let (mut delta_t, mut rating): (Vec<_>, Vec<_>) =
                     item.reviews.iter().map(|r| (r.delta_t, r.rating)).unzip();
-                delta_t.resize(pad_size, 0);
+                delta_t.resize(pad_size, 0.0);
                 rating.resize(pad_size, 0);
                 let delta_t = Tensor::<B, 2>::from_floats(
                     TensorData::new(
@@ -357,28 +338,26 @@ impl<B: Backend> FSRS<B> {
         interval: f32,
         sm2_retention: f32,
     ) -> Result<MemoryState> {
-        let w = &self.model().w;
-        let decay: f32 = w.get(20).neg().into_scalar().elem();
-        let factor = 0.9f32.powf(1.0 / decay) - 1.0;
-        let stability = interval.max(S_MIN) * factor / (sm2_retention.powf(1.0 / decay) - 1.0);
-        let w8: f32 = w.get(8).into_scalar().elem();
-        let w9: f32 = w.get(9).into_scalar().elem();
-        let w10: f32 = w.get(10).into_scalar().elem();
-        let difficulty = 11.0
-            - (ease_factor - 1.0)
-                / (w8.exp() * stability.powf(-w9) * ((1.0 - sm2_retention) * w10).exp_m1());
-        if !stability.is_finite() || !difficulty.is_finite() {
-            Err(FSRSError::InvalidInput)
-        } else {
-            Ok(MemoryState {
-                stability,
-                difficulty: difficulty.clamp(D_MIN, D_MAX),
-            })
-        }
+        self.model()
+            .memory_state_from_sm2(ease_factor, interval, sm2_retention)
+    }
+
+    /// Calculate current retrievability using the model's active forgetting
+    /// curve (FSRS-6 or FSRS-7).
+    pub fn current_retrievability(&self, state: MemoryState, days_elapsed: f32) -> f32 {
+        let device = self.device();
+        self.model()
+            .power_forgetting_curve(
+                Tensor::from_floats([days_elapsed.max(0.0)], &device),
+                Tensor::from_floats([state.stability], &device),
+            )
+            .into_scalar()
+            .elem()
     }
 
     /// Calculate the next interval for the current memory state, for rescheduling. Stability
     /// should be provided except when the card is new. Rating is ignored except when card is new.
+    /// FSRS-6 and FSRS-7 both return fractional intervals.
     pub fn next_interval(
         &self,
         stability: Option<f32>,
@@ -401,18 +380,35 @@ impl<B: Backend> FSRS<B> {
             .elem()
     }
 
-    /// The intervals and memory states for each answer button.
-    pub fn next_states(
+    /// Return the interval (in days) at which retrievability reaches `target_retrievability`.
+    ///
+    /// For legacy models (17/19/21 params), `target_retrievability == 0.9` maps directly to
+    /// the model stability by definition, so this function returns `state.stability` exactly.
+    /// For FSRS-7, this is solved via the model's bisection-based `next_interval` path.
+    pub fn interval_at_retrievability(
+        &self,
+        state: MemoryState,
+        target_retrievability: f32,
+    ) -> f32 {
+        let target_retrievability = target_retrievability.clamp(0.0001, 0.9999);
+        let stability = state.stability.max(S_MIN);
+        self.model()
+            .interval_at_retrievability(stability, target_retrievability)
+    }
+
+    /// Convenience helper for "S90": the interval (in days) where retrievability is 90%.
+    pub fn s90(&self, state: MemoryState) -> f32 {
+        self.interval_at_retrievability(state, 0.9)
+    }
+
+    fn next_states_inner(
         &self,
         current_memory_state: Option<MemoryState>,
         desired_retention: f32,
-        days_elapsed: u32,
+        days_elapsed: f32,
     ) -> Result<NextStates> {
         let device = self.device();
-        let delta_t = Tensor::from_data(
-            TensorData::new(vec![days_elapsed], Shape { dims: vec![1] }),
-            &device,
-        );
+        let delta_t = Tensor::from_floats([days_elapsed.max(0.0)], &device);
         let (current_memory_state_tensors, nth) = if let Some(state) = current_memory_state {
             (MemoryStateTensors::from_state(state), 1)
         } else {
@@ -455,6 +451,30 @@ impl<B: Backend> FSRS<B> {
             good: get_next_state()?,
             easy: get_next_state()?,
         })
+    }
+
+    /// The intervals and memory states for each answer button.
+    pub fn next_states(
+        &self,
+        current_memory_state: Option<MemoryState>,
+        desired_retention: f32,
+        days_elapsed: u32,
+    ) -> Result<NextStates> {
+        self.next_states_inner(current_memory_state, desired_retention, days_elapsed as f32)
+    }
+
+    /// Like [`FSRS::next_states`], but accepts fractional elapsed days.
+    ///
+    /// This is useful for same-day reviews where elapsed time is shorter than one day.
+    /// FSRS-6 rounds elapsed days to nearest whole day internally; FSRS-7 keeps
+    /// fractional elapsed days.
+    pub fn next_states_with_elapsed_days(
+        &self,
+        current_memory_state: Option<MemoryState>,
+        desired_retention: f32,
+        days_elapsed: f32,
+    ) -> Result<NextStates> {
+        self.next_states_inner(current_memory_state, desired_retention, days_elapsed)
     }
 
     /// Determine how well the model and parameters predict performance.
@@ -788,6 +808,8 @@ pub fn evaluate_with_time_series_splits<F>(
     ComputeParametersInput {
         train_set,
         enable_short_term,
+        enable_sched_penalties,
+        model_version,
         num_relearning_steps,
         ..
     }: ComputeParametersInput,
@@ -812,6 +834,8 @@ where
         let input = ComputeParametersInput {
             train_set: split.train_items.clone(),
             enable_short_term,
+            enable_sched_penalties,
+            model_version,
             num_relearning_steps,
             progress: None,
         };
@@ -859,7 +883,8 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::{
-        FSRSReview, convertor_tests::anki21_sample_file_converted_to_fsrs, current_retrievability,
+        FSRS6_DEFAULT_PARAMETERS, FSRSReview,
+        convertor_tests::anki21_sample_file_converted_to_fsrs, current_retrievability,
         dataset::filter_outlier, test_helpers::TestHelper,
     };
 
@@ -906,23 +931,23 @@ mod tests {
             reviews: vec![
                 FSRSReview {
                     rating: 1,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 1,
+                    delta_t: 1.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 3,
+                    delta_t: 3.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 8,
+                    delta_t: 8.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 21,
+                    delta_t: 21.0,
                 },
             ],
         };
@@ -955,7 +980,7 @@ mod tests {
         Ok(())
     }
 
-    fn assert_memory_state(w: &[f32], expected_stability: f32, expected_difficulty: f32) {
+    fn final_memory_state_for_sequence(w: &[f32]) -> MemoryState {
         let desired_retention = 0.9;
         let fsrs = FSRS::new(w).unwrap();
         let ratings: [u32; 6] = [1, 3, 3, 3, 3, 3];
@@ -980,7 +1005,11 @@ mod tests {
             // );
         }
 
-        let memory_state = memory_state.unwrap();
+        memory_state.unwrap()
+    }
+
+    fn assert_memory_state(w: &[f32], expected_stability: f32, expected_difficulty: f32) {
+        let memory_state = final_memory_state_for_sequence(w);
         let stability = memory_state.stability;
         let difficulty = memory_state.difficulty;
         assert!(
@@ -996,7 +1025,7 @@ mod tests {
     }
     #[test]
     fn test_memory_state() {
-        let mut w = DEFAULT_PARAMETERS;
+        let mut w = FSRS6_DEFAULT_PARAMETERS;
         assert_memory_state(&w, 53.62691, 6.3574867);
         // freeze short term
         w[17] = 0.0;
@@ -1006,14 +1035,33 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_state_fsrs7() {
+        let mut w = DEFAULT_PARAMETERS;
+        assert_memory_state(&w, 28.927855, 5.5002637);
+        w[26] = 0.0;
+        assert_memory_state(&w, 28.707403, 5.5002637);
+    }
+
+    #[test]
     fn test_next_interval() {
-        let fsrs = FSRS::default();
+        let fsrs = FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap();
         let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
         let intervals = desired_retentions
             .iter()
             .map(|r| fsrs.next_interval(Some(1.0), *r, 1).round().max(1.0) as i32)
             .collect::<Vec<_>>();
-        assert_eq!(intervals, [3116766, 34793, 2508, 387, 90, 27, 9, 3, 1, 1]);
+        assert_eq!(intervals, [36500, 34793, 2508, 387, 90, 27, 9, 3, 1, 1]);
+    }
+
+    #[test]
+    fn test_next_interval_fsrs7() {
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let desired_retentions = (1..=10).map(|i| i as f32 / 10.0).collect::<Vec<_>>();
+        let intervals = desired_retentions
+            .iter()
+            .map(|r| fsrs.next_interval(Some(1.0), *r, 1).round().max(1.0) as i32)
+            .collect::<Vec<_>>();
+        assert_eq!(intervals, [36500, 36500, 4092, 545, 115, 31, 9, 2, 1, 1]);
     }
 
     #[test]
@@ -1064,7 +1112,7 @@ mod tests {
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.208_657_4, 0.030_946_612]);
 
         let (self_by_other, other_by_self) = fsrs
-            .universal_metrics(items.clone(), &DEFAULT_PARAMETERS, |_| true)
+            .universal_metrics(items.clone(), &FSRS6_DEFAULT_PARAMETERS, |_| true)
             .unwrap();
 
         [self_by_other, other_by_self].assert_approx_eq([0.014087644, 0.017199915]);
@@ -1106,15 +1154,15 @@ mod tests {
                 reviews: vec![
                     FSRSReview {
                         rating: 1,
-                        delta_t: 0,
+                        delta_t: 0.0,
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 1,
+                        delta_t: 1.0,
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 3,
+                        delta_t: 3.0,
                     },
                 ],
             },
@@ -1122,23 +1170,23 @@ mod tests {
                 reviews: vec![
                     FSRSReview {
                         rating: 1,
-                        delta_t: 0,
+                        delta_t: 0.0,
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 1,
+                        delta_t: 1.0,
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 3,
+                        delta_t: 3.0,
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 8,
+                        delta_t: 8.0,
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 21,
+                        delta_t: 21.0,
                     },
                 ],
             },
@@ -1146,15 +1194,15 @@ mod tests {
                 reviews: vec![
                     FSRSReview {
                         rating: 2,
-                        delta_t: 0,
+                        delta_t: 0.0,
                     },
                     FSRSReview {
                         rating: 4,
-                        delta_t: 1,
+                        delta_t: 1.0,
                     },
                     FSRSReview {
                         rating: 2,
-                        delta_t: 2,
+                        delta_t: 2.0,
                     },
                 ],
             },
@@ -1238,18 +1286,18 @@ mod tests {
                 reviews: vec![
                     FSRSReview {
                         rating: 1,
-                        delta_t: 0,
+                        delta_t: 0.0,
                     },
                     FSRSReview {
                         rating: 3,
-                        delta_t: 1,
+                        delta_t: 1.0,
                     },
                 ],
             },
             FSRSItem {
                 reviews: vec![FSRSReview {
                     rating: 2,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 }],
             },
         ];
@@ -1282,18 +1330,22 @@ mod tests {
             train_set: items.clone(),
             progress: None,
             enable_short_term: true,
+            enable_sched_penalties: true,
+            model_version: crate::training::ComputeParametersVersion::Fsrs7,
             num_relearning_steps: None,
         };
 
         let metrics = evaluate_with_time_series_splits(input.clone(), |_| true).unwrap();
 
-        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19692886, 0.025453836]);
+        [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19782974, 0.027770871]);
 
         let result = evaluate_with_time_series_splits(
             ComputeParametersInput {
                 train_set: items[..5].to_vec(),
                 progress: None,
                 enable_short_term: true,
+                enable_sched_penalties: true,
+                model_version: crate::training::ComputeParametersVersion::Fsrs7,
                 num_relearning_steps: None,
             },
             |_| true,
@@ -1308,19 +1360,19 @@ mod tests {
             reviews: vec![
                 FSRSReview {
                     rating: 1,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 1,
+                    delta_t: 1.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 3,
+                    delta_t: 3.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 8,
+                    delta_t: 8.0,
                 },
             ],
         };
@@ -1359,7 +1411,151 @@ mod tests {
                 }
             }
         );
-        assert_eq!(fsrs.next_interval(Some(121.01552), 0.9, 1), 121.01551);
+        assert!((fsrs.next_interval(Some(121.01552), 0.9, 1) - 121.01551).abs() < 1e-4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_next_states_accepts_fractional_elapsed_days() -> Result<()> {
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let state = MemoryState {
+            stability: 12.0,
+            difficulty: 6.0,
+        };
+        let at_zero = fsrs
+            .next_states_with_elapsed_days(Some(state), 0.9, 0.0)?
+            .good
+            .memory
+            .stability;
+        let at_half_day = fsrs
+            .next_states_with_elapsed_days(Some(state), 0.9, 0.5)?
+            .good
+            .memory
+            .stability;
+        assert!((at_half_day - at_zero).abs() > 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn test_next_states_fsrs6_rounds_fractional_elapsed_days() -> Result<()> {
+        let fsrs = FSRS::new(&FSRS6_DEFAULT_PARAMETERS)?;
+        let state = MemoryState {
+            stability: 12.0,
+            difficulty: 6.0,
+        };
+        let at_zero = fsrs
+            .next_states_with_elapsed_days(Some(state), 0.9, 0.0)?
+            .good
+            .memory
+            .stability;
+        let at_half_day = fsrs
+            .next_states_with_elapsed_days(Some(state), 0.9, 0.49)?
+            .good
+            .memory
+            .stability;
+        let at_one_day = fsrs
+            .next_states_with_elapsed_days(Some(state), 0.9, 1.0)?
+            .good
+            .memory
+            .stability;
+        let at_half_plus = fsrs
+            .next_states_with_elapsed_days(Some(state), 0.9, 0.51)?
+            .good
+            .memory
+            .stability;
+        assert!((at_zero - at_half_day).abs() < 1e-6);
+        assert!((at_one_day - at_half_plus).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fsrs7_low_retention_lapse_has_minute_again_but_good_graduates() -> Result<()> {
+        assert_eq!(S_MIN, 0.0001);
+
+        let params = [
+            0.0113, 0.7801, 2.2056, 17.8287, 5.7900, 0.4527, 3.1686, 2.1464, 0.2876, 1.2004,
+            0.4385, 0.0057, 0.8110, 0.2112, 0.5439, 1.7069, 0.9438, 0.3588, 3.6203, 0.3262, 0.0060,
+            0.2524, 2.6739, 0.5529, 1.3967, 2.5000, 0.9966, 0.0630, 0.2528, 0.6248, 0.9734, 0.1204,
+            0.6260, 0.1575, 0.4048,
+        ];
+        let fsrs = FSRS::new(&params)?;
+        let desired_retention = 0.65;
+        let minutes_as_days = |minutes: f32| minutes / 24.0 / 60.0;
+        let reviews = vec![
+            FSRSReview {
+                rating: 1,
+                delta_t: 0.0,
+            },
+            FSRSReview {
+                rating: 1,
+                delta_t: minutes_as_days(23.0 * 60.0 + 57.0),
+            },
+            FSRSReview {
+                rating: 1,
+                delta_t: minutes_as_days(19.0 * 60.0 + 46.0),
+            },
+            FSRSReview {
+                rating: 1,
+                delta_t: minutes_as_days(24.0 * 60.0 + 56.0),
+            },
+            FSRSReview {
+                rating: 3,
+                delta_t: minutes_as_days(2.0),
+            },
+            FSRSReview {
+                rating: 3,
+                delta_t: minutes_as_days(3.0),
+            },
+            FSRSReview {
+                rating: 3,
+                delta_t: minutes_as_days(3.0),
+            },
+            FSRSReview {
+                rating: 3,
+                delta_t: minutes_as_days(4.0),
+            },
+        ];
+        let history = FSRSItem {
+            reviews: reviews.clone(),
+        };
+
+        let mut state = None;
+        let mut selected_intervals_minutes = Vec::with_capacity(reviews.len());
+        for review in reviews {
+            let states =
+                fsrs.next_states_with_elapsed_days(state, desired_retention, review.delta_t)?;
+            let selected = match review.rating {
+                1 => states.again,
+                2 => states.hard,
+                3 => states.good,
+                4 => states.easy,
+                _ => unreachable!(),
+            };
+            selected_intervals_minutes.push(selected.interval * 24.0 * 60.0);
+            state = Some(selected.memory);
+        }
+
+        assert!(
+            selected_intervals_minutes[3] > 1.0 && selected_intervals_minutes[3] < 2.0,
+            "expected the fourth Again interval to remain minute-scale after repeated lapses, got {}",
+            selected_intervals_minutes[3]
+        );
+        assert!(
+            selected_intervals_minutes[4] > 120.0,
+            "core FSRS should move the first same-day Good out of the minute-scale lapse interval, got {}",
+            selected_intervals_minutes[4]
+        );
+
+        let state = fsrs.memory_state(history, None)?;
+        let next_good = fsrs
+            .next_states_with_elapsed_days(Some(state), desired_retention, minutes_as_days(1.75))?
+            .good;
+        let next_good_minutes = next_good.interval * 24.0 * 60.0;
+
+        assert!(
+            next_good_minutes > 24.0 * 60.0,
+            "core FSRS should not keep the next Good interval minute-scale, got {next_good_minutes}"
+        );
         Ok(())
     }
 
@@ -1428,15 +1624,15 @@ mod tests {
             reviews: vec![
                 FSRSReview {
                     rating: 2,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 },
             ],
         };
@@ -1446,11 +1642,11 @@ mod tests {
             reviews: vec![
                 FSRSReview {
                     rating: 3,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 0,
+                    delta_t: 0.0,
                 },
             ],
         };
@@ -1459,7 +1655,7 @@ mod tests {
         let item = FSRSItem {
             reviews: vec![FSRSReview {
                 rating: 4,
-                delta_t: 0,
+                delta_t: 0.0,
             }],
         };
         let state = fsrs.memory_state(item, None).unwrap();

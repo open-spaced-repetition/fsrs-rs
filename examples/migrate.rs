@@ -8,19 +8,19 @@ fn migrate_with_full_history() -> Result<(), Box<dyn std::error::Error>> {
     let reviews = vec![
         FSRSReview {
             rating: 3,
-            delta_t: 0,
+            delta_t: 0.0,
         },
         FSRSReview {
             rating: 3,
-            delta_t: 1,
+            delta_t: 1.0,
         },
         FSRSReview {
             rating: 4,
-            delta_t: 3,
+            delta_t: 3.0,
         },
         FSRSReview {
             rating: 3,
-            delta_t: 7,
+            delta_t: 7.0,
         },
     ];
     let item = FSRSItem { reviews };
@@ -53,15 +53,15 @@ fn migrate_with_partial_history() -> Result<(), Box<dyn std::error::Error>> {
     let reviews = vec![
         FSRSReview {
             rating: 3,
-            delta_t: 5,
+            delta_t: 5.0,
         },
         FSRSReview {
             rating: 4,
-            delta_t: 10,
+            delta_t: 10.0,
         },
         FSRSReview {
             rating: 3,
-            delta_t: 20,
+            delta_t: 20.0,
         },
     ];
     let item = FSRSItem { reviews };

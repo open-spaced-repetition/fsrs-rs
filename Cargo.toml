@@ -60,6 +60,10 @@ harness = false
 name = "parameters"
 harness = false
 
+[[bench]]
+name = "fsrs7_penalty"
+harness = false
+
 [[example]]
 name = "schedule"
 path = "examples/schedule.rs"

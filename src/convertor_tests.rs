@@ -116,12 +116,12 @@ fn convert_to_fsrs_items(
                     .take(idx + 1)
                     .map(|r| FSRSReview {
                         rating: r.button_chosen as u32,
-                        delta_t: r.last_interval.max(0) as u32,
+                        delta_t: r.last_interval.max(0) as f32,
                     })
                     .collect();
                 (entry.id, FSRSItem { reviews })
             })
-            .filter(|(_, item)| item.current().delta_t > 0)
+            .filter(|(_, item)| item.current().delta_t > 0.0)
             .collect(),
     )
 }
@@ -271,31 +271,46 @@ fn test_conversion_works() {
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22), (2, 56)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (4, 0), (3, 5), (3, 10), (3, 22), (2, 56), (3, 64)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             }
         ]
@@ -335,11 +350,11 @@ fn test_ordering_of_inputs_should_not_change() {
             reviews: vec![
                 FSRSReview {
                     rating: 4,
-                    delta_t: 0
+                    delta_t: 0.0
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 3
+                    delta_t: 3.0
                 }
             ]
         }
@@ -373,11 +388,11 @@ fn test_delta_t_is_correct() -> Result<()> {
             reviews: vec![
                 FSRSReview {
                     rating: 3,
-                    delta_t: 0
+                    delta_t: 0.0
                 },
                 FSRSReview {
                     rating: 3,
-                    delta_t: 1
+                    delta_t: 1.0
                 }
             ]
         }])
@@ -399,19 +414,28 @@ fn test_delta_t_is_correct() -> Result<()> {
             FSRSItem {
                 reviews: [(3, 0), (3, 2)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (3, 2), (3, 3)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             },
             FSRSItem {
                 reviews: [(3, 0), (3, 2), (3, 3), (3, 5)]
                     .into_iter()
-                    .map(|(rating, delta_t)| FSRSReview { rating, delta_t })
+                    .map(|(rating, delta_t)| FSRSReview {
+                        rating,
+                        delta_t: delta_t as f32
+                    })
                     .collect()
             },
         ])

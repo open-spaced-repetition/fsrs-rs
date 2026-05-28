@@ -177,7 +177,7 @@ fn convert_to_fsrs_item(history: Vec<(NaiveDate, u32)>) -> Vec<FSRSItem> {
     let mut items = Vec::new();
 
     for (date, rating) in history {
-        let delta_t = (date - last_date).num_days() as u32;
+        let delta_t = (date - last_date).num_days() as f32;
         reviews.push(FSRSReview { rating, delta_t });
         items.push(FSRSItem {
             reviews: reviews.clone(),

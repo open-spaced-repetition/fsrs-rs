@@ -1,4 +1,4 @@
-use crate::DEFAULT_PARAMETERS;
+use crate::FSRS6_DEFAULT_PARAMETERS;
 use crate::FSRSItem;
 use crate::error::{FSRSError, Result};
 use crate::simulation::S_MIN;
@@ -6,10 +6,10 @@ use ndarray::Array1;
 use std::collections::HashMap;
 
 static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
-    (1, DEFAULT_PARAMETERS[0]),
-    (2, DEFAULT_PARAMETERS[1]),
-    (3, DEFAULT_PARAMETERS[2]),
-    (4, DEFAULT_PARAMETERS[3]),
+    (1, FSRS6_DEFAULT_PARAMETERS[0]),
+    (2, FSRS6_DEFAULT_PARAMETERS[1]),
+    (3, FSRS6_DEFAULT_PARAMETERS[2]),
+    (4, FSRS6_DEFAULT_PARAMETERS[3]),
 ];
 
 pub(crate) fn initialize_stability_parameters(
@@ -31,6 +31,8 @@ type Count = u32;
 fn prepare_dataset_for_initialization(
     fsrs_items: Vec<FSRSItem>,
 ) -> HashMap<FirstRating, Vec<AverageRecall>> {
+    let to_key = |delta_t: f32| delta_t.to_bits();
+    let from_key = |key: u32| f32::from_bits(key);
     // filter FSRSItem instances with exactly 1 long term review.
     let items: Vec<_> = fsrs_items
         .into_iter()
@@ -45,7 +47,7 @@ fn prepare_dataset_for_initialization(
     for item in items {
         let first_rating = item.reviews[0].rating;
         let first_long_term_review = item.first_long_term_review();
-        let first_long_term_delta_t = first_long_term_review.delta_t;
+        let first_long_term_delta_t = to_key(first_long_term_review.delta_t);
         let first_long_term_label = (first_long_term_review.rating > 1) as i32;
 
         let inner_map = groups.entry(first_rating).or_insert_with(HashMap::new);
@@ -64,7 +66,7 @@ fn prepare_dataset_for_initialization(
         for (second_delta_t, ratings) in inner_map {
             let avg = ratings.iter().map(|&x| x as f64).sum::<f64>() / ratings.len() as f64;
             data.push(AverageRecall {
-                delta_t: *second_delta_t as f64,
+                delta_t: from_key(*second_delta_t) as f64,
                 recall: avg,
                 count: ratings.len() as f64,
             })
@@ -98,7 +100,7 @@ fn total_rating_count(
 }
 
 fn power_forgetting_curve(t: &Array1<f64>, s: f64) -> Array1<f64> {
-    let decay = -DEFAULT_PARAMETERS[20] as f64;
+    let decay = -FSRS6_DEFAULT_PARAMETERS[20] as f64;
     let factor = 0.9f64.powf(1.0 / decay) - 1.0;
     (t / s * factor + 1.0).mapv(|v| v.powf(decay))
 }
@@ -304,7 +306,7 @@ mod tests {
             0.86666667, 0.90721649, 0.73015873, 0.76315789, 0.67857143,
         ]);
         let count = Array1::from(vec![435.0, 97.0, 63.0, 38.0, 28.0]);
-        let default_s0 = DEFAULT_PARAMETERS[0] as f64;
+        let default_s0 = FSRS6_DEFAULT_PARAMETERS[0] as f64;
         let actual = loss(&delta_t, &recall, &count, 0.7840586, default_s0);
         assert_eq!(actual, 279.9206961069712);
         let actual = loss(&delta_t, &recall, &count, 0.7840590622451964, default_s0);
