@@ -100,7 +100,9 @@ impl<B: Backend> Model<B> {
         // info!("t_historys: {}", &t_historys);
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
-        let retrievability = self.power_forgetting_curve(delta_ts, state.stability);
+        let retrievability = self
+            .power_forgetting_curve(delta_ts, state.stability)
+            .clamp(0.0001_f32, 0.9999_f32);
         BCELoss::new().forward(retrievability, labels.float(), weights, reduce)
     }
 }
@@ -816,6 +818,30 @@ mod tests {
 
         assert!(parameters.is_ok());
         assert_eq!(parameters.unwrap().len(), 35);
+    }
+
+    #[test]
+    fn test_forward_classification_clamps_retrievability_for_bce() {
+        use burn::backend::ndarray::NdArrayDevice;
+        use burn::tensor::TensorData;
+
+        let device = NdArrayDevice::Cpu;
+        type B = NdArray<f32>;
+        let model: Model<B> = parameters_to_model::<B>(&DEFAULT_PARAMETERS, &device);
+
+        let loss = model.forward_classification(
+            Tensor::from_floats(TensorData::from([[0.0, 0.0]]), &device),
+            Tensor::from_floats(TensorData::from([[1.0, 1.0]]), &device),
+            Tensor::from_floats([0.0, f32::MAX], &device),
+            Tensor::from_ints([1, 0], &device),
+            Tensor::from_floats([1.0, 1.0], &device),
+            Reduction::Sum,
+        );
+
+        let actual = loss.into_scalar().to_f32();
+        let expected = -2.0 * 0.9999_f32.ln();
+        assert!(actual.is_finite());
+        assert!((actual - expected).abs() < 1e-7);
     }
 
     #[test]

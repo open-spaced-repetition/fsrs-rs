@@ -53,6 +53,8 @@
   helper.
 - FSRS-7 parameter clipping is NaN-safe: non-finite values are converted to
   finite bounds before clamping.
+- Training classification clamps predicted retrievability to `[0.0001, 0.9999]`
+  before binary cross-entropy, avoiding `log(0)` at recall probability bounds.
 - Negative elapsed days are normalized to `0.0` before FSRS-7 training and
   state updates, matching the existing public retrievability behavior.
 - Outlier filtering no longer assumes every training item has a long-term
