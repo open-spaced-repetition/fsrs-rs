@@ -29,6 +29,9 @@ const COST_ADR_DEFAULT_BASELINE_RETENTIONS: [f32; 16] = [
 const COST_ADR_DEFAULT_SEED: u64 = 42;
 const COST_ADR_DEFAULT_RETENTION_MIN: f32 = 0.30;
 const COST_ADR_DEFAULT_RETENTION_MAX: f32 = 0.995;
+const COST_ADR_CALIBRATION_POINT_COUNT_MIN: usize = 2;
+const COST_ADR_CALIBRATION_WEIGHT_TOLERANCE: f32 = 1e-4;
+const COST_ADR_CALIBRATION_MAX_ITERATIONS: usize = 24;
 const COST_ADR_DEFAULT_INITIAL_COEFFICIENTS: [f32; COST_ADR_PARAMETER_COUNT] = [
     -0.202, 9.14, -0.0978, 0.226, -5.31, -7.44, 24.1, -0.375, 1.81, -22.9, -5.82, 22.3, 1.72,
     -1.99, -19.4,
@@ -271,6 +274,143 @@ impl CostAdrPolicy {
             }
         }
         Ok(points)
+    }
+
+    pub fn calibrate_average_desired_retention_range(
+        &self,
+        config: &SimulatorConfig,
+        parameters: &Parameters,
+        point_count: usize,
+        seed: Option<u64>,
+    ) -> Result<Vec<CostAdrEvaluationPoint>> {
+        if point_count < COST_ADR_CALIBRATION_POINT_COUNT_MIN {
+            return Err(FSRSError::InvalidInput);
+        }
+
+        let low = evaluate_cost_adr_rollout_for_weight(
+            config,
+            parameters,
+            self,
+            self.cost_weight_min,
+            seed,
+        )?;
+        let high = evaluate_cost_adr_rollout_for_weight(
+            config,
+            parameters,
+            self,
+            self.cost_weight_max,
+            seed,
+        )?;
+        let low_avg = average_desired_retention_from_point(&low)?;
+        let high_avg = average_desired_retention_from_point(&high)?;
+        if is_close(low_avg, high_avg) {
+            return Ok(vec![low, high]);
+        }
+
+        let mut points = Vec::with_capacity(point_count);
+        for index in 0..point_count {
+            let ratio = index as f32 / (point_count - 1) as f32;
+            let target = low_avg + (high_avg - low_avg) * ratio;
+            let point = self.calibrate_cost_weight_for_average_desired_retention(
+                config, parameters, target, seed,
+            )?;
+            points.push(point);
+        }
+        points.sort_by(|left, right| left.goal_cost_weight.total_cmp(&right.goal_cost_weight));
+        Ok(points)
+    }
+
+    pub fn calibrate_cost_weight_for_average_desired_retention(
+        &self,
+        config: &SimulatorConfig,
+        parameters: &Parameters,
+        target_average_desired_retention: f32,
+        seed: Option<u64>,
+    ) -> Result<CostAdrEvaluationPoint> {
+        self.validate()?;
+        if !target_average_desired_retention.is_finite() {
+            return Err(FSRSError::InvalidInput);
+        }
+
+        let mut low = evaluate_cost_adr_rollout_for_weight(
+            config,
+            parameters,
+            self,
+            self.cost_weight_min,
+            seed,
+        )?;
+        let mut high = evaluate_cost_adr_rollout_for_weight(
+            config,
+            parameters,
+            self,
+            self.cost_weight_max,
+            seed,
+        )?;
+        let mut low_avg = average_desired_retention_from_point(&low)?;
+        let mut high_avg = average_desired_retention_from_point(&high)?;
+        let min_avg = low_avg.min(high_avg);
+        let max_avg = low_avg.max(high_avg);
+        if (target_average_desired_retention < min_avg
+            && !is_close(target_average_desired_retention, min_avg))
+            || (target_average_desired_retention > max_avg
+                && !is_close(target_average_desired_retention, max_avg))
+        {
+            return Err(FSRSError::InvalidInput);
+        }
+        if is_close(target_average_desired_retention, low_avg) {
+            return Ok(low);
+        }
+        if is_close(target_average_desired_retention, high_avg) {
+            return Ok(high);
+        }
+
+        let mut best = closest_average_desired_retention_point(
+            low.clone(),
+            high.clone(),
+            target_average_desired_retention,
+        )?;
+        let decreasing = low_avg > high_avg;
+
+        for _ in 0..COST_ADR_CALIBRATION_MAX_ITERATIONS {
+            if (high.goal_cost_weight - low.goal_cost_weight).abs()
+                <= COST_ADR_CALIBRATION_WEIGHT_TOLERANCE
+            {
+                break;
+            }
+            let mid_weight = midpoint_log_cost_weight(low.goal_cost_weight, high.goal_cost_weight);
+            let mid =
+                evaluate_cost_adr_rollout_for_weight(config, parameters, self, mid_weight, seed)?;
+            let mid_avg = average_desired_retention_from_point(&mid)?;
+            best = closest_average_desired_retention_point(
+                best,
+                mid.clone(),
+                target_average_desired_retention,
+            )?;
+            if is_close(mid_avg, target_average_desired_retention) {
+                break;
+            }
+
+            if decreasing {
+                if mid_avg > target_average_desired_retention {
+                    low = mid;
+                    low_avg = mid_avg;
+                } else {
+                    high = mid;
+                    high_avg = mid_avg;
+                }
+            } else if mid_avg < target_average_desired_retention {
+                low = mid;
+                low_avg = mid_avg;
+            } else {
+                high = mid;
+                high_avg = mid_avg;
+            }
+            if is_close(low_avg, high_avg) {
+                break;
+            }
+        }
+
+        Ok(best)
     }
 
     fn cost_adr_item_state<B: Backend>(
@@ -571,6 +711,59 @@ fn evaluate_cost_adr_rollouts(
             })
         })
         .collect()
+}
+
+fn evaluate_cost_adr_rollout_for_weight(
+    config: &SimulatorConfig,
+    parameters: &Parameters,
+    policy: &CostAdrPolicy,
+    goal_cost_weight: f32,
+    seed: Option<u64>,
+) -> Result<CostAdrEvaluationPoint> {
+    let result = simulate_with_cost_adr_policy_for_evaluation(
+        config,
+        parameters,
+        policy,
+        goal_cost_weight,
+        seed,
+        None,
+    )?;
+    Ok(CostAdrEvaluationPoint {
+        goal_cost_weight,
+        metrics: metrics_from_simulation(&result.result),
+        average_desired_retention: result.average_desired_retention,
+        fixed_fsrs_equivalent_desired_retention: None,
+        same_target_time_saved_percent: None,
+    })
+}
+
+fn average_desired_retention_from_point(point: &CostAdrEvaluationPoint) -> Result<f32> {
+    let average_desired_retention = point
+        .average_desired_retention
+        .ok_or(FSRSError::InvalidInput)?;
+    if average_desired_retention.is_finite() {
+        Ok(average_desired_retention)
+    } else {
+        Err(FSRSError::InvalidInput)
+    }
+}
+
+fn closest_average_desired_retention_point(
+    left: CostAdrEvaluationPoint,
+    right: CostAdrEvaluationPoint,
+    target: f32,
+) -> Result<CostAdrEvaluationPoint> {
+    let left_distance = (average_desired_retention_from_point(&left)? - target).abs();
+    let right_distance = (average_desired_retention_from_point(&right)? - target).abs();
+    Ok(if left_distance <= right_distance {
+        left
+    } else {
+        right
+    })
+}
+
+fn midpoint_log_cost_weight(left: f32, right: f32) -> f32 {
+    ((left.ln_1p() + right.ln_1p()) * 0.5).exp_m1()
 }
 
 fn annotate_cost_adr_rollouts(
@@ -1643,6 +1836,78 @@ mod tests {
             assert!(point.desired_retention.is_finite());
             assert!(
                 (policy.retention_min..=policy.retention_max).contains(&point.desired_retention)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_average_desired_retention_calibration_uses_bisection() -> Result<()> {
+        let policy = CostAdrPolicy::default_initial();
+        let config = SimulatorConfig {
+            deck_size: 80,
+            learn_span: 10,
+            learn_limit: 20,
+            review_limit: 200,
+            ..Default::default()
+        };
+        let low = evaluate_cost_adr_rollout_for_weight(
+            &config,
+            &DEFAULT_PARAMETERS,
+            &policy,
+            policy.cost_weight_min,
+            Some(9),
+        )?;
+        let high = evaluate_cost_adr_rollout_for_weight(
+            &config,
+            &DEFAULT_PARAMETERS,
+            &policy,
+            policy.cost_weight_max,
+            Some(9),
+        )?;
+        let target = (average_desired_retention_from_point(&low)?
+            + average_desired_retention_from_point(&high)?)
+            * 0.5;
+
+        let point = policy.calibrate_cost_weight_for_average_desired_retention(
+            &config,
+            &DEFAULT_PARAMETERS,
+            target,
+            Some(9),
+        )?;
+
+        assert!(
+            point.goal_cost_weight > policy.cost_weight_min
+                && point.goal_cost_weight < policy.cost_weight_max
+        );
+        assert!((point.average_desired_retention.unwrap() - target).abs() <= 1e-3);
+        Ok(())
+    }
+
+    #[test]
+    fn test_average_desired_retention_range_calibration_returns_sorted_weights() -> Result<()> {
+        let policy = CostAdrPolicy::default_initial();
+        let config = SimulatorConfig {
+            deck_size: 80,
+            learn_span: 10,
+            learn_limit: 20,
+            review_limit: 200,
+            ..Default::default()
+        };
+
+        let points = policy.calibrate_average_desired_retention_range(
+            &config,
+            &DEFAULT_PARAMETERS,
+            4,
+            Some(11),
+        )?;
+
+        assert_eq!(points.len(), 4);
+        for point in points.windows(2) {
+            assert!(point[0].goal_cost_weight <= point[1].goal_cost_weight);
+            assert!(
+                point[0].average_desired_retention.unwrap()
+                    >= point[1].average_desired_retention.unwrap()
             );
         }
         Ok(())
