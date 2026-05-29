@@ -96,6 +96,8 @@ The example accepts command-line overrides for quick experiments:
 cargo run --release --example cost_adr -- --days 90 --deck 2000 --pop 8 --gen 5
 ```
 
+By default, the example uses the same simulation scale as `srs-simulator`: 1825 days, a 10000-card deck, 10 new cards per day, a 9999-review limit, and a 720-minute daily cost limit. Its training defaults come from `CostAdrTrainingConfig::default()`.
+
 The example trains a per-user `CostAdrPolicy`, shows which fields should be persisted with the user's FSRS parameters, and demonstrates the runtime scheduling loop: compute the post-rating `MemoryState`, ask the policy for a cost-conditioned desired retention, then pass that retention back into FSRS to get the next interval. Use `simulate_with_cost_adr_policy` when you already have a `CostAdrPolicy` and want the simulator to recompute per-card desired retention after each review in an offline simulation.
 
 ### Migrate from SM-2 style data

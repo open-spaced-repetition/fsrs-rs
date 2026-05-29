@@ -14,12 +14,14 @@ const USAGE: &str = "\
 Usage: cargo run --release --example cost_adr -- [OPTIONS]
 
 Options:
-  --days <usize>            Simulation learn span in days (default: 90)
-  --deck <usize>            Simulated deck size (default: 2000)
-  --learn-limit <usize>     New-card limit per day (default: 40)
-  --review-limit <usize>    Review limit per day (default: 400)
-  --pop <usize>             CMA-ES population size (default: 8)
-  --gen <usize>             CMA-ES generation count (default: 5)
+  --days <usize>            Simulation learn span in days (default: 1825)
+  --deck <usize>            Simulated deck size (default: 10000)
+  --learn-limit <usize>     New-card limit per day (default: 10)
+  --review-limit <usize>    Review limit per day (default: 9999)
+  --cost-limit-minutes <f32>
+                            Study time limit per day in minutes (default: 720.0)
+  --pop <usize>             CMA-ES population size (default: 16)
+  --gen <usize>             CMA-ES generation count (default: 20)
   --seed <u64>              Optimizer and simulation seed (default: 42)
   --sigma0 <f32>            CMA-ES initial sigma (default: 1.0)
   --goal-weight <f32>       Runtime scheduling cost weight (default: 64.0)
@@ -31,6 +33,7 @@ struct ExampleConfig {
     deck_size: usize,
     learn_limit: usize,
     review_limit: usize,
+    cost_limit_minutes: f32,
     population_size: usize,
     generations: usize,
     seed: u64,
@@ -40,15 +43,17 @@ struct ExampleConfig {
 
 impl Default for ExampleConfig {
     fn default() -> Self {
+        let training_config = CostAdrTrainingConfig::default();
         Self {
-            days: 90,
-            deck_size: 2_000,
-            learn_limit: 40,
-            review_limit: 400,
-            population_size: 8,
-            generations: 5,
-            seed: 42,
-            sigma0: 1.0,
+            days: 1_825,
+            deck_size: 10_000,
+            learn_limit: 10,
+            review_limit: 9_999,
+            cost_limit_minutes: 720.0,
+            population_size: training_config.population_size,
+            generations: training_config.generations,
+            seed: training_config.seed,
+            sigma0: training_config.sigma0,
             goal_cost_weight: 64.0,
         }
     }
@@ -117,6 +122,10 @@ fn parse_args() -> Result<Option<ExampleConfig>, Box<dyn Error>> {
             }
             "--review-limit" => {
                 config.review_limit = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--cost-limit-minutes" => {
+                config.cost_limit_minutes =
+                    parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
             }
             "--pop" => {
                 config.population_size =
@@ -213,6 +222,7 @@ fn main() -> fsrs::Result<()> {
         learn_span: example_config.days,
         learn_limit: example_config.learn_limit,
         review_limit: example_config.review_limit,
+        max_cost_perday: example_config.cost_limit_minutes * 60.0,
         ..Default::default()
     };
     let training_config = CostAdrTrainingConfig {
@@ -232,11 +242,12 @@ fn main() -> fsrs::Result<()> {
 
     println!("Cost ADR single-user FSRS training");
     println!(
-        "config days={} deck={} learn_limit={} review_limit={} pop={} gen={} sigma0={} seed={}",
+        "config days={} deck={} learn_limit={} review_limit={} cost_limit_minutes={} pop={} gen={} sigma0={} seed={}",
         example_config.days,
         example_config.deck_size,
         example_config.learn_limit,
         example_config.review_limit,
+        example_config.cost_limit_minutes,
         example_config.population_size,
         example_config.generations,
         example_config.sigma0,
