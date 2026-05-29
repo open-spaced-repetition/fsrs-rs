@@ -14,6 +14,7 @@ use itertools::Itertools;
 use rusqlite::Connection;
 use rusqlite::{Result, Row};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 impl rusqlite::types::FromSql for RevlogReviewKind {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
@@ -151,10 +152,23 @@ pub struct RevlogCsv {
     pub review_duration: u32,
 }
 
+const REVLOG_CSV_FILE: &str = "tests/data/revlog.csv";
+
+pub(crate) fn try_data_from_csv() -> Option<Vec<FSRSItem>> {
+    data_from_csv_path(REVLOG_CSV_FILE)
+}
+
 pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
-    const CSV_FILE: &str = "tests/data/revlog.csv";
+    data_from_csv_path(REVLOG_CSV_FILE).expect("tests/data/revlog.csv should exist")
+}
+
+fn data_from_csv_path(csv_file: &str) -> Option<Vec<FSRSItem>> {
+    if !Path::new(csv_file).exists() {
+        return None;
+    }
+
     let rdr = csv::ReaderBuilder::new();
-    let dataset = InMemDataset::<RevlogCsv>::from_csv(CSV_FILE, &rdr).unwrap();
+    let dataset = InMemDataset::<RevlogCsv>::from_csv(csv_file, &rdr).unwrap();
     let mut revlogs: Vec<_> = dataset
         .iter()
         .map(|r| RevlogEntry {
@@ -178,7 +192,7 @@ pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     dbg!(revlogs.len());
     let fsrs_items = anki_to_fsrs(revlogs);
     dbg!(fsrs_items.len());
-    fsrs_items
+    Some(fsrs_items)
 }
 
 pub(crate) fn anki21_sample_file_converted_to_fsrs() -> Vec<FSRSItem> {
@@ -339,6 +353,11 @@ fn test_conversion_works() {
         [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
     );
     assert_eq!(res.labels.into_scalar().to_i32(), 1);
+}
+
+#[test]
+fn missing_revlog_csv_fixture_is_optional() {
+    assert!(data_from_csv_path("tests/data/missing-revlog.csv").is_none());
 }
 
 #[test]

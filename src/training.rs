@@ -172,6 +172,15 @@ impl CombinedProgressState {
         Default::default()
     }
 
+    pub(crate) fn reset(&mut self, splits: Vec<ProgressState>) {
+        self.splits = splits;
+        self.finished = false;
+    }
+
+    pub(crate) fn mark_finished(&mut self) {
+        self.finished = true;
+    }
+
     pub fn current(&self) -> usize {
         self.splits.iter().map(|s| s.current()).sum()
     }
@@ -353,7 +362,7 @@ pub fn compute_parameters(
             // - If there were fewer than 512 entries, render_train() will have never been called
             // - One or more of the splits may have ignored later epochs, if accuracy went backwards
             // Because of this, we need a separate finished flag.
-            progress.lock().unwrap().finished = true;
+            progress.lock().unwrap().mark_finished();
         }
     };
 
@@ -421,7 +430,7 @@ pub fn compute_parameters(
             epoch: 0,
             items_processed: 0,
         };
-        progress.lock().unwrap().splits = vec![progress_state];
+        progress.lock().unwrap().reset(vec![progress_state]);
     }
     let model = train::<Autodiff<B>>(
         weighted_train_set.clone(),
@@ -709,7 +718,7 @@ mod tests {
 
     use super::*;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
-    use crate::convertor_tests::data_from_csv;
+    use crate::convertor_tests::try_data_from_csv;
     use crate::dataset::FSRSBatch;
     use crate::model::{FSRS, parameters_to_model};
     use crate::test_helpers::TestHelper;
@@ -1108,7 +1117,14 @@ mod tests {
                 .apply()
                 .unwrap();
         }
-        for items in [anki21_sample_file_converted_to_fsrs(), data_from_csv()] {
+        let mut datasets = vec![anki21_sample_file_converted_to_fsrs()];
+        if let Some(items) = try_data_from_csv() {
+            datasets.push(items);
+        } else {
+            eprintln!("Skipping optional tests/data/revlog.csv fixture");
+        }
+
+        for items in datasets {
             for model_version in [
                 ComputeParametersVersion::Fsrs6,
                 ComputeParametersVersion::Fsrs7,

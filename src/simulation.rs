@@ -1,4 +1,5 @@
 use crate::DEFAULT_PARAMETERS;
+use crate::cost_adr::CostAdrPolicy;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::{ModelVersion, check_and_fill_parameters, model_v6, model_v7};
@@ -26,6 +27,11 @@ pub struct SimulationResult {
     pub correct_cnt_per_day: Vec<usize>,
     pub introduced_cnt_per_day: Vec<usize>,
     pub cards: Vec<Card>,
+}
+
+pub(crate) struct CostAdrSimulationResult {
+    pub result: SimulationResult,
+    pub average_desired_retention: Option<f32>,
 }
 
 trait Round {
@@ -257,7 +263,13 @@ trait SimulatedFsrs {
     fn init_d(&self, w: &[f32], rating: usize) -> f32;
     fn next_d(&self, w: &[f32], d: f32, rating: usize) -> f32;
     fn power_forgetting_curve(&self, w: &[f32], t: f32, s: f32) -> f32;
-    fn next_interval(&self, w: &[f32], stability: f32, desired_retention: f32) -> f32;
+    fn next_interval(
+        &self,
+        w: &[f32],
+        stability: f32,
+        desired_retention: f32,
+        fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
+    ) -> f32;
 }
 
 struct SimulatedFsrs7;
@@ -296,28 +308,21 @@ impl SimulatedFsrs for SimulatedFsrs7 {
         model_v7::fsrs7_forgetting_curve_scalar(w, t, s)
     }
 
-    fn next_interval(&self, w: &[f32], stability: f32, desired_retention: f32) -> f32 {
-        let desired_retention = desired_retention.clamp(0.0001, 0.9999);
-        if desired_retention >= 0.9999 {
-            return 0.0;
-        }
-        let mut low = 0.0;
-        let mut high = stability.max(1.0);
-        while self.power_forgetting_curve(w, high, stability) > desired_retention && high < S_MAX {
-            high = (high * 2.0).min(S_MAX);
-            if (high - S_MAX).abs() < f32::EPSILON {
-                break;
-            }
-        }
-        for _ in 0..50 {
-            let mid = (low + high) / 2.0;
-            if self.power_forgetting_curve(w, mid, stability) > desired_retention {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        ((low + high) / 2.0).clamp(0.0, S_MAX)
+    fn next_interval(
+        &self,
+        w: &[f32],
+        stability: f32,
+        desired_retention: f32,
+        fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
+    ) -> f32 {
+        let owned_lut;
+        let lut = if let Some(lut) = fsrs7_lut {
+            lut
+        } else {
+            owned_lut = model_v7::fsrs7_s90_lut(w);
+            owned_lut.as_ref()
+        };
+        model_v7::fsrs7_next_interval_scalar(w, stability, desired_retention, lut)
     }
 }
 
@@ -354,7 +359,13 @@ impl SimulatedFsrs for LegacySimulatedFsrs {
         model_v6::power_forgetting_curve_scalar(w, t, s)
     }
 
-    fn next_interval(&self, w: &[f32], stability: f32, desired_retention: f32) -> f32 {
+    fn next_interval(
+        &self,
+        w: &[f32],
+        stability: f32,
+        desired_retention: f32,
+        _fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
+    ) -> f32 {
         model_v6::next_interval_scalar(w, stability, desired_retention)
     }
 }
@@ -533,15 +544,22 @@ fn next_interval_with_fsrs(
     w: &[f32],
     stability: f32,
     desired_retention: f32,
+    fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
 ) -> f32 {
-    fsrs.next_interval(w, stability, desired_retention)
+    fsrs.next_interval(w, stability, desired_retention, fsrs7_lut)
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
 fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     let fsrs = simulated_fsrs(w);
-    next_interval_with_fsrs(fsrs, w, stability, desired_retention)
+    let fsrs7_lut = fsrs7_interval_lut(w);
+    next_interval_with_fsrs(fsrs, w, stability, desired_retention, fsrs7_lut.as_deref())
+}
+
+fn fsrs7_interval_lut(w: &[f32]) -> Option<Arc<model_v7::Fsrs7S90Lut>> {
+    (ModelVersion::from_param_count(w.len()) == ModelVersion::Fsrs7)
+        .then(|| model_v7::fsrs7_s90_lut(w))
 }
 
 /// Dynamic programming-based workload estimator
@@ -636,6 +654,7 @@ impl WorkloadEstimator {
     fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
         self.desired_retention = desired_retention;
         let fsrs = simulated_fsrs(w);
+        let fsrs7_lut = fsrs7_interval_lut(w);
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
@@ -646,7 +665,7 @@ impl WorkloadEstimator {
         for s_idx in 0..self.s_size {
             let s = self.s_state[s_idx];
             // Calculate interval and retrievability once and cache them
-            let ivl = next_interval_with_fsrs(fsrs, w, s, desired_retention)
+            let ivl = next_interval_with_fsrs(fsrs, w, s, desired_retention, fsrs7_lut.as_deref())
                 .max(1.0)
                 .round();
             let r = power_forgetting_curve_with_fsrs(fsrs, w, ivl, s);
@@ -666,9 +685,15 @@ impl WorkloadEstimator {
                         stability_after_success_with_fsrs(fsrs, w, s, r, d, rating, ivl)
                     };
                     let next_d_val = next_d_with_fsrs(fsrs, w, d, rating);
-                    let next_ivl = next_interval_with_fsrs(fsrs, w, next_s, desired_retention)
-                        .max(1.0)
-                        .round() as usize;
+                    let next_ivl = next_interval_with_fsrs(
+                        fsrs,
+                        w,
+                        next_s,
+                        desired_retention,
+                        fsrs7_lut.as_deref(),
+                    )
+                    .max(1.0)
+                    .round() as usize;
                     next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
                     next_d_indices[[rating - 1, s_idx, d_idx]] = self.d2i(next_d_val);
                     next_intervals[[rating - 1, s_idx, d_idx]] = next_ivl;
@@ -718,15 +743,17 @@ impl WorkloadEstimator {
             return 0.0;
         }
         let fsrs = simulated_fsrs(w);
+        let fsrs7_lut = fsrs7_interval_lut(w);
         let mut total_cost = 0.0;
         for rating in 1..=4 {
             let s = init_s(w, rating);
             let d = init_d_with_fsrs(fsrs, w, rating);
             let s_idx = self.s2i(s);
             let d_idx = self.d2i(d);
-            let ivl = next_interval_with_fsrs(fsrs, w, s, self.desired_retention)
-                .max(1.0)
-                .round() as usize;
+            let ivl =
+                next_interval_with_fsrs(fsrs, w, s, self.desired_retention, fsrs7_lut.as_deref())
+                    .max(1.0)
+                    .round() as usize;
             let t_idx = (due + ivl).min(self.t_size);
             total_cost += (unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
                 + self.state_rating_costs[LEARNING][rating - 1])
@@ -749,6 +776,7 @@ impl WorkloadEstimator {
             return 0.0;
         }
         let fsrs = simulated_fsrs(w);
+        let fsrs7_lut = fsrs7_interval_lut(w);
 
         let real_due = card.due.max(0.0);
 
@@ -810,10 +838,15 @@ impl WorkloadEstimator {
                     next_d_with_fsrs(fsrs, w, card.difficulty, rating),
                 )
             };
-            let new_interval =
-                next_interval_with_fsrs(fsrs, w, new_stability, self.desired_retention)
-                    .max(1.0)
-                    .round() as usize;
+            let new_interval = next_interval_with_fsrs(
+                fsrs,
+                w,
+                new_stability,
+                self.desired_retention,
+                fsrs7_lut.as_deref(),
+            )
+            .max(1.0)
+            .round() as usize;
             let new_due = real_due as usize + new_interval;
             // Calculate future cost using precomputed cost matrix
             let future_cost = if new_due > self.t_size {
@@ -948,7 +981,68 @@ pub fn simulate(
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
+    Ok(simulate_inner(
+        config,
+        w,
+        desired_retention,
+        seed,
+        existing_cards,
+        None,
+        0.0,
+    )?
+    .result)
+}
+
+pub fn simulate_with_cost_adr_policy(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    policy: &CostAdrPolicy,
+    goal_cost_weight: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+) -> Result<SimulationResult, FSRSError> {
+    Ok(simulate_with_cost_adr_policy_for_evaluation(
+        config,
+        w,
+        policy,
+        goal_cost_weight,
+        seed,
+        existing_cards,
+    )?
+    .result)
+}
+
+pub(crate) fn simulate_with_cost_adr_policy_for_evaluation(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    policy: &CostAdrPolicy,
+    goal_cost_weight: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+) -> Result<CostAdrSimulationResult, FSRSError> {
+    policy.validate()?;
+    simulate_inner(
+        config,
+        w,
+        policy.retention_max,
+        seed,
+        existing_cards,
+        Some(policy),
+        goal_cost_weight,
+    )
+}
+
+fn simulate_inner(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    desired_retention: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+    cost_adr_policy: Option<&CostAdrPolicy>,
+    goal_cost_weight: f32,
+) -> Result<CostAdrSimulationResult, FSRSError> {
     let w = Arc::new(check_and_fill_parameters(w)?);
+    let fsrs7_lut = fsrs7_interval_lut(&w);
     if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
@@ -960,6 +1054,8 @@ pub fn simulate(
     let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
     let mut correct_cnt_per_day = vec![0; config.learn_span];
     let mut introduced_cnt_per_day = vec![0; config.learn_span];
+    let mut desired_retention_sum = 0.0;
+    let mut desired_retention_count = 0;
 
     let first_rating_choices = RATINGS;
     let first_rating_dist = WeightedIndex::new(config.first_rating_prob).unwrap();
@@ -1049,6 +1145,11 @@ pub fn simulate(
     while let Some((&card_index, _)) = card_priorities.peek() {
         let card = &mut cards[card_index];
         let fsrs = simulated_fsrs(&card.parameters);
+        let card_fsrs7_lut = if Arc::ptr_eq(&card.parameters, &w) {
+            fsrs7_lut.as_deref()
+        } else {
+            None
+        };
 
         let day_index = card.due.max(0.0) as usize;
 
@@ -1230,11 +1331,19 @@ pub fn simulate(
             card.difficulty = new_d;
         }
 
+        if let Some(policy) = cost_adr_policy {
+            card.desired_retention =
+                policy.evaluate_retention(card.stability, card.difficulty, goal_cost_weight);
+        }
+        desired_retention_sum += card.desired_retention;
+        desired_retention_count += 1;
+
         let mut ivl = next_interval_with_fsrs(
             fsrs,
             &card.parameters,
             card.stability,
             card.desired_retention,
+            card_fsrs7_lut,
         )
         .round()
         .clamp(1.0, config.max_ivl);
@@ -1264,14 +1373,21 @@ pub fn simulate(
         &cost_per_day[learn_span - 1],
     ));*/
 
-    Ok(SimulationResult {
-        memorized_cnt_per_day,
-        review_cnt_per_day,
-        learn_cnt_per_day,
-        cost_per_day,
-        correct_cnt_per_day,
-        cards,
-        introduced_cnt_per_day,
+    Ok(CostAdrSimulationResult {
+        result: SimulationResult {
+            memorized_cnt_per_day,
+            review_cnt_per_day,
+            learn_cnt_per_day,
+            cost_per_day,
+            correct_cnt_per_day,
+            cards,
+            introduced_cnt_per_day,
+        },
+        average_desired_retention: if desired_retention_count > 0 {
+            Some(desired_retention_sum / desired_retention_count as f32)
+        } else {
+            None
+        },
     })
 }
 

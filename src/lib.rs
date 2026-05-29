@@ -4,6 +4,7 @@ mod batch_shuffle;
 #[cfg(test)]
 mod convertor_tests;
 mod cosine_annealing;
+mod cost_adr;
 mod dataset;
 mod error;
 mod inference;
@@ -16,6 +17,11 @@ mod simulation;
 mod test_helpers;
 mod training;
 
+pub use cost_adr::{
+    COST_ADR_POLICY_VERSION, CostAdrBounds, CostAdrEvaluationConfig, CostAdrEvaluationPoint,
+    CostAdrEvaluationResult, CostAdrItemState, CostAdrMetrics, CostAdrNextStates, CostAdrPlotPoint,
+    CostAdrPolicy, CostAdrTrainingConfig, CostAdrTrainingResult,
+};
 pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
 pub use error::{FSRSError, Result};
 pub use inference::{
@@ -24,6 +30,7 @@ pub use inference::{
     evaluate_with_time_series_splits,
 };
 pub use model::FSRS;
+pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
     CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, ReviewRatingCostFn, RevlogEntry,
     RevlogReviewKind, SimulationResult, SimulatorConfig, expected_workload,

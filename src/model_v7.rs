@@ -12,8 +12,9 @@ pub(super) const PARAM_LEN: usize = 35;
 const S90_TARGET: f32 = 0.9;
 const LUT_SIZE: usize = 256;
 const BISECTION_ITERS: usize = 50;
-const BRENT_ITERS: usize = 10;
-const BRENT_TOL: f64 = 1e-3;
+const NEWTON_ITERS: usize = 12;
+const INTERVAL_SOLVE_TOL: f32 = 1e-4;
+const RETENTION_SOLVE_TOL: f32 = 1e-4;
 const DR_MIN: f32 = 0.0001;
 const DR_MAX: f32 = 0.9999;
 const LUT_S_MIN: f32 = 0.03;
@@ -117,15 +118,44 @@ pub(crate) fn fsrs7_forgetting_curve_scalar(w: &[f32], t: f32, s: f32) -> f32 {
     (weight1 * r1 + weight2 * r2) / (weight1 + weight2)
 }
 
+fn fsrs7_forgetting_curve_and_derivative_scalar(w: &[f32], t: f32, s: f32) -> (f32, f32) {
+    let s = s.max(super::S_MIN);
+    let t = t.max(0.0);
+    let t_over_s = t / s;
+
+    let decay1 = -w[27];
+    let decay2 = -w[28];
+    let base1 = w[29];
+    let base2 = w[30];
+
+    let factor1 = base1.powf(1.0 / decay1) - 1.0;
+    let factor2 = base2.powf(1.0 / decay2) - 1.0;
+    let x1 = 1.0 + factor1 * t_over_s;
+    let x2 = 1.0 + factor2 * t_over_s;
+    let r1 = x1.powf(decay1);
+    let r2 = x2.powf(decay2);
+    let dr1 = r1 * decay1 * factor1 / (s * x1);
+    let dr2 = r2 * decay2 * factor2 / (s * x2);
+
+    let weight1 = w[31] * s.powf(-w[33]);
+    let weight2 = w[32] * s.powf(w[34]);
+    let weight_sum = weight1 + weight2;
+
+    (
+        (weight1 * r1 + weight2 * r2) / weight_sum,
+        (weight1 * dr1 + weight2 * dr2) / weight_sum,
+    )
+}
+
 #[derive(Debug)]
-pub(super) struct Fsrs7S90Lut {
+pub(crate) struct Fsrs7S90Lut {
     log_s_min: f32,
     log_s_step: f32,
     t90_grid: Vec<f32>,
 }
 
 impl Fsrs7S90Lut {
-    pub(super) fn build(w: &[f32]) -> Self {
+    pub(crate) fn build(w: &[f32]) -> Self {
         let log_s_min = LUT_S_MIN.max(super::S_MIN).ln();
         let log_s_max = LUT_S_MAX.min(super::S_MAX).ln();
         let log_s_step = (log_s_max - log_s_min) / (LUT_SIZE - 1) as f32;
@@ -142,7 +172,7 @@ impl Fsrs7S90Lut {
         }
     }
 
-    fn interpolate_t90(&self, stability: f32) -> f32 {
+    pub(crate) fn interpolate_t90(&self, stability: f32) -> f32 {
         if self.t90_grid.len() == 1 {
             return self.t90_grid[0];
         }
@@ -171,7 +201,7 @@ fn fsrs7_params_hash(w: &[f32]) -> u64 {
     hasher.finish()
 }
 
-pub(super) fn fsrs7_s90_lut(w: &[f32]) -> Arc<Fsrs7S90Lut> {
+pub(crate) fn fsrs7_s90_lut(w: &[f32]) -> Arc<Fsrs7S90Lut> {
     let key = fsrs7_params_hash(w);
     let cache = FSRS7_S90_LUT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(lut) = cache
@@ -187,75 +217,7 @@ pub(super) fn fsrs7_s90_lut(w: &[f32]) -> Arc<Fsrs7S90Lut> {
     guard.entry(key).or_insert_with(|| built.clone()).clone()
 }
 
-fn brent_root_f64<F>(mut f: F, mut a: f64, mut b: f64, tol: f64, max_iter: usize) -> Option<f64>
-where
-    F: FnMut(f64) -> f64,
-{
-    let mut fa = f(a);
-    let mut fb = f(b);
-    if !fa.is_finite() || !fb.is_finite() || fa * fb > 0.0 {
-        return None;
-    }
-    if fa.abs() < fb.abs() {
-        std::mem::swap(&mut a, &mut b);
-        std::mem::swap(&mut fa, &mut fb);
-    }
-
-    let mut c = a;
-    let mut fc = fa;
-    let mut d = c;
-    let mut mflag = true;
-
-    for _ in 0..max_iter {
-        let mut s = if (fa - fc).abs() > f64::EPSILON && (fb - fc).abs() > f64::EPSILON {
-            a * fb * fc / ((fa - fb) * (fa - fc))
-                + b * fa * fc / ((fb - fa) * (fb - fc))
-                + c * fa * fb / ((fc - fa) * (fc - fb))
-        } else if (fb - fa).abs() > f64::EPSILON {
-            b - fb * (b - a) / (fb - fa)
-        } else {
-            (a + b) * 0.5
-        };
-
-        let lower = ((3.0 * a) + b) * 0.25;
-        let upper = b;
-        let cond1 = (s <= lower && s <= upper) || (s >= lower && s >= upper);
-        let cond2 = mflag && (s - b).abs() >= (b - c).abs() * 0.5;
-        let cond3 = !mflag && (s - b).abs() >= (c - d).abs() * 0.5;
-        let cond4 = mflag && (b - c).abs() < tol;
-        let cond5 = !mflag && (c - d).abs() < tol;
-        if cond1 || cond2 || cond3 || cond4 || cond5 {
-            s = (a + b) * 0.5;
-            mflag = true;
-        } else {
-            mflag = false;
-        }
-
-        let fs = f(s);
-        d = c;
-        c = b;
-        fc = fb;
-        if fa * fs < 0.0 {
-            b = s;
-            fb = fs;
-        } else {
-            a = s;
-            fa = fs;
-        }
-
-        if fa.abs() < fb.abs() {
-            std::mem::swap(&mut a, &mut b);
-            std::mem::swap(&mut fa, &mut fb);
-        }
-
-        if fb.abs() <= tol {
-            return Some(b);
-        }
-    }
-    None
-}
-
-pub(super) fn fsrs7_next_interval_bisection_scalar(
+pub(crate) fn fsrs7_next_interval_bisection_scalar(
     w: &[f32],
     stability: f32,
     desired_retention: f32,
@@ -296,7 +258,7 @@ pub(super) fn fsrs7_next_interval_bisection_scalar(
     ((low + high) / 2.0).clamp(0.0, super::S_MAX)
 }
 
-pub(super) fn fsrs7_next_interval_scalar(
+pub(crate) fn fsrs7_next_interval_scalar(
     w: &[f32],
     stability: f32,
     desired_retention: f32,
@@ -308,38 +270,59 @@ pub(super) fn fsrs7_next_interval_scalar(
         return 0.0;
     }
 
-    let f = |t: f32| fsrs7_forgetting_curve_scalar(w, t, stability) - desired_retention;
     let mut high = lut
         .interpolate_t90(stability)
         .clamp(0.0, super::S_MAX)
         .max(super::S_MIN);
-    let mut f_high = f(high);
-    if !f_high.is_finite() {
+    let mut high_r = fsrs7_forgetting_curve_scalar(w, high, stability);
+    if !high_r.is_finite() {
         return fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high));
     }
-    while f_high > 0.0 && high < super::S_MAX {
+    while high_r > desired_retention && high < super::S_MAX {
         high = (high * 2.0).min(super::S_MAX);
-        f_high = f(high);
+        high_r = fsrs7_forgetting_curve_scalar(w, high, stability);
     }
-    if !f_high.is_finite() {
+    if !high_r.is_finite() {
         return fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high));
     }
-    if f_high > 0.0 {
+    if high_r > desired_retention {
         return super::S_MAX;
     }
 
-    let brent = brent_root_f64(
-        |x| f(x as f32) as f64,
-        0.0,
-        high as f64,
-        BRENT_TOL,
-        BRENT_ITERS,
-    );
-    if let Some(root) = brent {
-        root as f32
+    let mut low = 0.0;
+    let interval_solve_tol = high.max(super::S_MIN) * INTERVAL_SOLVE_TOL;
+    let mut t = if desired_retention >= S90_TARGET {
+        let ratio = ((1.0 - desired_retention) / (1.0 - S90_TARGET)).clamp(0.0, 1.0);
+        (high * ratio).clamp(low, high)
     } else {
-        fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high))
+        (low + high) * 0.5
+    };
+
+    for _ in 0..NEWTON_ITERS {
+        let (r, derivative) = fsrs7_forgetting_curve_and_derivative_scalar(w, t, stability);
+        if !(r.is_finite() && derivative.is_finite() && derivative < 0.0) {
+            t = (low + high) * 0.5;
+            continue;
+        }
+        let residual = r - desired_retention;
+        if residual > 0.0 {
+            low = t;
+        } else {
+            high = t;
+        }
+        if high - low <= interval_solve_tol && residual.abs() <= RETENTION_SOLVE_TOL {
+            return ((low + high) * 0.5).clamp(0.0, super::S_MAX);
+        }
+
+        let next = t - residual / derivative;
+        t = if next.is_finite() && low < next && next < high {
+            next
+        } else {
+            (low + high) * 0.5
+        };
     }
+
+    fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high))
 }
 
 pub(super) fn power_forgetting_curve<B: Backend>(
