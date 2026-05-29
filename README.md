@@ -90,11 +90,10 @@ Feed the optimizer a vector of `FSRSItem` instances built from your review histo
 cargo run --release --example cost_adr
 ```
 
-The example accepts environment overrides for quick experiments:
+The example accepts command-line overrides for quick experiments:
 
 ```sh
-COST_ADR_DAYS=90 COST_ADR_DECK=2000 COST_ADR_POP=8 COST_ADR_GEN=5 \
-  cargo run --release --example cost_adr
+cargo run --release --example cost_adr -- --days 90 --deck 2000 --pop 8 --gen 5
 ```
 
 The example trains a per-user `CostAdrPolicy`, shows which fields should be persisted with the user's FSRS parameters, and demonstrates the runtime scheduling loop: compute the post-rating `MemoryState`, ask the policy for a cost-conditioned desired retention, then pass that retention back into FSRS to get the next interval. Use `simulate_with_cost_adr_policy` when you already have a `CostAdrPolicy` and want the simulator to recompute per-card desired retention after each review in an offline simulation.

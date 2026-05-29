@@ -4,27 +4,141 @@ use fsrs::{
     SimulatorConfig, train_cost_adr_single_user,
 };
 use std::env;
+use std::error::Error;
+use std::fmt::Display;
+use std::io::{Error as IoError, ErrorKind};
+use std::str::FromStr;
 use std::time::Instant;
 
-fn env_usize(name: &str, default: usize) -> usize {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
+const USAGE: &str = "\
+Usage: cargo run --release --example cost_adr -- [OPTIONS]
+
+Options:
+  --days <usize>            Simulation learn span in days (default: 90)
+  --deck <usize>            Simulated deck size (default: 2000)
+  --learn-limit <usize>     New-card limit per day (default: 40)
+  --review-limit <usize>    Review limit per day (default: 400)
+  --pop <usize>             CMA-ES population size (default: 8)
+  --gen <usize>             CMA-ES generation count (default: 5)
+  --seed <u64>              Optimizer and simulation seed (default: 42)
+  --sigma0 <f32>            CMA-ES initial sigma (default: 1.0)
+  --goal-weight <f32>       Runtime scheduling cost weight (default: 64.0)
+  -h, --help                Print help
+";
+
+struct ExampleConfig {
+    days: usize,
+    deck_size: usize,
+    learn_limit: usize,
+    review_limit: usize,
+    population_size: usize,
+    generations: usize,
+    seed: u64,
+    sigma0: f32,
+    goal_cost_weight: f32,
 }
 
-fn env_u64(name: &str, default: u64) -> u64 {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
+impl Default for ExampleConfig {
+    fn default() -> Self {
+        Self {
+            days: 90,
+            deck_size: 2_000,
+            learn_limit: 40,
+            review_limit: 400,
+            population_size: 8,
+            generations: 5,
+            seed: 42,
+            sigma0: 1.0,
+            goal_cost_weight: 64.0,
+        }
+    }
 }
 
-fn env_f32(name: &str, default: f32) -> f32 {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
+fn invalid_arg(message: impl Into<String>) -> Box<dyn Error> {
+    Box::new(IoError::new(ErrorKind::InvalidInput, message.into()))
+}
+
+fn parse_value<T>(flag: &str, value: &str) -> Result<T, Box<dyn Error>>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    value
+        .parse()
+        .map_err(|err| invalid_arg(format!("invalid value for {flag}: {value} ({err})")))
+}
+
+fn next_arg_value<I>(args: &mut I, flag: &str) -> Result<String, Box<dyn Error>>
+where
+    I: Iterator<Item = String>,
+{
+    args.next()
+        .ok_or_else(|| invalid_arg(format!("missing value for {flag}")))
+}
+
+fn arg_value<I>(
+    args: &mut I,
+    flag: &str,
+    inline_value: Option<String>,
+) -> Result<String, Box<dyn Error>>
+where
+    I: Iterator<Item = String>,
+{
+    match inline_value {
+        Some(value) => Ok(value),
+        None => next_arg_value(args, flag),
+    }
+}
+
+fn parse_args() -> Result<Option<ExampleConfig>, Box<dyn Error>> {
+    let mut config = ExampleConfig::default();
+    let mut args = env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "-h" || arg == "--help" {
+            print!("{USAGE}");
+            return Ok(None);
+        }
+
+        let (flag, inline_value) = if let Some((flag, value)) = arg.split_once('=') {
+            (flag, Some(value.to_string()))
+        } else {
+            (arg.as_str(), None)
+        };
+
+        match flag {
+            "--days" => {
+                config.days = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--deck" => {
+                config.deck_size = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--learn-limit" => {
+                config.learn_limit = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--review-limit" => {
+                config.review_limit = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--pop" => {
+                config.population_size =
+                    parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--gen" => {
+                config.generations = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--seed" => {
+                config.seed = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--sigma0" => {
+                config.sigma0 = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            "--goal-weight" => {
+                config.goal_cost_weight =
+                    parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+            }
+            _ => return Err(invalid_arg(format!("unknown argument: {flag}"))),
+        }
+    }
+    Ok(Some(config))
 }
 
 fn format_optional(value: Option<f32>) -> String {
@@ -84,29 +198,29 @@ fn schedule_after_review_with_cost_adr(
 }
 
 fn main() -> fsrs::Result<()> {
-    let days = env_usize("COST_ADR_DAYS", 90);
-    let deck_size = env_usize("COST_ADR_DECK", 2_000);
-    let learn_limit = env_usize("COST_ADR_LEARN_LIMIT", 40);
-    let review_limit = env_usize("COST_ADR_REVIEW_LIMIT", 400);
-    let population_size = env_usize("COST_ADR_POP", 8);
-    let generations = env_usize("COST_ADR_GEN", 5);
-    let seed = env_u64("COST_ADR_SEED", 42);
-    let sigma0 = env_f32("COST_ADR_SIGMA0", 1.0);
-    let goal_cost_weight = env_f32("COST_ADR_GOAL_WEIGHT", 64.0);
+    let Some(example_config) = parse_args().map_err(|err| {
+        eprintln!("{err}");
+        eprintln!();
+        eprint!("{USAGE}");
+        FSRSError::InvalidInput
+    })?
+    else {
+        return Ok(());
+    };
 
     let config = SimulatorConfig {
-        deck_size,
-        learn_span: days,
-        learn_limit,
-        review_limit,
+        deck_size: example_config.deck_size,
+        learn_span: example_config.days,
+        learn_limit: example_config.learn_limit,
+        review_limit: example_config.review_limit,
         ..Default::default()
     };
     let training_config = CostAdrTrainingConfig {
-        population_size,
-        generations,
-        sigma0,
-        seed,
-        simulation_seed: seed,
+        population_size: example_config.population_size,
+        generations: example_config.generations,
+        sigma0: example_config.sigma0,
+        seed: example_config.seed,
+        simulation_seed: example_config.seed,
         ..Default::default()
     };
 
@@ -118,7 +232,15 @@ fn main() -> fsrs::Result<()> {
 
     println!("Cost ADR single-user FSRS training");
     println!(
-        "config days={days} deck={deck_size} learn_limit={learn_limit} review_limit={review_limit} pop={population_size} gen={generations} sigma0={sigma0} seed={seed}"
+        "config days={} deck={} learn_limit={} review_limit={} pop={} gen={} sigma0={} seed={}",
+        example_config.days,
+        example_config.deck_size,
+        example_config.learn_limit,
+        example_config.review_limit,
+        example_config.population_size,
+        example_config.generations,
+        example_config.sigma0,
+        example_config.seed
     );
     println!(
         "duration_seconds={:.3} result_training_seconds={:.3}",
@@ -177,7 +299,7 @@ fn main() -> fsrs::Result<()> {
     println!(
         "persist policy coefficient_count={} goal_cost_weight={}",
         user_policy.coefficients.len(),
-        goal_cost_weight
+        example_config.goal_cost_weight
     );
 
     let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
@@ -191,7 +313,7 @@ fn main() -> fsrs::Result<()> {
         previous_state,
         7,
         3,
-        goal_cost_weight,
+        example_config.goal_cost_weight,
         config.max_ivl.round() as u32,
     )?;
     println!(
