@@ -1,4 +1,5 @@
 use crate::DEFAULT_PARAMETERS;
+use crate::cost_adr::CostAdrPolicy;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
@@ -689,6 +690,46 @@ pub fn simulate(
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
+    simulate_inner(
+        config,
+        w,
+        desired_retention,
+        seed,
+        existing_cards,
+        None,
+        0.0,
+    )
+}
+
+pub fn simulate_with_cost_adr_policy(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    policy: &CostAdrPolicy,
+    goal_cost_weight: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+) -> Result<SimulationResult, FSRSError> {
+    policy.validate()?;
+    simulate_inner(
+        config,
+        w,
+        policy.retention_max,
+        seed,
+        existing_cards,
+        Some(policy),
+        goal_cost_weight,
+    )
+}
+
+fn simulate_inner(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    desired_retention: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+    cost_adr_policy: Option<&CostAdrPolicy>,
+    goal_cost_weight: f32,
+) -> Result<SimulationResult, FSRSError> {
     let w = Arc::new(check_and_fill_parameters(w)?);
     if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
@@ -940,6 +981,10 @@ pub fn simulate(
             card.difficulty = new_d;
         }
 
+        if let Some(policy) = cost_adr_policy {
+            card.desired_retention =
+                policy.evaluate_retention(card.stability, card.difficulty, goal_cost_weight);
+        }
         let mut ivl = next_interval(&card.parameters, card.stability, card.desired_retention)
             .round()
             .clamp(1.0, config.max_ivl);
