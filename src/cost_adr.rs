@@ -27,10 +27,20 @@ const COST_ADR_DEFAULT_BASELINE_RETENTIONS: [f32; 16] = [
     0.50, 0.53, 0.56, 0.59, 0.62, 0.65, 0.68, 0.71, 0.74, 0.77, 0.80, 0.83, 0.86, 0.89, 0.92, 0.95,
 ];
 const COST_ADR_DEFAULT_SEED: u64 = 42;
+const COST_ADR_DEFAULT_RETENTION_MIN: f32 = 0.30;
+const COST_ADR_DEFAULT_RETENTION_MAX: f32 = 0.995;
 const COST_ADR_DEFAULT_INITIAL_COEFFICIENTS: [f32; COST_ADR_PARAMETER_COUNT] = [
     -0.202, 9.14, -0.0978, 0.226, -5.31, -7.44, 24.1, -0.375, 1.81, -22.9, -5.82, 22.3, 1.72,
     -1.99, -19.4,
 ];
+
+fn default_cost_adr_retention_min() -> f32 {
+    COST_ADR_DEFAULT_RETENTION_MIN
+}
+
+fn default_cost_adr_retention_max() -> f32 {
+    COST_ADR_DEFAULT_RETENTION_MAX
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CostAdrBounds {
@@ -401,7 +411,9 @@ pub struct CostAdrTrainingConfig {
     pub simulation_seed: Option<u64>,
     pub lower_bound: f32,
     pub upper_bound: f32,
+    #[serde(default = "default_cost_adr_retention_min")]
     pub retention_min: f32,
+    #[serde(default = "default_cost_adr_retention_max")]
     pub retention_max: f32,
     pub initial_coefficients: Vec<f32>,
     pub cost_weights: Vec<f32>,
@@ -437,8 +449,8 @@ impl Default for CostAdrTrainingConfig {
             simulation_seed: None,
             lower_bound: -64.0,
             upper_bound: 64.0,
-            retention_min: 0.30,
-            retention_max: 0.995,
+            retention_min: COST_ADR_DEFAULT_RETENTION_MIN,
+            retention_max: COST_ADR_DEFAULT_RETENTION_MAX,
             initial_coefficients: COST_ADR_DEFAULT_INITIAL_COEFFICIENTS.to_vec(),
             cost_weights: COST_ADR_DEFAULT_COST_WEIGHTS.to_vec(),
             baseline_desired_retentions: COST_ADR_DEFAULT_BASELINE_RETENTIONS.to_vec(),
