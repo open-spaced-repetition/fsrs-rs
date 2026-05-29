@@ -180,7 +180,7 @@ impl CostAdrPolicy {
         days_elapsed: u32,
     ) -> Result<CostAdrNextStates> {
         self.validate()?;
-        if !goal_cost_weight.is_finite() {
+        if !goal_cost_weight.is_finite() || goal_cost_weight < 0.0 {
             return Err(FSRSError::InvalidInput);
         }
 
