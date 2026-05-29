@@ -84,7 +84,7 @@ Feed the optimizer a vector of `FSRSItem` instances built from your review histo
 
 ### Train and use a single-user Cost ADR policy
 
-`fsrs-rs` also includes a CPU/Rayon single-user optimizer for the FSRS6 Cost ADR retention policy. It searches a 15-parameter cost-conditioned desired-retention policy and evaluates it against a fixed 16-point desired-retention baseline portfolio. The report includes hypervolume, same-target time-saved AUC, relative same-target time-saved AUC, and memory-span coverage.
+`fsrs-rs` also includes a CPU/Rayon single-user optimizer for the FSRS6 Cost ADR policy. It searches a 15-parameter cost-conditioned desired-retention policy and evaluates it against a fixed 16-point desired-retention baseline portfolio. The report includes hypervolume, same-target time-saved AUC, relative same-target time-saved AUC, and memory-span coverage.
 
 ```sh
 cargo run --release --example cost_adr
