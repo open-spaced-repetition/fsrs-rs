@@ -401,6 +401,8 @@ pub struct CostAdrTrainingConfig {
     pub simulation_seed: Option<u64>,
     pub lower_bound: f32,
     pub upper_bound: f32,
+    pub retention_min: f32,
+    pub retention_max: f32,
     pub initial_coefficients: Vec<f32>,
     pub cost_weights: Vec<f32>,
     pub baseline_desired_retentions: Vec<f32>,
@@ -417,6 +419,8 @@ impl PartialEq for CostAdrTrainingConfig {
             && self.simulation_seed == other.simulation_seed
             && self.lower_bound == other.lower_bound
             && self.upper_bound == other.upper_bound
+            && self.retention_min == other.retention_min
+            && self.retention_max == other.retention_max
             && self.initial_coefficients == other.initial_coefficients
             && self.cost_weights == other.cost_weights
             && self.baseline_desired_retentions == other.baseline_desired_retentions
@@ -433,6 +437,8 @@ impl Default for CostAdrTrainingConfig {
             simulation_seed: None,
             lower_bound: -64.0,
             upper_bound: 64.0,
+            retention_min: 0.30,
+            retention_max: 0.995,
             initial_coefficients: COST_ADR_DEFAULT_INITIAL_COEFFICIENTS.to_vec(),
             cost_weights: COST_ADR_DEFAULT_COST_WEIGHTS.to_vec(),
             baseline_desired_retentions: COST_ADR_DEFAULT_BASELINE_RETENTIONS.to_vec(),
@@ -913,7 +919,8 @@ fn train_cost_adr_single_user_inner(
                 if cost_adr_training_should_abort(&progress) {
                     return Err(FSRSError::Interrupted);
                 }
-                let policy = CostAdrPolicy::new(coefficients.clone())?;
+                let policy =
+                    cost_adr_policy_from_training_config(coefficients.clone(), training_config)?;
                 let mut points = evaluate_cost_adr_rollouts(
                     config,
                     parameters,
@@ -986,7 +993,7 @@ fn train_cost_adr_single_user_inner(
     let best_auc_metrics = cost_adr_auc_metrics(&baseline_metrics, &best_metrics);
 
     Ok(CostAdrTrainingResult {
-        policy: CostAdrPolicy::new(best_coefficients)?,
+        policy: cost_adr_policy_from_training_config(best_coefficients, training_config)?,
         baseline_metrics,
         baseline_hypervolume,
         best_hypervolume,
@@ -996,6 +1003,20 @@ fn train_cost_adr_single_user_inner(
         history,
         training_seconds: started.elapsed().as_secs_f32(),
     })
+}
+
+fn cost_adr_policy_from_training_config(
+    coefficients: Vec<f32>,
+    config: &CostAdrTrainingConfig,
+) -> Result<CostAdrPolicy> {
+    CostAdrPolicy::new_with_settings(
+        coefficients,
+        0.0,
+        1024.0,
+        config.retention_min,
+        config.retention_max,
+        None,
+    )
 }
 
 fn reset_cost_adr_training_progress(config: &CostAdrTrainingConfig) {
@@ -1056,6 +1077,10 @@ fn validate_training_config(config: &CostAdrTrainingConfig) -> Result<()> {
         || !config.lower_bound.is_finite()
         || !config.upper_bound.is_finite()
         || config.lower_bound >= config.upper_bound
+        || !config.retention_min.is_finite()
+        || !config.retention_max.is_finite()
+        || !(0.0 < config.retention_min && config.retention_min < config.retention_max)
+        || config.retention_max >= 1.0
         || config.initial_coefficients.len() != COST_ADR_PARAMETER_COUNT
         || config
             .initial_coefficients
@@ -1768,6 +1793,33 @@ mod tests {
         assert_eq!(result.best_cost_weight_metrics.len(), 2);
         assert_eq!(result.history.len(), 2);
         assert!(result.training_seconds >= 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_train_cost_adr_uses_configured_retention_bounds() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 80,
+            learn_span: 10,
+            learn_limit: 20,
+            review_limit: 200,
+            ..Default::default()
+        };
+        let training_config = CostAdrTrainingConfig {
+            population_size: 2,
+            generations: 1,
+            sigma0: 0.5,
+            retention_min: 0.75,
+            retention_max: 0.95,
+            cost_weights: vec![0.0],
+            baseline_desired_retentions: vec![0.9],
+            ..Default::default()
+        };
+        let result =
+            CostAdrPolicy::train_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
+
+        assert_eq!(result.policy.retention_min, 0.75);
+        assert_eq!(result.policy.retention_max, 0.95);
         Ok(())
     }
 
