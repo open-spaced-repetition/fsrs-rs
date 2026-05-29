@@ -30,6 +30,7 @@ const COST_ADR_DEFAULT_SEED: u64 = 42;
 const COST_ADR_DEFAULT_RETENTION_MIN: f32 = 0.30;
 const COST_ADR_DEFAULT_RETENTION_MAX: f32 = 0.995;
 const COST_ADR_CALIBRATION_POINT_COUNT_MIN: usize = 2;
+const COST_ADR_CALIBRATION_MIN_AVERAGE_DR_SPAN: f32 = 0.005;
 const COST_ADR_CALIBRATION_WEIGHT_TOLERANCE: f32 = 1e-4;
 const COST_ADR_CALIBRATION_MAX_ITERATIONS: usize = 24;
 const COST_ADR_DEFAULT_INITIAL_COEFFICIENTS: [f32; COST_ADR_PARAMETER_COUNT] = [
@@ -303,7 +304,7 @@ impl CostAdrPolicy {
         )?;
         let low_avg = average_desired_retention_from_point(&low)?;
         let high_avg = average_desired_retention_from_point(&high)?;
-        if is_close(low_avg, high_avg) {
+        if (low_avg - high_avg).abs() < COST_ADR_CALIBRATION_MIN_AVERAGE_DR_SPAN {
             return Ok(vec![low, high]);
         }
 
@@ -1910,6 +1911,31 @@ mod tests {
                     >= point[1].average_desired_retention.unwrap()
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_average_desired_retention_range_calibration_keeps_only_endpoints_when_narrow()
+    -> Result<()> {
+        let policy = CostAdrPolicy::constant_retention(0.9)?;
+        let config = SimulatorConfig {
+            deck_size: 80,
+            learn_span: 10,
+            learn_limit: 20,
+            review_limit: 200,
+            ..Default::default()
+        };
+
+        let points = policy.calibrate_average_desired_retention_range(
+            &config,
+            &DEFAULT_PARAMETERS,
+            16,
+            Some(11),
+        )?;
+
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].goal_cost_weight, policy.cost_weight_min);
+        assert_eq!(points[1].goal_cost_weight, policy.cost_weight_max);
         Ok(())
     }
 
