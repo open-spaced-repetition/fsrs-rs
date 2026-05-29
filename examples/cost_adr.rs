@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration as StdDuration, Instant};
 
 const USAGE: &str = "\
-Usage: cargo run --release --example cost_adr -- [OPTIONS]
+Usage: cargo run --release --features experimental_cost_adr --example cost_adr -- [OPTIONS]
 
 Options:
   --days <usize>            Simulation learn span in days (default: 1825)

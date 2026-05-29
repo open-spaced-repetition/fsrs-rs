@@ -15,7 +15,8 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 
 [features]
 default = []
-cost_adr = []
+# Experimental: Cost ADR APIs may change without semver compatibility guarantees.
+experimental_cost_adr = []
 
 [dependencies.burn]
 version = "0.17.1"
@@ -79,4 +80,4 @@ path = "examples/optimize.rs"
 [[example]]
 name = "cost_adr"
 path = "examples/cost_adr.rs"
-required-features = ["cost_adr"]
+required-features = ["experimental_cost_adr"]
