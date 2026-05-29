@@ -1,14 +1,16 @@
 use chrono::{DateTime, Duration, Utc};
 use fsrs::{
-    CostAdrPolicy, CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS, FSRSError, MemoryState,
-    SimulatorConfig, train_cost_adr_single_user,
+    CombinedProgressState, CostAdrPolicy, CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS,
+    FSRSError, MemoryState, SimulatorConfig, train_cost_adr_single_user,
 };
 use std::env;
 use std::error::Error;
 use std::fmt::Display;
-use std::io::{Error as IoError, ErrorKind};
+use std::io::{Error as IoError, ErrorKind, Write};
 use std::str::FromStr;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration as StdDuration, Instant};
 
 const USAGE: &str = "\
 Usage: cargo run --release --example cost_adr -- [OPTIONS]
@@ -156,6 +158,41 @@ fn format_optional(value: Option<f32>) -> String {
         .unwrap_or_else(|| "n/a".to_string())
 }
 
+fn spawn_progress_printer(progress: Arc<Mutex<CombinedProgressState>>) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut stderr = std::io::stderr();
+        loop {
+            let (current, total, finished) = {
+                let progress = progress.lock().unwrap();
+                (progress.current(), progress.total(), progress.finished())
+            };
+            eprint!("\r{}", progress_line(current, total, finished));
+            let _ = stderr.flush();
+
+            if finished {
+                eprintln!();
+                break;
+            }
+
+            thread::sleep(StdDuration::from_millis(100));
+        }
+    })
+}
+
+fn progress_line(current: usize, total: usize, finished: bool) -> String {
+    if total == 0 {
+        return "Cost ADR training [initializing]".to_string();
+    }
+
+    const WIDTH: usize = 32;
+    let current = current.min(total);
+    let filled = ((current * WIDTH) / total).min(WIDTH);
+    let bar = format!("{}{}", "=".repeat(filled), " ".repeat(WIDTH - filled));
+    let percent = current as f32 * 100.0 / total as f32;
+    let status = if finished { "done" } else { "training" };
+    format!("Cost ADR {status} [{bar}] {current}/{total} ({percent:.1}%)")
+}
+
 struct ScheduledReview {
     memory_state: MemoryState,
     desired_retention: f32,
@@ -225,20 +262,25 @@ fn main() -> fsrs::Result<()> {
         max_cost_perday: example_config.cost_limit_minutes * 60.0,
         ..Default::default()
     };
+    let progress = CombinedProgressState::new_shared();
     let training_config = CostAdrTrainingConfig {
         population_size: example_config.population_size,
         generations: example_config.generations,
         sigma0: example_config.sigma0,
         seed: example_config.seed,
         simulation_seed: example_config.seed,
+        progress: Some(progress.clone()),
         ..Default::default()
     };
 
     // For a production user, replace DEFAULT_PARAMETERS with parameters trained
     // from that user's revlog via compute_parameters.
+    let progress_printer = spawn_progress_printer(progress.clone());
     let started = Instant::now();
-    let result = train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
+    let result = train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config);
     let wall_seconds = started.elapsed().as_secs_f32();
+    let _ = progress_printer.join();
+    let result = result?;
 
     println!("Cost ADR single-user FSRS training");
     println!(
@@ -312,6 +354,7 @@ fn main() -> fsrs::Result<()> {
         user_policy.coefficients.len(),
         example_config.goal_cost_weight
     );
+    println!("policy={user_policy:#?}");
 
     let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
     let previous_state = Some(MemoryState {

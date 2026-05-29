@@ -1,6 +1,7 @@
 use crate::error::{FSRSError, Result};
 use crate::inference::Parameters;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
+use crate::training::{CombinedProgressState, ProgressState};
 use crate::{SimulationResult, SimulatorConfig, simulate, simulate_with_cost_adr_policy};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -9,6 +10,8 @@ use rayon::iter::{
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const COST_ADR_PARAMETER_COUNT: usize = 15;
@@ -229,7 +232,7 @@ pub struct CostAdrEvaluationResult {
     pub auc_metrics: CostAdrAucMetrics,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostAdrTrainingConfig {
     pub population_size: usize,
     pub generations: usize,
@@ -241,6 +244,23 @@ pub struct CostAdrTrainingConfig {
     pub initial_coefficients: Vec<f32>,
     pub cost_weights: Vec<f32>,
     pub baseline_desired_retentions: Vec<f32>,
+    #[serde(skip)]
+    pub progress: Option<Arc<Mutex<CombinedProgressState>>>,
+}
+
+impl PartialEq for CostAdrTrainingConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.population_size == other.population_size
+            && self.generations == other.generations
+            && self.sigma0 == other.sigma0
+            && self.seed == other.seed
+            && self.simulation_seed == other.simulation_seed
+            && self.lower_bound == other.lower_bound
+            && self.upper_bound == other.upper_bound
+            && self.initial_coefficients == other.initial_coefficients
+            && self.cost_weights == other.cost_weights
+            && self.baseline_desired_retentions == other.baseline_desired_retentions
+    }
 }
 
 impl Default for CostAdrTrainingConfig {
@@ -256,6 +276,7 @@ impl Default for CostAdrTrainingConfig {
             initial_coefficients: COST_ADR_DEFAULT_INITIAL_COEFFICIENTS.to_vec(),
             cost_weights: COST_ADR_DEFAULT_COST_WEIGHTS.to_vec(),
             baseline_desired_retentions: COST_ADR_DEFAULT_BASELINE_RETENTIONS.to_vec(),
+            progress: None,
         }
     }
 }
@@ -488,7 +509,25 @@ pub fn train_cost_adr_single_user(
     parameters: &Parameters,
     training_config: &CostAdrTrainingConfig,
 ) -> Result<CostAdrTrainingResult> {
-    validate_training_config(training_config)?;
+    if let Err(err) = validate_training_config(training_config) {
+        finish_cost_adr_training_progress(&training_config.progress);
+        return Err(err);
+    }
+    reset_cost_adr_training_progress(training_config);
+    let result = train_cost_adr_single_user_inner(config, parameters, training_config);
+    finish_cost_adr_training_progress(&training_config.progress);
+    result
+}
+
+fn train_cost_adr_single_user_inner(
+    config: &SimulatorConfig,
+    parameters: &Parameters,
+    training_config: &CostAdrTrainingConfig,
+) -> Result<CostAdrTrainingResult> {
+    if cost_adr_training_should_abort(&training_config.progress) {
+        return Err(FSRSError::Interrupted);
+    }
+
     let started = Instant::now();
     let initial_coefficients = clamp_coefficients(
         &training_config.initial_coefficients,
@@ -519,14 +558,23 @@ pub fn train_cost_adr_single_user(
     let mut history = Vec::with_capacity(training_config.generations);
 
     for generation in 0..training_config.generations {
+        if cost_adr_training_should_abort(&training_config.progress) {
+            return Err(FSRSError::Interrupted);
+        }
+
         let mut solutions = optimizer.ask(training_config.population_size);
         if generation == 0 && !solutions.is_empty() {
             solutions[0] = initial_coefficients.clone();
         }
 
+        let completed_candidates = AtomicUsize::new(generation * training_config.population_size);
+        let progress = training_config.progress.clone();
         let candidate_results: Result<Vec<CandidateEvaluation>> = solutions
             .into_par_iter()
             .map(|coefficients| {
+                if cost_adr_training_should_abort(&progress) {
+                    return Err(FSRSError::Interrupted);
+                }
                 let policy = CostAdrPolicy::new(coefficients.clone())?;
                 let points = evaluate_cost_adr_rollouts(
                     config,
@@ -540,12 +588,19 @@ pub fn train_cost_adr_single_user(
                 let candidate_points = points_from_metrics(&candidate_metrics);
                 let hypervolume = hypervolume_2d(&candidate_points, reference);
                 let hypervolume_delta = hypervolume - baseline_hypervolume;
-                Ok(CandidateEvaluation {
+                let evaluation = Ok(CandidateEvaluation {
                     coefficients,
                     rollout_points: points,
                     hypervolume,
                     hypervolume_delta,
-                })
+                });
+                let completed = completed_candidates.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+                update_cost_adr_training_progress(
+                    &progress,
+                    completed,
+                    training_config.population_size,
+                );
+                evaluation
             })
             .collect();
 
@@ -598,6 +653,57 @@ pub fn train_cost_adr_single_user(
         history,
         training_seconds: started.elapsed().as_secs_f32(),
     })
+}
+
+fn reset_cost_adr_training_progress(config: &CostAdrTrainingConfig) {
+    if let Some(progress) = &config.progress {
+        let progress_state = ProgressState {
+            epoch_total: config.generations,
+            items_total: config.population_size,
+            epoch: 0,
+            items_processed: 0,
+        };
+        progress.lock().unwrap().reset(vec![progress_state]);
+    }
+}
+
+fn finish_cost_adr_training_progress(progress: &Option<Arc<Mutex<CombinedProgressState>>>) {
+    if let Some(progress) = progress {
+        progress.lock().unwrap().mark_finished();
+    }
+}
+
+fn cost_adr_training_should_abort(progress: &Option<Arc<Mutex<CombinedProgressState>>>) -> bool {
+    progress
+        .as_ref()
+        .is_some_and(|progress| progress.lock().unwrap().want_abort)
+}
+
+fn update_cost_adr_training_progress(
+    progress: &Option<Arc<Mutex<CombinedProgressState>>>,
+    completed: usize,
+    items_total: usize,
+) {
+    if let Some(progress) = progress {
+        let (epoch, items_processed) = cost_adr_training_progress_position(completed, items_total);
+        let mut state = progress.lock().unwrap();
+        if let Some(split) = state.splits.first_mut() {
+            split.epoch = epoch;
+            split.items_processed = items_processed;
+        }
+    }
+}
+
+fn cost_adr_training_progress_position(completed: usize, items_total: usize) -> (usize, usize) {
+    if completed == 0 {
+        return (0, 0);
+    }
+    let items_processed = completed % items_total;
+    if items_processed == 0 {
+        (completed / items_total, items_total)
+    } else {
+        (completed / items_total + 1, items_processed)
+    }
 }
 
 fn validate_training_config(config: &CostAdrTrainingConfig) -> Result<()> {
@@ -1097,6 +1203,62 @@ mod tests {
         assert_eq!(result.history.len(), 2);
         assert!(result.training_seconds >= 0.0);
         Ok(())
+    }
+
+    #[test]
+    fn test_train_cost_adr_updates_progress() -> Result<()> {
+        let progress = CombinedProgressState::new_shared();
+        let config = SimulatorConfig {
+            deck_size: 80,
+            learn_span: 10,
+            learn_limit: 20,
+            review_limit: 200,
+            ..Default::default()
+        };
+        let training_config = CostAdrTrainingConfig {
+            population_size: 2,
+            generations: 2,
+            sigma0: 0.5,
+            cost_weights: vec![0.0],
+            baseline_desired_retentions: vec![0.9],
+            progress: Some(progress.clone()),
+            ..Default::default()
+        };
+
+        train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
+
+        let progress = progress.lock().unwrap();
+        assert!(progress.finished());
+        assert_eq!(progress.current(), 4);
+        assert_eq!(progress.total(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_train_cost_adr_progress_can_abort() {
+        let progress = CombinedProgressState::new_shared();
+        progress.lock().unwrap().want_abort = true;
+        let config = SimulatorConfig {
+            deck_size: 80,
+            learn_span: 10,
+            learn_limit: 20,
+            review_limit: 200,
+            ..Default::default()
+        };
+        let training_config = CostAdrTrainingConfig {
+            population_size: 2,
+            generations: 2,
+            sigma0: 0.5,
+            cost_weights: vec![0.0],
+            baseline_desired_retentions: vec![0.9],
+            progress: Some(progress.clone()),
+            ..Default::default()
+        };
+
+        let result = train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config);
+
+        assert_eq!(result, Err(FSRSError::Interrupted));
+        assert!(progress.lock().unwrap().finished());
     }
 
     #[test]
