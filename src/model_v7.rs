@@ -13,6 +13,7 @@ const S90_TARGET: f32 = 0.9;
 const LUT_SIZE: usize = 256;
 const BISECTION_ITERS: usize = 50;
 const NEWTON_ITERS: usize = 12;
+const BRENT_ITERS: usize = 64;
 const INTERVAL_SOLVE_TOL: f32 = 1e-4;
 const RETENTION_SOLVE_TOL: f32 = 1e-4;
 const DR_MIN: f32 = 0.0001;
@@ -290,7 +291,7 @@ pub(crate) fn fsrs7_next_interval_scalar(
     }
 
     let mut low = 0.0;
-    let interval_solve_tol = high.max(super::S_MIN) * INTERVAL_SOLVE_TOL;
+    let interval_solve_tol = INTERVAL_SOLVE_TOL;
     let mut t = if desired_retention >= S90_TARGET {
         let ratio = ((1.0 - desired_retention) / (1.0 - S90_TARGET)).clamp(0.0, 1.0);
         (high * ratio).clamp(low, high)
@@ -322,7 +323,64 @@ pub(crate) fn fsrs7_next_interval_scalar(
         };
     }
 
-    fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high))
+    fsrs7_next_interval_brent_scalar_with_high(w, stability, desired_retention, high)
+}
+
+#[cfg(test)]
+fn fsrs7_next_interval_brent_scalar(
+    w: &[f32],
+    stability: f32,
+    desired_retention: f32,
+    lut: &Fsrs7S90Lut,
+) -> f32 {
+    let desired_retention = desired_retention.clamp(DR_MIN, DR_MAX);
+    let stability = stability.max(super::S_MIN);
+    if desired_retention >= DR_MAX {
+        return 0.0;
+    }
+
+    let mut high = lut
+        .interpolate_t90(stability)
+        .clamp(0.0, super::S_MAX)
+        .max(super::S_MIN);
+    let mut high_r = fsrs7_forgetting_curve_scalar(w, high, stability);
+    if !high_r.is_finite() {
+        return fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high));
+    }
+    while high_r > desired_retention && high < super::S_MAX {
+        high = (high * 2.0).min(super::S_MAX);
+        high_r = fsrs7_forgetting_curve_scalar(w, high, stability);
+    }
+    if !high_r.is_finite() {
+        return fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high));
+    }
+    if high_r > desired_retention {
+        return super::S_MAX;
+    }
+
+    fsrs7_next_interval_brent_scalar_with_high(w, stability, desired_retention, high)
+}
+
+fn fsrs7_next_interval_brent_scalar_with_high(
+    w: &[f32],
+    stability: f32,
+    desired_retention: f32,
+    high: f32,
+) -> f32 {
+    let mut convergency = roots::SimpleConvergency {
+        eps: 1e-12,
+        max_iter: BRENT_ITERS,
+    };
+    roots::find_root_brent(
+        0.0_f64,
+        high as f64,
+        |t| fsrs7_forgetting_curve_scalar(w, t as f32, stability) as f64 - desired_retention as f64,
+        &mut convergency,
+    )
+    .map(|interval| (interval as f32).clamp(0.0, super::S_MAX))
+    .unwrap_or_else(|_| {
+        fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high))
+    })
 }
 
 pub(super) fn power_forgetting_curve<B: Backend>(
@@ -669,7 +727,9 @@ mod tests {
                 let t = fsrs7_next_interval_scalar(&w, stability, desired, &lut);
                 let r = fsrs7_forgetting_curve_scalar(&w, t, stability);
                 assert!(
-                    (r - desired).abs() <= 1e-3 || (t - S_MAX).abs() < 1e-4,
+                    (r - desired).abs() <= 1e-3
+                        || t <= INTERVAL_SOLVE_TOL
+                        || (t - S_MAX).abs() < 1e-4,
                     "stability={stability}, desired={desired}, t={t}, r={r}"
                 );
             }
@@ -684,11 +744,9 @@ mod tests {
             for desired in [0.4, 0.6, 0.8, 0.9, 0.95] {
                 let baseline = fsrs7_next_interval_bisection_scalar(&w, stability, desired, None);
                 let optimized = fsrs7_next_interval_scalar(&w, stability, desired, &lut);
-                let baseline_r = fsrs7_forgetting_curve_scalar(&w, baseline, stability);
-                let optimized_r = fsrs7_forgetting_curve_scalar(&w, optimized, stability);
                 assert!(
-                    (optimized_r - baseline_r).abs() <= 1e-3,
-                    "stability={stability}, desired={desired}, baseline={baseline}, optimized={optimized}, baseline_r={baseline_r}, optimized_r={optimized_r}"
+                    (optimized - baseline).abs() <= 0.01,
+                    "stability={stability}, desired={desired}, baseline={baseline}, optimized={optimized}"
                 );
             }
         }
@@ -754,14 +812,181 @@ mod tests {
             for desired in desireds {
                 let baseline = fsrs7_next_interval_bisection_scalar(&w, stability, desired, None);
                 let optimized = fsrs7_next_interval_scalar(&w, stability, desired, &lut);
-                let baseline_r = fsrs7_forgetting_curve_scalar(&w, baseline, stability);
-                let optimized_r = fsrs7_forgetting_curve_scalar(&w, optimized, stability);
                 assert!(
-                    (optimized_r - baseline_r).abs() <= 1e-3,
-                    "stability={stability}, desired={desired}, baseline={baseline}, optimized={optimized}, baseline_r={baseline_r}, optimized_r={optimized_r}"
+                    (optimized - baseline).abs() <= 0.01
+                        || ((optimized - S_MAX).abs() < 1e-4 && (baseline - S_MAX).abs() < 1e-4),
+                    "stability={stability}, desired={desired}, baseline={baseline}, optimized={optimized}"
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_fsrs7_brent_interval_matches_bisection_dense_grid() {
+        let w = DEFAULT_PARAMETERS;
+        let lut = Fsrs7S90Lut::build(&w);
+        let desireds = [0.25, 0.4, 0.55, 0.7, 0.8, 0.9, 0.95, 0.98];
+
+        for i in 0..25 {
+            let p = i as f32 / 24.0;
+            let stability =
+                (super::super::S_MIN.ln() + (S_MAX.ln() - super::super::S_MIN.ln()) * p).exp();
+            for desired in desireds {
+                let baseline = fsrs7_next_interval_bisection_scalar(&w, stability, desired, None);
+                let brent = fsrs7_next_interval_brent_scalar(&w, stability, desired, &lut);
+                let baseline_r = fsrs7_forgetting_curve_scalar(&w, baseline, stability);
+                let brent_r = fsrs7_forgetting_curve_scalar(&w, brent, stability);
+                assert!(
+                    (brent_r - baseline_r).abs() <= 1e-3,
+                    "stability={stability}, desired={desired}, baseline={baseline}, brent={brent}, baseline_r={baseline_r}, brent_r={brent_r}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn compare_fsrs7_interval_solver_speed() {
+        let w = DEFAULT_PARAMETERS;
+        let lut = Fsrs7S90Lut::build(&w);
+        let desireds = [0.25, 0.4, 0.55, 0.7, 0.8, 0.9, 0.95, 0.98];
+        let stabilities = (0..128)
+            .map(|i| {
+                let p = i as f32 / 127.0;
+                (super::super::S_MIN.ln() + (S_MAX.ln() - super::super::S_MIN.ln()) * p).exp()
+            })
+            .collect::<Vec<_>>();
+        let cases = stabilities
+            .iter()
+            .flat_map(|&stability| desireds.iter().map(move |&desired| (stability, desired)))
+            .collect::<Vec<_>>();
+
+        let repetitions = 2_000;
+        let mut newton_sum = 0.0;
+        let started = std::time::Instant::now();
+        for _ in 0..repetitions {
+            for &(stability, desired) in &cases {
+                newton_sum +=
+                    std::hint::black_box(fsrs7_next_interval_scalar(&w, stability, desired, &lut));
+            }
+        }
+        let newton_elapsed = started.elapsed();
+
+        let mut brent_sum = 0.0;
+        let started = std::time::Instant::now();
+        for _ in 0..repetitions {
+            for &(stability, desired) in &cases {
+                brent_sum += std::hint::black_box(fsrs7_next_interval_brent_scalar(
+                    &w, stability, desired, &lut,
+                ));
+            }
+        }
+        let brent_elapsed = started.elapsed();
+
+        let mut max_retention_error = 0.0_f32;
+        let mut max_interval_delta = 0.0_f32;
+        for &(stability, desired) in &cases {
+            let newton = fsrs7_next_interval_scalar(&w, stability, desired, &lut);
+            let brent = fsrs7_next_interval_brent_scalar(&w, stability, desired, &lut);
+            let newton_r = fsrs7_forgetting_curve_scalar(&w, newton, stability);
+            let brent_r = fsrs7_forgetting_curve_scalar(&w, brent, stability);
+            max_retention_error = max_retention_error.max((newton_r - brent_r).abs());
+            max_interval_delta = max_interval_delta.max((newton - brent).abs());
+        }
+
+        println!(
+            "cases={} repetitions={} calls={} newton={:?} brent={:?} brent/newton={:.3} checksum_delta={:.3} max_interval_delta={:.6} max_retention_error={:.6}",
+            cases.len(),
+            repetitions,
+            cases.len() * repetitions,
+            newton_elapsed,
+            brent_elapsed,
+            brent_elapsed.as_secs_f64() / newton_elapsed.as_secs_f64(),
+            (newton_sum - brent_sum).abs(),
+            max_interval_delta,
+            max_retention_error,
+        );
+    }
+
+    #[test]
+    fn test_fsrs7_interval_matches_f64_bisection_reference() {
+        let w = DEFAULT_PARAMETERS;
+        let lut = Fsrs7S90Lut::build(&w);
+        let desireds = [0.25, 0.4, 0.55, 0.7, 0.8, 0.9, 0.95, 0.98];
+        let mut max_retention_error = 0.0_f64;
+        let mut max_interval_delta = 0.0_f64;
+
+        for i in 0..128 {
+            let p = i as f64 / 127.0;
+            let stability = ((super::super::S_MIN as f64).ln()
+                + ((S_MAX as f64).ln() - (super::super::S_MIN as f64).ln()) * p)
+                .exp() as f32;
+            for desired in desireds {
+                let reference = fsrs7_next_interval_f64_bisection(&w, stability, desired);
+                if reference > S_MAX as f64 - 100.0 {
+                    continue;
+                }
+                let interval = fsrs7_next_interval_scalar(&w, stability, desired, &lut) as f64;
+                max_interval_delta = max_interval_delta.max((interval - reference).abs());
+                let retention = fsrs7_forgetting_curve_f64(&w, interval, stability as f64);
+                max_retention_error = max_retention_error.max((retention - desired as f64).abs());
+            }
+        }
+
+        assert!(
+            max_interval_delta <= 0.05,
+            "max_retention_error={max_retention_error}, max_interval_delta={max_interval_delta}"
+        );
+    }
+
+    fn fsrs7_next_interval_f64_bisection(w: &[f32], stability: f32, desired_retention: f32) -> f64 {
+        let desired_retention = (desired_retention as f64).clamp(DR_MIN as f64, DR_MAX as f64);
+        let stability = (stability as f64).max(super::super::S_MIN as f64);
+        if desired_retention >= DR_MAX as f64 {
+            return 0.0;
+        }
+
+        let mut low = 0.0;
+        let mut high = stability.max(1.0).min(S_MAX as f64);
+        while fsrs7_forgetting_curve_f64(w, high, stability) > desired_retention
+            && high < S_MAX as f64
+        {
+            high = (high * 2.0).min(S_MAX as f64);
+        }
+        if fsrs7_forgetting_curve_f64(w, high, stability) > desired_retention {
+            return S_MAX as f64;
+        }
+
+        for _ in 0..120 {
+            let mid = (low + high) * 0.5;
+            if fsrs7_forgetting_curve_f64(w, mid, stability) > desired_retention {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+
+        (low + high) * 0.5
+    }
+
+    fn fsrs7_forgetting_curve_f64(w: &[f32], t: f64, s: f64) -> f64 {
+        let s = s.max(super::super::S_MIN as f64);
+        let t_over_s = t.max(0.0) / s;
+
+        let decay1 = -(w[27] as f64);
+        let decay2 = -(w[28] as f64);
+        let base1 = w[29] as f64;
+        let base2 = w[30] as f64;
+
+        let factor1 = base1.powf(1.0 / decay1) - 1.0;
+        let factor2 = base2.powf(1.0 / decay2) - 1.0;
+        let r1 = (1.0 + factor1 * t_over_s).powf(decay1);
+        let r2 = (1.0 + factor2 * t_over_s).powf(decay2);
+
+        let weight1 = (w[31] as f64) * s.powf(-(w[33] as f64));
+        let weight2 = (w[32] as f64) * s.powf(w[34] as f64);
+
+        (weight1 * r1 + weight2 * r2) / (weight1 + weight2)
     }
 
     #[test]

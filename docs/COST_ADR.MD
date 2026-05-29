@@ -71,3 +71,27 @@
 - `fixed_fsrs_equivalent_desired_retention` (`FSRS Eq. DR`, displayed as `FSRS6 Eq. DR` or `FSRS7 Eq. DR`): fixed-FSRS desired retention that reaches the same simulated Memorized target for the selected model, interpolated from the fixed-DR baseline frontier.
 - `same_target_time_saved_percent`: time saved by ADR compared with that fixed-FSRS equivalent desired retention at the same Memorized target.
 - `cost_weight_for_average_desired_retention(target)`: inferred ADR cost weight for a target average ADR desired retention. It interpolates in `ln(1 + weight)` space because ADR normalizes the cost weight with the same transform.
+
+## FSRS-7 Interval Solver
+
+Yomitan comparison from 2026-05-29, using `examples/fsrs7_adr_collection.rs` with `--deck-name-contains Yomitan`, target average ADR DR `0.8`, FSRS-7, and the same trained parameter vector. The run covered 169,942 revlogs, 10,013 reviewed cards, and 129,085 FSRS items.
+
+These results use `1e-4` as an absolute interval tolerance for the Newton-based variants. The earlier relative tolerance (`high * 1e-4`) was not the intended precision target and produced a different output family.
+
+| Solver | Meaning | ADR training seconds | Inferred cost weight for Avg ADR DR 0.8 | Notes |
+| --- | --- | ---: | ---: | --- |
+| Pure Newton | Newton only, no bracket fallback | 58.027 | 125.883 | Fastest, but lands in the old output family; not reliable enough. |
+| Newton/Bisection | Safe Newton with bisection fallback | 73.915 | 79.453 | Reliable behavior, slower than Newton/Brent. |
+| Newton/Brent | Safe Newton with Brent fallback | 66.936 | 79.453 | Best candidate so far: close to Brent/Bisection behavior, faster fallback. |
+| Pure Brent | `roots::find_root_brent`, strict convergence | 147.087 | 79.476 | Close behavior, too slow. |
+| Bisection | 50 iterations, LUT high hint | 174.888 | 79.476 | Slow reference behavior. |
+
+Interpretation:
+
+- The implemented FSRS-7 interval solver is now `Newton/Brent`: safe Newton first, strict Brent fallback.
+- Pure Newton is fast but can miss enough roots to materially change ADR evaluation.
+- Brent and bisection agree closely, which makes them useful references, but both are too slow as primary solvers.
+- Newton/Brent was selected because it matches the reliable output family while avoiding the full bisection fallback cost.
+- `Newton/Bisection` remains the historical compatibility baseline for pre-change FSRS-7 interval solving.
+
+Run caveat: the `Newton/Brent` and `Pure Newton` runs used a copied collection snapshot after the live SQLite database became locked. The snapshot had the same Yomitan revlog/card counts and the same FSRS-7 parameter vector as the live runs.
