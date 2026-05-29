@@ -22,17 +22,18 @@ const COST_ADR_DEFAULT_COST_WEIGHTS: [f32; 16] = [
 const COST_ADR_DEFAULT_BASELINE_RETENTIONS: [f32; 16] = [
     0.50, 0.53, 0.56, 0.59, 0.62, 0.65, 0.68, 0.71, 0.74, 0.77, 0.80, 0.83, 0.86, 0.89, 0.92, 0.95,
 ];
+const COST_ADR_DEFAULT_SEED: u64 = 42;
 const COST_ADR_DEFAULT_INITIAL_COEFFICIENTS: [f32; COST_ADR_PARAMETER_COUNT] = [
     -0.202, 9.14, -0.0978, 0.226, -5.31, -7.44, 24.1, -0.375, 1.81, -22.9, -5.82, 22.3, 1.72,
     -1.99, -19.4,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct CostAdrBounds {
-    pub s_min: f32,
-    pub s_max: f32,
-    pub d_min: f32,
-    pub d_max: f32,
+struct CostAdrBounds {
+    s_min: f32,
+    s_max: f32,
+    d_min: f32,
+    d_max: f32,
 }
 
 impl Default for CostAdrBounds {
@@ -54,10 +55,18 @@ pub struct CostAdrPolicy {
     pub retention_min: f32,
     pub retention_max: f32,
     pub max_interval_days: Option<f32>,
-    pub bounds: CostAdrBounds,
+    bounds: CostAdrBounds,
 }
 
 impl CostAdrPolicy {
+    pub fn train_single_user(
+        config: &SimulatorConfig,
+        parameters: &Parameters,
+        training_config: &CostAdrTrainingConfig,
+    ) -> Result<CostAdrTrainingResult> {
+        train_cost_adr_single_user(config, parameters, training_config)
+    }
+
     pub fn new(coefficients: Vec<f32>) -> Result<Self> {
         Self::new_with_settings(coefficients, 0.0, 1024.0, 0.30, 0.995, None)
     }
@@ -131,6 +140,15 @@ impl CostAdrPolicy {
         Ok(())
     }
 
+    pub fn evaluate(
+        &self,
+        config: &SimulatorConfig,
+        parameters: &Parameters,
+        evaluation_config: &CostAdrEvaluationConfig,
+    ) -> Result<CostAdrEvaluationResult> {
+        evaluate_cost_adr_policy(config, parameters, self, evaluation_config)
+    }
+
     pub fn evaluate_retention(&self, stability: f32, difficulty: f32, cost_weight: f32) -> f32 {
         let phi = self.state_features(stability, difficulty);
         let z = self.normalized_cost_weight(cost_weight);
@@ -197,7 +215,7 @@ pub struct CostAdrAucMetrics {
 pub struct CostAdrEvaluationConfig {
     pub cost_weights: Vec<f32>,
     pub baseline_desired_retentions: Vec<f32>,
-    pub seed: u64,
+    pub seed: Option<u64>,
 }
 
 impl Default for CostAdrEvaluationConfig {
@@ -205,7 +223,7 @@ impl Default for CostAdrEvaluationConfig {
         Self {
             cost_weights: COST_ADR_DEFAULT_COST_WEIGHTS.to_vec(),
             baseline_desired_retentions: COST_ADR_DEFAULT_BASELINE_RETENTIONS.to_vec(),
-            seed: 42,
+            seed: None,
         }
     }
 }
@@ -225,8 +243,8 @@ pub struct CostAdrTrainingConfig {
     pub population_size: usize,
     pub generations: usize,
     pub sigma0: f32,
-    pub seed: u64,
-    pub simulation_seed: u64,
+    pub seed: Option<u64>,
+    pub simulation_seed: Option<u64>,
     pub lower_bound: f32,
     pub upper_bound: f32,
     pub initial_coefficients: Vec<f32>,
@@ -257,8 +275,8 @@ impl Default for CostAdrTrainingConfig {
             population_size: 16,
             generations: 20,
             sigma0: 1.0,
-            seed: 42,
-            simulation_seed: 42,
+            seed: None,
+            simulation_seed: None,
             lower_bound: -64.0,
             upper_bound: 64.0,
             initial_coefficients: COST_ADR_DEFAULT_INITIAL_COEFFICIENTS.to_vec(),
@@ -291,18 +309,19 @@ pub struct CostAdrTrainingResult {
     pub training_seconds: f32,
 }
 
-pub fn evaluate_cost_adr_policy(
+fn evaluate_cost_adr_policy(
     config: &SimulatorConfig,
     parameters: &Parameters,
     policy: &CostAdrPolicy,
     evaluation_config: &CostAdrEvaluationConfig,
 ) -> Result<CostAdrEvaluationResult> {
     validate_evaluation_config(evaluation_config)?;
+    let seed = evaluation_config.seed.unwrap_or(COST_ADR_DEFAULT_SEED);
     let baseline_metrics = evaluate_baseline_desired_retentions(
         config,
         parameters,
         &evaluation_config.baseline_desired_retentions,
-        evaluation_config.seed,
+        seed,
     )?;
     let baseline_points = points_from_metrics(&baseline_metrics);
     let reference = reference_point(&baseline_points)?;
@@ -312,7 +331,7 @@ pub fn evaluate_cost_adr_policy(
         parameters,
         policy,
         &evaluation_config.cost_weights,
-        evaluation_config.seed,
+        seed,
     )?;
     let scheduler_metrics_only = scheduler_metrics
         .iter()
@@ -494,7 +513,7 @@ fn cost_adr_auc_metrics(
     }
 }
 
-pub fn train_cost_adr_single_user(
+fn train_cost_adr_single_user(
     config: &SimulatorConfig,
     parameters: &Parameters,
     training_config: &CostAdrTrainingConfig,
@@ -519,6 +538,10 @@ fn train_cost_adr_single_user_inner(
     }
 
     let started = Instant::now();
+    let seed = training_config.seed.unwrap_or(COST_ADR_DEFAULT_SEED);
+    let simulation_seed = training_config
+        .simulation_seed
+        .unwrap_or(COST_ADR_DEFAULT_SEED);
     let initial_coefficients = clamp_coefficients(
         &training_config.initial_coefficients,
         training_config.lower_bound,
@@ -528,7 +551,7 @@ fn train_cost_adr_single_user_inner(
         config,
         parameters,
         &training_config.baseline_desired_retentions,
-        training_config.simulation_seed,
+        simulation_seed,
     )?;
     let baseline_points = points_from_metrics(&baseline_metrics);
     let reference = reference_point(&baseline_points)?;
@@ -538,7 +561,7 @@ fn train_cost_adr_single_user_inner(
         training_config.sigma0,
         training_config.lower_bound,
         training_config.upper_bound,
-        training_config.seed,
+        seed,
     );
 
     let mut best_coefficients = initial_coefficients.clone();
@@ -571,7 +594,7 @@ fn train_cost_adr_single_user_inner(
                     parameters,
                     &policy,
                     &training_config.cost_weights,
-                    training_config.simulation_seed,
+                    simulation_seed,
                 )?;
                 let candidate_metrics =
                     points.iter().map(|point| point.metrics).collect::<Vec<_>>();
@@ -1189,7 +1212,8 @@ mod tests {
             baseline_desired_retentions: vec![0.8, 0.9],
             ..Default::default()
         };
-        let result = train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
+        let result =
+            CostAdrPolicy::train_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
         assert_eq!(result.policy.coefficients.len(), COST_ADR_PARAMETER_COUNT);
         assert_eq!(result.best_cost_weight_metrics.len(), 2);
         assert_eq!(result.history.len(), 2);
@@ -1217,7 +1241,7 @@ mod tests {
             ..Default::default()
         };
 
-        train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
+        CostAdrPolicy::train_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
 
         let progress = progress.lock().unwrap();
         assert!(progress.finished());
@@ -1247,7 +1271,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config);
+        let result =
+            CostAdrPolicy::train_single_user(&config, &DEFAULT_PARAMETERS, &training_config);
 
         assert_eq!(result, Err(FSRSError::Interrupted));
         assert!(progress.lock().unwrap().finished());
@@ -1282,7 +1307,8 @@ mod tests {
             baseline_desired_retentions: vec![0.8, 0.9],
             ..Default::default()
         };
-        let result = train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
+        let result =
+            CostAdrPolicy::train_single_user(&config, &DEFAULT_PARAMETERS, &training_config)?;
         assert!(
             result
                 .policy
@@ -1306,10 +1332,9 @@ mod tests {
         let evaluation_config = CostAdrEvaluationConfig {
             cost_weights: vec![0.0, 16.0],
             baseline_desired_retentions: vec![0.8, 0.9],
-            seed: 11,
+            seed: Some(11),
         };
-        let result =
-            evaluate_cost_adr_policy(&config, &DEFAULT_PARAMETERS, &policy, &evaluation_config)?;
+        let result = policy.evaluate(&config, &DEFAULT_PARAMETERS, &evaluation_config)?;
         assert_eq!(result.baseline_metrics.len(), 2);
         assert_eq!(result.scheduler_metrics.len(), 2);
         assert!(result.baseline_hypervolume.is_finite());
@@ -1321,6 +1346,33 @@ mod tests {
         }
         assert_eq!(result.auc_metrics.baseline_point_count, 2);
         assert_eq!(result.auc_metrics.scheduler_point_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cost_adr_none_seed_uses_default_seed() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 120,
+            learn_span: 15,
+            learn_limit: 20,
+            review_limit: 200,
+            ..Default::default()
+        };
+        let policy = CostAdrPolicy::default_initial();
+        let default_seed = CostAdrEvaluationConfig {
+            cost_weights: vec![0.0, 16.0],
+            baseline_desired_retentions: vec![0.8, 0.9],
+            seed: None,
+        };
+        let explicit_seed = CostAdrEvaluationConfig {
+            seed: Some(COST_ADR_DEFAULT_SEED),
+            ..default_seed.clone()
+        };
+
+        let default_result = policy.evaluate(&config, &DEFAULT_PARAMETERS, &default_seed)?;
+        let explicit_result = policy.evaluate(&config, &DEFAULT_PARAMETERS, &explicit_seed)?;
+
+        assert_eq!(default_result, explicit_result);
         Ok(())
     }
 

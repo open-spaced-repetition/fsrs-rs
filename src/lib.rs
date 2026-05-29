@@ -17,10 +17,8 @@ mod test_helpers;
 mod training;
 
 pub use cost_adr::{
-    CostAdrAucMetrics, CostAdrBounds, CostAdrEvaluationConfig, CostAdrEvaluationPoint,
-    CostAdrEvaluationResult, CostAdrGenerationMetrics, CostAdrMetrics, CostAdrPolicy,
-    CostAdrTrainingConfig, CostAdrTrainingResult, evaluate_cost_adr_policy,
-    train_cost_adr_single_user,
+    CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrPolicy, CostAdrTrainingConfig,
+    CostAdrTrainingResult,
 };
 pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
 pub use error::{FSRSError, Result};

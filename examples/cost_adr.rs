@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use fsrs::{
     CombinedProgressState, CostAdrPolicy, CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS,
-    FSRSError, MemoryState, SimulatorConfig, train_cost_adr_single_user,
+    FSRSError, MemoryState, SimulatorConfig,
 };
 use std::env;
 use std::error::Error;
@@ -38,7 +38,7 @@ struct ExampleConfig {
     cost_limit_minutes: f32,
     population_size: usize,
     generations: usize,
-    seed: u64,
+    seed: Option<u64>,
     sigma0: f32,
     goal_cost_weight: f32,
 }
@@ -137,7 +137,10 @@ fn parse_args() -> Result<Option<ExampleConfig>, Box<dyn Error>> {
                 config.generations = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
             }
             "--seed" => {
-                config.seed = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
+                config.seed = Some(parse_value(
+                    flag,
+                    &arg_value(&mut args, flag, inline_value)?,
+                )?)
             }
             "--sigma0" => {
                 config.sigma0 = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
@@ -277,7 +280,7 @@ fn main() -> fsrs::Result<()> {
     // from that user's revlog via compute_parameters.
     let progress_printer = spawn_progress_printer(progress.clone());
     let started = Instant::now();
-    let result = train_cost_adr_single_user(&config, &DEFAULT_PARAMETERS, &training_config);
+    let result = CostAdrPolicy::train_single_user(&config, &DEFAULT_PARAMETERS, &training_config);
     let wall_seconds = started.elapsed().as_secs_f32();
     let _ = progress_printer.join();
     let result = result?;
@@ -293,7 +296,7 @@ fn main() -> fsrs::Result<()> {
         example_config.population_size,
         example_config.generations,
         example_config.sigma0,
-        example_config.seed
+        example_config.seed.unwrap_or(42)
     );
     println!(
         "duration_seconds={:.3} result_training_seconds={:.3}",
@@ -336,7 +339,7 @@ fn main() -> fsrs::Result<()> {
     println!("selected cost-weight rollout points:");
     for point in &result.best_cost_weight_metrics {
         println!(
-            "  w={:<7.1} avg_actual_dr={:>8} memorized_avg={:>9.3} time_avg_min={:>7.3} mem_per_min={:>9.3} reviews={} lapses={}",
+            "  w={:<7.1} avg_dr={:>8} memorized_avg={:>9.3} time_avg_min={:>7.3} mem_per_min={:>9.3} reviews={} lapses={}",
             point.goal_cost_weight,
             format_optional(point.average_desired_retention),
             point.metrics.memorized_average,
