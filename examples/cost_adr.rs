@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use fsrs::{
-    CombinedProgressState, CostAdrPolicy, CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS,
-    FSRSError, MemoryState, SimulatorConfig,
+    CombinedProgressState, CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrPolicy,
+    CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS, FSRSError, MemoryState, SimulatorConfig,
 };
 use std::env;
 use std::error::Error;
@@ -196,6 +196,46 @@ fn progress_line(current: usize, total: usize, finished: bool) -> String {
     format!("Cost ADR {status} [{bar}] {current}/{total} ({percent:.1}%)")
 }
 
+fn print_default_policy_evaluation(result: &CostAdrEvaluationResult) {
+    println!(
+        "default_policy_baseline_hypervolume={:.6} default_policy_hypervolume={:.6} default_policy_hypervolume_delta={:.6}",
+        result.baseline_hypervolume, result.scheduler_hypervolume, result.hypervolume_delta
+    );
+    println!(
+        "default_policy_span_coverage_percent={:.3} covered_span={:.3} total_span={:.3} covered_targets={}/{} baseline_frontier={} scheduler_frontier={}",
+        result.auc_metrics.span_coverage_percent,
+        result.auc_metrics.covered_span,
+        result.auc_metrics.total_span,
+        result.auc_metrics.covered_target_count,
+        result.auc_metrics.target_count,
+        result.auc_metrics.baseline_frontier_count,
+        result.auc_metrics.scheduler_frontier_count
+    );
+    println!(
+        "default_policy_same_target_time_saved_auc={} baseline_time_auc={} relative_same_target_time_saved_auc_percent={}",
+        format_optional(result.auc_metrics.same_target_time_saved_auc),
+        format_optional(result.auc_metrics.baseline_time_auc),
+        format_optional(
+            result
+                .auc_metrics
+                .relative_same_target_time_saved_auc_percent
+        )
+    );
+    println!("default policy cost-weight rollout points:");
+    for point in &result.scheduler_metrics {
+        println!(
+            "  w={:<7.1} avg_dr={:>8} memorized_avg={:>9.3} time_avg_min={:>7.3} mem_per_min={:>9.3} reviews={} lapses={}",
+            point.goal_cost_weight,
+            format_optional(point.average_desired_retention),
+            point.metrics.memorized_average,
+            point.metrics.time_average,
+            point.metrics.memorized_per_minute,
+            point.metrics.total_reviews,
+            point.metrics.total_lapses
+        );
+    }
+}
+
 struct ScheduledReview {
     memory_state: MemoryState,
     desired_retention: f32,
@@ -275,6 +315,21 @@ fn main() -> fsrs::Result<()> {
         progress: Some(progress.clone()),
         ..Default::default()
     };
+
+    let default_policy = CostAdrPolicy::new(training_config.initial_coefficients.clone())?;
+    let evaluation_config = CostAdrEvaluationConfig {
+        seed: example_config.seed,
+        ..Default::default()
+    };
+    println!("Cost ADR default policy evaluation");
+    let started = Instant::now();
+    let default_evaluation =
+        default_policy.evaluate(&config, &DEFAULT_PARAMETERS, &evaluation_config)?;
+    println!(
+        "default_policy_duration_seconds={:.3}",
+        started.elapsed().as_secs_f32()
+    );
+    print_default_policy_evaluation(&default_evaluation);
 
     // For a production user, replace DEFAULT_PARAMETERS with parameters trained
     // from that user's revlog via compute_parameters.
