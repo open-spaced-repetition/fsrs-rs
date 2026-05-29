@@ -5,6 +5,7 @@ use crate::training::{CombinedProgressState, ProgressState};
 use crate::{SimulationResult, SimulatorConfig, simulate, simulate_with_cost_adr_policy};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use rand_distr::StandardNormal;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
@@ -1099,9 +1100,7 @@ impl SeparableCmaEs {
     }
 
     fn sample_standard_normal(&mut self) -> f32 {
-        let u1 = self.rng.random::<f32>().clamp(f32::MIN_POSITIVE, 1.0);
-        let u2 = self.rng.random::<f32>();
-        (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+        self.rng.sample(StandardNormal)
     }
 }
 
