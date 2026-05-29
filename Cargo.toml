@@ -13,6 +13,11 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+# Experimental: Cost ADR APIs may change without semver compatibility guarantees.
+experimental_cost_adr = ["dep:rand_distr"]
+
 [dependencies.burn]
 version = "0.17.1"
 # git = "https://github.com/tracel-ai/burn.git"
@@ -35,8 +40,9 @@ log = "0.4"
 ndarray = "0.17.2"
 priority-queue = "=2.7.0"
 rand = "0.9.2"
+rand_distr = { version = "0.5.1", optional = true }
 rayon = "1.12.0"
-serde = "1.0.228"
+serde = { version = "1.0.228", features = ["derive"] }
 snafu = "0.9.0"
 strum = { version = "0.28.0", features = ["derive"] }
 
@@ -71,3 +77,8 @@ path = "examples/migrate.rs"
 [[example]]
 name = "optimize"
 path = "examples/optimize.rs"
+
+[[example]]
+name = "cost_adr"
+path = "examples/cost_adr.rs"
+required-features = ["experimental_cost_adr"]
