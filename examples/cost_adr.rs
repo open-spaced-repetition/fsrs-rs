@@ -336,8 +336,9 @@ fn main() -> fsrs::Result<()> {
     println!("selected cost-weight rollout points:");
     for point in &result.best_cost_weight_metrics {
         println!(
-            "  w={:<7.1} memorized_avg={:>9.3} time_avg_min={:>7.3} mem_per_min={:>9.3} reviews={} lapses={}",
+            "  w={:<7.1} avg_actual_dr={:>8} memorized_avg={:>9.3} time_avg_min={:>7.3} mem_per_min={:>9.3} reviews={} lapses={}",
             point.goal_cost_weight,
+            format_optional(point.average_desired_retention),
             point.metrics.memorized_average,
             point.metrics.time_average,
             point.metrics.memorized_per_minute,

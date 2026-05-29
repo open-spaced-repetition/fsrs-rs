@@ -174,6 +174,7 @@ pub struct CostAdrMetrics {
 pub struct CostAdrEvaluationPoint {
     pub goal_cost_weight: f32,
     pub metrics: CostAdrMetrics,
+    pub average_desired_retention: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -352,9 +353,11 @@ fn evaluate_cost_adr_rollouts(
                 Some(seed + index as u64),
                 None,
             )?;
+            let metrics = metrics_from_simulation(&result);
             Ok(CostAdrEvaluationPoint {
                 goal_cost_weight,
-                metrics: metrics_from_simulation(&result),
+                metrics,
+                average_desired_retention: result.average_desired_retention,
             })
         })
         .collect()
@@ -1164,6 +1167,8 @@ mod tests {
         assert_eq!(fixed.review_cnt_per_day, dynamic.review_cnt_per_day);
         assert_eq!(fixed.learn_cnt_per_day, dynamic.learn_cnt_per_day);
         assert_eq!(fixed.cost_per_day, dynamic.cost_per_day);
+        assert!((fixed.average_desired_retention.unwrap() - 0.9).abs() < 1e-4);
+        assert!((dynamic.average_desired_retention.unwrap() - 0.9).abs() < 1e-4);
         Ok(())
     }
 
@@ -1310,6 +1315,10 @@ mod tests {
         assert!(result.baseline_hypervolume.is_finite());
         assert!(result.scheduler_hypervolume.is_finite());
         assert!(result.hypervolume_delta.is_finite());
+        for point in &result.scheduler_metrics {
+            let average_desired_retention = point.average_desired_retention.unwrap();
+            assert!((0.30..=0.995).contains(&average_desired_retention));
+        }
         assert_eq!(result.auc_metrics.baseline_point_count, 2);
         assert_eq!(result.auc_metrics.scheduler_point_count, 2);
         Ok(())
