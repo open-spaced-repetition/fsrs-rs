@@ -4,6 +4,7 @@ mod batch_shuffle;
 #[cfg(test)]
 mod convertor_tests;
 mod cosine_annealing;
+#[cfg(feature = "cost_adr")]
 mod cost_adr;
 mod dataset;
 mod error;
@@ -16,6 +17,7 @@ mod simulation;
 mod test_helpers;
 mod training;
 
+#[cfg(feature = "cost_adr")]
 pub use cost_adr::{
     CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrPolicy, CostAdrTrainingConfig,
     CostAdrTrainingResult,
@@ -28,9 +30,11 @@ pub use inference::{
     evaluate_with_time_series_splits,
 };
 pub use model::FSRS;
+#[cfg(feature = "cost_adr")]
+pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
     CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind,
     SimulationResult, SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
-    extract_simulator_config, optimal_retention, simulate, simulate_with_cost_adr_policy,
+    extract_simulator_config, optimal_retention, simulate,
 };
 pub use training::{CombinedProgressState, ComputeParametersInput, benchmark, compute_parameters};

@@ -1,7 +1,8 @@
 use chrono::{DateTime, Duration, Utc};
 use fsrs::{
     CombinedProgressState, CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrPolicy,
-    CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS, FSRSError, MemoryState, SimulatorConfig,
+    CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS, FSRSError, MemoryState, SimulationResult,
+    SimulatorConfig, simulate_with_cost_adr_policy,
 };
 use std::env;
 use std::error::Error;
@@ -236,6 +237,38 @@ fn print_default_policy_evaluation(result: &CostAdrEvaluationResult) {
     }
 }
 
+fn print_cost_adr_simulation(label: &str, result: &SimulationResult) {
+    let total_cost = result.cost_per_day.iter().sum::<f32>();
+    let time_average = if result.cost_per_day.is_empty() {
+        0.0
+    } else {
+        total_cost / result.cost_per_day.len() as f32 / 60.0
+    };
+    let memorized_average = if result.memorized_cnt_per_day.is_empty() {
+        0.0
+    } else {
+        result.memorized_cnt_per_day.iter().sum::<f32>() / result.memorized_cnt_per_day.len() as f32
+    };
+    let total_reviews = result.review_cnt_per_day.iter().sum::<usize>()
+        + result.learn_cnt_per_day.iter().sum::<usize>();
+    let total_lapses = result.cards.iter().map(|card| card.lapses).sum::<u32>();
+
+    println!(
+        "{label} avg_dr={} memorized_avg={:.3} time_avg_min={:.3} mem_per_min={:.3} reviews={} lapses={} total_cost_seconds={:.3}",
+        format_optional(result.average_desired_retention),
+        memorized_average,
+        time_average,
+        if time_average > 0.0 {
+            memorized_average / time_average
+        } else {
+            0.0
+        },
+        total_reviews,
+        total_lapses,
+        total_cost
+    );
+}
+
 struct ScheduledReview {
     memory_state: MemoryState,
     desired_retention: f32,
@@ -414,6 +447,16 @@ fn main() -> fsrs::Result<()> {
         example_config.goal_cost_weight
     );
     println!("policy={user_policy:#?}");
+
+    let rollout = simulate_with_cost_adr_policy(
+        &config,
+        &DEFAULT_PARAMETERS,
+        &user_policy,
+        example_config.goal_cost_weight,
+        example_config.seed,
+        None,
+    )?;
+    print_cost_adr_simulation("simulate_with_cost_adr_policy", &rollout);
 
     let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
     let previous_state = Some(MemoryState {

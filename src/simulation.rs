@@ -1,4 +1,5 @@
 use crate::DEFAULT_PARAMETERS;
+#[cfg(feature = "cost_adr")]
 use crate::cost_adr::CostAdrPolicy;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
@@ -16,6 +17,9 @@ use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
+
+#[cfg(not(feature = "cost_adr"))]
+struct CostAdrPolicy;
 
 #[derive(Debug)]
 pub struct SimulationResult {
@@ -702,6 +706,7 @@ pub fn simulate(
     )
 }
 
+#[cfg(feature = "cost_adr")]
 pub fn simulate_with_cost_adr_policy(
     config: &SimulatorConfig,
     w: &Parameters,
@@ -732,6 +737,9 @@ fn simulate_inner(
     goal_cost_weight: f32,
 ) -> Result<SimulationResult, FSRSError> {
     let w = Arc::new(check_and_fill_parameters(w)?);
+    #[cfg(not(feature = "cost_adr"))]
+    let _ = (cost_adr_policy, goal_cost_weight);
+
     if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
@@ -984,6 +992,7 @@ fn simulate_inner(
             card.difficulty = new_d;
         }
 
+        #[cfg(feature = "cost_adr")]
         if let Some(policy) = cost_adr_policy {
             card.desired_retention =
                 policy.evaluate_retention(card.stability, card.difficulty, goal_cost_weight);

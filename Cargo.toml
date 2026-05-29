@@ -13,6 +13,10 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+cost_adr = []
+
 [dependencies.burn]
 version = "0.17.1"
 # git = "https://github.com/tracel-ai/burn.git"
@@ -75,3 +79,4 @@ path = "examples/optimize.rs"
 [[example]]
 name = "cost_adr"
 path = "examples/cost_adr.rs"
+required-features = ["cost_adr"]
