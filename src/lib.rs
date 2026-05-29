@@ -19,8 +19,8 @@ mod training;
 
 #[cfg(feature = "experimental_cost_adr")]
 pub use cost_adr::{
-    CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrPolicy, CostAdrTrainingConfig,
-    CostAdrTrainingResult,
+    CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrItemState, CostAdrNextStates,
+    CostAdrPolicy, CostAdrTrainingConfig, CostAdrTrainingResult,
 };
 pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
 pub use error::{FSRSError, Result};

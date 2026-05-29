@@ -87,18 +87,18 @@ Feed the optimizer a vector of `FSRSItem` instances built from your review histo
 `fsrs-rs` also includes a CPU/Rayon single-user optimizer for the FSRS6 Cost ADR policy. It searches a 15-parameter cost-conditioned desired-retention policy and evaluates it against a fixed 16-point desired-retention baseline portfolio. The report includes hypervolume, same-target time-saved AUC, relative same-target time-saved AUC, and memory-span coverage.
 
 ```sh
-cargo run --release --example cost_adr
+cargo run --release --features experimental_cost_adr --example cost_adr
 ```
 
 The example accepts command-line overrides for quick experiments:
 
 ```sh
-cargo run --release --example cost_adr -- --days 90 --deck 2000 --pop 8 --gen 5
+cargo run --release --features experimental_cost_adr --example cost_adr -- --days 90 --deck 2000 --pop 8 --gen 5
 ```
 
 By default, the example uses the same simulation scale as `srs-simulator`: 1825 days, a 10000-card deck, 10 new cards per day, a 9999-review limit, and a 720-minute daily cost limit. Its training defaults come from `CostAdrTrainingConfig::default()`.
 
-The example trains a per-user `CostAdrPolicy`, shows which fields should be persisted with the user's FSRS parameters, and demonstrates the runtime scheduling loop: compute the post-rating `MemoryState`, ask the policy for a cost-conditioned desired retention, then pass that retention back into FSRS to get the next interval. Use `simulate_with_cost_adr_policy` when you already have a `CostAdrPolicy` and want the simulator to recompute per-card desired retention after each review in an offline simulation.
+The example trains a per-user `CostAdrPolicy`, shows which fields should be persisted with the user's FSRS parameters, and demonstrates the runtime scheduling loop with `CostAdrPolicy::next_states`, which returns the post-rating `MemoryState`, cost-conditioned desired retention, and next interval for each answer button. Use `simulate_with_cost_adr_policy` when you already have a `CostAdrPolicy` and want the simulator to recompute per-card desired retention after each review in an offline simulation.
 
 ### Migrate from SM-2 style data
 
