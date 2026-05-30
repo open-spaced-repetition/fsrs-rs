@@ -7,7 +7,7 @@ use rusqlite::{Connection, Row};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs::{File, create_dir_all};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Write, stdout};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -22,8 +22,15 @@ fn main() -> fsrs::Result<()> {
     create_dir_all(&args.output_dir).map_err(|_| fsrs::FSRSError::InvalidInput)?;
 
     let collection_started = Instant::now();
-    let (revlogs, day_cutoff, selected_decks) =
+    let (mut revlogs, day_cutoff, selected_decks) =
         read_collection(&args.collection_path, args.deck_name_contains.as_deref())?;
+    if let Some(card_ids_file) = &args.card_ids_file {
+        let card_ids = read_card_ids(card_ids_file)?;
+        revlogs.retain(|entry| card_ids.contains(&entry.cid));
+    }
+    if let Some(first_grade) = args.first_grade {
+        revlogs = filter_revlogs_by_first_grade(&revlogs, first_grade);
+    }
     let fsrs_items = revlogs_to_fsrs_items(&revlogs, day_cutoff);
     let collection_seconds = collection_started.elapsed().as_secs_f32();
 
@@ -35,11 +42,13 @@ fn main() -> fsrs::Result<()> {
     let learn_limit = ((unique_cards.len() as f32 / active_days as f32).round() as usize).max(1);
 
     let mut config = extract_simulator_config(revlogs.clone(), day_cutoff, true);
-    config.deck_size = unique_cards.len();
-    config.learn_span = active_days;
-    config.learn_limit = learn_limit;
-    config.review_limit = 9999;
-    config.max_cost_perday = 720.0 * 60.0;
+    if !args.use_extracted_simulator_config {
+        config.deck_size = unique_cards.len();
+        config.learn_span = active_days;
+        config.learn_limit = learn_limit;
+        config.review_limit = 9999;
+        config.max_cost_perday = 720.0 * 60.0;
+    }
 
     println!("collection_path={}", args.collection_path.display());
     if let Some(deck_name_contains) = &args.deck_name_contains {
@@ -50,6 +59,12 @@ fn main() -> fsrs::Result<()> {
                 deck.id, deck.name
             );
         }
+    }
+    if let Some(first_grade) = args.first_grade {
+        println!("first_grade={first_grade}");
+    }
+    if let Some(card_ids_file) = &args.card_ids_file {
+        println!("card_ids_file={}", card_ids_file.display());
     }
     println!(
         "collection revlogs={} reviewed_cards={} fsrs_items={} active_new_card_days={} load_seconds={:.3}",
@@ -67,32 +82,68 @@ fn main() -> fsrs::Result<()> {
         config.review_limit,
         config.max_cost_perday
     );
-    println!("model_version={}", args.model_version.label());
-
-    let fsrs_started = Instant::now();
-    let parameters = compute_parameters(ComputeParametersInput {
-        train_set: fsrs_items,
-        progress: Some(CombinedProgressState::new_shared()),
-        enable_short_term: true,
-        enable_sched_penalties: true,
-        model_version: args.model_version.compute_parameters_version(),
-        num_relearning_steps: None,
-    })?;
-    let fsrs_seconds = fsrs_started.elapsed().as_secs_f32();
     println!(
-        "{}_parameter_training_seconds={fsrs_seconds:.3}",
-        args.model_version.label()
+        "simulator_mode={}",
+        if args.use_extracted_simulator_config {
+            "extracted"
+        } else {
+            "example_overrides"
+        }
     );
+    println!("model_version={}", args.model_version.label());
+    stdout()
+        .flush()
+        .map_err(|_| fsrs::FSRSError::InvalidInput)?;
+
+    let parameters = if let Some(params_file) = &args.params_file {
+        println!(
+            "{}_parameters_file={}",
+            args.model_version.label(),
+            params_file.display()
+        );
+        read_params(params_file)?
+    } else {
+        let fsrs_started = Instant::now();
+        let parameters = compute_parameters(ComputeParametersInput {
+            train_set: fsrs_items,
+            progress: Some(CombinedProgressState::new_shared()),
+            enable_short_term: true,
+            enable_sched_penalties: true,
+            model_version: args.model_version.compute_parameters_version(),
+            num_relearning_steps: None,
+        })?;
+        let fsrs_seconds = fsrs_started.elapsed().as_secs_f32();
+        println!(
+            "{}_parameter_training_seconds={fsrs_seconds:.3}",
+            args.model_version.label()
+        );
+        parameters
+    };
     println!("{}_parameters={parameters:?}", args.model_version.label());
 
     let adr_training_config = CostAdrTrainingConfig {
         population_size: args.population_size,
         generations: args.generations,
+        early_stop_patience_generations: args.early_stop_patience_generations,
+        early_stop_min_generations: args.early_stop_min_generations,
+        early_stop_min_relative_gain: args.early_stop_min_relative_gain,
         seed: Some(args.seed),
         simulation_seed: Some(args.seed),
+        average_desired_retention_min_weight_target: args.endpoint_avg_dr_min_weight,
+        average_desired_retention_max_weight_target: args.endpoint_avg_dr_max_weight,
+        average_desired_retention_endpoint_penalty: args.endpoint_avg_dr_penalty,
         progress: Some(Arc::new(Mutex::new(Default::default()))),
         ..Default::default()
     };
+    println!(
+        "endpoint_avg_dr_min_weight={:?} endpoint_avg_dr_max_weight={:?} endpoint_avg_dr_penalty={} early_stop_patience_generations={} early_stop_min_generations={} early_stop_min_relative_gain={}",
+        adr_training_config.average_desired_retention_min_weight_target,
+        adr_training_config.average_desired_retention_max_weight_target,
+        adr_training_config.average_desired_retention_endpoint_penalty,
+        adr_training_config.early_stop_patience_generations,
+        adr_training_config.early_stop_min_generations,
+        adr_training_config.early_stop_min_relative_gain
+    );
 
     let adr_started = Instant::now();
     let result = CostAdrPolicy::train_single_user(&config, &parameters, &adr_training_config)?;
@@ -100,6 +151,11 @@ fn main() -> fsrs::Result<()> {
     println!(
         "cost_adr_training_seconds={:.3} result_training_seconds={:.3}",
         adr_wall_seconds, result.training_seconds
+    );
+    println!(
+        "cost_adr_generations_ran={} cost_adr_max_generations={}",
+        result.history.len(),
+        adr_training_config.generations
     );
     println!(
         "baseline_hypervolume={:.6} best_hypervolume={:.6} best_hypervolume_delta={:.6}",
@@ -144,11 +200,21 @@ struct Args {
     collection_path: PathBuf,
     output_dir: PathBuf,
     deck_name_contains: Option<String>,
+    card_ids_file: Option<PathBuf>,
+    params_file: Option<PathBuf>,
     target_average_desired_retention: Option<f32>,
     model_version: ModelChoice,
+    first_grade: Option<u8>,
     population_size: usize,
     generations: usize,
     seed: u64,
+    endpoint_avg_dr_min_weight: Option<f32>,
+    endpoint_avg_dr_max_weight: Option<f32>,
+    endpoint_avg_dr_penalty: f32,
+    early_stop_patience_generations: usize,
+    early_stop_min_generations: usize,
+    early_stop_min_relative_gain: f32,
+    use_extracted_simulator_config: bool,
 }
 
 impl Args {
@@ -157,11 +223,22 @@ impl Args {
         let mut collection_path = PathBuf::from(DEFAULT_COLLECTION);
         let mut output_dir = PathBuf::from(DEFAULT_OUTPUT_DIR);
         let mut deck_name_contains = None;
+        let mut card_ids_file = None;
+        let mut params_file = None;
         let mut target_average_desired_retention = None;
         let mut model_version = ModelChoice::Fsrs7;
+        let mut first_grade = None;
         let mut population_size = 8;
         let mut generations = 5;
         let mut seed = DEFAULT_SEED;
+        let mut endpoint_avg_dr_min_weight = None;
+        let mut endpoint_avg_dr_max_weight = None;
+        let mut endpoint_avg_dr_penalty = 0.0;
+        let mut early_stop_patience_generations =
+            default_cost_adr_early_stop_patience_generations();
+        let mut early_stop_min_generations = default_cost_adr_early_stop_min_generations();
+        let mut early_stop_min_relative_gain = default_cost_adr_early_stop_min_relative_gain();
+        let mut use_extracted_simulator_config = false;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -175,6 +252,16 @@ impl Args {
                 "--deck-name-contains" => {
                     deck_name_contains = Some(args.next().ok_or(fsrs::FSRSError::InvalidInput)?);
                 }
+                "--card-ids-file" => {
+                    card_ids_file = Some(PathBuf::from(
+                        args.next().ok_or(fsrs::FSRSError::InvalidInput)?,
+                    ));
+                }
+                "--params-file" => {
+                    params_file = Some(PathBuf::from(
+                        args.next().ok_or(fsrs::FSRSError::InvalidInput)?,
+                    ));
+                }
                 "--target-avg-adr-dr" => {
                     target_average_desired_retention = Some(parse_arg(args.next())?);
                 }
@@ -182,6 +269,13 @@ impl Args {
                     model_version = ModelChoice::parse(
                         args.next().ok_or(fsrs::FSRSError::InvalidInput)?.as_str(),
                     )?;
+                }
+                "--first-grade" => {
+                    let value: u8 = parse_arg(args.next())?;
+                    if !(1..=4).contains(&value) {
+                        return Err(fsrs::FSRSError::InvalidInput);
+                    }
+                    first_grade = Some(value);
                 }
                 "--pop" => {
                     population_size = parse_arg(args.next())?;
@@ -192,6 +286,27 @@ impl Args {
                 "--seed" => {
                     seed = parse_arg(args.next())?;
                 }
+                "--endpoint-avg-dr-min-weight" => {
+                    endpoint_avg_dr_min_weight = Some(parse_arg(args.next())?);
+                }
+                "--endpoint-avg-dr-max-weight" => {
+                    endpoint_avg_dr_max_weight = Some(parse_arg(args.next())?);
+                }
+                "--endpoint-avg-dr-penalty" => {
+                    endpoint_avg_dr_penalty = parse_arg(args.next())?;
+                }
+                "--early-stop-patience-generations" => {
+                    early_stop_patience_generations = parse_arg(args.next())?;
+                }
+                "--early-stop-min-generations" => {
+                    early_stop_min_generations = parse_arg(args.next())?;
+                }
+                "--early-stop-min-relative-gain" => {
+                    early_stop_min_relative_gain = parse_arg(args.next())?;
+                }
+                "--use-extracted-simulator-config" => {
+                    use_extracted_simulator_config = true;
+                }
                 _ => return Err(fsrs::FSRSError::InvalidInput),
             }
         }
@@ -200,13 +315,35 @@ impl Args {
             collection_path,
             output_dir,
             deck_name_contains,
+            card_ids_file,
+            params_file,
             target_average_desired_retention,
             model_version,
+            first_grade,
             population_size,
             generations,
             seed,
+            endpoint_avg_dr_min_weight,
+            endpoint_avg_dr_max_weight,
+            endpoint_avg_dr_penalty,
+            early_stop_patience_generations,
+            early_stop_min_generations,
+            early_stop_min_relative_gain,
+            use_extracted_simulator_config,
         })
     }
+}
+
+fn default_cost_adr_early_stop_patience_generations() -> usize {
+    4
+}
+
+fn default_cost_adr_early_stop_min_generations() -> usize {
+    10
+}
+
+fn default_cost_adr_early_stop_min_relative_gain() -> f32 {
+    0.01
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -244,6 +381,22 @@ fn parse_arg<T: std::str::FromStr>(value: Option<String>) -> fsrs::Result<T> {
         .ok_or(fsrs::FSRSError::InvalidInput)?
         .parse()
         .map_err(|_| fsrs::FSRSError::InvalidInput)
+}
+
+fn read_card_ids(path: &Path) -> fsrs::Result<HashSet<i64>> {
+    let data = std::fs::read_to_string(path).map_err(|_| fsrs::FSRSError::InvalidInput)?;
+    data.split(|character: char| character.is_ascii_whitespace() || character == ',')
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse().map_err(|_| fsrs::FSRSError::InvalidInput))
+        .collect()
+}
+
+fn read_params(path: &Path) -> fsrs::Result<Vec<f32>> {
+    let data = std::fs::read_to_string(path).map_err(|_| fsrs::FSRSError::InvalidInput)?;
+    data.split(|character: char| character.is_ascii_whitespace() || character == ',')
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse().map_err(|_| fsrs::FSRSError::InvalidInput))
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -387,6 +540,25 @@ fn revlogs_to_fsrs_items(revlogs: &[RevlogEntry], day_cutoff: i64) -> Vec<FSRSIt
         }
     }
     items
+}
+
+fn filter_revlogs_by_first_grade(revlogs: &[RevlogEntry], first_grade: u8) -> Vec<RevlogEntry> {
+    let mut grouped = BTreeMap::<i64, Vec<RevlogEntry>>::new();
+    for &entry in revlogs {
+        grouped.entry(entry.cid).or_default().push(entry);
+    }
+
+    grouped
+        .into_values()
+        .filter_map(|entries| {
+            let entries = remove_before_last_first_learning(entries);
+            entries
+                .first()
+                .is_some_and(|entry| entry.button_chosen == first_grade)
+                .then_some(entries)
+        })
+        .flatten()
+        .collect()
 }
 
 fn remove_before_last_first_learning(entries: Vec<RevlogEntry>) -> Vec<RevlogEntry> {
