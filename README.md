@@ -16,9 +16,8 @@ For more information about the algorithm, please refer to [the wiki page of FSRS
 
 Add FSRS to your project:
 
-```toml
-[dependencies]
-fsrs = "5.2.0"
+```sh
+cargo add fsrs
 ```
 
 The scheduling example below also uses `chrono` to track review times:
