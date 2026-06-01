@@ -1,7 +1,7 @@
 use fsrs::{
     CombinedProgressState, CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrPolicy,
-    CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS, FSRSError, MemoryState, SimulationResult,
-    SimulatorConfig, simulate_with_cost_adr_policy,
+    CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS, FSRSError, SimulationResult, SimulatorConfig,
+    simulate_with_cost_adr_policy,
 };
 use std::env;
 use std::error::Error;
@@ -26,7 +26,6 @@ Options:
   --gen <usize>             CMA-ES generation count (default: 20)
   --seed <u64>              Optimizer and simulation seed (default: 42)
   --sigma0 <f32>            CMA-ES initial sigma (default: 1.0)
-  --goal-weight <f32>       Runtime scheduling cost weight (default: 64.0)
   -h, --help                Print help
 ";
 
@@ -40,7 +39,6 @@ struct ExampleConfig {
     generations: usize,
     seed: Option<u64>,
     sigma0: f32,
-    goal_cost_weight: f32,
 }
 
 impl Default for ExampleConfig {
@@ -56,7 +54,6 @@ impl Default for ExampleConfig {
             generations: training_config.generations,
             seed: training_config.seed,
             sigma0: training_config.sigma0,
-            goal_cost_weight: 64.0,
         }
     }
 }
@@ -144,10 +141,6 @@ fn parse_args() -> Result<Option<ExampleConfig>, Box<dyn Error>> {
             }
             "--sigma0" => {
                 config.sigma0 = parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
-            }
-            "--goal-weight" => {
-                config.goal_cost_weight =
-                    parse_value(flag, &arg_value(&mut args, flag, inline_value)?)?
             }
             _ => return Err(invalid_arg(format!("unknown argument: {flag}"))),
         }
@@ -387,42 +380,82 @@ fn main() -> fsrs::Result<()> {
         );
     }
 
-    // In production, persist the policy with the user's FSRS parameters and chosen
-    // goal_cost_weight. CostAdrPolicy derives serde Serialize/Deserialize.
+    // In production, persist the policy with the user's FSRS parameters.
+    // CostAdrPolicy derives serde Serialize/Deserialize.
     let mut user_policy = result.policy.clone();
     user_policy.max_interval_days = Some(config.max_ivl);
     println!(
-        "persist policy coefficient_count={} goal_cost_weight={}",
-        user_policy.coefficients.len(),
-        example_config.goal_cost_weight
+        "persist policy coefficient_count={}",
+        user_policy.coefficients.len()
     );
     println!("policy={user_policy:#?}");
 
+    let rollout_cost_weight = training_config.cost_weights[0];
     let rollout = simulate_with_cost_adr_policy(
         &config,
         &DEFAULT_PARAMETERS,
         &user_policy,
-        example_config.goal_cost_weight,
+        rollout_cost_weight,
         example_config.seed,
         None,
     )?;
-    print_cost_adr_simulation("simulate_with_cost_adr_policy", &rollout);
+    print_cost_adr_simulation(
+        &format!("simulate_with_cost_adr_policy w={rollout_cost_weight:.1}"),
+        &rollout,
+    );
 
     let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
-    let previous_state = Some(MemoryState {
-        stability: 7.0,
-        difficulty: 5.0,
-    });
-    let next_states =
-        user_policy.next_states(&fsrs, previous_state, example_config.goal_cost_weight, 7)?;
-    let scheduled = next_states.good;
-    let interval_days = scheduled.interval.round().max(1.0) as u32;
-    println!(
-        "runtime schedule rating=Good stability={:.3} difficulty={:.3} desired_retention={:.6} interval_days={}",
-        scheduled.memory.stability,
-        scheduled.memory.difficulty,
-        scheduled.desired_retention,
-        interval_days
-    );
+    let previous_state = fsrs.next_states(None, 0.9, 0)?.good.memory;
+    println!("\nruntime schedule by cost weight:");
+    for &cost_weight in &training_config.cost_weights {
+        let next_states = user_policy.next_states(&fsrs, Some(previous_state), cost_weight, 7)?;
+        println!("  w={cost_weight:.1}");
+        for (rating, scheduled) in [
+            ("Again", &next_states.again),
+            ("Hard", &next_states.hard),
+            ("Good", &next_states.good),
+            ("Easy", &next_states.easy),
+        ] {
+            let interval_days = scheduled.interval.round().max(1.0) as u32;
+            println!(
+                "    rating={} stability={:.3} difficulty={:.3} desired_retention={:.6} interval_days={}",
+                rating,
+                scheduled.memory.stability,
+                scheduled.memory.difficulty,
+                scheduled.desired_retention,
+                interval_days
+            );
+        }
+    }
+
+    println!("\nconsecutive Good interval sequence by cost weight:");
+    for &cost_weight in &training_config.cost_weights {
+        println!("  w={cost_weight:.1}");
+        let mut state = None;
+        for i in 0..10 {
+            let next_states = user_policy.next_states(
+                &fsrs,
+                state,
+                cost_weight,
+                if i == 0 { 0 } else { interval_seq_days(state) },
+            )?;
+            let good = &next_states.good;
+            let interval_days = good.interval.round().max(1.0) as u32;
+            println!(
+                "    review={} stability={:.3} difficulty={:.3} desired_retention={:.6} interval_days={}",
+                i + 1,
+                good.memory.stability,
+                good.memory.difficulty,
+                good.desired_retention,
+                interval_days
+            );
+            state = Some(good.memory);
+        }
+    }
+
     Ok(())
+}
+
+fn interval_seq_days(state: Option<fsrs::MemoryState>) -> u32 {
+    state.map_or(0, |s| s.stability.round().max(1.0) as u32)
 }
