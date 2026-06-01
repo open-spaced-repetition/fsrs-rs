@@ -569,7 +569,7 @@ impl WorkloadEstimator {
             } else {
                 let s_idx = self.s2i(new_stability);
                 let d_idx = self.d2i(new_difficulty);
-                let t_idx = new_due as usize;
+                let t_idx = new_due;
                 unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
             };
 
