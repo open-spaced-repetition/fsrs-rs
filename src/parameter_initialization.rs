@@ -177,13 +177,12 @@ pub(crate) fn smooth_and_fill(
         if let (Some(&small_value), Some(&big_value)) = (
             rating_stability.get(&small_rating),
             rating_stability.get(&big_rating),
-        ) {
-            if small_value > big_value {
-                if rating_count[&small_rating] > rating_count[&big_rating] {
-                    rating_stability.insert(big_rating, small_value);
-                } else {
-                    rating_stability.insert(small_rating, big_value);
-                }
+        ) && small_value > big_value
+        {
+            if rating_count[&small_rating] > rating_count[&big_rating] {
+                rating_stability.insert(big_rating, small_value);
+            } else {
+                rating_stability.insert(small_rating, big_value);
             }
         }
     }

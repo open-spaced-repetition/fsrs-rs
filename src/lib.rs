@@ -1,5 +1,5 @@
 #![allow(clippy::single_range_in_vec_init)]
-
+#![allow(clippy::needless_range_loop)]
 mod batch_shuffle;
 #[cfg(test)]
 mod convertor_tests;
