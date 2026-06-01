@@ -1,8 +1,10 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::Parameters;
+use crate::inference::{ItemState, MemoryState, Parameters};
+use crate::model::FSRS;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
 use crate::training::{CombinedProgressState, ProgressState};
 use crate::{SimulationResult, SimulatorConfig, simulate, simulate_with_cost_adr_policy};
+use burn::tensor::backend::Backend;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rand_distr::StandardNormal;
@@ -57,6 +59,21 @@ pub struct CostAdrPolicy {
     pub retention_max: f32,
     pub max_interval_days: Option<f32>,
     bounds: CostAdrBounds,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CostAdrNextStates {
+    pub again: CostAdrItemState,
+    pub hard: CostAdrItemState,
+    pub good: CostAdrItemState,
+    pub easy: CostAdrItemState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CostAdrItemState {
+    pub memory: MemoryState,
+    pub interval: f32,
+    pub desired_retention: f32,
 }
 
 impl CostAdrPolicy {
@@ -129,6 +146,9 @@ impl CostAdrPolicy {
             || !(0.0 < self.retention_min && self.retention_min < self.retention_max)
             || self.retention_max >= 1.0
             || self.coefficients.iter().any(|value| !value.is_finite())
+            || self
+                .max_interval_days
+                .is_some_and(|value| !value.is_finite() || value < 1.0)
         {
             return Err(FSRSError::InvalidInput);
         }
@@ -150,6 +170,29 @@ impl CostAdrPolicy {
         evaluate_cost_adr_policy(config, parameters, self, evaluation_config)
     }
 
+    /// The intervals, memory states, and cost-conditioned desired retentions for each answer
+    /// button.
+    pub fn next_states<B: Backend>(
+        &self,
+        fsrs: &FSRS<B>,
+        current_memory_state: Option<MemoryState>,
+        goal_cost_weight: f32,
+        days_elapsed: u32,
+    ) -> Result<CostAdrNextStates> {
+        self.validate()?;
+        if !goal_cost_weight.is_finite() || goal_cost_weight < 0.0 {
+            return Err(FSRSError::InvalidInput);
+        }
+
+        let states = fsrs.next_states(current_memory_state, self.retention_max, days_elapsed)?;
+        Ok(CostAdrNextStates {
+            again: self.cost_adr_item_state(fsrs, states.again, goal_cost_weight, 1)?,
+            hard: self.cost_adr_item_state(fsrs, states.hard, goal_cost_weight, 2)?,
+            good: self.cost_adr_item_state(fsrs, states.good, goal_cost_weight, 3)?,
+            easy: self.cost_adr_item_state(fsrs, states.easy, goal_cost_weight, 4)?,
+        })
+    }
+
     pub fn evaluate_retention(&self, stability: f32, difficulty: f32, cost_weight: f32) -> f32 {
         let phi = self.state_features(stability, difficulty);
         let z = self.normalized_cost_weight(cost_weight);
@@ -158,6 +201,34 @@ impl CostAdrPolicy {
         let z2_effect = softplus(dot(&self.coefficients[10..15], &phi)) * z * z;
         self.retention_min
             + (self.retention_max - self.retention_min) * sigmoid(base - z_effect - z2_effect)
+    }
+
+    fn cost_adr_item_state<B: Backend>(
+        &self,
+        fsrs: &FSRS<B>,
+        item_state: ItemState,
+        goal_cost_weight: f32,
+        rating: u32,
+    ) -> Result<CostAdrItemState> {
+        let desired_retention = self.evaluate_retention(
+            item_state.memory.stability,
+            item_state.memory.difficulty,
+            goal_cost_weight,
+        );
+        let mut interval =
+            fsrs.next_interval(Some(item_state.memory.stability), desired_retention, rating);
+        if let Some(max_interval_days) = self.max_interval_days {
+            interval = interval.clamp(1.0, max_interval_days);
+        }
+        if !interval.is_finite() {
+            return Err(FSRSError::InvalidInput);
+        }
+
+        Ok(CostAdrItemState {
+            memory: item_state.memory,
+            interval,
+            desired_retention,
+        })
     }
 
     fn state_features(&self, stability: f32, difficulty: f32) -> [f32; 5] {
@@ -1135,7 +1206,7 @@ fn softplus(value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEFAULT_PARAMETERS;
+    use crate::{DEFAULT_PARAMETERS, FSRS};
 
     fn test_metrics(memorized_average: f32, time_average: f32) -> CostAdrMetrics {
         CostAdrMetrics {
@@ -1191,6 +1262,50 @@ mod tests {
         assert_eq!(fixed.cost_per_day, dynamic.cost_per_day);
         assert!((fixed.average_desired_retention.unwrap() - 0.9).abs() < 1e-4);
         assert!((dynamic.average_desired_retention.unwrap() - 0.9).abs() < 1e-4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cost_adr_next_states_matches_constant_retention() -> Result<()> {
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let policy = CostAdrPolicy::constant_retention(0.9)?;
+        let previous_state = Some(MemoryState {
+            stability: 7.0,
+            difficulty: 5.0,
+        });
+
+        let fixed = fsrs.next_states(previous_state, 0.9, 7)?;
+        let dynamic = policy.next_states(&fsrs, previous_state, 64.0, 7)?;
+
+        assert_eq!(fixed.again.memory, dynamic.again.memory);
+        assert_eq!(fixed.hard.memory, dynamic.hard.memory);
+        assert_eq!(fixed.good.memory, dynamic.good.memory);
+        assert_eq!(fixed.easy.memory, dynamic.easy.memory);
+        assert!((fixed.good.interval - dynamic.good.interval).abs() < 1e-4);
+        assert!((dynamic.good.desired_retention - 0.9).abs() < 1e-4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cost_adr_next_states_clamps_policy_max_interval() -> Result<()> {
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let policy = CostAdrPolicy::new_with_settings(
+            COST_ADR_DEFAULT_INITIAL_COEFFICIENTS.to_vec(),
+            0.0,
+            1024.0,
+            0.30,
+            0.995,
+            Some(3.0),
+        )?;
+        let previous_state = Some(MemoryState {
+            stability: 100.0,
+            difficulty: 5.0,
+        });
+
+        let states = policy.next_states(&fsrs, previous_state, 64.0, 7)?;
+
+        assert!(states.good.interval <= 3.0);
+        assert!(states.good.interval >= 1.0);
         Ok(())
     }
 

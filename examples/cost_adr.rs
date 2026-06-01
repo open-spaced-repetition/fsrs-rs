@@ -1,4 +1,3 @@
-use chrono::{DateTime, Duration, Utc};
 use fsrs::{
     CombinedProgressState, CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrPolicy,
     CostAdrTrainingConfig, DEFAULT_PARAMETERS, FSRS, FSRSError, MemoryState, SimulationResult,
@@ -269,56 +268,6 @@ fn print_cost_adr_simulation(label: &str, result: &SimulationResult) {
     );
 }
 
-struct ScheduledReview {
-    memory_state: MemoryState,
-    desired_retention: f32,
-    interval_days: u32,
-    due: DateTime<Utc>,
-}
-
-fn schedule_after_review_with_cost_adr(
-    fsrs: &FSRS,
-    policy: &CostAdrPolicy,
-    previous_state: Option<MemoryState>,
-    elapsed_days: u32,
-    rating: u32,
-    goal_cost_weight: f32,
-    max_interval_days: u32,
-) -> fsrs::Result<ScheduledReview> {
-    policy.validate()?;
-
-    // The desired retention passed here does not affect the memory-state update.
-    // It only affects the intervals carried by NextStates, which we recompute below.
-    let next_states = fsrs.next_states(previous_state, 0.9, elapsed_days)?;
-    let reviewed_state = match rating {
-        1 => next_states.again,
-        2 => next_states.hard,
-        3 => next_states.good,
-        4 => next_states.easy,
-        _ => return Err(FSRSError::InvalidInput),
-    };
-    let desired_retention = policy.evaluate_retention(
-        reviewed_state.memory.stability,
-        reviewed_state.memory.difficulty,
-        goal_cost_weight,
-    );
-    let interval_days = fsrs
-        .next_interval(
-            Some(reviewed_state.memory.stability),
-            desired_retention,
-            rating,
-        )
-        .round()
-        .clamp(1.0, max_interval_days as f32) as u32;
-
-    Ok(ScheduledReview {
-        memory_state: reviewed_state.memory,
-        desired_retention,
-        interval_days,
-        due: Utc::now() + Duration::days(interval_days as i64),
-    })
-}
-
 fn main() -> fsrs::Result<()> {
     let Some(example_config) = parse_args().map_err(|err| {
         eprintln!("{err}");
@@ -440,7 +389,8 @@ fn main() -> fsrs::Result<()> {
 
     // In production, persist the policy with the user's FSRS parameters and chosen
     // goal_cost_weight. CostAdrPolicy derives serde Serialize/Deserialize.
-    let user_policy = result.policy.clone();
+    let mut user_policy = result.policy.clone();
+    user_policy.max_interval_days = Some(config.max_ivl);
     println!(
         "persist policy coefficient_count={} goal_cost_weight={}",
         user_policy.coefficients.len(),
@@ -463,22 +413,16 @@ fn main() -> fsrs::Result<()> {
         stability: 7.0,
         difficulty: 5.0,
     });
-    let scheduled = schedule_after_review_with_cost_adr(
-        &fsrs,
-        &user_policy,
-        previous_state,
-        7,
-        3,
-        example_config.goal_cost_weight,
-        config.max_ivl.round() as u32,
-    )?;
+    let next_states =
+        user_policy.next_states(&fsrs, previous_state, example_config.goal_cost_weight, 7)?;
+    let scheduled = next_states.good;
+    let interval_days = scheduled.interval.round().max(1.0) as u32;
     println!(
-        "runtime schedule rating=Good stability={:.3} difficulty={:.3} desired_retention={:.6} interval_days={} due={}",
-        scheduled.memory_state.stability,
-        scheduled.memory_state.difficulty,
+        "runtime schedule rating=Good stability={:.3} difficulty={:.3} desired_retention={:.6} interval_days={}",
+        scheduled.memory.stability,
+        scheduled.memory.difficulty,
         scheduled.desired_retention,
-        scheduled.interval_days,
-        scheduled.due
+        interval_days
     );
     Ok(())
 }
