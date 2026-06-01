@@ -432,13 +432,9 @@ fn main() -> fsrs::Result<()> {
     for &cost_weight in &training_config.cost_weights {
         println!("  w={cost_weight:.1}");
         let mut state = None;
+        let mut days_elapsed = 0;
         for i in 0..10 {
-            let next_states = user_policy.next_states(
-                &fsrs,
-                state,
-                cost_weight,
-                if i == 0 { 0 } else { interval_seq_days(state) },
-            )?;
+            let next_states = user_policy.next_states(&fsrs, state, cost_weight, days_elapsed)?;
             let good = &next_states.good;
             let interval_days = good.interval.round().max(1.0) as u32;
             println!(
@@ -450,12 +446,9 @@ fn main() -> fsrs::Result<()> {
                 interval_days
             );
             state = Some(good.memory);
+            days_elapsed = interval_days;
         }
     }
 
     Ok(())
-}
-
-fn interval_seq_days(state: Option<fsrs::MemoryState>) -> u32 {
-    state.map_or(0, |s| s.stability.round().max(1.0) as u32)
 }
