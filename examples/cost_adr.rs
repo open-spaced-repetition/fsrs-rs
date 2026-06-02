@@ -433,7 +433,7 @@ fn main() -> fsrs::Result<()> {
         println!("  w={cost_weight:.1}");
         let mut state = None;
         let mut days_elapsed = 0;
-        for i in 0..10 {
+        for i in 1..=10 {
             let next_states = user_policy.next_states(&fsrs, state, cost_weight, days_elapsed)?;
             let good = &next_states.good;
             let interval_days = good.interval.round().max(1.0) as u32;
