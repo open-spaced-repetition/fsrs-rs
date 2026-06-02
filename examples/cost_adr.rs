@@ -439,7 +439,7 @@ fn main() -> fsrs::Result<()> {
             let interval_days = good.interval.round().max(1.0) as u32;
             println!(
                 "    review={} stability={:.3} difficulty={:.3} desired_retention={:.6} interval_days={}",
-                i + 1,
+                i,
                 good.memory.stability,
                 good.memory.difficulty,
                 good.desired_retention,
