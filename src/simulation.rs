@@ -930,14 +930,15 @@ fn simulate_inner(
     }
 
     for (i, card) in cards.iter().enumerate() {
-        card_priorities.push(
-            i,
-            card_priority(
-                card,
-                card.last_date == f32::NEG_INFINITY,
-                &review_priority_fn,
-            ),
+        let priority = card_priority(
+            card,
+            card.last_date == f32::NEG_INFINITY,
+            &review_priority_fn,
         );
+        if card.last_date == f32::NEG_INFINITY && card.due >= config.learn_span as f32 {
+            continue;
+        }
+        card_priorities.push(i, priority);
     }
 
     // Main simulation loop
