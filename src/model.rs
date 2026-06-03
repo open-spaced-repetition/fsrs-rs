@@ -32,8 +32,7 @@ impl Default for ModelConfig {
 }
 
 impl ModelConfig {
-    #[cfg(test)]
-    fn initial_parameters(&self) -> [f32; 21] {
+    pub(crate) fn initial_parameters(&self) -> [f32; 21] {
         let mut parameters: [f32; 21] = self
             .initial_stability
             .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())

@@ -306,6 +306,7 @@ pub fn compute_parameters(
         freeze_short_term_stability: !enable_short_term,
         num_relearning_steps: num_relearning_steps.unwrap_or(1),
     });
+    let training_initial_parameters = config.model.initial_parameters().to_vec();
     let mut weighted_train_set = match train_card_ids {
         Some(card_ids) => recency_weighted_fsrs_items_with_card_ids(train_set, card_ids),
         None => recency_weighted_fsrs_items(train_set),
@@ -324,7 +325,7 @@ pub fn compute_parameters(
     let optimized_parameters = train(
         weighted_train_set.clone(),
         weighted_train_set,
-        &initialized_parameters,
+        &training_initial_parameters,
         &config,
         progress.clone().map(|p| ProgressCollector::new(p, 0)),
     )
@@ -374,16 +375,13 @@ pub fn benchmark(
         initialize_stability_parameters(dataset_for_initialization, average_recall)
             .unwrap()
             .0;
-    let initialized_parameters: Vec<f32> = initial_stability
-        .into_iter()
-        .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-        .collect();
     let mut config = TrainingConfig::new(ModelConfig {
         freeze_initial_stability: !enable_short_term,
         initial_stability: Some(initial_stability),
         freeze_short_term_stability: !enable_short_term,
         num_relearning_steps: num_relearning_steps.unwrap_or(1),
     });
+    let initialized_parameters = config.model.initial_parameters().to_vec();
     // save RAM and speed up training
     config.max_seq_len = 64;
     let mut weighted_train_set = match card_ids {
@@ -1285,6 +1283,39 @@ mod tests {
                 windowed_grad[i]
             );
         }
+    }
+
+    #[test]
+    fn test_disabled_short_term_benchmark_zeroes_short_term_parameters() {
+        let items = (0..80)
+            .map(|idx| {
+                let mut reviews = vec![
+                    FSRSReview {
+                        rating: idx % 4 + 1,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: if idx % 5 == 0 { 1 } else { 3 },
+                        delta_t: idx % 7 + 1,
+                    },
+                ];
+                if idx >= 20 {
+                    reviews.push(FSRSReview {
+                        rating: if idx % 6 == 0 { 1 } else { 4 },
+                        delta_t: idx * 3 % 14 + 1,
+                    });
+                }
+                FSRSItem { reviews }
+            })
+            .collect();
+
+        let parameters = benchmark(ComputeParametersInput {
+            train_set: items,
+            enable_short_term: false,
+            ..Default::default()
+        });
+
+        assert_eq!(&parameters[17..20], &[0.0, 0.0, 0.0]);
     }
 
     #[test]
