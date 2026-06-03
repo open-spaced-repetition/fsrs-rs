@@ -33,8 +33,8 @@ pub use model::FSRS;
 #[cfg(feature = "experimental_cost_adr")]
 pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
-    CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind,
-    SimulationResult, SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
-    extract_simulator_config, optimal_retention, simulate,
+    CMRRTargetFn, Card, PostSchedulingContext, PostSchedulingFn, ReviewPriorityFn, RevlogEntry,
+    RevlogReviewKind, SimulationResult, SimulatorConfig, expected_workload,
+    expected_workload_with_existing_cards, extract_simulator_config, optimal_retention, simulate,
 };
 pub use training::{CombinedProgressState, ComputeParametersInput, benchmark, compute_parameters};
