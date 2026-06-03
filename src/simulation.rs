@@ -1,4 +1,6 @@
 use crate::DEFAULT_PARAMETERS;
+#[cfg(feature = "experimental_cost_adr")]
+use crate::cost_adr::CostAdrPolicy;
 use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
@@ -16,12 +18,16 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 
+#[cfg(not(feature = "experimental_cost_adr"))]
+struct CostAdrPolicy;
+
 #[derive(Debug)]
 pub struct SimulationResult {
     pub memorized_cnt_per_day: Vec<f32>,
     pub review_cnt_per_day: Vec<usize>,
     pub learn_cnt_per_day: Vec<usize>,
     pub cost_per_day: Vec<f32>,
+    pub average_desired_retention: Option<f32>,
     // The amount of review cards you got correct on a given day (not including learn cards).
     pub correct_cnt_per_day: Vec<usize>,
     pub introduced_cnt_per_day: Vec<usize>,
@@ -563,7 +569,7 @@ impl WorkloadEstimator {
             } else {
                 let s_idx = self.s2i(new_stability);
                 let d_idx = self.d2i(new_difficulty);
-                let t_idx = new_due as usize;
+                let t_idx = new_due;
                 unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
             };
 
@@ -689,7 +695,51 @@ pub fn simulate(
     seed: Option<u64>,
     existing_cards: Option<Vec<Card>>,
 ) -> Result<SimulationResult, FSRSError> {
+    simulate_inner(
+        config,
+        w,
+        desired_retention,
+        seed,
+        existing_cards,
+        None,
+        0.0,
+    )
+}
+
+#[cfg(feature = "experimental_cost_adr")]
+pub fn simulate_with_cost_adr_policy(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    policy: &CostAdrPolicy,
+    goal_cost_weight: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+) -> Result<SimulationResult, FSRSError> {
+    policy.validate()?;
+    simulate_inner(
+        config,
+        w,
+        policy.retention_max,
+        seed,
+        existing_cards,
+        Some(policy),
+        goal_cost_weight,
+    )
+}
+
+fn simulate_inner(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    desired_retention: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+    cost_adr_policy: Option<&CostAdrPolicy>,
+    goal_cost_weight: f32,
+) -> Result<SimulationResult, FSRSError> {
     let w = Arc::new(check_and_fill_parameters(w)?);
+    #[cfg(not(feature = "experimental_cost_adr"))]
+    let _ = (cost_adr_policy, goal_cost_weight);
+
     if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
@@ -701,6 +751,8 @@ pub fn simulate(
     let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
     let mut correct_cnt_per_day = vec![0; config.learn_span];
     let mut introduced_cnt_per_day = vec![0; config.learn_span];
+    let mut desired_retention_sum = 0.0;
+    let mut desired_retention_count = 0;
 
     let first_rating_choices = RATINGS;
     let first_rating_dist = WeightedIndex::new(config.first_rating_prob).unwrap();
@@ -940,6 +992,13 @@ pub fn simulate(
             card.difficulty = new_d;
         }
 
+        #[cfg(feature = "experimental_cost_adr")]
+        if let Some(policy) = cost_adr_policy {
+            card.desired_retention =
+                policy.evaluate_retention(card.stability, card.difficulty, goal_cost_weight);
+        }
+        desired_retention_sum += card.desired_retention;
+        desired_retention_count += 1;
         let mut ivl = next_interval(&card.parameters, card.stability, card.desired_retention)
             .round()
             .clamp(1.0, config.max_ivl);
@@ -974,6 +1033,11 @@ pub fn simulate(
         review_cnt_per_day,
         learn_cnt_per_day,
         cost_per_day,
+        average_desired_retention: if desired_retention_count > 0 {
+            Some(desired_retention_sum / desired_retention_count as f32)
+        } else {
+            None
+        },
         correct_cnt_per_day,
         cards,
         introduced_cnt_per_day,

@@ -16,9 +16,8 @@ For more information about the algorithm, please refer to [the wiki page of FSRS
 
 Add FSRS to your project:
 
-```toml
-[dependencies]
-fsrs = "5.2.0"
+```sh
+cargo add fsrs
 ```
 
 The scheduling example below also uses `chrono` to track review times:
@@ -27,7 +26,7 @@ The scheduling example below also uses `chrono` to track review times:
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 ```
 
-Run `cargo run --example <name>` to see the complete samples ([`schedule`](examples/schedule.rs), [`migrate`](examples/migrate.rs), [`optimize`](examples/optimize.rs)).
+Run `cargo run --example <name>` to see the complete samples ([`schedule`](examples/schedule.rs), [`migrate`](examples/migrate.rs), [`optimize`](examples/optimize.rs), [`cost_adr`](examples/cost_adr.rs)).
 
 ### Schedule reviews
 
@@ -81,6 +80,24 @@ let parameters = compute_parameters(ComputeParametersInput {
 ```
 
 Feed the optimizer a vector of `FSRSItem` instances built from your review history; the returned parameters can then be persisted or supplied to schedulers. Full example: [`examples/optimize.rs`](examples/optimize.rs).
+
+### Train and use a single-user Cost ADR policy
+
+`fsrs-rs` also includes a CPU/Rayon single-user optimizer for the FSRS6 Cost ADR policy. It searches a 15-parameter cost-conditioned desired-retention policy and evaluates it against a fixed 16-point desired-retention baseline portfolio. The report includes hypervolume, same-target time-saved AUC, relative same-target time-saved AUC, and memory-span coverage.
+
+```sh
+cargo run --release --features experimental_cost_adr --example cost_adr
+```
+
+The example accepts command-line overrides for quick experiments:
+
+```sh
+cargo run --release --features experimental_cost_adr --example cost_adr -- --days 90 --deck 2000 --pop 8 --gen 5
+```
+
+By default, the example uses the same simulation scale as `srs-simulator`: 1825 days, a 10000-card deck, 10 new cards per day, a 9999-review limit, and a 720-minute daily cost limit. Its training defaults come from `CostAdrTrainingConfig::default()`.
+
+The example trains a per-user `CostAdrPolicy`, shows which fields should be persisted with the user's FSRS parameters, and demonstrates the runtime scheduling loop with `CostAdrPolicy::next_states`, which returns the post-rating `MemoryState`, cost-conditioned desired retention, and next interval for each answer button. Use `simulate_with_cost_adr_policy` when you already have a `CostAdrPolicy` and want the simulator to recompute per-card desired retention after each review in an offline simulation.
 
 ### Migrate from SM-2 style data
 

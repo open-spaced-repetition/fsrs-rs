@@ -1,6 +1,6 @@
 [package]
 name = "fsrs"
-version = "6.0.0"
+version = "6.1.0"
 authors = ["Open Spaced Repetition"]
 categories = ["algorithms", "science"]
 edition = "2024"
@@ -12,6 +12,11 @@ repository = "https://github.com/open-spaced-repetition/fsrs-rs"
 description = "FSRS for Rust, including Optimizer and Scheduler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+# Experimental: Cost ADR APIs may change without semver compatibility guarantees.
+experimental_cost_adr = ["dep:rand_distr"]
 
 [dependencies.burn]
 version = "0.17.1"
@@ -36,8 +41,8 @@ ndarray = "0.17.2"
 priority-queue = "=2.7.0"
 rand = "0.10.0"
 rayon = "1.12.0"
-serde = "1.0.228"
-snafu = "0.8.9"
+serde = { version = "1.0.228", features = ["derive"] }
+snafu = "0.9.0"
 strum = { version = "0.28.0", features = ["derive"] }
 
 [dev-dependencies]
@@ -71,3 +76,8 @@ path = "examples/migrate.rs"
 [[example]]
 name = "optimize"
 path = "examples/optimize.rs"
+
+[[example]]
+name = "cost_adr"
+path = "examples/cost_adr.rs"
+required-features = ["experimental_cost_adr"]

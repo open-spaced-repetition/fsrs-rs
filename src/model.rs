@@ -199,12 +199,36 @@ impl<B: Backend> Model<B> {
         starting_state: Option<MemoryStateTensors<B>>,
     ) -> MemoryStateTensors<B> {
         let [seq_len, batch_size] = delta_ts.dims();
-        let mut state = if let Some(state) = starting_state {
-            state
+        let (mut state, start_index) = if let Some(state) = starting_state {
+            (state, 0)
+        } else if seq_len == 0 {
+            (MemoryStateTensors::zeros(batch_size), 0)
         } else {
-            MemoryStateTensors::zeros(batch_size)
+            let rating = ratings.get(0).squeeze(0);
+            let initial_rating = rating.clone().clamp(1, 4);
+            let mut stability = self
+                .init_stability(initial_rating.clone())
+                .clamp(S_MIN, S_MAX);
+            let mut difficulty = self.init_difficulty(initial_rating).clamp(D_MIN, D_MAX);
+            let padding = rating.equal_elem(0);
+            let device = stability.device();
+            stability = stability.mask_where(
+                padding.clone(),
+                Tensor::ones([batch_size], &device).mul_scalar(S_MIN),
+            );
+            difficulty = difficulty.mask_where(
+                padding,
+                Tensor::ones([batch_size], &device).mul_scalar(D_MIN),
+            );
+            (
+                MemoryStateTensors {
+                    stability,
+                    difficulty,
+                },
+                1,
+            )
         };
-        for i in 0..seq_len {
+        for i in start_index..seq_len {
             let delta_t = delta_ts.get(i).squeeze(0);
             // [batch_size]
             let rating = ratings.get(i).squeeze(0);

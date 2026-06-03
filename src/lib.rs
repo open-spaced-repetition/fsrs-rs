@@ -1,9 +1,11 @@
 #![allow(clippy::single_range_in_vec_init)]
-
+#![allow(clippy::needless_range_loop)]
 mod batch_shuffle;
 #[cfg(test)]
 mod convertor_tests;
 mod cosine_annealing;
+#[cfg(feature = "experimental_cost_adr")]
+mod cost_adr;
 mod dataset;
 mod error;
 mod inference;
@@ -15,6 +17,11 @@ mod simulation;
 mod test_helpers;
 mod training;
 
+#[cfg(feature = "experimental_cost_adr")]
+pub use cost_adr::{
+    CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrItemState, CostAdrNextStates,
+    CostAdrPolicy, CostAdrTrainingConfig, CostAdrTrainingResult,
+};
 pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
 pub use error::{FSRSError, Result};
 pub use inference::{
@@ -23,6 +30,8 @@ pub use inference::{
     evaluate_with_time_series_splits,
 };
 pub use model::FSRS;
+#[cfg(feature = "experimental_cost_adr")]
+pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
     CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, RevlogEntry, RevlogReviewKind,
     SimulationResult, SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
