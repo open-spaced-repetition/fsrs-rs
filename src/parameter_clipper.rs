@@ -3,11 +3,13 @@ use crate::{
     parameter_initialization::INIT_S_MAX,
     simulation::{D_MAX, D_MIN, S_MIN},
 };
+#[cfg(test)]
 use burn::{
     module::Param,
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
+#[cfg(test)]
 pub(crate) fn parameter_clipper<B: Backend>(
     parameters: Param<Tensor<B, 1>>,
     num_relearning_steps: usize,

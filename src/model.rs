@@ -27,6 +27,7 @@ impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
 }
 
 impl<B: Backend> Model<B> {
+    #[cfg(test)]
     pub fn new(config: ModelConfig) -> Self {
         Self::new_with_device(config, &B::Device::default())
     }
@@ -275,6 +276,7 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
+    #[cfg(test)]
     pub fn init<B: Backend>(&self) -> Model<B> {
         Model::new(self.clone())
     }

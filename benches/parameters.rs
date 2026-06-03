@@ -10,6 +10,8 @@ use itertools::Itertools;
 use rusqlite::{Connection, Result as SqlResult, Row, types::FromSqlError as SqlFromSqlError};
 use std::hint::black_box;
 
+type FsrsItemWithCardId = (FSRSItem, i64);
+
 // Inlined RevlogReviewKind enum from convertor_tests.rs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum RevlogReviewKind {
@@ -99,7 +101,7 @@ fn convert_to_fsrs_items(
     mut entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,
     timezone: Tz,
-) -> Option<Vec<(i64, FSRSItem)>> {
+) -> Option<Vec<(i64, i64, FSRSItem)>> {
     entries = remove_revlog_before_last_first_learn(entries);
     if entries.is_empty() {
         return None;
@@ -125,14 +127,14 @@ fn convert_to_fsrs_items(
                         delta_t: r.last_interval.max(0) as u32,
                     })
                     .collect();
-                (entry.id, FSRSItem { reviews })
+                (entry.id, entry.cid, FSRSItem { reviews })
             })
-            .filter(|(_, item)| item.reviews.last().is_some_and(|r| r.delta_t > 0)) // Ensure last review has delta_t > 0
+            .filter(|(_, _, item)| item.reviews.last().is_some_and(|r| r.delta_t > 0)) // Ensure last review has delta_t > 0
             .collect(),
     )
 }
 
-fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
+fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FsrsItemWithCardId> {
     let mut revlogs_by_card = revlogs
         .into_iter()
         .chunk_by(|r| r.cid)
@@ -142,14 +144,17 @@ fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
         })
         .flatten()
         .collect_vec();
-    revlogs_by_card.sort_by_cached_key(|(id, _)| *id);
-    revlogs_by_card.into_iter().map(|(_, item)| item).collect()
+    revlogs_by_card.sort_by_cached_key(|(id, _, _)| *id);
+    revlogs_by_card
+        .into_iter()
+        .map(|(_, card_id, item)| (item, card_id))
+        .collect()
 }
 
 fn read_collection_inline() -> SqlResult<Vec<RevlogEntry>> {
     let db = Connection::open("tests/data/collection.anki21")?;
     let filter_out_suspended_cards = false;
-    let filter_out_flags: [i32; 0] = [];
+    let filter_out_flags = Vec::<i32>::new();
     let flags_str = if !filter_out_flags.is_empty() {
         format!(
             "AND flags NOT IN ({})",
@@ -176,15 +181,17 @@ fn read_collection_inline() -> SqlResult<Vec<RevlogEntry>> {
 }
 
 // Inlined anki21_sample_file_converted_to_fsrs
-fn anki21_sample_file_converted_to_fsrs_inline() -> Vec<FSRSItem> {
+fn anki21_sample_file_converted_to_fsrs_inline() -> Vec<FsrsItemWithCardId> {
     anki_to_fsrs(read_collection_inline().expect("read error for inlined function"))
 }
 
 // Inlined prepare_training_data (simplified version matching fsrs::dataset::prepare_training_data)
-fn prepare_training_data_inline(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
-    let filtered_items: Vec<FSRSItem> = items
+fn prepare_training_data_inline(
+    items: Vec<FsrsItemWithCardId>,
+) -> (Vec<FsrsItemWithCardId>, Vec<FsrsItemWithCardId>) {
+    let filtered_items: Vec<FsrsItemWithCardId> = items
         .into_iter()
-        .filter(|item| {
+        .filter(|(item, _)| {
             !item.reviews.is_empty() && item.reviews.len() > 1 && item.reviews[0].delta_t == 0
         })
         .collect();
@@ -198,10 +205,14 @@ fn prepare_training_data_inline(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSR
     (pretrain_part.to_vec(), train_part.to_vec())
 }
 
-fn load_and_prepare_data() -> Vec<FSRSItem> {
+fn load_and_prepare_data_with_card_ids() -> (Vec<FSRSItem>, Vec<i64>) {
     let items = anki21_sample_file_converted_to_fsrs_inline();
     let (pretrain_set, train_set) = prepare_training_data_inline(items);
-    [pretrain_set, train_set].concat()
+    [pretrain_set, train_set].concat().into_iter().unzip()
+}
+
+fn load_and_prepare_data() -> Vec<FSRSItem> {
+    load_and_prepare_data_with_card_ids().0
 }
 
 fn benchmark_evaluate(c: &mut Criterion) {
@@ -226,6 +237,7 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
     // evaluate_with_time_series_splits computes parameters internally for each split.
     let input = ComputeParametersInput {
         train_set: items.clone(),
+        card_ids: None,
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
@@ -243,9 +255,10 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
 }
 
 fn benchmark_compute_parameters(c: &mut Criterion) {
-    let items = load_and_prepare_data();
+    let (items, card_ids) = load_and_prepare_data_with_card_ids();
     let input = ComputeParametersInput {
         train_set: items.clone(), // Using the full prepared dataset
+        card_ids: Some(card_ids.clone()),
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value

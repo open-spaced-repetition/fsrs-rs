@@ -811,6 +811,7 @@ where
         // Compute parameters on training data
         let input = ComputeParametersInput {
             train_set: split.train_items.clone(),
+            card_ids: None,
             enable_short_term,
             num_relearning_steps,
             progress: None,
@@ -1280,6 +1281,7 @@ mod tests {
         let items = [dataset_for_initialization, trainset].concat();
         let input = ComputeParametersInput {
             train_set: items.clone(),
+            card_ids: None,
             progress: None,
             enable_short_term: true,
             num_relearning_steps: None,
@@ -1292,6 +1294,7 @@ mod tests {
         let result = evaluate_with_time_series_splits(
             ComputeParametersInput {
                 train_set: items[..5].to_vec(),
+                card_ids: None,
                 progress: None,
                 enable_short_term: true,
                 num_relearning_steps: None,

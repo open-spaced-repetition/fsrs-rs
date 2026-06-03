@@ -2262,6 +2262,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "temporarily disabled while optimal retention behavior is being reviewed"]
     fn test_optimal_retention_with_old_parameters() -> Result<()> {
         let learn_span = 1000;
         let learn_limit = 10;

@@ -2,7 +2,7 @@
 // License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 
 use std::hint::black_box;
-use std::iter::repeat;
+use std::iter::repeat_n;
 
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -19,7 +19,7 @@ pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<
         rating: 3,
         delta_t: 21,
     };
-    let reviews = repeat(review).take(past_reviews + 1).collect_vec();
+    let reviews = repeat_n(review, past_reviews + 1).collect_vec();
     (0..card_cnt)
         .map(|_| {
             inf.memory_state(
@@ -34,16 +34,20 @@ pub(crate) fn calc_mem(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<
 }
 
 pub(crate) fn calc_mem_batch(inf: &FSRS, past_reviews: usize, card_cnt: usize) -> Vec<MemoryState> {
-    let reviews = repeat(FSRSReview {
-        rating: 3,
-        delta_t: 21,
-    })
-    .take(past_reviews)
+    let reviews = repeat_n(
+        FSRSReview {
+            rating: 3,
+            delta_t: 21,
+        },
+        past_reviews,
+    )
     .collect_vec();
-    let items = repeat(FSRSItem {
-        reviews: reviews.clone(),
-    })
-    .take(card_cnt)
+    let items = repeat_n(
+        FSRSItem {
+            reviews: reviews.clone(),
+        },
+        card_cnt,
+    )
     .collect_vec();
     inf.memory_state_batch(items, vec![None; card_cnt]).unwrap()
 }
