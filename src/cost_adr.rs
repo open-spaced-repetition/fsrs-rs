@@ -6,7 +6,7 @@ use crate::training::{CombinedProgressState, ProgressState};
 use crate::{SimulationResult, SimulatorConfig, simulate, simulate_with_cost_adr_policy};
 use burn::tensor::backend::Backend;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_distr::StandardNormal;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,

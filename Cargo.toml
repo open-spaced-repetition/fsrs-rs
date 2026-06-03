@@ -39,8 +39,8 @@ itertools = "0.14.0"
 log = "0.4"
 ndarray = "0.17.2"
 priority-queue = "=2.7.0"
-rand = "0.9.2"
-rand_distr = { version = "0.5.1", optional = true }
+rand = "0.10.0"
+rand_distr = { version = "0.6.0", optional = true }
 rayon = "1.12.0"
 serde = { version = "1.0.228", features = ["derive"] }
 snafu = "0.9.0"
