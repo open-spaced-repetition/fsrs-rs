@@ -61,6 +61,13 @@ fn add(gw: &mut [f64], idx: usize, value: f64) {
 }
 
 #[inline]
+/// Computes weighted binary cross entropy and its derivative with respect to
+/// retrievability.
+///
+/// The loss is `-weight * (label * ln(r) + (1 - label) * ln(1 - r))`, where
+/// `r` is `r_raw` clamped into `[MIN_PROB, MAX_PROB]` for numerical stability.
+/// The returned gradient is `d(loss) / d(r_raw)`. When `r_raw` lies outside the
+/// clamp interval, the clamp is treated as active and the gradient is zero.
 fn bce_loss_and_grad_r(r_raw: f32, label: f32, weight: f32) -> (f64, f64) {
     if weight == 0.0 {
         return (0.0, 0.0);
@@ -77,6 +84,13 @@ fn bce_loss_and_grad_r(r_raw: f32, label: f32, weight: f32) -> (f64, f64) {
 }
 
 #[inline]
+/// Evaluates the FSRS power forgetting curve and caches intermediates needed
+/// by the backward pass.
+///
+/// With `decay = -w[20]` and `factor = exp(ln(0.9) / decay) - 1`, the curve is
+/// `R(t, s) = (1 + max(t, 0) / s * factor)^decay`. The factor is chosen so that
+/// `R(s, s) = 0.9`, matching the FSRS definition of stability as the elapsed
+/// days at 90% retrievability.
 fn curve_forward(w: &[f32], t: f32, s: f32) -> CurveCache {
     let t = t.max(0.0);
     let decay = -w[20];
@@ -94,6 +108,13 @@ fn curve_forward(w: &[f32], t: f32, s: f32) -> CurveCache {
 }
 
 #[inline]
+/// Backpropagates through the cached power forgetting curve.
+///
+/// `g_r` is the upstream derivative `d(loss) / d(R)`. The function accumulates
+/// `d(loss) / d(w[20])` into `gw` and returns `d(loss) / d(s)` so callers can
+/// continue backpropagating into the previous memory state. Since the forward
+/// curve uses `decay = -w[20]`, the derivative with respect to `w[20]` is the
+/// negative derivative with respect to `decay`.
 fn curve_backward(w: &[f32], cache: CurveCache, g_r: f64, gw: &mut [f64]) -> f64 {
     if g_r == 0.0 {
         return 0.0;
@@ -122,12 +143,36 @@ fn curve_backward(w: &[f32], cache: CurveCache, g_r: f64, gw: &mut [f64]) -> f64
 }
 
 #[inline]
+/// Computes the initial difficulty for a first review rating.
+///
+/// The formula is `w[4] - exp(w[5] * (rating - 1)) + 1`. Callers clamp the
+/// result into the model difficulty range when it becomes part of a memory
+/// state. `rating` is expected to be in `1..=4`; saturating subtraction keeps
+/// padding or malformed zero ratings from underflowing.
 fn init_difficulty(w: &[f32], rating: usize) -> f32 {
     let offset = rating.saturating_sub(1) as f32;
     w[4] - (w[5] * offset).exp() + 1.0
 }
 
 #[inline]
+/// Applies one scalar FSRS state transition and records all branch decisions
+/// needed for analytic backpropagation.
+///
+/// `state` is first clamped into the legal stability/difficulty ranges, then
+/// retrievability is computed with the power forgetting curve. For non-initial
+/// reviews, stability follows one of three active branches:
+///
+/// - same-day reviews (`delta_t == 0`) use the short-term multiplier
+///   `exp(w[17] * (rating - 3 + w[18])) * s^-w[19]`, floored at `1` for
+///   ratings `2..=4`;
+/// - lapses (`rating == 1`) use the smaller of the raw failure stability and
+///   the failure floor `s / exp(w[17] * w[18])`;
+/// - all other reviews use the success increment with hard/easy multipliers.
+///
+/// The first non-padding review initializes stability from `w[0..4]` and
+/// difficulty from [`init_difficulty`]. Padding reviews (`rating == 0`) preserve
+/// the previous state. The returned [`StepCache`] stores the active branch and
+/// pre-clamp values so `step_backward` can use the same non-smooth path.
 fn step_forward(
     w: &[f32],
     state: State,
@@ -227,6 +272,16 @@ fn step_forward(
     (out, cache)
 }
 
+/// Differentiates the long-term success stability branch.
+///
+/// The forward branch is `s' = s * (1 + inc)`, where
+/// `inc = exp(w[8]) * (11 - d) * s^-w[9] *
+/// (exp((1 - r) * w[10]) - 1) * hard_penalty * easy_bonus`.
+///
+/// `g` is `d(loss) / d(s')`. The function accumulates parameter gradients for
+/// `w[8]`, `w[9]`, `w[10]`, and conditionally `w[15]`/`w[16]`, then returns
+/// gradients with respect to the previous stability, previous difficulty, and
+/// retrievability `(dL/ds, dL/dd, dL/dr)`.
 fn backward_success(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f64, f64) {
     if g == 0.0 {
         return (0.0, 0.0, 0.0);
@@ -262,6 +317,17 @@ fn backward_success(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f
     (g_s, g_d, g_r)
 }
 
+/// Differentiates the lapse stability branch.
+///
+/// The raw branch is
+/// `w[11] * d^-w[12] * ((s + 1)^w[13] - 1) * exp((1 - r) * w[14])`.
+/// The forward pass uses the failure floor `s / exp(w[17] * w[18])` when that
+/// floor is lower than the raw value. This backward helper follows only the
+/// active branch selected in [`step_forward`], so the gradient at the branch
+/// boundary is intentionally one-sided.
+///
+/// Returns gradients with respect to previous stability, previous difficulty,
+/// and retrievability.
 fn backward_failure(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f64, f64) {
     if g == 0.0 {
         return (0.0, 0.0, 0.0);
@@ -296,6 +362,14 @@ fn backward_failure(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f
     (g_s, g_d, g_r)
 }
 
+/// Differentiates the same-day short-term stability branch.
+///
+/// The branch computes `s' = s * short_value`, where the raw multiplier is
+/// `exp(w[17] * (rating - 3 + w[18])) * s^-w[19]`. For ratings `2..=4`, the raw
+/// multiplier is floored at `1`; when that floor is active, only the direct
+/// derivative of `s'` with respect to `s` remains.
+///
+/// Returns the gradient with respect to the previous stability.
 fn backward_short(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> f64 {
     if g == 0.0 {
         return 0.0;
@@ -314,6 +388,16 @@ fn backward_short(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> f64 {
     g_s
 }
 
+/// Differentiates the difficulty update branch.
+///
+/// Difficulty first moves by linear damping,
+/// `next_d = d + (10 - d) * (-w[6] * (rating - 3)) / 9`, then mean-reverts
+/// toward the easy-rating initial difficulty:
+/// `mean_d = w[7] * (init_difficulty(4) - next_d) + next_d`.
+///
+/// The gradient is stopped when the output difficulty clamp is active. Otherwise
+/// this helper accumulates gradients for `w[4]`, `w[5]`, `w[6]`, and `w[7]`, and
+/// returns `d(loss) / d(previous_difficulty)`.
 fn backward_difficulty(w: &[f32], c: &StepCache, g_out: f64, gw: &mut [f64]) -> f64 {
     if g_out == 0.0 {
         return 0.0;
@@ -341,6 +425,12 @@ fn backward_difficulty(w: &[f32], c: &StepCache, g_out: f64, gw: &mut [f64]) -> 
     g_next * (1.0 - delta_d / 9.0)
 }
 
+/// Differentiates the first-review initialization branch.
+///
+/// Initial stability is selected directly from `w[rating - 1]`; initial
+/// difficulty uses [`init_difficulty`] and the same difficulty clamp as the
+/// forward pass. This helper accumulates gradients into `w[0..4]` for stability
+/// and `w[4]`/`w[5]` for difficulty.
 fn backward_init(w: &[f32], rating: usize, g_s: f64, g_d: f64, gw: &mut [f64]) {
     add(gw, rating - 1, g_s);
     let raw_d = init_difficulty(w, rating);
@@ -352,6 +442,19 @@ fn backward_init(w: &[f32], rating: usize, g_s: f64, g_d: f64, gw: &mut [f64]) {
     }
 }
 
+/// Backpropagates through one cached FSRS state transition.
+///
+/// `g_out_s` and `g_out_d` are gradients from later state values. `g_r_extra`
+/// is an additional gradient flowing directly through the review-step
+/// retrievability, used by per-card losses that score each historical review.
+///
+/// The backward path mirrors the exact branch chosen by [`step_forward`]:
+/// padding copies gradients to the previous state, first-review initialization
+/// updates initial parameters, and review branches route through short,
+/// failure, or success stability plus the difficulty update. Any accumulated
+/// `dL/dR` is then propagated through the forgetting curve to previous
+/// stability and `w[20]`. State clamps are treated as hard stops at their
+/// boundaries.
 fn step_backward(
     w: &[f32],
     c: &StepCache,
@@ -404,6 +507,17 @@ fn step_backward(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Computes the loss for one batch column by scoring only the next review after
+/// a fixed history prefix.
+///
+/// `t_hist` and `r_hist` are flattened in time-major order:
+/// `idx = time * batch + column`. The function replays `seq_len` historical
+/// reviews for `column`, predicts retrievability after `delta_t`, and computes
+/// weighted BCE against `label`.
+///
+/// When `gw` is provided, gradients are accumulated into the shared parameter
+/// gradient buffer by first differentiating the final forgetting curve and then
+/// walking the cached review steps in reverse.
 fn prefix_loss_and_grad(
     w: &[f32],
     t_hist: &[f32],
@@ -439,6 +553,12 @@ fn prefix_loss_and_grad(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Computes summed next-review loss and parameter gradients for a prefix batch.
+///
+/// Each column represents one card prefix. `delta_ts`, `labels`, and `weights`
+/// have length `batch` and describe the target review following each prefix.
+/// `gw` is an accumulation buffer for the 21 FSRS parameters; it is not cleared
+/// by this function.
 pub(crate) fn batch_loss_and_grad(
     w: &[f32],
     t_hist: &[f32],
@@ -469,6 +589,11 @@ pub(crate) fn batch_loss_and_grad(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Computes summed next-review loss for a prefix batch without gradients.
+///
+/// This is the forward-only counterpart of [`batch_loss_and_grad`]. It uses the
+/// same time-major history layout and target arrays, but skips all cache
+/// backpropagation work.
 pub(crate) fn batch_loss(
     w: &[f32],
     t_hist: &[f32],
@@ -498,6 +623,15 @@ pub(crate) fn batch_loss(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Computes all in-card review losses for one batch column.
+///
+/// Unlike [`prefix_loss_and_grad`], this scores every review after the first
+/// review in the same card sequence. At step `t`, the BCE target uses
+/// `labels[t * batch + column]` and `weights[t * batch + column]`, while the
+/// predicted retrievability comes from the state before applying that review.
+///
+/// When gradients are requested, per-step `dL/dR` values are stored and then
+/// propagated backward through the entire cached card trajectory.
 fn card_column_loss_and_grad(
     w: &[f32],
     t_hist: &[f32],
@@ -539,6 +673,12 @@ fn card_column_loss_and_grad(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Computes summed in-card review loss and parameter gradients for a batch.
+///
+/// Each batch column is one full card trajectory. `labels` and `weights` use
+/// the same time-major layout as `t_hist` and `r_hist`; entries for the first
+/// review are ignored because there is no prior state to score. `gw` is an
+/// accumulation buffer and is not reset by this function.
 pub(crate) fn card_loss_and_grad(
     w: &[f32],
     t_hist: &[f32],
@@ -567,6 +707,11 @@ pub(crate) fn card_loss_and_grad(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Computes summed in-card review loss for a batch without gradients.
+///
+/// This is the forward-only counterpart of [`card_loss_and_grad`], used when the
+/// training loop or evaluation path needs only the scalar objective value for
+/// full card trajectories.
 pub(crate) fn card_loss(
     w: &[f32],
     t_hist: &[f32],
