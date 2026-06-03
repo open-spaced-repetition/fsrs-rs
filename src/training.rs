@@ -1285,35 +1285,58 @@ mod tests {
         }
     }
 
+    fn disabled_short_term_regression_items() -> Vec<FSRSItem> {
+        let initialization_items = (0..30).map(|idx| FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: if idx % 7 == 0 { 1 } else { 3 },
+                    delta_t: 2,
+                },
+            ],
+        });
+        let training_items = (0..100).map(|idx| FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: if idx % 5 == 0 { 1 } else { 3 },
+                    delta_t: 2,
+                },
+                FSRSReview {
+                    rating: if idx % 6 == 0 { 1 } else { 4 },
+                    delta_t: idx * 3 % 14 + 1,
+                },
+            ],
+        });
+
+        initialization_items.chain(training_items).collect()
+    }
+
     #[test]
     fn test_disabled_short_term_benchmark_zeroes_short_term_parameters() {
-        let items = (0..80)
-            .map(|idx| {
-                let mut reviews = vec![
-                    FSRSReview {
-                        rating: idx % 4 + 1,
-                        delta_t: 0,
-                    },
-                    FSRSReview {
-                        rating: if idx % 5 == 0 { 1 } else { 3 },
-                        delta_t: idx % 7 + 1,
-                    },
-                ];
-                if idx >= 20 {
-                    reviews.push(FSRSReview {
-                        rating: if idx % 6 == 0 { 1 } else { 4 },
-                        delta_t: idx * 3 % 14 + 1,
-                    });
-                }
-                FSRSItem { reviews }
-            })
-            .collect();
-
         let parameters = benchmark(ComputeParametersInput {
-            train_set: items,
+            train_set: disabled_short_term_regression_items(),
             enable_short_term: false,
             ..Default::default()
         });
+
+        assert_eq!(&parameters[17..20], &[0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_disabled_short_term_compute_parameters_zeroes_short_term_parameters() {
+        let parameters = compute_parameters(ComputeParametersInput {
+            train_set: disabled_short_term_regression_items(),
+            enable_short_term: false,
+            ..Default::default()
+        })
+        .unwrap();
 
         assert_eq!(&parameters[17..20], &[0.0, 0.0, 0.0]);
     }
