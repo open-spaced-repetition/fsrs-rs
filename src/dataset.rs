@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use burn::data::dataloader::batcher::Batcher;
 use burn::{
     data::dataset::Dataset,
-    tensor::{Float, Int, Shape, Tensor, TensorData, backend::Backend},
+    tensor::{Float, Int, Tensor, TensorData, backend::Backend},
 };
 
 use itertools::Itertools;
@@ -101,6 +101,7 @@ pub(crate) struct FSRSBatch<B: Backend> {
 
 impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, device: &B::Device) -> FSRSBatch<B> {
+        let batch_size = weighted_items.len();
         let pad_size = weighted_items
             .iter()
             .map(|x| x.item.reviews.len())
@@ -108,60 +109,36 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
             .expect("FSRSItem is empty")
             - 1;
 
-        let (time_histories, rating_histories) = weighted_items
-            .iter()
-            .map(|weighted_item| {
-                let (mut delta_t, mut rating): (Vec<_>, Vec<_>) = weighted_item
-                    .item
-                    .history()
-                    .map(|r| (r.delta_t, r.rating))
-                    .unzip();
-                delta_t.resize(pad_size, 0);
-                rating.resize(pad_size, 0);
-                let delta_t = Tensor::<B, 2>::from_floats(
-                    TensorData::new(
-                        delta_t,
-                        Shape {
-                            dims: vec![1, pad_size],
-                        },
-                    ),
-                    device,
-                );
-                let rating = Tensor::<B, 2>::from_data(
-                    TensorData::new(
-                        rating,
-                        Shape {
-                            dims: vec![1, pad_size],
-                        },
-                    ),
-                    device,
-                );
-                (delta_t, rating)
-            })
-            .unzip();
+        let mut time_histories = vec![0.0; pad_size * batch_size];
+        let mut rating_histories = vec![0.0; pad_size * batch_size];
+        let mut delta_ts = Vec::with_capacity(batch_size);
+        let mut labels = Vec::with_capacity(batch_size);
+        let mut weights = Vec::with_capacity(batch_size);
 
-        let (delta_ts, labels, weights) = weighted_items
-            .iter()
-            .map(|weighted_item| {
-                let current = weighted_item.item.current();
-                let delta_t: Tensor<B, 1> = Tensor::from_floats([current.delta_t as f32], device);
-                let label = match current.rating {
-                    1 => 0,
-                    _ => 1,
-                };
-                let label: Tensor<B, 1, Int> = Tensor::from_ints([label], device);
-                let weight: Tensor<B, 1> = Tensor::from_floats([weighted_item.weight], device);
-                (delta_t, label, weight)
-            })
-            .multiunzip();
+        for (batch_index, weighted_item) in weighted_items.iter().enumerate() {
+            for (history_index, review) in weighted_item.item.history().enumerate() {
+                let index = history_index * batch_size + batch_index;
+                time_histories[index] = review.delta_t as f32;
+                rating_histories[index] = review.rating as f32;
+            }
 
-        let t_historys = Tensor::cat(time_histories, 0).transpose().to_device(device); // [seq_len, batch_size]
-        let r_historys = Tensor::cat(rating_histories, 0)
-            .transpose()
-            .to_device(device); // [seq_len, batch_size]
-        let delta_ts = Tensor::cat(delta_ts, 0).to_device(device);
-        let labels = Tensor::cat(labels, 0).to_device(device);
-        let weights = Tensor::cat(weights, 0).to_device(device);
+            let current = weighted_item.item.current();
+            delta_ts.push(current.delta_t as f32);
+            labels.push(if current.rating == 1 { 0 } else { 1 });
+            weights.push(weighted_item.weight);
+        }
+
+        let t_historys = Tensor::from_floats(
+            TensorData::new(time_histories, [pad_size, batch_size]),
+            device,
+        ); // [seq_len, batch_size]
+        let r_historys = Tensor::from_floats(
+            TensorData::new(rating_histories, [pad_size, batch_size]),
+            device,
+        ); // [seq_len, batch_size]
+        let delta_ts = Tensor::from_floats(TensorData::new(delta_ts, [batch_size]), device);
+        let labels = Tensor::from_ints(TensorData::new(labels, [batch_size]), device);
+        let weights = Tensor::from_floats(TensorData::new(weights, [batch_size]), device);
 
         // dbg!(&items[0].t_history);
         // dbg!(&t_historys);
