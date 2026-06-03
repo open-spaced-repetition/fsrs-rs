@@ -55,6 +55,9 @@ pub(crate) const LEARNING: usize = 0;
 pub(crate) const REVIEW: usize = 1;
 pub(crate) const RELEARNING: usize = 2;
 pub(crate) const MAX_STEPS: usize = 5;
+const WORKLOAD_SHORT_STEP_DIVISOR: f32 = 14.0;
+const WORKLOAD_LONG_STEP: f32 = 7.5;
+const WORKLOAD_D_EPS: f32 = 0.4;
 
 /// Context for post scheduling operations.
 pub struct PostSchedulingContext<'a> {
@@ -459,18 +462,77 @@ pub struct WorkloadEstimator {
 }
 
 #[derive(Clone, Copy)]
+struct InterpolationAxis {
+    lower: usize,
+    upper: usize,
+    upper_weight: f32,
+}
+
+impl InterpolationAxis {
+    fn from_position(position: f32, size: usize) -> Self {
+        debug_assert!(size > 0);
+        let last = size - 1;
+        if position <= 0.0 {
+            return Self {
+                lower: 0,
+                upper: 0,
+                upper_weight: 0.0,
+            };
+        }
+        if position >= last as f32 {
+            return Self {
+                lower: last,
+                upper: last,
+                upper_weight: 0.0,
+            };
+        }
+
+        let lower = position.floor() as usize;
+        Self {
+            lower,
+            upper: lower + 1,
+            upper_weight: position - lower as f32,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct ReviewTransition {
-    s_idx: usize,
-    d_idx: usize,
+    state: InterpolatedState,
     interval: usize,
+}
+
+#[derive(Clone, Copy)]
+struct InterpolatedState {
+    offsets: [usize; 4],
+    weights: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct InFlightCardCostKey {
+    stability: u32,
+    difficulty: u32,
+    last_date: u32,
+    due: u32,
+}
+
+impl From<&Card> for InFlightCardCostKey {
+    fn from(card: &Card) -> Self {
+        Self {
+            stability: card.stability.to_bits(),
+            difficulty: card.difficulty.to_bits(),
+            last_date: card.last_date.to_bits(),
+            due: card.due.to_bits(),
+        }
+    }
 }
 
 impl WorkloadEstimator {
     pub fn new(config: &SimulatorConfig) -> Self {
         let s_max = 365.0;
-        let short_step = 2.0f32.ln() / 25.0;
-        let long_step = 5.0;
-        let d_eps = 0.3;
+        let short_step = 2.0f32.ln() / WORKLOAD_SHORT_STEP_DIVISOR;
+        let long_step = WORKLOAD_LONG_STEP;
+        let d_eps = WORKLOAD_D_EPS;
 
         // Create stability state space
         let s_mid_target = (long_step / (1.0 - (-short_step).exp())).min(s_max);
@@ -515,28 +577,31 @@ impl WorkloadEstimator {
         }
     }
 
-    fn s2i(&self, s: f32) -> usize {
-        let index = if s <= self.s_mid {
-            // Handle small values (logarithmic scale)
-            ((s.ln() - S_MIN.ln()) / self.short_step).ceil() as usize
+    fn s_axis(&self, s: f32) -> InterpolationAxis {
+        let position = if s <= self.s_mid {
+            (s.ln() - S_MIN.ln()) / self.short_step
         } else {
-            // Handle large values (linear scale)
-            self.s_mid_size - 1 + ((s - self.s_mid) / self.long_step).ceil() as usize
+            self.s_mid_size as f32 - 1.0 + (s - self.s_mid) / self.long_step
         };
-        index.min(self.s_size - 1)
+        InterpolationAxis::from_position(position, self.s_size)
     }
 
-    fn d2i(&self, d: f32) -> usize {
-        let index = ((d - D_MIN) / (D_MAX - D_MIN) * self.d_size as f32).floor() as usize;
-        index.min(self.d_size - 1)
+    fn d_axis(&self, d: f32) -> InterpolationAxis {
+        let position = (d.clamp(D_MIN, D_MAX) - D_MIN) / (D_MAX - D_MIN) * (self.d_size - 1) as f32;
+        InterpolationAxis::from_position(position, self.d_size)
     }
 
     #[inline]
-    fn cost_index(&self, t_idx: usize, s_idx: usize, d_idx: usize) -> usize {
-        debug_assert!(t_idx <= self.t_size);
+    fn state_offset(&self, s_idx: usize, d_idx: usize) -> usize {
         debug_assert!(s_idx < self.s_size);
         debug_assert!(d_idx < self.d_size);
-        (t_idx * self.s_size + s_idx) * self.d_size + d_idx
+        s_idx * self.d_size + d_idx
+    }
+
+    #[inline]
+    fn layer_offset(&self, t_idx: usize) -> usize {
+        debug_assert!(t_idx <= self.t_size);
+        t_idx * self.s_size * self.d_size
     }
 
     #[inline]
@@ -547,6 +612,51 @@ impl WorkloadEstimator {
         (rating_idx * self.s_size + s_idx) * self.d_size + d_idx
     }
 
+    #[inline]
+    fn interpolated_state(&self, s: f32, d: f32) -> InterpolatedState {
+        let s_axis = self.s_axis(s);
+        let d_axis = self.d_axis(d);
+        let dw = d_axis.upper_weight;
+        let sw = s_axis.upper_weight;
+        let lower_s_weight = 1.0 - sw;
+        let upper_s_weight = sw;
+        let lower_d_weight = 1.0 - dw;
+        let upper_d_weight = dw;
+        InterpolatedState {
+            offsets: [
+                self.state_offset(s_axis.lower, d_axis.lower),
+                self.state_offset(s_axis.lower, d_axis.upper),
+                self.state_offset(s_axis.upper, d_axis.lower),
+                self.state_offset(s_axis.upper, d_axis.upper),
+            ],
+            weights: [
+                lower_s_weight * lower_d_weight,
+                lower_s_weight * upper_d_weight,
+                upper_s_weight * lower_d_weight,
+                upper_s_weight * upper_d_weight,
+            ],
+        }
+    }
+
+    #[inline]
+    fn interpolated_cost(
+        &self,
+        cost_matrix: &[f32],
+        t_idx: usize,
+        state: InterpolatedState,
+    ) -> f32 {
+        let layer_offset = self.layer_offset(t_idx);
+        cost_matrix[layer_offset + state.offsets[0]] * state.weights[0]
+            + cost_matrix[layer_offset + state.offsets[1]] * state.weights[1]
+            + cost_matrix[layer_offset + state.offsets[2]] * state.weights[2]
+            + cost_matrix[layer_offset + state.offsets[3]] * state.weights[3]
+    }
+
+    #[inline]
+    fn future_cost(&self, t_idx: usize, s: f32, d: f32) -> f32 {
+        self.interpolated_cost(&self.cost_matrix, t_idx, self.interpolated_state(s, d))
+    }
+
     fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
         self.desired_retention = desired_retention;
         let (decay, forgetting_factor) = forgetting_curve_constants(w);
@@ -554,8 +664,10 @@ impl WorkloadEstimator {
         let mut transition_probs = vec![0.0; 4 * self.s_size];
         let mut transitions = vec![
             ReviewTransition {
-                s_idx: 0,
-                d_idx: 0,
+                state: InterpolatedState {
+                    offsets: [0; 4],
+                    weights: [0.0; 4],
+                },
                 interval: 0
             };
             4 * self.s_size * self.d_size
@@ -595,8 +707,7 @@ impl WorkloadEstimator {
                     .round() as usize;
                     let index = self.transition_index(rating - 1, s_idx, d_idx);
                     transitions[index] = ReviewTransition {
-                        s_idx: self.s2i(next_s),
-                        d_idx: self.d2i(next_d_val),
+                        state: self.interpolated_state(next_s, next_d_val),
                         interval: next_ivl,
                     };
                 }
@@ -614,13 +725,13 @@ impl WorkloadEstimator {
                         let transition =
                             transitions[self.transition_index(rating - 1, s_idx, d_idx)];
                         let next_t_idx = (t + transition.interval).min(self.t_size);
-                        let future_cost = cost_matrix
-                            [self.cost_index(next_t_idx, transition.s_idx, transition.d_idx)];
+                        let future_cost =
+                            self.interpolated_cost(&cost_matrix, next_t_idx, transition.state);
                         let transition_prob = transition_probs[(rating - 1) * self.s_size + s_idx];
 
                         current_cost += (review_costs[rating - 1] + future_cost) * transition_prob;
                     }
-                    let cost_index = self.cost_index(t, s_idx, d_idx);
+                    let cost_index = self.layer_offset(t) + self.state_offset(s_idx, d_idx);
                     cost_matrix[cost_index] = current_cost;
                 }
             }
@@ -641,11 +752,9 @@ impl WorkloadEstimator {
         for rating in 1..=4 {
             let s = init_s(w, rating);
             let d = init_d(w, rating);
-            let s_idx = self.s2i(s);
-            let d_idx = self.d2i(d);
             let ivl = next_interval(w, s, self.desired_retention).max(1.0).round() as usize;
             let t_idx = (due + ivl).min(self.t_size);
-            total_cost += (self.cost_matrix[self.cost_index(t_idx, s_idx, d_idx)]
+            total_cost += (self.future_cost(t_idx, s, d)
                 + self.state_rating_costs[LEARNING][rating - 1])
                 * first_rating_probs[rating - 1];
         }
@@ -725,10 +834,8 @@ impl WorkloadEstimator {
             let future_cost = if new_due > self.t_size {
                 0.0
             } else {
-                let s_idx = self.s2i(new_stability);
-                let d_idx = self.d2i(new_difficulty);
                 let t_idx = new_due;
-                self.cost_matrix[self.cost_index(t_idx, s_idx, d_idx)]
+                self.future_cost(t_idx, new_stability, new_difficulty)
             };
 
             expected_cost += transition_prob * (immediate_cost + future_cost);
@@ -763,16 +870,28 @@ pub fn expected_workload_with_existing_cards(
     let w = check_and_fill_parameters(parameters)?;
     let mut estimator = WorkloadEstimator::new(config);
     estimator.precompute_cost_matrix(desired_retention, &w);
-    let mut workload: f32 = existing_cards
-        .iter()
-        .map(|card| {
-            if card.stability > 1e-9 {
-                estimator.evaluate_in_flight_card_cost(card, &w)
-            } else {
-                estimator.evaluate_new_card_cost(&w, &config.first_rating_prob, card.due as usize)
-            }
-        })
-        .sum();
+    let mut workload = 0.0;
+    let mut in_flight_cost_cache: HashMap<InFlightCardCostKey, f32> = HashMap::new();
+    let mut existing_new_card_due_counts: HashMap<usize, usize> = HashMap::new();
+
+    for card in existing_cards {
+        if card.stability > 1e-9 {
+            let key = InFlightCardCostKey::from(card);
+            let cost = *in_flight_cost_cache
+                .entry(key)
+                .or_insert_with(|| estimator.evaluate_in_flight_card_cost(card, &w));
+            workload += cost;
+        } else {
+            *existing_new_card_due_counts
+                .entry(card.due as usize)
+                .or_default() += 1;
+        }
+    }
+
+    for (due, count) in existing_new_card_due_counts {
+        workload +=
+            estimator.evaluate_new_card_cost(&w, &config.first_rating_prob, due) * count as f32;
+    }
 
     if let Some(learn_limit) = std::num::NonZeroUsize::new(config.learn_limit) {
         let learn_limit = learn_limit.get();
