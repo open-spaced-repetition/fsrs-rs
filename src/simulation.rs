@@ -56,16 +56,51 @@ pub(crate) const REVIEW: usize = 1;
 pub(crate) const RELEARNING: usize = 2;
 pub(crate) const MAX_STEPS: usize = 5;
 
-/// Function type for post scheduling operations that takes interval, maximum interval,
-/// current day index, due counts per day, and a random number generator,
+/// Context for post scheduling operations.
+pub struct PostSchedulingContext<'a> {
+    pub card: &'a Card,
+    pub max_interval: f32,
+    pub today: usize,
+    pub due_counts_per_day: &'a [usize],
+    rng: &'a mut StdRng,
+}
+
+impl PostSchedulingContext<'_> {
+    pub fn random_f32(&mut self) -> f32 {
+        self.rng.random()
+    }
+
+    pub fn random_u64(&mut self) -> u64 {
+        self.rng.random()
+    }
+}
+
+/// Function type for post scheduling operations that takes a scheduling context
 /// and returns a new interval.
 #[allow(clippy::type_complexity)]
-pub struct PostSchedulingFn(
-    Arc<dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send>,
-);
+pub struct PostSchedulingFn(Arc<dyn for<'a> Fn(PostSchedulingContext<'a>) -> f32 + Sync + Send>);
+
+impl PostSchedulingFn {
+    /// Create a post scheduling callback.
+    ///
+    /// ```
+    /// use fsrs::{PostSchedulingContext, PostSchedulingFn};
+    ///
+    /// let callback = PostSchedulingFn::new(|mut ctx: PostSchedulingContext<'_>| {
+    ///     let _fuzz_seed = ctx.random_u64();
+    ///     ctx.card.interval.clamp(1.0, ctx.max_interval)
+    /// });
+    /// ```
+    pub fn new<F>(f: F) -> Self
+    where
+        F: for<'a> Fn(PostSchedulingContext<'a>) -> f32 + Sync + Send + 'static,
+    {
+        Self(Arc::new(f))
+    }
+}
 
 impl Deref for PostSchedulingFn {
-    type Target = dyn Fn(&Card, f32, usize, &[usize], &mut StdRng) -> f32 + Sync + Send;
+    type Target = dyn for<'a> Fn(PostSchedulingContext<'a>) -> f32 + Sync + Send;
 
     fn deref(&self) -> &Self::Target {
         &*self.0
@@ -90,6 +125,22 @@ impl std::fmt::Debug for PostSchedulingFn {
 #[allow(clippy::type_complexity)]
 pub struct ReviewPriorityFn(Arc<dyn Fn(&Card) -> i32 + Sync + Send>);
 
+impl ReviewPriorityFn {
+    /// Create a review priority callback.
+    ///
+    /// ```
+    /// use fsrs::{Card, ReviewPriorityFn};
+    ///
+    /// let callback = ReviewPriorityFn::new(|card: &Card| card.id as i32);
+    /// ```
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&Card) -> i32 + Sync + Send + 'static,
+    {
+        Self(Arc::new(f))
+    }
+}
+
 impl PartialEq for ReviewPriorityFn {
     fn eq(&self, _: &Self) -> bool {
         true
@@ -112,12 +163,30 @@ impl std::fmt::Debug for ReviewPriorityFn {
 
 impl Default for ReviewPriorityFn {
     fn default() -> Self {
-        Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
+        Self::new(|card| (card.difficulty * 100.0) as i32)
     }
 }
 
 #[allow(clippy::type_complexity)]
 pub struct CMRRTargetFn(Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
+
+impl CMRRTargetFn {
+    /// Create a target callback for CMRR optimization.
+    ///
+    /// ```
+    /// use fsrs::{CMRRTargetFn, SimulationResult};
+    ///
+    /// let callback = CMRRTargetFn::new(|result: &SimulationResult, _weights: &[f32]| {
+    ///     result.cost_per_day.iter().sum()
+    /// });
+    /// ```
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send + 'static,
+    {
+        Self(Arc::new(f))
+    }
+}
 
 impl Deref for CMRRTargetFn {
     type Target = dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send;
@@ -135,7 +204,7 @@ impl std::fmt::Debug for CMRRTargetFn {
 
 impl Default for CMRRTargetFn {
     fn default() -> Self {
-        Self(Arc::new(|result, _w| {
+        Self::new(|result, _w| {
             let SimulationResult {
                 memorized_cnt_per_day,
                 cost_per_day,
@@ -145,7 +214,7 @@ impl Default for CMRRTargetFn {
             let total_memorized = memorized_cnt_per_day[memorized_cnt_per_day.len() - 1];
             let total_cost = cost_per_day.iter().sum::<f32>();
             total_cost / total_memorized
-        }))
+        })
     }
 }
 
@@ -203,6 +272,43 @@ impl Default for SimulatorConfig {
             learning_step_count: 2,
             relearning_step_count: 1,
         }
+    }
+}
+
+impl SimulatorConfig {
+    /// Set the review priority callback.
+    ///
+    /// ```
+    /// use fsrs::{Card, SimulatorConfig};
+    ///
+    /// let config = SimulatorConfig::default()
+    ///     .with_review_priority(|card: &Card| (card.difficulty * 100.0) as i32);
+    /// ```
+    pub fn with_review_priority<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&Card) -> i32 + Sync + Send + 'static,
+    {
+        self.review_priority_fn = Some(ReviewPriorityFn::new(f));
+        self
+    }
+
+    /// Set the post scheduling callback.
+    ///
+    /// ```
+    /// use fsrs::{PostSchedulingContext, SimulatorConfig};
+    ///
+    /// let config = SimulatorConfig::default()
+    ///     .with_post_scheduling(|mut ctx: PostSchedulingContext<'_>| {
+    ///         let fuzz = ctx.random_f32();
+    ///         if fuzz >= 0.0 { ctx.card.interval } else { 1.0 }
+    ///     });
+    /// ```
+    pub fn with_post_scheduling<F>(mut self, f: F) -> Self
+    where
+        F: for<'a> Fn(PostSchedulingContext<'a>) -> f32 + Sync + Send + 'static,
+    {
+        self.post_scheduling_fn = Some(PostSchedulingFn::new(f));
+        self
     }
 }
 
@@ -1008,7 +1114,13 @@ fn simulate_inner(
         card.due = day_index as f32 + ivl;
 
         if let Some(cb) = &config.post_scheduling_fn {
-            ivl = cb(card, config.max_ivl, day_index, &due_cnt_per_day, &mut rng);
+            ivl = cb(PostSchedulingContext {
+                card,
+                max_interval: config.max_ivl,
+                today: day_index,
+                due_counts_per_day: &due_cnt_per_day,
+                rng: &mut rng,
+            });
             card.interval = ivl;
             card.due = day_index as f32 + ivl;
         }
@@ -2011,9 +2123,15 @@ mod tests {
             deck_size: 10,
             learn_span: 10,
             learn_limit: 1,
-            post_scheduling_fn: Some(PostSchedulingFn(Arc::new(|_, _, _, _, _| 1.0))),
             ..Default::default()
-        };
+        }
+        .with_post_scheduling(|ctx| {
+            assert!(ctx.max_interval >= 1.0);
+            assert!(ctx.today < 10);
+            assert!(!ctx.due_counts_per_day.is_empty());
+            assert!(ctx.card.interval >= 1.0);
+            1.0
+        });
         let SimulationResult {
             review_cnt_per_day, ..
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
@@ -2058,7 +2176,7 @@ mod tests {
 
         macro_rules! wrap {
             ($f:expr) => {
-                Some(ReviewPriorityFn(std::sync::Arc::new($f)))
+                Some(ReviewPriorityFn::new($f))
             };
         }
         println!("Default behavior: low difficulty cards reviewed first.");
