@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
+#[cfg(test)]
 use burn::data::dataloader::batcher::Batcher;
 #[cfg(test)]
 use burn::data::dataset::Dataset;
+#[cfg(test)]
 use burn::tensor::{Float, Int, Tensor, TensorData, backend::Backend};
 
 use itertools::Itertools;
@@ -77,11 +79,13 @@ impl FSRSItem {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct FSRSBatcher<B: Backend> {
     _backend: core::marker::PhantomData<B>,
 }
 
+#[cfg(test)]
 impl<B: Backend> FSRSBatcher<B> {
     pub const fn new() -> Self {
         Self {
@@ -90,6 +94,7 @@ impl<B: Backend> FSRSBatcher<B> {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct FSRSBatch<B: Backend> {
     pub t_historys: Tensor<B, 2, Float>,
@@ -99,6 +104,7 @@ pub(crate) struct FSRSBatch<B: Backend> {
     pub weights: Tensor<B, 1, Float>,
 }
 
+#[cfg(test)]
 impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, device: &B::Device) -> FSRSBatch<B> {
         let batch_size = weighted_items.len();

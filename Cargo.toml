@@ -18,14 +18,6 @@ default = []
 # Experimental: Cost ADR APIs may change without semver compatibility guarantees.
 experimental_cost_adr = ["dep:rand_distr"]
 
-[dependencies.burn]
-version = "0.17.1"
-# git = "https://github.com/tracel-ai/burn.git"
-# rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
-# path = "../burn/burn"
-default-features = false
-features = ["std", "train", "ndarray", "metrics"]
-
 [dev-dependencies.burn]
 version = "0.17.1"
 # git = "https://github.com/tracel-ai/burn.git"

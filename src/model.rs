@@ -1,53 +1,342 @@
 use crate::DEFAULT_PARAMETERS;
+use crate::dataset::FSRSReview;
 use crate::error::{FSRSError, Result};
 use crate::inference::{FSRS5_DEFAULT_DECAY, MemoryState, Parameters};
 use crate::parameter_clipper::clip_parameters;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
-use burn::backend::NdArray;
-use burn::backend::ndarray::NdArrayDevice;
+
+#[cfg(test)]
 use burn::{
-    config::Config,
     module::{Module, Param},
     tensor::{Shape, Tensor, TensorData, backend::Backend},
 };
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ModelConfig {
+    pub freeze_initial_stability: bool,
+    pub initial_stability: Option<[f32; 4]>,
+    pub freeze_short_term_stability: bool,
+    pub num_relearning_steps: usize,
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            freeze_initial_stability: false,
+            initial_stability: None,
+            freeze_short_term_stability: false,
+            num_relearning_steps: 1,
+        }
+    }
+}
+
+impl ModelConfig {
+    #[cfg(test)]
+    fn initial_parameters(&self) -> [f32; 21] {
+        let mut parameters: [f32; 21] = self
+            .initial_stability
+            .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
+            .into_iter()
+            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        if self.freeze_short_term_stability {
+            parameters[17] = 0.0;
+            parameters[18] = 0.0;
+            parameters[19] = 0.0;
+        }
+        parameters
+    }
+
+    #[cfg(test)]
+    pub fn init<B: Backend>(&self) -> Model<B> {
+        Model::new(self.clone())
+    }
+}
+
+/// This is the main structure provided by this crate. It can be used
+/// for both parameter training, and for reviews.
+#[derive(Debug, Clone)]
+pub struct FSRS {
+    parameters: [f32; 21],
+}
+
+impl Default for FSRS {
+    fn default() -> Self {
+        Self::new(&[]).expect("Default parameters should be valid")
+    }
+}
+
+impl FSRS {
+    /// - Parameters must be provided before running commands that need them.
+    /// - Parameters may be an empty slice to use the default values instead.
+    pub fn new(parameters: &Parameters) -> Result<Self> {
+        let parameters = check_and_fill_parameters(parameters)?;
+        let config = ModelConfig::default();
+        let parameters =
+            clip_parameters(&parameters, config.num_relearning_steps, Default::default());
+        Ok(Self {
+            parameters: parameters.try_into().unwrap(),
+        })
+    }
+
+    pub(crate) const fn parameters(&self) -> &[f32; 21] {
+        &self.parameters
+    }
+
+    #[inline]
+    pub(crate) fn power_forgetting_curve(&self, t: f32, s: f32) -> f32 {
+        power_forgetting_curve(&self.parameters, t, s)
+    }
+
+    #[inline]
+    pub(crate) fn next_interval_for_stability(
+        &self,
+        stability: f32,
+        desired_retention: f32,
+    ) -> f32 {
+        next_interval(&self.parameters, stability, desired_retention)
+    }
+
+    #[inline]
+    pub(crate) fn init_stability(&self, rating: u32) -> f32 {
+        init_stability(&self.parameters, rating as usize)
+    }
+
+    #[inline]
+    pub(crate) fn init_difficulty(&self, rating: u32) -> f32 {
+        init_difficulty(&self.parameters, rating as usize)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn next_difficulty(&self, difficulty: f32, rating: u32) -> f32 {
+        next_difficulty(&self.parameters, difficulty, rating as f32)
+    }
+
+    pub(crate) fn step(
+        &self,
+        delta_t: f32,
+        rating: u32,
+        state: MemoryState,
+        nth: usize,
+    ) -> MemoryState {
+        step(&self.parameters, delta_t, rating as f32, state, nth)
+    }
+
+    /// If [starting_state] is provided, it will be used instead of the default initial stability/
+    /// difficulty.
+    pub(crate) fn forward_reviews(
+        &self,
+        reviews: &[FSRSReview],
+        starting_state: Option<MemoryState>,
+    ) -> MemoryState {
+        let (mut state, start_index) = if let Some(state) = starting_state {
+            (state, 0)
+        } else if reviews.is_empty() {
+            (
+                MemoryState {
+                    stability: 0.0,
+                    difficulty: 0.0,
+                },
+                0,
+            )
+        } else {
+            let rating = reviews[0].rating;
+            if rating == 0 {
+                (
+                    MemoryState {
+                        stability: S_MIN,
+                        difficulty: D_MIN,
+                    },
+                    1,
+                )
+            } else {
+                let rating = rating.clamp(1, 4);
+                (
+                    MemoryState {
+                        stability: self.init_stability(rating).clamp(S_MIN, S_MAX),
+                        difficulty: self.init_difficulty(rating).clamp(D_MIN, D_MAX),
+                    },
+                    1,
+                )
+            }
+        };
+
+        for (index, review) in reviews.iter().enumerate().skip(start_index) {
+            state = self.step(review.delta_t as f32, review.rating, state, index);
+        }
+        state
+    }
+}
+
+#[inline]
+pub(crate) fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
+    let decay = -w[20];
+    let factor = (0.9f32.ln() / decay).exp() - 1.0;
+    (t / s * factor + 1.0).powf(decay)
+}
+
+#[inline]
+pub(crate) fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
+    let decay = -w[20];
+    let factor = (0.9f32.ln() / decay).exp() - 1.0;
+    stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
+}
+
+#[inline]
+pub(crate) fn init_stability(w: &[f32], rating: usize) -> f32 {
+    w[rating.saturating_sub(1).min(3)]
+}
+
+#[inline]
+pub(crate) fn init_difficulty(w: &[f32], rating: usize) -> f32 {
+    w[4] - (w[5] * rating.saturating_sub(1) as f32).exp() + 1.0
+}
+
+#[inline]
+fn mean_reversion(w: &[f32], new_d: f32) -> f32 {
+    w[7] * (init_difficulty(w, 4) - new_d) + new_d
+}
+
+#[inline]
+fn linear_damping(delta_d: f32, old_d: f32) -> f32 {
+    (10.0 - old_d) * delta_d / 9.0
+}
+
+#[inline]
+pub(crate) fn next_difficulty(w: &[f32], difficulty: f32, rating: f32) -> f32 {
+    let delta_d = -w[6] * (rating - 3.0);
+    difficulty + linear_damping(delta_d, difficulty)
+}
+
+#[inline]
+fn stability_after_success(w: &[f32], last_s: f32, last_d: f32, r: f32, rating: f32) -> f32 {
+    let hard_penalty = if rating == 2.0 { w[15] } else { 1.0 };
+    let easy_bonus = if rating == 4.0 { w[16] } else { 1.0 };
+    last_s
+        * (w[8].exp()
+            * (11.0 - last_d)
+            * last_s.powf(-w[9])
+            * (((1.0 - r) * w[10]).exp() - 1.0)
+            * hard_penalty
+            * easy_bonus
+            + 1.0)
+}
+
+#[inline]
+fn stability_after_failure(w: &[f32], last_s: f32, last_d: f32, r: f32) -> f32 {
+    let new_s = w[11]
+        * last_d.powf(-w[12])
+        * ((last_s + 1.0).powf(w[13]) - 1.0)
+        * ((1.0 - r) * w[14]).exp();
+    let new_s_min = last_s / (w[17] * w[18]).exp();
+    new_s.min(new_s_min)
+}
+
+#[inline]
+fn stability_short_term(w: &[f32], last_s: f32, rating: f32) -> f32 {
+    let sinc = (w[17] * (rating - 3.0 + w[18])).exp() * last_s.powf(-w[19]);
+    last_s * if rating >= 2.0 { sinc.max(1.0) } else { sinc }
+}
+
+fn step(w: &[f32], delta_t: f32, rating: f32, state: MemoryState, nth: usize) -> MemoryState {
+    let last_s = state.stability.clamp(S_MIN, S_MAX);
+    let last_d = state.difficulty.clamp(D_MIN, D_MAX);
+
+    let retrievability = power_forgetting_curve(w, delta_t, last_s);
+    let stability_after_success =
+        stability_after_success(w, last_s, last_d, retrievability, rating);
+    let stability_after_failure = stability_after_failure(w, last_s, last_d, retrievability);
+    let stability_short_term = stability_short_term(w, last_s, rating);
+
+    let mut new_s = if rating == 1.0 {
+        stability_after_failure
+    } else {
+        stability_after_success
+    };
+    if delta_t == 0.0 {
+        new_s = stability_short_term;
+    }
+
+    let mut new_d = next_difficulty(w, last_d, rating);
+    new_d = mean_reversion(w, new_d).clamp(D_MIN, D_MAX);
+
+    if nth == 0 && state.stability == 0.0 {
+        let init_rating = (rating as u32).clamp(1, 4) as usize;
+        new_s = init_stability(w, init_rating);
+        new_d = init_difficulty(w, init_rating).clamp(D_MIN, D_MAX);
+    }
+
+    if rating == 0.0 {
+        new_s = last_s;
+        new_d = last_d;
+    }
+
+    MemoryState {
+        stability: new_s.clamp(S_MIN, S_MAX),
+        difficulty: new_d,
+    }
+}
+
+pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
+    let parameters = match parameters.len() {
+        0 => DEFAULT_PARAMETERS.to_vec(),
+        17 => {
+            let mut parameters = parameters.to_vec();
+            parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
+            parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
+            parameters[6] += 0.5;
+            parameters.extend_from_slice(&[0.0, 0.0, 0.0, FSRS5_DEFAULT_DECAY]);
+            parameters
+        }
+        19 => {
+            let mut parameters = parameters.to_vec();
+            parameters.extend_from_slice(&[0.0, FSRS5_DEFAULT_DECAY]);
+            parameters
+        }
+        21 => parameters.to_vec(),
+        _ => return Err(FSRSError::InvalidParameters),
+    };
+    if parameters.iter().any(|&w| !w.is_finite()) {
+        return Err(FSRSError::InvalidParameters);
+    }
+    Ok(parameters)
+}
+
+#[cfg(test)]
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
     pub w: Param<Tensor<B, 1>>,
 }
 
+#[cfg(test)]
 pub(crate) trait Get<B: Backend, const N: usize> {
     fn get(&self, n: usize) -> Tensor<B, N>;
 }
 
+#[cfg(test)]
 impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
     fn get(&self, n: usize) -> Self {
         self.clone().slice([n..(n + 1)])
     }
 }
 
+#[cfg(test)]
 impl<B: Backend> Model<B> {
-    #[cfg(test)]
     pub fn new(config: ModelConfig) -> Self {
         Self::new_with_device(config, &B::Device::default())
     }
 
     pub fn new_with_device(config: ModelConfig, device: &B::Device) -> Self {
-        let mut initial_params: Vec<f32> = config
-            .initial_stability
-            .unwrap_or_else(|| DEFAULT_PARAMETERS[0..4].try_into().unwrap())
-            .into_iter()
-            .chain(DEFAULT_PARAMETERS[4..].iter().copied())
-            .collect();
-        if config.freeze_short_term_stability {
-            initial_params[17] = 0.0;
-            initial_params[18] = 0.0;
-            initial_params[19] = 0.0;
-        }
-
         Self {
             w: Param::from_tensor(Tensor::from_floats(
-                TensorData::new(initial_params, Shape { dims: vec![21] }),
+                TensorData::new(
+                    config.initial_parameters().to_vec(),
+                    Shape { dims: vec![21] },
+                ),
                 device,
             )),
         }
@@ -59,6 +348,7 @@ impl<B: Backend> Model<B> {
         (t / s * factor + 1.0).powf(decay)
     }
 
+    #[allow(dead_code)]
     pub fn next_interval(
         &self,
         stability: Tensor<B, 1>,
@@ -170,19 +460,15 @@ impl<B: Backend> Model<B> {
         new_d = self.mean_reversion(new_d).clamp(D_MIN, D_MAX);
 
         if nth == 0 {
-            // Check if state.stability is all zeros
             let is_initial = state.stability.equal_elem(0.0);
-            // If initial, use init_stability/init_difficulty, else use normal update
             let init_s = self.init_stability(rating.clone().clamp(1, 4));
             let init_d = self
                 .init_difficulty(rating.clone().clamp(1, 4))
                 .clamp(D_MIN, D_MAX);
-            // If state.stability == 0, use init values, else use calculated
             new_s = new_s.mask_where(is_initial.clone(), init_s);
             new_d = new_d.mask_where(is_initial, init_d);
         }
 
-        // mask padding zeros for rating
         new_s = new_s.mask_where(rating.clone().equal_elem(0), last_s);
         new_d = new_d.mask_where(rating.equal_elem(0), last_d);
         MemoryStateTensors {
@@ -191,8 +477,6 @@ impl<B: Backend> Model<B> {
         }
     }
 
-    /// If [starting_state] is provided, it will be used instead of the default initial stability/
-    /// difficulty.
     pub(crate) fn forward(
         &self,
         delta_ts: Tensor<B, 2>,
@@ -231,21 +515,21 @@ impl<B: Backend> Model<B> {
         };
         for i in start_index..seq_len {
             let delta_t = delta_ts.get(i).squeeze(0);
-            // [batch_size]
             let rating = ratings.get(i).squeeze(0);
-            // [batch_size]
             state = self.step(delta_t, rating, state, i);
         }
         state
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct MemoryStateTensors<B: Backend> {
     pub stability: Tensor<B, 1>,
     pub difficulty: Tensor<B, 1>,
 }
 
+#[cfg(test)]
 impl<B: Backend> MemoryStateTensors<B> {
     pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
         let device = B::Device::default();
@@ -264,104 +548,15 @@ impl<B: Backend> MemoryStateTensors<B> {
     }
 }
 
-#[derive(Config, Debug, Default)]
-pub struct ModelConfig {
-    #[config(default = false)]
-    pub freeze_initial_stability: bool,
-    pub initial_stability: Option<[f32; 4]>,
-    #[config(default = false)]
-    pub freeze_short_term_stability: bool,
-    #[config(default = 1)]
-    pub num_relearning_steps: usize,
-}
-
-impl ModelConfig {
-    #[cfg(test)]
-    pub fn init<B: Backend>(&self) -> Model<B> {
-        Model::new(self.clone())
-    }
-}
-
-/// This is the main structure provided by this crate. It can be used
-/// for both parameter training, and for reviews.
-#[derive(Debug, Clone)]
-pub struct FSRS<B: Backend = NdArray> {
-    model: Model<B>,
-}
-
-impl Default for FSRS<NdArray> {
-    fn default() -> Self {
-        Self::new(&[]).expect("Default parameters should be valid")
-    }
-}
-
-impl FSRS<NdArray> {
-    /// - Parameters must be provided before running commands that need them.
-    /// - Parameters may be an empty slice to use the default values instead.
-    pub fn new(parameters: &Parameters) -> Result<Self> {
-        Self::new_with_backend(parameters, &NdArrayDevice::Cpu)
-    }
-}
-
-impl<B: Backend> FSRS<B> {
-    pub fn new_with_backend<B2: Backend>(
-        parameters: &Parameters,
-        device: &B2::Device,
-    ) -> Result<FSRS<B2>> {
-        let parameters = check_and_fill_parameters(parameters)?;
-        let model = parameters_to_model::<B2>(&parameters, device);
-
-        Ok(FSRS { model })
-    }
-
-    pub(crate) fn model(&self) -> &Model<B> {
-        &self.model
-    }
-
-    pub(crate) fn device(&self) -> B::Device {
-        self.model().w.device()
-    }
-}
-
-pub(crate) fn parameters_to_model<B: Backend>(
-    parameters: &Parameters,
-    device: &B::Device,
-) -> Model<B> {
-    let config = ModelConfig::default();
-    let mut model = Model::new_with_device(config.clone(), device);
-    model.w = Param::from_tensor(Tensor::from_floats(
-        TensorData::new(
-            clip_parameters(parameters, config.num_relearning_steps, Default::default()),
-            Shape { dims: vec![21] },
-        ),
-        device,
-    ));
-    model
-}
-
-pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
-    let parameters = match parameters.len() {
-        0 => DEFAULT_PARAMETERS.to_vec(),
-        17 => {
-            let mut parameters = parameters.to_vec();
-            parameters[4] = parameters[5].mul_add(2.0, parameters[4]);
-            parameters[5] = parameters[5].mul_add(3.0, 1.0).ln() / 3.0;
-            parameters[6] += 0.5;
-            parameters.extend_from_slice(&[0.0, 0.0, 0.0, FSRS5_DEFAULT_DECAY]);
-            parameters
+#[cfg(test)]
+impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
+    fn from(m: MemoryStateTensors<B>) -> Self {
+        use burn::tensor::ElementConversion;
+        Self {
+            stability: m.stability.into_scalar().elem(),
+            difficulty: m.difficulty.into_scalar().elem(),
         }
-        19 => {
-            let mut parameters = parameters.to_vec();
-            parameters.extend_from_slice(&[0.0, FSRS5_DEFAULT_DECAY]);
-            parameters
-        }
-        21 => parameters.to_vec(),
-        _ => return Err(FSRSError::InvalidParameters),
-    };
-    if parameters.iter().any(|&w| !w.is_finite()) {
-        return Err(FSRSError::InvalidParameters);
     }
-    Ok(parameters)
 }
 
 #[cfg(test)]
@@ -369,8 +564,9 @@ mod tests {
     use super::*;
     use crate::test_helpers::TestHelper;
     use crate::test_helpers::{Model, Tensor};
-    use burn::tensor::{TensorData, Tolerance};
-    static DEVICE: burn::backend::ndarray::NdArrayDevice = NdArrayDevice::Cpu;
+    use burn::backend::ndarray::NdArrayDevice;
+    use burn::tensor::TensorData;
+    static DEVICE: NdArrayDevice = NdArrayDevice::Cpu;
 
     #[test]
     fn test_w() {
@@ -399,55 +595,52 @@ mod tests {
 
     #[test]
     fn test_power_forgetting_curve() {
-        let model = Model::new(ModelConfig::default());
-        let delta_t = Tensor::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &DEVICE);
-        let stability = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 4.0, 2.0], &DEVICE);
-        let retrievability = model.power_forgetting_curve(delta_t, stability);
+        let fsrs = FSRS::default();
+        let retrievability = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+            .into_iter()
+            .zip([1.0, 2.0, 3.0, 4.0, 4.0, 2.0])
+            .map(|(delta_t, stability)| fsrs.power_forgetting_curve(delta_t, stability))
+            .collect::<Vec<_>>();
 
-        retrievability.to_data().assert_approx_eq::<f32>(
-            &TensorData::from([1.0, 0.9403443, 0.9253786, 0.9185229, 0.9, 0.8261359]),
-            Tolerance::absolute(1e-5),
-        );
+        retrievability.assert_approx_eq([1.0, 0.9403443, 0.9253786, 0.9185229, 0.9, 0.8261359]);
     }
 
     #[test]
     fn test_init_stability() {
-        let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &DEVICE);
-        let stability = model.init_stability(rating);
+        let fsrs = FSRS::default();
+        let stability = [1, 2, 3, 4, 1, 2].map(|rating| fsrs.init_stability(rating));
         assert_eq!(
-            stability.to_data(),
-            TensorData::from([
+            stability,
+            [
                 DEFAULT_PARAMETERS[0],
                 DEFAULT_PARAMETERS[1],
                 DEFAULT_PARAMETERS[2],
                 DEFAULT_PARAMETERS[3],
                 DEFAULT_PARAMETERS[0],
                 DEFAULT_PARAMETERS[1]
-            ])
+            ]
         )
     }
 
     #[test]
     fn test_init_difficulty() {
-        let model = Model::new(ModelConfig::default());
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], &DEVICE);
-        let difficulty = model.init_difficulty(rating);
+        let fsrs = FSRS::default();
+        let difficulty = [1, 2, 3, 4, 1, 2].map(|rating| fsrs.init_difficulty(rating));
         assert_eq!(
-            difficulty.to_data(),
-            TensorData::from([
+            difficulty,
+            [
                 DEFAULT_PARAMETERS[4],
                 DEFAULT_PARAMETERS[4] - DEFAULT_PARAMETERS[5].exp() + 1.0,
                 DEFAULT_PARAMETERS[4] - (2.0 * DEFAULT_PARAMETERS[5]).exp() + 1.0,
                 DEFAULT_PARAMETERS[4] - (3.0 * DEFAULT_PARAMETERS[5]).exp() + 1.0,
                 DEFAULT_PARAMETERS[4],
                 DEFAULT_PARAMETERS[4] - DEFAULT_PARAMETERS[5].exp() + 1.0,
-            ])
+            ]
         )
     }
 
     #[test]
-    fn test_forward() {
+    fn test_forward_matches_burn_oracle() {
         let model = Model::new(ModelConfig::default());
         let delta_ts = Tensor::from_floats(
             [
@@ -464,104 +657,149 @@ mod tests {
             &DEVICE,
         );
         let state = model.forward(delta_ts, ratings, None);
-        let stability = state.stability.to_data();
-        let difficulty = state.difficulty.to_data();
+        let burn_stability = state.stability.to_data().to_vec::<f32>().unwrap();
+        let burn_difficulty = state.difficulty.to_data().to_vec::<f32>().unwrap();
 
-        stability.to_vec::<f32>().unwrap().assert_approx_eq([
-            0.10088589,
-            3.2494123,
-            7.3153,
-            18.014914,
-            0.112798266,
-            4.4694576,
-        ]);
+        let fsrs = FSRS::default();
+        let scalar_states = [
+            [(1, 0), (1, 1)],
+            [(2, 0), (2, 1)],
+            [(3, 0), (3, 1)],
+            [(4, 0), (4, 1)],
+            [(1, 0), (1, 2)],
+            [(2, 0), (2, 2)],
+        ]
+        .map(|reviews| FSRSReview {
+            rating: reviews[0].0,
+            delta_t: reviews[0].1,
+        })
+        .into_iter()
+        .zip([
+            FSRSReview {
+                rating: 1,
+                delta_t: 1,
+            },
+            FSRSReview {
+                rating: 2,
+                delta_t: 1,
+            },
+            FSRSReview {
+                rating: 3,
+                delta_t: 1,
+            },
+            FSRSReview {
+                rating: 4,
+                delta_t: 1,
+            },
+            FSRSReview {
+                rating: 1,
+                delta_t: 2,
+            },
+            FSRSReview {
+                rating: 2,
+                delta_t: 2,
+            },
+        ])
+        .map(|(first, second)| fsrs.forward_reviews(&[first, second], None))
+        .collect::<Vec<_>>();
 
-        difficulty
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([8.806304, 6.7404594, 2.1112142, 1.0, 8.806304, 6.7404594]);
+        let scalar_stability = scalar_states
+            .iter()
+            .map(|state| state.stability)
+            .collect::<Vec<_>>();
+        let scalar_difficulty = scalar_states
+            .iter()
+            .map(|state| state.difficulty)
+            .collect::<Vec<_>>();
+        let burn_stability: [f32; 6] = burn_stability.try_into().unwrap();
+        let burn_difficulty: [f32; 6] = burn_difficulty.try_into().unwrap();
+        scalar_stability.assert_approx_eq(burn_stability);
+        scalar_difficulty.assert_approx_eq(burn_difficulty);
     }
 
     #[test]
     fn test_next_difficulty() {
-        let model = Model::new(ModelConfig::default());
-        let difficulty = Tensor::from_floats([5.0; 4], &DEVICE);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
-        let next_difficulty = model.next_difficulty(difficulty, rating);
-        next_difficulty.clone().backward();
-
-        next_difficulty
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([8.354889, 6.6774445, 5.0, 3.3225555]);
-        let next_difficulty = model.mean_reversion(next_difficulty);
-        next_difficulty.clone().backward();
-
-        next_difficulty
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([8.341763, 6.6659956, 4.990228, 3.3144615]);
+        let fsrs = FSRS::default();
+        let next_difficulty = [1, 2, 3, 4].map(|rating| fsrs.next_difficulty(5.0, rating));
+        next_difficulty.assert_approx_eq([8.354889, 6.6774445, 5.0, 3.3225555]);
+        let next_difficulty = next_difficulty.map(|value| mean_reversion(fsrs.parameters(), value));
+        next_difficulty.assert_approx_eq([8.341763, 6.6659956, 4.990228, 3.3144615]);
     }
 
     #[test]
     fn test_next_stability() {
-        let model = Model::new(ModelConfig::default());
-        let stability = Tensor::from_floats([5.0; 4], &DEVICE);
-        let difficulty = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
-        let retrievability = Tensor::from_floats([0.9, 0.8, 0.7, 0.6], &DEVICE);
-        let rating = Tensor::from_floats([1.0, 2.0, 3.0, 4.0], &DEVICE);
-        let s_recall = model.stability_after_success(
-            stability.clone(),
-            difficulty.clone(),
-            retrievability.clone(),
-            rating.clone(),
-        );
-        s_recall.clone().backward();
+        let w = DEFAULT_PARAMETERS;
+        let s_recall = [1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .zip([0.9, 0.8, 0.7, 0.6])
+            .map(|(rating, retrievability)| {
+                stability_after_success(&w, 5.0, rating, retrievability, rating)
+            })
+            .collect::<Vec<_>>();
+        s_recall.assert_approx_eq([25.602541, 28.226582, 58.656002, 127.226685]);
 
-        s_recall
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([25.602541, 28.226582, 58.656002, 127.226685]);
-        let s_forget = model.stability_after_failure(stability.clone(), difficulty, retrievability);
-        s_forget.clone().backward();
+        let s_forget = [1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .zip([0.9, 0.8, 0.7, 0.6])
+            .map(|(difficulty, retrievability)| {
+                stability_after_failure(&w, 5.0, difficulty, retrievability)
+            })
+            .collect::<Vec<_>>();
+        s_forget.assert_approx_eq([1.0525396, 1.1894329, 1.3680838, 1.584989]);
 
-        s_forget
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([1.0525396, 1.1894329, 1.3680838, 1.584989]);
-        let next_stability = s_recall.mask_where(rating.clone().equal_elem(1), s_forget);
-        next_stability.clone().backward();
+        let next_stability = [s_forget[0], s_recall[1], s_recall[2], s_recall[3]];
+        next_stability.assert_approx_eq([1.0525396, 28.226582, 58.656002, 127.226685]);
 
-        next_stability
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([1.0525396, 28.226582, 58.656002, 127.226685]);
-        let next_stability = model.stability_short_term(stability, rating);
-
-        next_stability
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq([1.596818, 5.0, 5.0, 8.12961]);
+        let next_stability =
+            [1.0, 2.0, 3.0, 4.0].map(|rating| stability_short_term(&w, 5.0, rating));
+        next_stability.assert_approx_eq([1.596818, 5.0, 5.0, 8.12961]);
     }
 
     #[test]
     fn test_fsrs() {
         FSRS::default()
-            .model()
-            .w
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
+            .parameters()
+            .to_vec()
             .assert_approx_eq(DEFAULT_PARAMETERS);
         assert!(FSRS::new(&[]).is_ok());
         assert!(FSRS::new(&[1.]).is_err());
         assert!(FSRS::new(DEFAULT_PARAMETERS.as_slice()).is_ok());
         assert!(FSRS::new(&DEFAULT_PARAMETERS[..17]).is_ok());
+    }
+
+    #[test]
+    fn scalar_step_matches_burn_oracle() {
+        let model = Model::new(ModelConfig::default());
+        let fsrs = FSRS::default();
+        let starting = MemoryState {
+            stability: 5.0,
+            difficulty: 6.0,
+        };
+        for (nth, state) in [
+            (
+                0,
+                MemoryState {
+                    stability: 0.0,
+                    difficulty: 0.0,
+                },
+            ),
+            (1, starting),
+        ] {
+            for delta_t in [0.0, 1.0, 21.0] {
+                for rating in 0..=4 {
+                    let burn_state: MemoryState = model
+                        .step(
+                            Tensor::from_floats([delta_t], &DEVICE),
+                            Tensor::from_floats([rating as f32], &DEVICE),
+                            MemoryStateTensors::from_state(state),
+                            nth,
+                        )
+                        .into();
+                    let scalar_state = fsrs.step(delta_t, rating, state, nth);
+                    [scalar_state.stability, scalar_state.difficulty]
+                        .assert_approx_eq([burn_state.stability, burn_state.difficulty]);
+                }
+            }
+        }
     }
 }

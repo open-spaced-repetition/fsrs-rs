@@ -5,21 +5,14 @@ use crate::dataset::{
     recency_weighted_fsrs_items_with_card_ids,
 };
 use crate::error::Result;
-use crate::model::{Model, ModelConfig};
+#[cfg(test)]
+use crate::model::Model;
+use crate::model::ModelConfig;
 use crate::parameter_clipper::clip_parameters;
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
 use crate::{DEFAULT_PARAMETERS, FSRSError};
-use burn::config::Config;
-use burn::lr_scheduler::LrScheduler;
-use burn::nn::loss::Reduction;
-use burn::optim::AdamConfig;
 #[cfg(test)]
-use burn::tensor::Int;
-use burn::tensor::Tensor;
-use burn::tensor::backend::Backend;
-use burn::train::TrainingInterrupter;
-use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
-use core::marker::PhantomData;
+use burn::{nn::loss::Reduction, tensor::Int, tensor::Tensor, tensor::backend::Backend};
 use log::info;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -33,35 +26,21 @@ static PARAMS_STDDEV: [f32; 21] = [
     1.03, 0.31, 0.32, 0.14, 0.27,
 ];
 
-pub struct BCELoss<B: Backend> {
-    backend: PhantomData<B>,
+pub(crate) fn weighted_binary_cross_entropy(
+    retrievability: &[f32],
+    labels: &[f32],
+    weights: &[f32],
+) -> f32 {
+    let mut loss = 0.0;
+    let mut weight_sum = 0.0;
+    for ((&r, &label), &weight) in retrievability.iter().zip(labels).zip(weights) {
+        loss += (label * r.ln() + (1.0 - label) * (1.0 - r).ln()) * weight;
+        weight_sum += weight;
+    }
+    -loss / weight_sum
 }
 
-impl<B: Backend> BCELoss<B> {
-    pub const fn new() -> Self {
-        Self {
-            backend: PhantomData,
-        }
-    }
-    pub fn forward(
-        &self,
-        retrievability: Tensor<B, 1>,
-        labels: Tensor<B, 1>,
-        weights: Tensor<B, 1>,
-        mean: Reduction,
-    ) -> Tensor<B, 1> {
-        let loss = (labels.clone() * retrievability.clone().log()
-            + (-labels + 1) * (-retrievability + 1).log())
-            * weights.clone();
-        // info!("loss: {}", &loss);
-        match mean {
-            Reduction::Mean => loss.mean().neg(),
-            Reduction::Sum => loss.sum().neg(),
-            Reduction::Auto => (loss.sum() / weights.sum()).neg(),
-        }
-    }
-}
-
+#[cfg(test)]
 impl<B: Backend> Model<B> {
     #[cfg(test)]
     pub fn forward_classification(
@@ -77,7 +56,15 @@ impl<B: Backend> Model<B> {
         // info!("r_historys: {}", &r_historys);
         let state = self.forward(t_historys, r_historys, None);
         let retrievability = self.power_forgetting_curve(delta_ts, state.stability);
-        BCELoss::new().forward(retrievability, labels.float(), weights, reduce)
+        let labels = labels.float();
+        let loss = (labels.clone() * retrievability.clone().log()
+            + (-labels + 1) * (-retrievability + 1).log())
+            * weights.clone();
+        match reduce {
+            Reduction::Mean => loss.mean().neg(),
+            Reduction::Sum => loss.sum().neg(),
+            Reduction::Auto => (loss.sum() / weights.sum()).neg(),
+        }
     }
 
     #[cfg(test)]
@@ -142,18 +129,29 @@ impl CombinedProgressState {
 #[derive(Clone)]
 pub struct ProgressCollector {
     pub state: Arc<Mutex<CombinedProgressState>>,
-    pub interrupter: TrainingInterrupter,
     /// The index of the split we should update.
     pub index: usize,
 }
 
 impl ProgressCollector {
     pub fn new(state: Arc<Mutex<CombinedProgressState>>, index: usize) -> Self {
-        Self {
-            state,
-            interrupter: Default::default(),
-            index,
-        }
+        Self { state, index }
+    }
+
+    fn render_train(
+        &mut self,
+        epoch: usize,
+        epoch_total: usize,
+        items_processed: usize,
+        items_total: usize,
+    ) -> bool {
+        let mut info = self.state.lock().unwrap();
+        let split = &mut info.splits[self.index];
+        split.epoch = epoch;
+        split.epoch_total = epoch_total;
+        split.items_processed = items_processed;
+        split.items_total = items_total;
+        !info.want_abort
     }
 }
 
@@ -167,42 +165,29 @@ impl ProgressState {
     }
 }
 
-impl MetricsRenderer for ProgressCollector {
-    fn update_train(&mut self, _state: MetricState) {}
-
-    fn update_valid(&mut self, _state: MetricState) {}
-
-    fn render_train(&mut self, item: TrainingProgress) {
-        let mut info = self.state.lock().unwrap();
-        let split = &mut info.splits[self.index];
-        split.epoch = item.epoch;
-        split.epoch_total = item.epoch_total;
-        split.items_processed = item.progress.items_processed;
-        split.items_total = item.progress.items_total;
-        if info.want_abort {
-            self.interrupter.stop();
-        }
-    }
-
-    fn render_valid(&mut self, _item: TrainingProgress) {}
-}
-
-#[derive(Config)]
+#[derive(Debug, Clone)]
 pub(crate) struct TrainingConfig {
     pub model: ModelConfig,
-    pub optimizer: AdamConfig,
-    #[config(default = 5)]
     pub num_epochs: usize,
-    #[config(default = 512)]
     pub batch_size: usize,
-    #[config(default = 2023)]
     pub seed: u64,
-    #[config(default = 4e-2)]
     pub learning_rate: f64,
-    #[config(default = 256)]
     pub max_seq_len: usize,
-    #[config(default = 1.0)]
     pub gamma: f64,
+}
+
+impl TrainingConfig {
+    fn new(model: ModelConfig) -> Self {
+        Self {
+            model,
+            num_epochs: 5,
+            batch_size: 512,
+            seed: 2023,
+            learning_rate: 4e-2,
+            max_seq_len: 256,
+            gamma: 1.0,
+        }
+    }
 }
 
 pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -315,15 +300,12 @@ pub fn compute_parameters(
         finish_progress();
         return Ok(initialized_parameters);
     }
-    let config = TrainingConfig::new(
-        ModelConfig {
-            freeze_initial_stability: !enable_short_term,
-            initial_stability: Some(initial_stability),
-            freeze_short_term_stability: !enable_short_term,
-            num_relearning_steps: num_relearning_steps.unwrap_or(1),
-        },
-        AdamConfig::new().with_epsilon(1e-8),
-    );
+    let config = TrainingConfig::new(ModelConfig {
+        freeze_initial_stability: !enable_short_term,
+        initial_stability: Some(initial_stability),
+        freeze_short_term_stability: !enable_short_term,
+        num_relearning_steps: num_relearning_steps.unwrap_or(1),
+    });
     let mut weighted_train_set = match train_card_ids {
         Some(card_ids) => recency_weighted_fsrs_items_with_card_ids(train_set, card_ids),
         None => recency_weighted_fsrs_items(train_set),
@@ -396,15 +378,12 @@ pub fn benchmark(
         .into_iter()
         .chain(DEFAULT_PARAMETERS[4..].iter().copied())
         .collect();
-    let mut config = TrainingConfig::new(
-        ModelConfig {
-            freeze_initial_stability: !enable_short_term,
-            initial_stability: Some(initial_stability),
-            freeze_short_term_stability: !enable_short_term,
-            num_relearning_steps: num_relearning_steps.unwrap_or(1),
-        },
-        AdamConfig::new().with_epsilon(1e-8),
-    );
+    let mut config = TrainingConfig::new(ModelConfig {
+        freeze_initial_stability: !enable_short_term,
+        initial_stability: Some(initial_stability),
+        freeze_short_term_stability: !enable_short_term,
+        num_relearning_steps: num_relearning_steps.unwrap_or(1),
+    });
     // save RAM and speed up training
     config.max_seq_len = 64;
     let mut weighted_train_set = match card_ids {
@@ -714,22 +693,15 @@ impl HostAdam {
 }
 
 fn render_progress(
-    renderer: &mut dyn MetricsRenderer,
+    progress: &mut Option<ProgressCollector>,
     epoch: usize,
     epoch_total: usize,
-    iteration: usize,
     items_processed: usize,
     items_total: usize,
-) {
-    renderer.render_train(TrainingProgress {
-        progress: burn::data::dataloader::Progress {
-            items_processed,
-            items_total,
-        },
-        epoch,
-        epoch_total,
-        iteration,
-    });
+) -> bool {
+    progress.as_mut().is_none_or(|progress| {
+        progress.render_train(epoch, epoch_total, items_processed, items_total)
+    })
 }
 
 fn train(
@@ -739,21 +711,13 @@ fn train(
     config: &TrainingConfig,
     progress: Option<ProgressCollector>,
 ) -> Result<Vec<f32>> {
-    let _ = &config.optimizer;
     let total_size = train_set.len();
     let test_size = test_set.len();
     let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
     let train_batches = build_host_batches(train_set, config.batch_size);
     let valid_batches = build_host_batches(test_set, config.batch_size);
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
-    let interrupter = TrainingInterrupter::new();
-    let mut renderer: Box<dyn MetricsRenderer> = match progress {
-        Some(mut progress) => {
-            progress.interrupter = interrupter.clone();
-            Box::new(progress)
-        }
-        None => Box::new(NoProgress {}),
-    };
+    let mut progress = progress;
 
     let mut parameters = initial_parameters.to_vec();
     let mut adam = HostAdam::new();
@@ -764,9 +728,9 @@ fn train(
         let mut batch_order = (0..train_batches.len()).collect::<Vec<_>>();
         batch_order.shuffle(&mut rng);
         let mut items_processed = 0;
-        for (iteration, batch_idx) in batch_order.into_iter().enumerate() {
+        for batch_idx in batch_order {
             let batch = &train_batches[batch_idx];
-            let lr = LrScheduler::step(&mut lr_scheduler);
+            let lr = lr_scheduler.step();
             let mut grad = [0.0; 21];
             batch_loss_and_grad(batch, &parameters, &mut grad);
             add_l2_gradient(
@@ -790,22 +754,16 @@ fn train(
                 !config.model.freeze_short_term_stability,
             );
             items_processed += batch.real_batch_size;
-            render_progress(
-                renderer.as_mut(),
+            let keep_going = render_progress(
+                &mut progress,
                 epoch,
                 config.num_epochs,
-                iteration + 1,
                 items_processed.min(total_size),
                 total_size,
             );
-
-            if interrupter.should_stop() {
-                break;
+            if !keep_going {
+                return Err(FSRSError::Interrupted);
             }
-        }
-
-        if interrupter.should_stop() {
-            break;
         }
 
         let mut loss_valid = 0.0;
@@ -819,8 +777,11 @@ fn train(
                     config.gamma,
                 );
 
-            if interrupter.should_stop() {
-                break;
+            if progress
+                .as_ref()
+                .is_some_and(|progress| progress.state.lock().unwrap().want_abort)
+            {
+                return Err(FSRSError::Interrupted);
             }
         }
         loss_valid /= test_size as f64;
@@ -833,23 +794,7 @@ fn train(
 
     info!("best_loss: {:?}", best_loss);
 
-    if interrupter.should_stop() {
-        return Err(FSRSError::Interrupted);
-    }
-
     Ok(best_parameters)
-}
-
-struct NoProgress {}
-
-impl MetricsRenderer for NoProgress {
-    fn update_train(&mut self, _state: MetricState) {}
-
-    fn update_valid(&mut self, _state: MetricState) {}
-
-    fn render_train(&mut self, _item: TrainingProgress) {}
-
-    fn render_valid(&mut self, _item: TrainingProgress) {}
 }
 
 #[cfg(test)]
@@ -868,7 +813,7 @@ mod tests {
     use crate::test_helpers::TestHelper;
     use burn::backend::Autodiff;
     use burn::backend::NdArray;
-    use burn::optim::{GradientsParams, Optimizer};
+    use burn::optim::{AdamConfig, GradientsParams, Optimizer};
     use burn::tensor::cast::ToElement;
     use log::LevelFilter;
 
@@ -957,9 +902,8 @@ mod tests {
             0.27700496,
         ]);
 
-        let config =
-            TrainingConfig::new(ModelConfig::default(), AdamConfig::new().with_epsilon(1e-8));
-        let mut optim = config.optimizer.init::<B, Model<B>>();
+        let config = TrainingConfig::new(ModelConfig::default());
+        let mut optim = AdamConfig::new().with_epsilon(1e-8).init::<B, Model<B>>();
         let lr = 0.04;
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
