@@ -5,7 +5,7 @@ use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::check_and_fill_parameters;
 use itertools::{Itertools, izip};
-use ndarray::{Array1, Array2, Array3};
+use ndarray::Array1;
 use priority_queue::PriorityQueue;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
@@ -342,6 +342,14 @@ fn stability_short_term(w: &[f32], s: f32, rating: usize) -> f32 {
     new_s.clamp(S_MIN, S_MAX)
 }
 
+fn step_transition_dists(step_transitions: &[[f32; 4]; 3]) -> [WeightedIndex<f32>; 3] {
+    [
+        WeightedIndex::new(step_transitions[0]).unwrap(),
+        WeightedIndex::new(step_transitions[1]).unwrap(),
+        WeightedIndex::new(step_transitions[2]).unwrap(),
+    ]
+}
+
 #[allow(clippy::too_many_arguments)]
 fn memory_state_short_term(
     w: &[f32],
@@ -349,7 +357,7 @@ fn memory_state_short_term(
     d: f32,
     init_rating: Option<usize>,
     rating_costs: &[f32; 4],
-    step_transitions: &[[f32; 4]; 3],
+    step_transition_dists: &[WeightedIndex<f32>; 3],
     step_count: usize,
     rng: &mut StdRng,
 ) -> (f32, f32, f32) {
@@ -371,8 +379,7 @@ fn memory_state_short_term(
         if consecutive >= consecutive_max || rating >= 4 {
             break;
         }
-        let next_rating_dist = WeightedIndex::new(step_transitions[rating - 1]).unwrap();
-        rating = RATINGS[next_rating_dist.sample(rng)];
+        rating = RATINGS[step_transition_dists[rating - 1].sample(rng)];
         new_s = stability_short_term(w, new_s, rating);
         new_d = next_d(w, new_d, rating);
         cost += rating_costs[rating - 1];
@@ -403,17 +410,29 @@ fn mean_reversion(w: &[f32], init: f32, current: f32) -> f32 {
     w[7] * init + (1.0 - w[7]) * current
 }
 
-fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
-    debug_assert!(t >= 0.);
+fn forgetting_curve_constants(w: &[f32]) -> (f32, f32) {
     let decay = -w[20];
     let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    (decay, factor)
+}
+
+fn power_forgetting_curve_with_constants(decay: f32, factor: f32, t: f32, s: f32) -> f32 {
+    debug_assert!(t >= 0.);
     (t / s).mul_add(factor, 1.0).powf(decay)
 }
 
+fn next_interval_with_factor(stability: f32, factor: f32, desired_retention_factor: f32) -> f32 {
+    stability / factor * desired_retention_factor
+}
+
+fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
+    let (decay, factor) = forgetting_curve_constants(w);
+    power_forgetting_curve_with_constants(decay, factor, t, s)
+}
+
 fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
-    let decay = -w[20];
-    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
-    stability / factor * (desired_retention.powf(1.0 / decay) - 1.0)
+    let (decay, factor) = forgetting_curve_constants(w);
+    next_interval_with_factor(stability, factor, desired_retention.powf(1.0 / decay) - 1.0)
 }
 
 /// Dynamic programming-based workload estimator
@@ -436,7 +455,14 @@ pub struct WorkloadEstimator {
     review_rating_prob: [f32; 3],
     state_rating_costs: [[f32; 4]; 3],
     desired_retention: f32,
-    cost_matrix: Array3<f32>,
+    cost_matrix: Vec<f32>,
+}
+
+#[derive(Clone, Copy)]
+struct ReviewTransition {
+    s_idx: usize,
+    d_idx: usize,
+    interval: usize,
 }
 
 impl WorkloadEstimator {
@@ -470,7 +496,7 @@ impl WorkloadEstimator {
         );
 
         let t_size = config.learn_span;
-        let cost_matrix = Array3::zeros((s_size, d_size, t_size + 1));
+        let cost_matrix = vec![0.0; s_size * d_size * (t_size + 1)];
 
         Self {
             s_state,
@@ -505,25 +531,50 @@ impl WorkloadEstimator {
         index.min(self.d_size - 1)
     }
 
+    #[inline]
+    fn cost_index(&self, t_idx: usize, s_idx: usize, d_idx: usize) -> usize {
+        debug_assert!(t_idx <= self.t_size);
+        debug_assert!(s_idx < self.s_size);
+        debug_assert!(d_idx < self.d_size);
+        (t_idx * self.s_size + s_idx) * self.d_size + d_idx
+    }
+
+    #[inline]
+    fn transition_index(&self, rating_idx: usize, s_idx: usize, d_idx: usize) -> usize {
+        debug_assert!(rating_idx < 4);
+        debug_assert!(s_idx < self.s_size);
+        debug_assert!(d_idx < self.d_size);
+        (rating_idx * self.s_size + s_idx) * self.d_size + d_idx
+    }
+
     fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
         self.desired_retention = desired_retention;
-        // Cache precomputed values using ndarray
-        let mut transition_probs = Array2::zeros((4, self.s_size));
-        let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
-        let mut next_d_indices = Array3::zeros((4, self.s_size, self.d_size));
-        let mut next_intervals = Array3::zeros((4, self.s_size, self.d_size));
+        let (decay, forgetting_factor) = forgetting_curve_constants(w);
+        let desired_retention_factor = desired_retention.powf(1.0 / decay) - 1.0;
+        let mut transition_probs = vec![0.0; 4 * self.s_size];
+        let mut transitions = vec![
+            ReviewTransition {
+                s_idx: 0,
+                d_idx: 0,
+                interval: 0
+            };
+            4 * self.s_size * self.d_size
+        ];
 
         // Precompute transitions for all state combinations
         for s_idx in 0..self.s_size {
             let s = self.s_state[s_idx];
             // Calculate interval and retrievability once and cache them
-            let ivl = next_interval(w, s, desired_retention).max(1.0).round();
-            let r = power_forgetting_curve(w, ivl, s);
+            let ivl = next_interval_with_factor(s, forgetting_factor, desired_retention_factor)
+                .max(1.0)
+                .round();
+            let r = power_forgetting_curve_with_constants(decay, forgetting_factor, ivl, s);
             for rating in 1..=4 {
                 if rating == 1 {
-                    transition_probs[[rating - 1, s_idx]] = 1.0 - r;
+                    transition_probs[(rating - 1) * self.s_size + s_idx] = 1.0 - r;
                 } else {
-                    transition_probs[[rating - 1, s_idx]] = r * self.review_rating_prob[rating - 2];
+                    transition_probs[(rating - 1) * self.s_size + s_idx] =
+                        r * self.review_rating_prob[rating - 2];
                 }
             }
             for d_idx in 0..self.d_size {
@@ -535,21 +586,24 @@ impl WorkloadEstimator {
                         stability_after_success(w, s, r, d, rating)
                     };
                     let next_d_val = next_d(w, d, rating);
-                    let next_ivl =
-                        next_interval(w, next_s, desired_retention).max(1.0).round() as usize;
-                    next_s_indices[[rating - 1, s_idx, d_idx]] = self.s2i(next_s);
-                    next_d_indices[[rating - 1, s_idx, d_idx]] = self.d2i(next_d_val);
-                    next_intervals[[rating - 1, s_idx, d_idx]] = next_ivl;
+                    let next_ivl = next_interval_with_factor(
+                        next_s,
+                        forgetting_factor,
+                        desired_retention_factor,
+                    )
+                    .max(1.0)
+                    .round() as usize;
+                    let index = self.transition_index(rating - 1, s_idx, d_idx);
+                    transitions[index] = ReviewTransition {
+                        s_idx: self.s2i(next_s),
+                        d_idx: self.d2i(next_d_val),
+                        interval: next_ivl,
+                    };
                 }
             }
         }
-        let transition_probs = transition_probs.view();
-        let next_s_indices = next_s_indices.view();
-        let next_d_indices = next_d_indices.view();
-        let next_intervals = next_intervals.view();
 
-        // Initialize cost matrix using ndarray
-        let mut cost_matrix = Array3::zeros((self.s_size, self.d_size, self.t_size + 1));
+        let mut cost_matrix = vec![0.0; self.s_size * self.d_size * (self.t_size + 1)];
         let review_costs = self.state_rating_costs[REVIEW];
         // Dynamic programming backward pass
         for t in (0..self.t_size).rev() {
@@ -557,19 +611,17 @@ impl WorkloadEstimator {
                 for d_idx in 0..self.d_size {
                     let mut current_cost = 0.0;
                     for rating in 1..=4 {
-                        let next_s_idx = next_s_indices[[rating - 1, s_idx, d_idx]];
-                        let next_d_idx = next_d_indices[[rating - 1, s_idx, d_idx]];
-                        let next_ivl = next_intervals[[rating - 1, s_idx, d_idx]];
-                        let next_t_idx = (t + next_ivl).min(self.t_size);
-                        let future_cost =
-                            unsafe { *cost_matrix.uget([next_s_idx, next_d_idx, next_t_idx]) };
-                        let transition_prob = transition_probs[[rating - 1, s_idx]];
+                        let transition =
+                            transitions[self.transition_index(rating - 1, s_idx, d_idx)];
+                        let next_t_idx = (t + transition.interval).min(self.t_size);
+                        let future_cost = cost_matrix
+                            [self.cost_index(next_t_idx, transition.s_idx, transition.d_idx)];
+                        let transition_prob = transition_probs[(rating - 1) * self.s_size + s_idx];
 
                         current_cost += (review_costs[rating - 1] + future_cost) * transition_prob;
                     }
-                    unsafe {
-                        *cost_matrix.uget_mut([s_idx, d_idx, t]) = current_cost;
-                    }
+                    let cost_index = self.cost_index(t, s_idx, d_idx);
+                    cost_matrix[cost_index] = current_cost;
                 }
             }
         }
@@ -593,7 +645,7 @@ impl WorkloadEstimator {
             let d_idx = self.d2i(d);
             let ivl = next_interval(w, s, self.desired_retention).max(1.0).round() as usize;
             let t_idx = (due + ivl).min(self.t_size);
-            total_cost += (unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
+            total_cost += (self.cost_matrix[self.cost_index(t_idx, s_idx, d_idx)]
                 + self.state_rating_costs[LEARNING][rating - 1])
                 * first_rating_probs[rating - 1];
         }
@@ -676,7 +728,7 @@ impl WorkloadEstimator {
                 let s_idx = self.s2i(new_stability);
                 let d_idx = self.d2i(new_difficulty);
                 let t_idx = new_due;
-                unsafe { *self.cost_matrix.uget([s_idx, d_idx, t_idx]) }
+                self.cost_matrix[self.cost_index(t_idx, s_idx, d_idx)]
             };
 
             expected_cost += transition_prob * (immediate_cost + future_cost);
@@ -711,25 +763,7 @@ pub fn expected_workload_with_existing_cards(
     let w = check_and_fill_parameters(parameters)?;
     let mut estimator = WorkloadEstimator::new(config);
     estimator.precompute_cost_matrix(desired_retention, &w);
-    let mut cards = existing_cards.to_vec();
-    let w = Arc::new(w);
-
-    if config.learn_limit > 0 {
-        let init_ratings = (0..(config.deck_size - cards.len())).map(|i| Card {
-            id: -(i as i64),
-            difficulty: f32::NEG_INFINITY,
-            stability: f32::NEG_INFINITY,
-            last_date: f32::NEG_INFINITY,
-            due: (i / config.learn_limit) as f32,
-            interval: f32::NEG_INFINITY,
-            lapses: 0,
-            desired_retention,
-            parameters: w.clone(),
-        });
-
-        cards.extend(init_ratings);
-    }
-    let workload = cards
+    let mut workload: f32 = existing_cards
         .iter()
         .map(|card| {
             if card.stability > 1e-9 {
@@ -739,6 +773,23 @@ pub fn expected_workload_with_existing_cards(
             }
         })
         .sum();
+
+    if let Some(learn_limit) = std::num::NonZeroUsize::new(config.learn_limit) {
+        let learn_limit = learn_limit.get();
+        let new_card_count = config.deck_size - existing_cards.len();
+        let full_days = new_card_count / learn_limit;
+        for due in 0..full_days {
+            workload += estimator.evaluate_new_card_cost(&w, &config.first_rating_prob, due)
+                * learn_limit as f32;
+        }
+
+        let remaining = new_card_count % learn_limit;
+        if remaining > 0 {
+            workload += estimator.evaluate_new_card_cost(&w, &config.first_rating_prob, full_days)
+                * remaining as f32;
+        }
+    }
+
     Ok(workload)
 }
 
@@ -865,6 +916,9 @@ fn simulate_inner(
 
     let review_rating_choices = &RATINGS[1..];
     let review_rating_dist = WeightedIndex::new(config.review_rating_prob).unwrap();
+    let learning_step_transition_dists = step_transition_dists(&config.learning_step_transitions);
+    let relearning_step_transition_dists =
+        step_transition_dists(&config.relearning_step_transitions);
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
@@ -1008,7 +1062,7 @@ fn simulate_inner(
                 init_difficulty,
                 Some(init_rating),
                 &config.state_rating_costs[LEARNING],
-                &config.learning_step_transitions,
+                &learning_step_transition_dists,
                 config.learning_step_count,
                 &mut rng,
             );
@@ -1058,7 +1112,7 @@ fn simulate_inner(
                     post_lapse_difficulty,
                     None,
                     &config.state_rating_costs[RELEARNING],
-                    &config.relearning_step_transitions,
+                    &relearning_step_transition_dists,
                     config.relearning_step_count,
                     &mut rng,
                 );
@@ -1690,6 +1744,10 @@ mod tests {
         let w = DEFAULT_PARAMETERS;
         let config = SimulatorConfig::default();
         let mut rng = StdRng::seed_from_u64(42);
+        let learning_step_transition_dists =
+            step_transition_dists(&config.learning_step_transitions);
+        let relearning_step_transition_dists =
+            step_transition_dists(&config.relearning_step_transitions);
 
         // Expected results for each init_rating
         let expected_results = [
@@ -1711,7 +1769,7 @@ mod tests {
                 d,
                 Some(init_rating),
                 &config.state_rating_costs[LEARNING],
-                &config.learning_step_transitions,
+                &learning_step_transition_dists,
                 config.learning_step_count,
                 &mut rng,
             );
@@ -1733,7 +1791,7 @@ mod tests {
             post_lapse_d,
             None,
             &config.state_rating_costs[RELEARNING],
-            &config.relearning_step_transitions,
+            &relearning_step_transition_dists,
             config.relearning_step_count,
             &mut rng,
         );
