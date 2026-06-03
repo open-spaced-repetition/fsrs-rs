@@ -1285,6 +1285,155 @@ mod tests {
         }
     }
 
+    fn synthetic_card_id_training_data() -> (Vec<FSRSItem>, Vec<i64>) {
+        let mut items = Vec::new();
+        let mut card_ids = Vec::new();
+
+        for card_idx in 0..32 {
+            let card_id = 10_000 + card_idx as i64;
+            let reviews = [
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 2,
+                },
+                FSRSReview {
+                    rating: if card_idx % 6 == 0 {
+                        1
+                    } else if card_idx % 4 == 0 {
+                        4
+                    } else {
+                        3
+                    },
+                    delta_t: 3 + card_idx % 7,
+                },
+                FSRSReview {
+                    rating: if card_idx % 5 == 0 {
+                        2
+                    } else if card_idx % 3 == 0 {
+                        1
+                    } else {
+                        4
+                    },
+                    delta_t: 1 + (card_idx * 3) % 11,
+                },
+                FSRSReview {
+                    rating: if card_idx % 7 == 0 { 1 } else { 3 },
+                    delta_t: 2 + (card_idx * 5) % 17,
+                },
+            ];
+
+            for len in 2..=reviews.len() {
+                items.push(FSRSItem {
+                    reviews: reviews[..len].to_vec(),
+                });
+                card_ids.push(card_id);
+            }
+        }
+
+        (items, card_ids)
+    }
+
+    #[test]
+    fn test_windowed_host_batches_match_plain_prefixes_across_batches() {
+        let (items, card_ids) = synthetic_card_id_training_data();
+        let plain_batches = build_host_batches(recency_weighted_fsrs_items(items.clone()), 17);
+        let windowed_batches = build_host_batches(
+            recency_weighted_fsrs_items_with_card_ids(items, card_ids),
+            17,
+        );
+
+        assert!(plain_batches.len() > 1);
+        assert!(windowed_batches.len() > 1);
+
+        let mut plain_grad = [0.0; 21];
+        let mut plain_loss = 0.0;
+        for batch in &plain_batches {
+            plain_loss += batch_loss_and_grad(batch, &DEFAULT_PARAMETERS, &mut plain_grad);
+        }
+
+        let mut windowed_grad = [0.0; 21];
+        let mut windowed_loss = 0.0;
+        for batch in &windowed_batches {
+            windowed_loss += batch_loss_and_grad(batch, &DEFAULT_PARAMETERS, &mut windowed_grad);
+        }
+
+        assert!((plain_loss - windowed_loss).abs() < 1e-9);
+        for i in 0..21 {
+            assert!(
+                (plain_grad[i] - windowed_grad[i]).abs() < 1e-9,
+                "param {i}: plain={} windowed={}",
+                plain_grad[i],
+                windowed_grad[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_parameters_with_card_ids_matches_without_card_ids() {
+        let (items, card_ids) = synthetic_card_id_training_data();
+        let with_card_ids = compute_parameters(ComputeParametersInput {
+            train_set: items.clone(),
+            card_ids: Some(card_ids),
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        })
+        .unwrap();
+        let without_card_ids = compute_parameters(ComputeParametersInput {
+            train_set: items.clone(),
+            card_ids: None,
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        })
+        .unwrap();
+
+        assert_eq!(with_card_ids.len(), 21);
+        assert_eq!(without_card_ids.len(), 21);
+        assert!(with_card_ids.iter().all(|parameter| parameter.is_finite()));
+        assert!(
+            without_card_ids
+                .iter()
+                .all(|parameter| parameter.is_finite())
+        );
+
+        let max_parameter_diff = with_card_ids
+            .iter()
+            .zip(&without_card_ids)
+            .map(|(&with, &without)| (with - without).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_parameter_diff <= 1e-3,
+            "max parameter diff {max_parameter_diff}"
+        );
+
+        let with_metrics = FSRS::new(&with_card_ids)
+            .unwrap()
+            .evaluate(items.clone(), |_| true)
+            .unwrap();
+        let without_metrics = FSRS::new(&without_card_ids)
+            .unwrap()
+            .evaluate(items, |_| true)
+            .unwrap();
+
+        assert!(
+            (with_metrics.log_loss - without_metrics.log_loss).abs() <= 1e-4,
+            "log_loss with_card_ids={} without_card_ids={}",
+            with_metrics.log_loss,
+            without_metrics.log_loss
+        );
+        assert!(
+            (with_metrics.rmse_bins - without_metrics.rmse_bins).abs() <= 1e-4,
+            "rmse_bins with_card_ids={} without_card_ids={}",
+            with_metrics.rmse_bins,
+            without_metrics.rmse_bins
+        );
+    }
+
     fn disabled_short_term_regression_items() -> Vec<FSRSItem> {
         let initialization_items = (0..30).map(|idx| FSRSItem {
             reviews: vec![

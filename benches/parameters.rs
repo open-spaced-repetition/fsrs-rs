@@ -256,9 +256,16 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
 
 fn benchmark_compute_parameters(c: &mut Criterion) {
     let (items, card_ids) = load_and_prepare_data_with_card_ids();
-    let input = ComputeParametersInput {
+    let input_with_card_ids = ComputeParametersInput {
         train_set: items.clone(), // Using the full prepared dataset
         card_ids: Some(card_ids.clone()),
+        progress: None,
+        enable_short_term: true,    // Default/typical value
+        num_relearning_steps: None, // Default/typical value
+    };
+    let input_without_card_ids = ComputeParametersInput {
+        train_set: items.clone(), // Using the full prepared dataset
+        card_ids: None,
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
@@ -269,7 +276,13 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
 
     group.bench_function("compute_parameters", |b| {
         b.iter(|| {
-            compute_parameters(black_box(input.clone())).unwrap();
+            compute_parameters(black_box(input_with_card_ids.clone())).unwrap();
+        })
+    });
+
+    group.bench_function("compute_parameters_without_card_ids", |b| {
+        b.iter(|| {
+            compute_parameters(black_box(input_without_card_ids.clone())).unwrap();
         })
     });
 
