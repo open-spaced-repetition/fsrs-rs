@@ -89,6 +89,20 @@ impl F32x4 {
     }
 
     #[inline(always)]
+    fn exp_fast(self) -> Self {
+        let x = self.clamp(-87.0, 88.0);
+        let n = (x * Self::splat(LOG2E)).round();
+        let r = x - n * Self::splat(LN2);
+        let p = Self::splat(1.0004431) + r * (Self::splat(1.014861) + r * Self::splat(0.4962586));
+        let two_n = unsafe {
+            let n = vcvtq_s32_f32(n.0);
+            let exponent = vshlq_n_s32::<23>(vaddq_s32(n, vdupq_n_s32(127)));
+            Self(vreinterpretq_f32_s32(exponent))
+        };
+        p * two_n
+    }
+
+    #[inline(always)]
     fn ln(self) -> Self {
         let bits = unsafe { vreinterpretq_u32_f32(self.0) };
         let exponent = unsafe {
@@ -107,6 +121,26 @@ impl F32x4 {
             * t
             * (Self::splat(1.0000073)
                 + t2 * (Self::splat(0.33217952) + t2 * Self::splat(0.22657777)));
+        let exponent = unsafe { Self(vcvtq_f32_s32(exponent)) };
+        exponent * Self::splat(LN2) + poly
+    }
+
+    #[inline(always)]
+    fn ln_fast(self) -> Self {
+        let bits = unsafe { vreinterpretq_u32_f32(self.0) };
+        let exponent = unsafe {
+            let raw = vandq_u32(vshrq_n_u32::<23>(bits), vdupq_n_u32(0xff));
+            vsubq_s32(vreinterpretq_s32_u32(raw), vdupq_n_s32(127))
+        };
+        let mantissa = unsafe {
+            let masked = vandq_u32(bits, vdupq_n_u32(0x007f_ffff));
+            let normalized = vorrq_u32(masked, vdupq_n_u32(127 << 23));
+            Self(vreinterpretq_f32_u32(normalized))
+        };
+        let one = Self::splat(1.0);
+        let t = (mantissa - one) / (mantissa + one);
+        let t2 = t * t;
+        let poly = Self::splat(2.0) * t * (Self::splat(0.99965036) + t2 * Self::splat(0.35748693));
         let exponent = unsafe { Self(vcvtq_f32_s32(exponent)) };
         exponent * Self::splat(LN2) + poly
     }
@@ -348,17 +382,21 @@ struct Curve4 {
 
 #[inline(always)]
 fn curve4_fwd(w: &[f32], params: &Params, t: F32x4, s: F32x4) -> Curve4 {
+    curve4_fwd_with_ln(w, params, t, s, s.ln_fast())
+}
+
+#[inline(always)]
+fn curve4_fwd_with_ln(w: &[f32], params: &Params, t: F32x4, s: F32x4, ln_s: F32x4) -> Curve4 {
     let one = F32x4::splat(1.0);
     let t_over_s = t.max(F32x4::splat(0.0)) / s;
     let b1 = one + t_over_s * F32x4::splat(params.factor1);
-    let ln_b1 = b1.ln();
-    let r1 = (ln_b1 * F32x4::splat(params.decay1)).exp();
+    let ln_b1 = b1.ln_fast();
+    let r1 = (ln_b1 * F32x4::splat(params.decay1)).exp_fast();
     let b2 = one + t_over_s * F32x4::splat(params.factor2);
-    let ln_b2 = b2.ln();
-    let r2 = (ln_b2 * F32x4::splat(params.decay2)).exp();
-    let ln_s = s.ln();
-    let p33 = (ln_s * F32x4::splat(-w[33])).exp();
-    let p34 = (ln_s * F32x4::splat(w[34])).exp();
+    let ln_b2 = b2.ln_fast();
+    let r2 = (ln_b2 * F32x4::splat(params.decay2)).exp_fast();
+    let p33 = (ln_s * F32x4::splat(-w[33])).exp_fast();
+    let p34 = (ln_s * F32x4::splat(w[34])).exp_fast();
     let weight1 = F32x4::splat(w[31]) * p33;
     let weight2 = F32x4::splat(w[32]) * p34;
     let wsum = weight1 + weight2;
@@ -445,9 +483,8 @@ struct Stab4 {
     bb: F32x4,
     cc: F32x4,
     expr: F32x4,
-    pp: F32x4,
+    pr: F32x4,
     qbase: F32x4,
-    rexp: F32x4,
     hard: F32x4,
     easy: F32x4,
     ln_s: F32x4,
@@ -456,7 +493,17 @@ struct Stab4 {
 }
 
 #[inline(always)]
-fn stab4_fwd(w: &[f32], s: F32x4, r: F32x4, d: F32x4, rating: F32x4, start: usize) -> Stab4 {
+fn stab4_fwd_with_logs(
+    w: &[f32],
+    s: F32x4,
+    r: F32x4,
+    d: F32x4,
+    rating: F32x4,
+    start: usize,
+    ln_s: F32x4,
+    ln_d: F32x4,
+    ln_s1: F32x4,
+) -> Stab4 {
     let one = F32x4::splat(1.0);
     let hard = F32x4::blend(
         rating.cmp_eq(F32x4::splat(2.0)),
@@ -468,18 +515,15 @@ fn stab4_fwd(w: &[f32], s: F32x4, r: F32x4, d: F32x4, rating: F32x4, start: usiz
         F32x4::splat(w[start + 8]),
         one,
     );
-    let ln_s = s.ln();
-    let ln_d = d.ln();
-    let pp = (ln_d * F32x4::splat(-w[start + 4])).exp();
-    let ln_s1 = (s + one).ln();
-    let qbase = (ln_s1 * F32x4::splat(w[start + 5])).exp();
-    let rexp = ((one - r) * F32x4::splat(w[start + 6])).exp();
-    let nsf_fail = F32x4::splat(w[start + 3]) * pp * (qbase - one) * rexp;
+    let pr =
+        (ln_d * F32x4::splat(-w[start + 4]) + (one - r) * F32x4::splat(w[start + 6])).exp_fast();
+    let qbase = (ln_s1 * F32x4::splat(w[start + 5])).exp_fast();
+    let nsf_fail = F32x4::splat(w[start + 3]) * pr * (qbase - one);
     let pls = s.min(nsf_fail);
-    let aa = F32x4::splat(w[start] - 1.5).exp();
+    let aa = F32x4::splat(w[start] - 1.5).exp_fast();
     let bb = F32x4::splat(11.0) - d;
-    let cc = (ln_s * F32x4::splat(-w[start + 1])).exp();
-    let expr = ((one - r) * F32x4::splat(w[start + 2])).exp();
+    let cc = (ln_s * F32x4::splat(-w[start + 1])).exp_fast();
+    let expr = ((one - r) * F32x4::splat(w[start + 2])).exp_fast();
     let sinc = aa * bb * cc * (expr - one) * hard * easy + one;
     let success = s * sinc;
     let out = F32x4::blend(rating.cmp_gt(one), pls.max(success), pls);
@@ -493,9 +537,8 @@ fn stab4_fwd(w: &[f32], s: F32x4, r: F32x4, d: F32x4, rating: F32x4, start: usiz
         bb,
         cc,
         expr,
-        pp,
+        pr,
         qbase,
-        rexp,
         hard,
         easy,
         ln_s,
@@ -558,16 +601,16 @@ fn stab4_bwd(
     grad[start + 2] = grad[start + 2] + g_em1 * cache.expr * (one - r);
 
     let q = cache.qbase - one;
-    grad[start + 3] = grad[start + 3] + g_nsf_fail * cache.pp * q * cache.rexp;
-    let g_pp = g_nsf_fail * F32x4::splat(w[start + 3]) * q * cache.rexp;
-    let g_q = g_nsf_fail * F32x4::splat(w[start + 3]) * cache.pp * cache.rexp;
-    let g_rexp = g_nsf_fail * F32x4::splat(w[start + 3]) * cache.pp * q;
-    g_d = g_d + g_pp * F32x4::splat(-w[start + 4]) * cache.pp / d;
-    grad[start + 4] = grad[start + 4] + g_pp * (zero - cache.pp * cache.ln_d);
+    grad[start + 3] = grad[start + 3] + g_nsf_fail * cache.pr * q;
+    let g_pr = g_nsf_fail * F32x4::splat(w[start + 3]) * q;
+    let g_q = g_nsf_fail * F32x4::splat(w[start + 3]) * cache.pr;
+    let g_pr_inner = g_pr * cache.pr;
+    g_d = g_d + g_pr_inner * F32x4::splat(-w[start + 4]) / d;
+    grad[start + 4] = grad[start + 4] + g_pr_inner * (zero - cache.ln_d);
     g_s = g_s + g_q * F32x4::splat(w[start + 5]) * cache.qbase / (s + one);
     grad[start + 5] = grad[start + 5] + g_q * cache.qbase * cache.ln_s1;
-    g_r = g_r + g_rexp * cache.rexp * F32x4::splat(-w[start + 6]);
-    grad[start + 6] = grad[start + 6] + g_rexp * cache.rexp * (one - r);
+    g_r = g_r + g_pr_inner * F32x4::splat(-w[start + 6]);
+    grad[start + 6] = grad[start + 6] + g_pr_inner * (one - r);
 
     (g_s, g_d, g_r)
 }
@@ -668,7 +711,7 @@ fn step4_fwd(
         let one = F32x4::splat(1.0);
         let rc = rating.clamp(1.0, 4.0);
         let init_s_pre = init_stability(w, rating);
-        let init_d_exp = (F32x4::splat(w[5]) * (rc - one)).exp();
+        let init_d_exp = (F32x4::splat(w[5]) * (rc - one)).exp_fast();
         let init_d_pre = F32x4::splat(w[4]) - init_d_exp + one;
         let next_s = init_s_pre.clamp(S_MIN as f32, S_MAX as f32);
         let next_d = init_d_pre.clamp(D_MIN as f32, D_MAX as f32);
@@ -693,10 +736,13 @@ fn step4_fwd(
     }
 
     let dt = delta_t.max(F32x4::splat(0.0));
-    let curve = curve4_fwd(w, params, dt, last_s);
-    let long = stab4_fwd(w, last_s, curve.out, last_d, rating, 7);
-    let short = stab4_fwd(w, last_s, curve.out, last_d, rating, 16);
-    let transition_exp = (F32x4::splat(-w[25]) * dt).exp();
+    let ln_s = last_s.ln_fast();
+    let ln_d = last_d.ln_fast();
+    let ln_s1 = (last_s + F32x4::splat(1.0)).ln_fast();
+    let curve = curve4_fwd_with_ln(w, params, dt, last_s, ln_s);
+    let long = stab4_fwd_with_logs(w, last_s, curve.out, last_d, rating, 7, ln_s, ln_d, ln_s1);
+    let short = stab4_fwd_with_logs(w, last_s, curve.out, last_d, rating, 16, ln_s, ln_d, ln_s1);
+    let transition_exp = (F32x4::splat(-w[25]) * dt).exp_fast();
     let coefficient = F32x4::splat(1.0) - F32x4::splat(w[26]) * transition_exp;
     let new_s_pre = coefficient * long.out + (F32x4::splat(1.0) - coefficient) * short.out;
     let (next_d, nd_out_pre, nd_delta_d) = next_difficulty4_fwd(w, params, last_d, rating);
@@ -907,6 +953,29 @@ fn add_scalar_column_grad(
     }
 }
 
+#[inline(always)]
+fn group_active_seq_len(
+    r_historys: &[f32],
+    seq_len: usize,
+    batch_size: usize,
+    column: usize,
+) -> usize {
+    let mut active = seq_len;
+    while active > 1 {
+        let index = (active - 1) * batch_size + column;
+        if r_historys[index] == 0.0
+            && r_historys[index + 1] == 0.0
+            && r_historys[index + 2] == 0.0
+            && r_historys[index + 3] == 0.0
+        {
+            active -= 1;
+        } else {
+            break;
+        }
+    }
+    active
+}
+
 pub(super) fn windowed_loss(
     w: &[f32],
     t_historys: &[f32],
@@ -1000,10 +1069,14 @@ pub(super) fn windowed_grad(
         let mut caches = Vec::with_capacity(seq_len.saturating_sub(1));
         for group in 0..group_count {
             let column = group * 4;
+            let active_seq_len = group_active_seq_len(r_historys, seq_len, batch_size, column);
+            if active_seq_len < 2 {
+                continue;
+            }
             caches.clear();
             let mut s = F32x4::splat(0.0);
             let mut d = F32x4::splat(0.0);
-            for row in 0..seq_len - 1 {
+            for row in 0..active_seq_len - 1 {
                 let index = row * batch_size + column;
                 let (next_state, cache) = step4_fwd(
                     w,
@@ -1019,7 +1092,7 @@ pub(super) fn windowed_grad(
                 caches.push(cache);
             }
 
-            let last_index = (seq_len - 1) * batch_size + column;
+            let last_index = (active_seq_len - 1) * batch_size + column;
             let last_s = s.clamp(S_MIN as f32, S_MAX as f32);
             let last_curve = curve4_fwd(w, &params, F32x4::load(t_historys, last_index), last_s);
             let mut group_grad = [F32x4::splat(0.0); PARAM_LEN];
@@ -1044,7 +1117,7 @@ pub(super) fn windowed_grad(
             let mut g_s = F32x4::blend(s_open, g_last_s, F32x4::splat(0.0));
             let mut g_d = F32x4::splat(0.0);
 
-            for row in (0..seq_len - 1).rev() {
+            for row in (0..active_seq_len - 1).rev() {
                 let g_r_loss = if row == 0 {
                     F32x4::splat(0.0)
                 } else {

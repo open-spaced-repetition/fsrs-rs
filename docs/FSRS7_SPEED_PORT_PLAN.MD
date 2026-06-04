@@ -124,6 +124,28 @@ Current transparent groups already implemented on this branch:
   - Main Profile temp-copy windowed-only timing after this step: LogLoss
     `0.48999852`, RMSE bins about `0.04345194`, optimization `0.685 s` and
     `0.688 s` on repeated warm runs.
+- [x] ARM64 NEON FSRS-7 windowed gradient micro-optimizations.
+  - Files: `src/analytic_v7.rs`, `src/analytic_v7/neon_loss.rs`.
+  - Data-flow doc: `docs/TRAINING_DATA_FLOW.MD`.
+  - The NEON training-gradient path now hoists the shared recurrent `ln(s)`,
+    `ln(d)`, and `ln(s+1)` values per step, fuses the stability fail-path
+    `d`/retrievability exponentials, skips all-padding trailing rows per
+    four-lane group, and uses a faster approximate NEON `exp`/`ln` variant only
+    for training-gradient recurrence math. The NEON validation-loss path keeps
+    the more accurate approximation.
+  - The focused scalar-oracle gradient tolerance is now relative L2 `3e-2`
+    because the fast gradient path intentionally approximates the exact scalar
+    recurrence. The validation-loss oracle tolerance is unchanged.
+  - Local Criterion after this step, warm rerun: `parameters/compute_parameters`
+    `71.247 ms..74.427 ms`, reported as a significant improvement versus the
+    previous Criterion baseline.
+  - Repo fixture selected path after this step: LogLoss `0.20318088`, RMSE bins
+    `0.02366361`, optimization `0.071 s`, against prefix LogLoss gate
+    `0.20450646`.
+  - Main Profile temp-copy windowed-only timing after this step: LogLoss
+    `0.48992801`, RMSE bins about `0.04356728`, optimization samples `0.657 s`,
+    `0.946 s`, `0.807 s`, `0.995 s`, and `0.666 s`. Treat this as noisy but
+    gate-passing; the previous accepted gate was `0.49024179`.
 
 Verification commands already run after the scalar group:
 
@@ -175,9 +197,10 @@ Do not port next:
 
 Recommended next implementation:
 
-1. Reuse host batches directly and drop Burn tensors from the windowed training
-   path once validation and optimizer coverage exist.
-2. Layer SIMD and smaller scalar hoists only after those gates are stable.
+1. Profile the remaining FSRS-7 card-id optimization time after the NEON
+   gradient pass before adding more math kernels.
+2. Prefer changes that keep the current 35-parameter data contract and can be
+   checked against the repo fixture plus Main Profile temp-copy gates.
 
 ## Compatibility Gate
 
@@ -246,8 +269,11 @@ Defer for now:
   - Implemented as an opt-in API. Callers without card ids keep the prefix-item path.
 - [ ] Simulation workload estimator flat-matrix/cache rewrite.
   - Reason: useful for ADR/simulation, but not the next biggest transparent Anki-facing win.
-- [ ] SIMD and fast transcendental approximations.
-  - Reason: PR discussion noted SIMD speedup was not replicated; keep this behind scalar correctness and loss gates.
+- [x] ARM64 NEON SIMD and fast gradient transcendental approximations.
+  - Validation loss and training gradient are implemented for the current
+    35-parameter FSRS-7 card-id windowed layout. The fast approximation is
+    limited to the training-gradient recurrence and remains behind scalar
+    correctness and loss gates.
 - [ ] Standalone BCE clamping change.
   - Reason: this branch already clamps retrievability in `forward_classification`; revisit only when adding a new scalar BCE implementation.
 

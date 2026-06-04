@@ -551,6 +551,77 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    fn neon_test_arrays<const BATCH: usize, const SEQ: usize>(
+        histories: &[[(usize, f32); SEQ]; BATCH],
+    ) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
+        let mut t_historys = vec![0.0; SEQ * BATCH];
+        let mut r_historys = vec![0.0; SEQ * BATCH];
+        let mut labels = vec![0.0; SEQ * BATCH];
+        let mut weights = vec![0.0; SEQ * BATCH];
+        for (column, reviews) in histories.iter().enumerate() {
+            for (row, &(rating, delta_t)) in reviews.iter().enumerate() {
+                let index = row * BATCH + column;
+                t_historys[index] = delta_t;
+                r_historys[index] = rating as f32;
+                if row > 0 && rating != 0 {
+                    labels[index] = if rating == 1 { 0.0 } else { 1.0 };
+                    weights[index] = 0.4 + row as f32 * 0.07 + column as f32 * 0.03;
+                }
+            }
+        }
+        (t_historys, r_historys, labels, weights)
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    fn assert_neon_windowed_grad_matches_scalar<const BATCH: usize, const SEQ: usize>(
+        histories: &[[(usize, f32); SEQ]; BATCH],
+    ) {
+        let (t_historys, r_historys, labels, weights) = neon_test_arrays(histories);
+
+        let (_, scalar) = windowed_loss_and_grad(
+            &crate::DEFAULT_PARAMETERS,
+            &t_historys,
+            &r_historys,
+            &labels,
+            &weights,
+            SEQ,
+            BATCH,
+        );
+        let neon = neon_loss::windowed_grad_for_test(
+            &crate::DEFAULT_PARAMETERS,
+            &t_historys,
+            &r_historys,
+            &labels,
+            &weights,
+            SEQ,
+            BATCH,
+        );
+        let numerator = scalar
+            .iter()
+            .zip(neon)
+            .map(|(scalar, neon)| {
+                let diff = (*scalar - neon) as f64;
+                diff * diff
+            })
+            .sum::<f64>()
+            .sqrt();
+        let denominator = scalar
+            .iter()
+            .map(|value| {
+                let value = *value as f64;
+                value * value
+            })
+            .sum::<f64>()
+            .sqrt()
+            .max(1.0);
+        let relative_l2 = numerator / denominator;
+        assert!(
+            relative_l2 < 3e-2,
+            "relative gradient L2 {relative_l2:e}\nscalar={scalar:?}\nneon={neon:?}"
+        );
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     #[test]
     fn test_neon_windowed_loss_matches_scalar() {
         let histories = [
@@ -562,21 +633,7 @@ mod tests {
         ];
         let seq_len = 6;
         let batch_size = histories.len();
-        let mut t_historys = vec![0.0; seq_len * batch_size];
-        let mut r_historys = vec![0.0; seq_len * batch_size];
-        let mut labels = vec![0.0; seq_len * batch_size];
-        let mut weights = vec![0.0; seq_len * batch_size];
-        for (column, reviews) in histories.iter().enumerate() {
-            for (row, &(rating, delta_t)) in reviews.iter().enumerate() {
-                let index = row * batch_size + column;
-                t_historys[index] = delta_t;
-                r_historys[index] = rating as f32;
-                if row > 0 && rating != 0 {
-                    labels[index] = if rating == 1 { 0.0 } else { 1.0 };
-                    weights[index] = 0.4 + row as f32 * 0.07 + column as f32 * 0.03;
-                }
-            }
-        }
+        let (t_historys, r_historys, labels, weights) = neon_test_arrays(&histories);
 
         let scalar = windowed_loss_scalar(
             &crate::DEFAULT_PARAMETERS,
@@ -613,64 +670,18 @@ mod tests {
             [(2, 0.0), (3, 1.5), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)],
             [(3, 0.0), (2, 3.0), (4, 6.0), (1, 2.0), (0, 0.0), (0, 0.0)],
         ];
-        let seq_len = 6;
-        let batch_size = histories.len();
-        let mut t_historys = vec![0.0; seq_len * batch_size];
-        let mut r_historys = vec![0.0; seq_len * batch_size];
-        let mut labels = vec![0.0; seq_len * batch_size];
-        let mut weights = vec![0.0; seq_len * batch_size];
-        for (column, reviews) in histories.iter().enumerate() {
-            for (row, &(rating, delta_t)) in reviews.iter().enumerate() {
-                let index = row * batch_size + column;
-                t_historys[index] = delta_t;
-                r_historys[index] = rating as f32;
-                if row > 0 && rating != 0 {
-                    labels[index] = if rating == 1 { 0.0 } else { 1.0 };
-                    weights[index] = 0.4 + row as f32 * 0.07 + column as f32 * 0.03;
-                }
-            }
-        }
+        assert_neon_windowed_grad_matches_scalar(&histories);
+    }
 
-        let (_, scalar) = windowed_loss_and_grad(
-            &crate::DEFAULT_PARAMETERS,
-            &t_historys,
-            &r_historys,
-            &labels,
-            &weights,
-            seq_len,
-            batch_size,
-        );
-        let neon = neon_loss::windowed_grad_for_test(
-            &crate::DEFAULT_PARAMETERS,
-            &t_historys,
-            &r_historys,
-            &labels,
-            &weights,
-            seq_len,
-            batch_size,
-        );
-        let numerator = scalar
-            .iter()
-            .zip(neon)
-            .map(|(scalar, neon)| {
-                let diff = (*scalar - neon) as f64;
-                diff * diff
-            })
-            .sum::<f64>()
-            .sqrt();
-        let denominator = scalar
-            .iter()
-            .map(|value| {
-                let value = *value as f64;
-                value * value
-            })
-            .sum::<f64>()
-            .sqrt()
-            .max(1.0);
-        let relative_l2 = numerator / denominator;
-        assert!(
-            relative_l2 < 2e-2,
-            "relative gradient L2 {relative_l2:e}\nscalar={scalar:?}\nneon={neon:?}"
-        );
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    #[test]
+    fn test_neon_windowed_grad_skips_all_padding_group_tail() {
+        let histories = [
+            [(3, 0.0), (4, 1.0), (2, 2.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(1, 0.0), (3, 0.5), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(4, 0.0), (4, 2.0), (3, 4.0), (1, 1.0), (0, 0.0), (0, 0.0)],
+            [(2, 0.0), (3, 1.5), (2, 2.5), (0, 0.0), (0, 0.0), (0, 0.0)],
+        ];
+        assert_neon_windowed_grad_matches_scalar(&histories);
     }
 }

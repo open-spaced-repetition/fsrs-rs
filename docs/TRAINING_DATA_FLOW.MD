@@ -114,9 +114,14 @@ FSRS-7 windowed training now computes the BCE loss gradient from host arrays in
 `src/analytic_v7.rs`, then composes the existing penalty gradients in
 `src/training.rs`. On ARM64 targets with NEON, `src/analytic_v7/neon_loss.rs`
 processes four batch columns per native `float32x4_t` group for both the
-windowed validation loss and the training BCE gradient. Ragged remainders stay
-scalar, and non-NEON targets keep the scalar analytic path. FSRS-7 windowed
-optimizer steps use host-side Adam with the same `beta_1=0.8`, `beta_2=0.85`,
-and `epsilon=1e-8` settings as the Burn optimizer, followed by the same
-version-aware clipping rules. Prefix-item training, FSRS-6 training, and callers
-without card ids remain on the existing Burn tensor loss and optimizer path.
+windowed validation loss and the training BCE gradient. The NEON training
+gradient reuses per-step recurrent logarithms, fuses the stability fail-path
+`d`/retrievability exponentials, skips all-padding trailing rows per four-lane
+group, and uses a faster approximate NEON `exp`/`ln` variant for recurrence
+math. The NEON validation-loss path keeps the more accurate approximation.
+Ragged remainders stay scalar, and non-NEON targets keep the scalar analytic
+path. FSRS-7 windowed optimizer steps use host-side Adam with the same
+`beta_1=0.8`, `beta_2=0.85`, and `epsilon=1e-8` settings as the Burn optimizer,
+followed by the same version-aware clipping rules. Prefix-item training, FSRS-6
+training, and callers without card ids remain on the existing Burn tensor loss
+and optimizer path.

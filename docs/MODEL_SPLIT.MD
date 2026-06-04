@@ -32,9 +32,12 @@ while keeping shared model state/config logic in `src/model.rs`.
   - `src/analytic_v7.rs` computes scalar BCE loss and BCE loss gradients for
     FSRS-7 card-id windowed training batches.
   - `src/analytic_v7/neon_loss.rs` provides the ARM64 NEON validation-loss and
-    training-gradient paths for the same 35-parameter windowed batch layout.
-    The exact scalar dual-number gradient remains the oracle and non-NEON
-    fallback.
+    training-gradient paths for the same 35-parameter windowed batch layout. The
+    training-gradient path includes NEON-only recurrent log hoisting, fused
+    stability fail-path exponentials, all-padding group-tail skips, and a fast
+    approximate `exp`/`ln` recurrence. The validation-loss path keeps the more
+    accurate approximation. The exact scalar dual-number gradient remains the
+    oracle and non-NEON fallback.
   - The kernel is parameter-size-specific to the current 35-parameter FSRS-7
     layout and is not shared with FSRS-6.
 - Training initial-stability normalization is version-specific:
@@ -71,6 +74,7 @@ while keeping shared model state/config logic in `src/model.rs`.
   - runtime tensors (`delta_t`, `rating`, `stability`, `difficulty`)
   - FSRS-7 windowed host arrays (`t_historys`, `r_historys`, labels, weights)
     during analytic training-loss and training-gradient calculation
+  - FSRS-7 windowed padding ratings during NEON group active-length detection
   - FSRS-7 card-id windowed training tuning constants: learning rate `0.07`
     and `17` epochs
 - Data updated:
