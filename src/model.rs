@@ -280,7 +280,7 @@ fn step(w: &[f32], delta_t: f32, rating: f32, state: MemoryState, nth: usize) ->
     }
 }
 
-pub(crate) fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
+pub fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
     let parameters = match parameters.len() {
         0 => DEFAULT_PARAMETERS.to_vec(),
         17 => {
