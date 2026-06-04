@@ -117,26 +117,36 @@ fn prepare_dataset_for_initialization(
     results
 }
 
-fn forgetting_curve_with_params(t: f64, s: f64, params: &[f32; 8]) -> f64 {
-    let decay1 = -(params[0] as f64);
-    let decay2 = -(params[1] as f64);
-    let base1 = params[2] as f64;
-    let base2 = params[3] as f64;
-    let base_weight1 = params[4] as f64;
-    let base_weight2 = params[5] as f64;
-    let swp1 = params[6] as f64;
-    let swp2 = params[7] as f64;
+#[derive(Clone, Copy)]
+struct ForgettingCurveParams {
+    decay1: f64,
+    decay2: f64,
+    factor1: f64,
+    factor2: f64,
+    base_weight1: f64,
+    base_weight2: f64,
+    swp1: f64,
+    swp2: f64,
+}
 
-    let t_over_s = t / s;
-    let factor1 = base1.powf(1.0 / decay1) - 1.0;
-    let factor2 = base2.powf(1.0 / decay2) - 1.0;
-    let r1 = (t_over_s * factor1 + 1.0).powf(decay1);
-    let r2 = (t_over_s * factor2 + 1.0).powf(decay2);
+impl ForgettingCurveParams {
+    fn new(params: &[f32; 8]) -> Self {
+        let decay1 = -(params[0] as f64);
+        let decay2 = -(params[1] as f64);
+        let base1 = params[2] as f64;
+        let base2 = params[3] as f64;
 
-    let weight1 = base_weight1 * s.powf(-swp1);
-    let weight2 = base_weight2 * s.powf(swp2);
-
-    (r1 * weight1 + r2 * weight2) / (weight1 + weight2)
+        Self {
+            decay1,
+            decay2,
+            factor1: base1.powf(1.0 / decay1) - 1.0,
+            factor2: base2.powf(1.0 / decay2) - 1.0,
+            base_weight1: params[4] as f64,
+            base_weight2: params[5] as f64,
+            swp1: params[6] as f64,
+            swp2: params[7] as f64,
+        }
+    }
 }
 
 fn loss_with_curve(
@@ -145,15 +155,20 @@ fn loss_with_curve(
     count: &Array1<f64>,
     init_s0: f64,
     default_s0: f64,
-    params: &[f32; 8],
+    params: &ForgettingCurveParams,
 ) -> f64 {
+    let weight1 = params.base_weight1 * init_s0.powf(-params.swp1);
+    let weight2 = params.base_weight2 * init_s0.powf(params.swp2);
+    let weight_sum = weight1 + weight2;
     let logloss = delta_t
         .iter()
         .zip(recall)
         .zip(count)
         .map(|((&delta_t, &recall), &count)| {
-            let y_pred =
-                forgetting_curve_with_params(delta_t, init_s0, params).clamp(0.0001, 0.9999);
+            let t_over_s = delta_t / init_s0;
+            let r1 = (t_over_s * params.factor1 + 1.0).powf(params.decay1);
+            let r2 = (t_over_s * params.factor2 + 1.0).powf(params.decay2);
+            let y_pred = ((r1 * weight1 + r2 * weight2) / weight_sum).clamp(0.0001, 0.9999);
             -(recall * y_pred.ln() + (1.0 - recall) * (1.0 - y_pred).ln()) * count
         })
         .sum::<f64>();
@@ -166,6 +181,7 @@ fn search_parameters_for_curve(
     average_recall: f32,
     curve_params: &[f32; 8],
 ) -> (HashMap<u32, f32>, HashMap<u32, u32>, f64) {
+    let curve_params = ForgettingCurveParams::new(curve_params);
     let mut optimal_stabilities = HashMap::new();
     let mut rating_count = HashMap::new();
     let mut total_loss = 0.0;
@@ -190,8 +206,8 @@ fn search_parameters_for_curve(
             let mid1 = low + (high - low) / 3.0;
             let mid2 = high - (high - low) / 3.0;
 
-            let loss1 = loss_with_curve(&delta_t, &recall, &count, mid1, default_s0, curve_params);
-            let loss2 = loss_with_curve(&delta_t, &recall, &count, mid2, default_s0, curve_params);
+            let loss1 = loss_with_curve(&delta_t, &recall, &count, mid1, default_s0, &curve_params);
+            let loss2 = loss_with_curve(&delta_t, &recall, &count, mid2, default_s0, &curve_params);
 
             if loss1 < loss2 {
                 high = mid2;
@@ -208,7 +224,7 @@ fn search_parameters_for_curve(
             &count,
             optimal_s,
             default_s0,
-            curve_params,
+            &curve_params,
         );
         total_loss += best_loss;
         optimal_stabilities.insert(*first_rating, optimal_s as f32);
@@ -359,7 +375,14 @@ mod tests {
         let count = Array1::from_vec(vec![10.0, 5.0, 4.0]);
         let params = FSRS7_FORGETTING_CURVE_CANDIDATES[0];
 
-        let actual = loss_with_curve(&delta_t, &recall, &count, 2.5, 1.2, &params);
+        let actual = loss_with_curve(
+            &delta_t,
+            &recall,
+            &count,
+            2.5,
+            1.2,
+            &ForgettingCurveParams::new(&params),
+        );
 
         assert!((actual - 14.793305051722285).abs() < 1e-12);
     }

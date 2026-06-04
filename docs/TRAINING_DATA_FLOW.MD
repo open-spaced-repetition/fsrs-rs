@@ -148,7 +148,17 @@ production NEON training avoids scalar remainder columns; the logical batch size
 used for loss and penalty scaling remains the real prefix prediction count.
 FSRS-7 validation computes the schedule-penalty value with a scalar value-only
 rollout; training still uses the dual-number penalty path because it needs
-gradients for optimizer updates.
+gradients for optimizer updates. The dual-number penalty path computes
+variable-exponent powers with one fused derivative loop, which keeps the same
+35-parameter gradient data but avoids intermediate dual values.
+FSRS-7 windowed training validates every eighth epoch and always validates the
+final epoch. Training batches, optimizer updates, learning-rate schedule, and
+the final selected best-validated parameter vector remain in memory only and no
+new persisted training data is created.
+FSRS-7 initialization streams grouped recall buckets through precomputed
+forgetting-curve constants for each candidate curve and candidate initial
+stability. The initialization buckets and selected best candidate are
+unchanged; only repeated transient `pow` work is reduced.
 Non-NEON targets keep the scalar analytic path. FSRS-7 windowed optimizer steps
 use host-side Adam with the same
 `beta_1=0.8`, `beta_2=0.85`, and `epsilon=1e-8` settings as the Burn optimizer,

@@ -921,6 +921,99 @@ Interpretation:
       avoid duplicating code or adding dead branches.
     - Keep the scalar implementation as the oracle for NEON; update NEON only
       after scalar A/B is bit-for-bit.
+  - Main Profile current-tree profile, 2026-06-04:
+    - Collection source:
+      `/Users/jschoreels/Library/Application Support/Anki2/Main Profile/collection.anki2`.
+    - Data access: sampled a repeated release run against the SQLite `.backup`
+      copy at `/private/tmp/fsrs-main-profile-collection-backup.anki2`; no live
+      Anki profile data was written or modified.
+    - Command shape: temporary release example repeating FSRS-7
+      `compute_parameters()` with aligned `card_ids`, short-term enabled, and
+      schedule penalties enabled. The repeated run covered `80` optimizations,
+      `248819` review rows, and `183178` prepared FSRS items.
+    - Timing: `80` optimizations in `45.024579 s`; individual
+      `optimize_seconds` samples were usually around `0.50..0.60 s`.
+    - Follow-up `sample` report:
+      `/private/tmp/fsrs_compute_parameters_main_profile_current.sample.txt`.
+      Top symbol sample counts:
+      - `pow` from `libsystem_m`: `4308`
+      - `analytic_v7::neon_loss::windowed_grad`: `3575`
+      - `analytic_v7::windowed_loss`: `3035`
+      - `training_v7::Dual35::pow`: `665`
+      - `parameter_initialization_fsrs7::loss_with_curve`: `496`
+      - `training_v7::fsrs7_next_s_good_dual`: `474`
+      - `training_v7::fsrs7_fc_r_dual`: `425`
+      - `exp` from `libsystem_m`: `218`
+      - `training_v7::maybe_schedule_penalty_value_and_grad`: `144`
+      - `training::build_windowed_batch`: `61`
+      - `training_v7::schedule_penalty_value`: `25`
+    - Interpretation: the current Main Profile bottleneck is still math-heavy.
+      Batch construction, grouping, and sorting are too small to prioritize
+      before recurrence/pow work. The next candidate should be a narrow
+      recurrence or initialization `pow` reduction with log-loss gates, not a
+      data-setup rewrite.
+  - Initial `pow` reduction pass, 2026-06-04:
+    - Files: `src/parameter_initialization_fsrs7.rs`, `src/training_v7.rs`,
+      `docs/FSRS7_PENALTY.MD`, and `docs/TRAINING_DATA_FLOW.MD`.
+    - FSRS-7 initialization now precomputes parameter-only forgetting-curve
+      constants once per curve candidate and hoists candidate-stability weights
+      once per `loss_with_curve()` call.
+    - FSRS-7 schedule-penalty dual powers now use a fused derivative formula
+      for variable exponents and reuse the computed power value for
+      constant-exponent derivative coefficients.
+    - Expected impact: reduce the `pow`/dual-recurrence share observed in
+      `/private/tmp/fsrs_compute_parameters_main_profile_current.sample.txt`
+      without changing data selection, optimizer settings, or persisted model
+      data.
+    - Correctness checks:
+      `rtk cargo test training_v7`,
+      `rtk cargo test parameter_initialization_fsrs7`, and
+      `rtk cargo test -- --skip test_next_interval_fsrs7` passed.
+    - Criterion for `parameters/compute_parameters` after this pass:
+      `45.310 ms..46.250 ms`, change `[-0.4495% +1.4153% +2.8569%]`,
+      reported as no detected performance change.
+    - Main Profile backup rough timing from `examples/fsrs7_adr_collection`
+      before its intentionally invalid `--gen 0` ADR phase:
+      FSRS-7 parameter training `0.529 s` on `183178` prepared items, consistent
+      with the previous current-tree `0.524652 s` harness timing.
+  - FSRS-7 windowed validation cadence experiment, 2026-06-05:
+    - Files: `src/training.rs`, `docs/TRAINING_DATA_FLOW.MD`, and
+      `docs/FSRS7_PENALTY.MD`.
+    - Windowed FSRS-7 training now validates every eighth epoch and always
+      validates the final epoch. Prefix-item training and FSRS-6 validation
+      cadence remain unchanged.
+    - Rationale: Main Profile sampling still showed
+      `analytic_v7::windowed_loss` as a large remaining cost while
+      `training::build_windowed_batch` was negligible.
+    - Criterion for `parameters/compute_parameters`, interval 2:
+      `42.552 ms..45.628 ms`, change `[-6.7290% +3.9462% +19.591%]`,
+      reported as no detected performance change.
+    - Main Profile backup, interval 2: LogLoss `0.48805487`, RMSE bins
+      `0.03720748`, optimization samples `0.622379 s`, `0.453348 s`, and
+      `0.504469 s`.
+    - Criterion for `parameters/compute_parameters`, interval 4:
+      `38.615 ms..42.927 ms`, change `[-25.263% -11.477% +1.6711%]`,
+      reported as no detected performance change.
+    - Main Profile backup, interval 4: LogLoss `0.48805487`, RMSE bins
+      `0.03720748`, optimization samples `0.435455 s` and `0.429194 s`.
+    - Criterion for `parameters/compute_parameters`, interval 8:
+      `36.543 ms..38.530 ms`, change `[-17.355% -10.504% -3.0651%]`,
+      `p = 0.02 < 0.05`, reported as a performance improvement versus
+      interval 4.
+    - Main Profile backup, interval 8: LogLoss `0.48805487`, RMSE bins
+      `0.03720748`, optimization samples `0.424084 s` and `0.411935 s`.
+    - Criterion for `parameters/compute_parameters`, final-only validation:
+      `35.728 ms..37.638 ms`, change `[-6.5324% -1.9629% +2.1583%]`,
+      reported as no detected performance change versus interval 8.
+    - Main Profile backup, final-only validation: LogLoss `0.48805487`, RMSE
+      bins `0.03720748`, optimization samples `0.394338 s` and `0.390264 s`.
+    - Correctness check:
+      `rtk cargo test -- --skip test_next_interval_fsrs7` passed with
+      `168` passed, `5` ignored, and `1` filtered out.
+    - Interpretation: final-only validation preserved the selected parameters
+      on the user's collection, but interval 8 is the selected cadence because
+      it keeps one intermediate best-model checkpoint before the final epoch and
+      still provides most of the validation-cost reduction.
   - Required gates:
     - `rtk cargo test test_analytic_loss_and_grad_matches_burn`
     - `rtk cargo test windowed_matches_sum_of_prefixes`

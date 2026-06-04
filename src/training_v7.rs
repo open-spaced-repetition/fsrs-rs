@@ -177,20 +177,13 @@ impl Dual35 {
         Self { value, grad }
     }
 
-    fn log(self) -> Self {
-        let mut grad = [0.0; GRAD_LEN];
-        for (i, item) in grad.iter_mut().enumerate().take(GRAD_LEN) {
-            *item = self.grad[i] / self.value;
-        }
-        Self {
-            value: self.value.ln(),
-            grad,
-        }
-    }
-
     fn powf(self, exp: f64) -> Self {
         let value = self.value.powf(exp);
-        let coeff = exp * self.value.powf(exp - 1.0);
+        let coeff = if self.value.abs() > 1e-18 {
+            exp * value / self.value
+        } else {
+            exp * self.value.powf(exp - 1.0)
+        };
         let mut grad = [0.0; GRAD_LEN];
         for (i, item) in grad.iter_mut().enumerate().take(GRAD_LEN) {
             *item = self.grad[i] * coeff;
@@ -210,7 +203,14 @@ impl Dual35 {
 
     fn pow(self, exp: Self) -> Self {
         let base = self.clamp_min(1e-12);
-        exp.mul(base.log()).exp()
+        let ln_base = base.value.ln();
+        let value = (exp.value * ln_base).exp();
+        let inv_base = 1.0 / base.value;
+        let mut grad = [0.0; GRAD_LEN];
+        for (i, item) in grad.iter_mut().enumerate().take(GRAD_LEN) {
+            *item = value * (exp.grad[i] * ln_base + exp.value * base.grad[i] * inv_base);
+        }
+        Self { value, grad }
     }
 
     fn clamp_min(self, min: f64) -> Self {
@@ -1068,6 +1068,41 @@ mod tests {
     use burn::tensor::Tensor;
     use burn::tensor::TensorData;
     use burn::tensor::cast::ToElement;
+
+    #[test]
+    fn test_dual_pow_matches_expected_value_and_gradient() {
+        let base = Dual35::variable(2.5, 3);
+        let exp = Dual35::variable(1.7, 9);
+
+        let actual = base.pow(exp);
+        let expected_value = 2.5f64.powf(1.7);
+
+        assert!((actual.value - expected_value).abs() < 1e-12);
+        assert!((actual.grad[3] - 1.7 * expected_value / 2.5).abs() < 1e-12);
+        assert!((actual.grad[9] - expected_value * 2.5f64.ln()).abs() < 1e-12);
+        for (index, grad) in actual.grad.iter().enumerate() {
+            if index != 3 && index != 9 {
+                assert_eq!(*grad, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_dual_powf_matches_expected_value_and_gradient() {
+        let base = Dual35::variable(3.25, 4);
+        let exp = -0.75;
+
+        let actual = base.powf(exp);
+        let expected_value = 3.25f64.powf(exp);
+
+        assert!((actual.value - expected_value).abs() < 1e-12);
+        assert!((actual.grad[4] - exp * expected_value / 3.25).abs() < 1e-12);
+        for (index, grad) in actual.grad.iter().enumerate() {
+            if index != 4 {
+                assert_eq!(*grad, 0.0);
+            }
+        }
+    }
 
     #[test]
     fn test_fsrs7_schedule_penalty_toggle() {

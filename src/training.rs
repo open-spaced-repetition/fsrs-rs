@@ -50,6 +50,7 @@ const ADAM_BETA_2: f32 = 0.85;
 const ADAM_EPSILON: f32 = 1e-8;
 const WINDOWED_FSRS7_LEARNING_RATE: f64 = 0.07;
 const WINDOWED_FSRS7_NUM_EPOCHS: usize = 17;
+const WINDOWED_FSRS7_VALIDATION_INTERVAL: usize = 8;
 
 fn training_adam_config() -> AdamConfig {
     AdamConfig::new()
@@ -366,6 +367,10 @@ fn apply_windowed_fsrs7_training_tuning(
         config.learning_rate = WINDOWED_FSRS7_LEARNING_RATE;
         config.num_epochs = WINDOWED_FSRS7_NUM_EPOCHS;
     }
+}
+
+fn should_validate_epoch(epoch: usize, total_epochs: usize, use_windowed: bool) -> bool {
+    !use_windowed || epoch == total_epochs || epoch % WINDOWED_FSRS7_VALIDATION_INTERVAL == 0
 }
 
 fn normalize_for_model_version(
@@ -1131,6 +1136,9 @@ fn train<B: AutodiffBackend>(
         if let Some(host_parameters) = host_parameters.as_deref() {
             sync_host_parameters_to_model(&mut model, host_parameters);
         }
+        if !should_validate_epoch(epoch, config.num_epochs, use_windowed) {
+            continue;
+        }
         let model_valid = model.valid();
         let model_valid_w_vec = if host_parameters.is_none() {
             Some(model_valid.w.val().to_data().to_vec::<f32>().unwrap())
@@ -1288,6 +1296,16 @@ mod tests {
             assert_eq!(config.learning_rate, default_learning_rate);
             assert_eq!(config.num_epochs, default_num_epochs);
         }
+    }
+
+    #[test]
+    fn test_windowed_fsrs7_validation_cadence_keeps_final_epoch() {
+        assert!(should_validate_epoch(1, 8, false));
+        assert!(!should_validate_epoch(1, 17, true));
+        assert!(!should_validate_epoch(2, 17, true));
+        assert!(!should_validate_epoch(4, 17, true));
+        assert!(should_validate_epoch(8, 17, true));
+        assert!(should_validate_epoch(17, 17, true));
     }
 
     #[test]

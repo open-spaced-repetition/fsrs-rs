@@ -49,6 +49,13 @@ consumes schedule-penalty gradients. During each schedule-penalty call,
 parameter-only curve constants and success-prefactors are created once and
 passed through the rollout helpers. They are transient in-memory values only;
 they do not change the penalty formula or persisted model data.
+The scalar dual-number helper evaluates variable-exponent powers with a fused
+single-pass derivative formula, instead of materializing separate dual `log`,
+multiply, and `exp` intermediates. Constant-exponent dual powers reuse the
+already-computed power value for their derivative coefficient.
+On the FSRS-7 windowed optimization path, validation penalty values are computed
+only on the validation epochs selected by the training loop cadence. The
+training penalty gradient is still computed for every train batch.
 
 ## Data Flow
 
@@ -57,6 +64,8 @@ they do not change the penalty formula or persisted model data.
   - temporary scalar-only penalty values during validation batches.
   - temporary per-call schedule-penalty constants derived from the current
     model weights.
+  - temporary fused dual-power values and gradients during schedule-penalty
+    rollout.
 - Data read:
   - current model weights (`w[0..34]`), plus batch size for scaling.
   - input flag `enable_sched_penalties` to decide whether schedule penalties are computed.
