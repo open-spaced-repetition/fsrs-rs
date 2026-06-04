@@ -43,6 +43,34 @@ struct State {
     d: f32,
 }
 
+/// Weight-only subexpressions of the forward step. They depend solely on the parameter vector
+/// `w`, so they are computed ONCE per loss/gradient call instead of once per (card × timestep).
+/// Identical f32 ops to the inline versions they replace, so this is bit-for-bit — it only lifts
+/// loop-invariant transcendentals out of the hot per-timestep recurrence (forward and the curve
+/// reconstruction in the backward).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FwdConsts {
+    /// `exp(ln(0.9) / decay) - 1`, with `decay = -w[20]`. Used by the forgetting curve.
+    factor: f32,
+    /// `exp(w[8])` — the success-stability prefactor.
+    exp_w8: f32,
+    /// `exp(w[17] * w[18])` — denominator of the lapse failure floor `s / exp(w17*w18)`.
+    fail_floor_den: f32,
+    /// `init_difficulty(w, 4)` — the easy-rating initial difficulty used by mean reversion.
+    easy_d: f32,
+}
+
+#[inline]
+fn fwd_consts(w: &[f32]) -> FwdConsts {
+    let decay = -w[20];
+    FwdConsts {
+        factor: ((0.9f32.ln()) / decay).exp() - 1.0,
+        exp_w8: w[8].exp(),
+        fail_floor_den: (w[17] * w[18]).exp(),
+        easy_d: init_difficulty(w, 4),
+    }
+}
+
 #[inline]
 fn clamp(x: f32, min: f32, max: f32) -> f32 {
     x.clamp(min, max)
@@ -93,10 +121,9 @@ fn bce_loss_and_grad_r(r_raw: f32, label: f32, weight: f32) -> (f64, f64) {
 /// `R(t, s) = (1 + max(t, 0) / s * factor)^decay`. The factor is chosen so that
 /// `R(s, s) = 0.9`, matching the FSRS definition of stability as the elapsed
 /// days at 90% retrievability.
-fn curve_forward(w: &[f32], t: f32, s: f32) -> CurveCache {
+fn curve_forward(w: &[f32], t: f32, s: f32, factor: f32) -> CurveCache {
     let t = t.max(0.0);
     let decay = -w[20];
-    let factor = ((0.9f32.ln()) / decay).exp() - 1.0;
     let base = t / s * factor + 1.0;
     let retrievability = base.powf(decay);
     CurveCache {
@@ -177,6 +204,7 @@ fn init_difficulty(w: &[f32], rating: usize) -> f32 {
 /// pre-clamp values so `step_backward` can use the same non-smooth path.
 fn step_forward(
     w: &[f32],
+    consts: FwdConsts,
     state: State,
     delta_t: f32,
     rating: f32,
@@ -184,12 +212,12 @@ fn step_forward(
 ) -> (State, StepCache) {
     let last_s = clamp(state.s, S_MIN, S_MAX);
     let last_d = clamp(state.d, D_MIN, D_MAX);
-    let curve = curve_forward(w, delta_t, last_s);
+    let curve = curve_forward(w, delta_t, last_s, consts.factor);
     let r = curve.retrievability;
 
     let hard_penalty = if rating == 2.0 { w[15] } else { 1.0 };
     let easy_bonus = if rating == 4.0 { w[16] } else { 1.0 };
-    let success_inc = w[8].exp()
+    let success_inc = consts.exp_w8
         * (11.0 - last_d)
         * last_s.powf(-w[9])
         * (((1.0 - r) * w[10]).exp() - 1.0)
@@ -201,7 +229,7 @@ fn step_forward(
         * last_d.powf(-w[12])
         * ((last_s + 1.0).powf(w[13]) - 1.0)
         * ((1.0 - r) * w[14]).exp();
-    let failure_floor = last_s / (w[17] * w[18]).exp();
+    let failure_floor = last_s / consts.fail_floor_den;
     let failure_used_floor = failure_floor < failure_raw;
     let failure = if failure_used_floor {
         failure_floor
@@ -227,7 +255,7 @@ fn step_forward(
 
     let delta_d = -w[6] * (rating - 3.0);
     let next_d = last_d + (10.0 - last_d) * delta_d / 9.0;
-    let easy_d = init_difficulty(w, 4);
+    let easy_d = consts.easy_d;
     let mean_d = w[7] * (easy_d - next_d) + next_d;
     let mut new_d = clamp(mean_d, D_MIN, D_MAX);
 
@@ -459,6 +487,7 @@ fn backward_init(w: &[f32], rating: usize, g_s: f64, g_d: f64, gw: &mut [f64]) {
 /// boundaries.
 fn step_backward(
     w: &[f32],
+    consts: FwdConsts,
     c: &StepCache,
     g_out_s: f64,
     g_out_d: f64,
@@ -497,8 +526,8 @@ fn step_backward(
         t: c.delta_t.max(0.0),
         s: c.last_s,
         decay: -w[20],
-        factor: ((0.9f32.ln()) / -w[20]).exp() - 1.0,
-        base: c.delta_t.max(0.0) / c.last_s * (((0.9f32.ln()) / -w[20]).exp() - 1.0) + 1.0,
+        factor: consts.factor,
+        base: c.delta_t.max(0.0) / c.last_s * consts.factor + 1.0,
         retrievability: c.retrievability,
     };
     g_last_s += curve_backward(w, curve, g_r, gw);
@@ -522,6 +551,7 @@ fn step_backward(
 /// walking the cached review steps in reverse.
 fn prefix_loss_and_grad(
     w: &[f32],
+    consts: FwdConsts,
     t_hist: &[f32],
     r_hist: &[f32],
     seq_len: usize,
@@ -541,19 +571,19 @@ fn prefix_loss_and_grad(
     };
     for t in 0..seq_len {
         let idx = t * batch + column;
-        let (next, cache) = step_forward(w, state, t_hist[idx], r_hist[idx], t);
+        let (next, cache) = step_forward(w, consts, state, t_hist[idx], r_hist[idx], t);
         state = next;
         if need_grad {
             caches.push(cache);
         }
     }
-    let curve = curve_forward(w, delta_t, state.s);
+    let curve = curve_forward(w, delta_t, state.s, consts.factor);
     let (loss, g_r) = bce_loss_and_grad_r(curve.retrievability, label, weight);
     if let Some(gw) = gw {
         let mut g_s = curve_backward(w, curve, g_r, gw);
         let mut g_d = 0.0;
         for cache in caches.iter().rev() {
-            let (prev_s, prev_d) = step_backward(w, cache, g_s, g_d, 0.0, gw);
+            let (prev_s, prev_d) = step_backward(w, consts, cache, g_s, g_d, 0.0, gw);
             g_s = prev_s;
             g_d = prev_d;
         }
@@ -579,10 +609,12 @@ pub(crate) fn batch_loss_and_grad(
     weights: &[f32],
     gw: &mut [f64],
 ) -> f64 {
+    let consts = fwd_consts(w);
     let mut loss = 0.0;
     for column in 0..batch {
         loss += prefix_loss_and_grad(
             w,
+            consts,
             t_hist,
             r_hist,
             seq_len,
@@ -613,10 +645,12 @@ pub(crate) fn batch_loss(
     labels: &[f32],
     weights: &[f32],
 ) -> f64 {
+    let consts = fwd_consts(w);
     let mut loss = 0.0;
     for column in 0..batch {
         loss += prefix_loss_and_grad(
             w,
+            consts,
             t_hist,
             r_hist,
             seq_len,
@@ -643,6 +677,7 @@ pub(crate) fn batch_loss(
 /// propagated backward through the entire cached card trajectory.
 fn card_column_loss_and_grad(
     w: &[f32],
+    consts: FwdConsts,
     t_hist: &[f32],
     r_hist: &[f32],
     seq_len: usize,
@@ -667,7 +702,7 @@ fn card_column_loss_and_grad(
     };
     for t in 0..seq_len {
         let idx = t * batch + column;
-        let (next, cache) = step_forward(w, state, t_hist[idx], r_hist[idx], t);
+        let (next, cache) = step_forward(w, consts, state, t_hist[idx], r_hist[idx], t);
         let (step_loss, g_r) = if t == 0 {
             (0.0, 0.0)
         } else {
@@ -684,7 +719,7 @@ fn card_column_loss_and_grad(
         let mut g_s = 0.0;
         let mut g_d = 0.0;
         for (t, cache) in caches.iter().enumerate().rev() {
-            let (prev_s, prev_d) = step_backward(w, cache, g_s, g_d, g_r_losses[t], gw);
+            let (prev_s, prev_d) = step_backward(w, consts, cache, g_s, g_d, g_r_losses[t], gw);
             g_s = prev_s;
             g_d = prev_d;
         }
@@ -709,10 +744,12 @@ pub(crate) fn card_loss_and_grad(
     weights: &[f32],
     gw: &mut [f64],
 ) -> f64 {
+    let consts = fwd_consts(w);
     let mut loss = 0.0;
     for column in 0..batch {
         loss += card_column_loss_and_grad(
             w,
+            consts,
             t_hist,
             r_hist,
             seq_len,
@@ -741,10 +778,11 @@ pub(crate) fn card_loss(
     labels: &[f32],
     weights: &[f32],
 ) -> f64 {
+    let consts = fwd_consts(w);
     let mut loss = 0.0;
     for column in 0..batch {
         loss += card_column_loss_and_grad(
-            w, t_hist, r_hist, seq_len, batch, column, labels, weights, None,
+            w, consts, t_hist, r_hist, seq_len, batch, column, labels, weights, None,
         );
     }
     loss
