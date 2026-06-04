@@ -269,6 +269,16 @@ pub fn compute_parameters(
         finish_progress();
         return Err(FSRSError::InvalidInput);
     }
+    if original_train_set.iter().any(|item| {
+        item.reviews.is_empty()
+            || item
+                .reviews
+                .iter()
+                .any(|review| !(1..=4).contains(&review.rating))
+    }) {
+        finish_progress();
+        return Err(FSRSError::InvalidInput);
+    }
 
     let (dataset_for_initialization, train_set) = prepare_training_data(original_train_set.clone());
     let train_card_ids = match card_ids {
@@ -1510,6 +1520,25 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(result, Err(FSRSError::InvalidInput)));
+    }
+
+    #[test]
+    fn test_compute_parameters_rejects_invalid_items() {
+        let empty_item = FSRSItem { reviews: vec![] };
+        let invalid_rating_item = FSRSItem {
+            reviews: vec![FSRSReview {
+                rating: 5,
+                delta_t: 0,
+            }],
+        };
+
+        for item in [empty_item, invalid_rating_item] {
+            let result = compute_parameters(ComputeParametersInput {
+                train_set: vec![item],
+                ..Default::default()
+            });
+            assert!(matches!(result, Err(FSRSError::InvalidInput)));
+        }
     }
 
     #[test]

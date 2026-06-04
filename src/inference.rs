@@ -2,6 +2,7 @@ use itertools::izip;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
+use std::sync::{Arc, Mutex};
 
 use crate::dataset::{constant_weighted_fsrs_items, recency_weighted_fsrs_items};
 use crate::error::Result;
@@ -12,6 +13,7 @@ use crate::training::{self, ComputeParametersInput};
 use crate::{FSRSError, FSRSItem};
 /// This is a slice for efficiency, but should always be 21 in length.
 pub type Parameters = [f32];
+type SharedTrainingProgress = Arc<Mutex<training::CombinedProgressState>>;
 
 pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
 pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
@@ -68,6 +70,14 @@ struct RMatrixValue {
     weight: f32,
 }
 
+#[derive(Default)]
+struct SplitEvaluation {
+    predictions: Vec<f32>,
+    labels: Vec<f32>,
+    weights: Vec<f32>,
+    r_matrix: HashMap<(u32, u32, u32), RMatrixValue>,
+}
+
 fn validate_state(state: MemoryState) -> Result<MemoryState> {
     if !state.stability.is_finite() || !state.difficulty.is_finite() {
         Err(FSRSError::InvalidInput)
@@ -77,6 +87,9 @@ fn validate_state(state: MemoryState) -> Result<MemoryState> {
 }
 
 fn predict_retrievability(fsrs: &FSRS, item: &FSRSItem) -> Result<f32> {
+    if item.reviews.is_empty() {
+        return Err(FSRSError::InvalidInput);
+    }
     let history_len = item.reviews.len().saturating_sub(1);
     let state = fsrs.forward_reviews(&item.reviews[..history_len], None);
     let current = item.current();
@@ -99,6 +112,85 @@ fn rmse_bins(r_matrix: &HashMap<(u32, u32, u32), RMatrixValue>) -> f32 {
         .sum::<f32>()
         / r_matrix.values().map(|v| v.weight).sum::<f32>())
     .sqrt()
+}
+
+fn evaluate_time_series_split(
+    split: TimeSeriesSplit,
+    enable_short_term: bool,
+    num_relearning_steps: Option<usize>,
+    progress: Option<SharedTrainingProgress>,
+) -> Result<SplitEvaluation> {
+    if progress
+        .as_ref()
+        .is_some_and(|progress| progress.lock().unwrap().want_abort)
+    {
+        return Err(FSRSError::Interrupted);
+    }
+
+    let input = ComputeParametersInput {
+        train_set: split.train_items,
+        card_ids: None,
+        enable_short_term,
+        num_relearning_steps,
+        progress: progress.clone(),
+    };
+    let parameters = training::compute_parameters(input)?;
+
+    if progress
+        .as_ref()
+        .is_some_and(|progress| progress.lock().unwrap().want_abort)
+    {
+        return Err(FSRSError::Interrupted);
+    }
+
+    let fsrs = FSRS::new(&parameters)?;
+    let mut evaluation = SplitEvaluation {
+        predictions: Vec::with_capacity(split.test_items.len()),
+        labels: Vec::with_capacity(split.test_items.len()),
+        weights: Vec::with_capacity(split.test_items.len()),
+        r_matrix: HashMap::new(),
+    };
+
+    for item in &split.test_items {
+        let pred = predict_retrievability(&fsrs, item)?;
+        let label = if item.current().rating > 1 { 1.0 } else { 0.0 };
+        let bin = item.r_matrix_index();
+        let value = evaluation.r_matrix.entry(bin).or_default();
+        value.predicted += pred;
+        value.actual += label;
+        value.count += 1.0;
+        value.weight += 1.0;
+        evaluation.predictions.push(pred);
+        evaluation.labels.push(label);
+        evaluation.weights.push(1.0);
+    }
+
+    Ok(evaluation)
+}
+
+fn merge_split_evaluation(
+    evaluation: SplitEvaluation,
+    predictions: &mut Vec<f32>,
+    labels: &mut Vec<f32>,
+    weights: &mut Vec<f32>,
+    r_matrix: &mut HashMap<(u32, u32, u32), RMatrixValue>,
+) {
+    predictions.extend(evaluation.predictions);
+    labels.extend(evaluation.labels);
+    weights.extend(evaluation.weights);
+    for (bin, value) in evaluation.r_matrix {
+        let aggregate = r_matrix.entry(bin).or_default();
+        aggregate.predicted += value.predicted;
+        aggregate.actual += value.actual;
+        aggregate.count += value.count;
+        aggregate.weight += value.weight;
+    }
+}
+
+fn abort_training(progresses: &[SharedTrainingProgress]) {
+    for progress in progresses {
+        progress.lock().unwrap().want_abort = true;
+    }
 }
 
 impl FSRS {
@@ -479,37 +571,73 @@ where
         total: split_count,
     };
 
-    for split in splits {
-        let input = ComputeParametersInput {
-            train_set: split.train_items,
-            card_ids: None,
-            enable_short_term,
-            num_relearning_steps,
-            progress: None,
-        };
-        let parameters = training::compute_parameters(input)?;
-        let fsrs = FSRS::new(&parameters)?;
-        predictions.reserve(split.test_items.len());
-        labels.reserve(split.test_items.len());
-        weights.reserve(split.test_items.len());
-        for item in &split.test_items {
-            let pred = predict_retrievability(&fsrs, item)?;
-            let label = if item.current().rating > 1 { 1.0 } else { 0.0 };
-            let bin = item.r_matrix_index();
-            let value = r_matrix.entry(bin).or_default();
-            value.predicted += pred;
-            value.actual += label;
-            value.count += 1.0;
-            value.weight += 1.0;
-            predictions.push(pred);
-            labels.push(label);
-            weights.push(1.0);
+    {
+        let split_progresses = (0..split_count)
+            .map(|_| training::CombinedProgressState::new_shared())
+            .collect::<Vec<_>>();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut pending = std::iter::repeat_with(|| None)
+            .take(split_count)
+            .collect::<Vec<Option<Result<SplitEvaluation>>>>();
+        let mut next_index = 0;
+        let mut outcome: Result<()> = Ok(());
+
+        for (index, split) in splits.into_iter().enumerate() {
+            let tx = tx.clone();
+            let progress = split_progresses[index].clone();
+            rayon::spawn(move || {
+                let result = evaluate_time_series_split(
+                    split,
+                    enable_short_term,
+                    num_relearning_steps,
+                    Some(progress),
+                );
+                let _ = tx.send((index, result));
+            });
+        }
+        drop(tx);
+
+        for (index, result) in rx {
+            if outcome.is_err() {
+                continue;
+            }
+
+            pending[index] = Some(result);
+            while next_index < split_count {
+                let Some(result) = pending[next_index].take() else {
+                    break;
+                };
+
+                match result {
+                    Ok(evaluation) => {
+                        merge_split_evaluation(
+                            evaluation,
+                            &mut predictions,
+                            &mut labels,
+                            &mut weights,
+                            &mut r_matrix,
+                        );
+                        progress_info.current += 1;
+                        if !progress(progress_info) {
+                            abort_training(&split_progresses);
+                            outcome = Err(FSRSError::Interrupted);
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        abort_training(&split_progresses);
+                        outcome = Err(err);
+                        break;
+                    }
+                }
+                next_index += 1;
+            }
         }
 
-        progress_info.current += 1;
-        if !progress(progress_info) {
-            return Err(FSRSError::Interrupted);
+        if outcome.is_ok() && next_index < split_count {
+            outcome = Err(FSRSError::InvalidInput);
         }
+        outcome?;
     }
 
     let rmse = rmse_bins(&r_matrix);
