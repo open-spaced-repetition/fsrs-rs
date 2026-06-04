@@ -50,7 +50,9 @@ fn clamp(x: f32, min: f32, max: f32) -> f32 {
 
 #[inline]
 fn clamp_grad(x: f32, min: f32, max: f32) -> f64 {
-    if x > min && x < max { 1.0 } else { 0.0 }
+    // Match Burn/PyTorch clamp semantics: gradients pass through values exactly
+    // on the clamp boundary and stop only outside the interval.
+    if x >= min && x <= max { 1.0 } else { 0.0 }
 }
 
 #[inline]
@@ -752,6 +754,15 @@ pub(crate) fn card_loss(
 mod tests {
     use super::*;
     use crate::DEFAULT_PARAMETERS;
+
+    #[test]
+    fn clamp_grad_matches_burn_boundary_semantics() {
+        assert_eq!(clamp_grad(0.0, 0.001, 100.0), 0.0);
+        assert_eq!(clamp_grad(0.001, 0.001, 100.0), 1.0);
+        assert_eq!(clamp_grad(0.5, 0.001, 100.0), 1.0);
+        assert_eq!(clamp_grad(100.0, 0.001, 100.0), 1.0);
+        assert_eq!(clamp_grad(101.0, 0.001, 100.0), 0.0);
+    }
 
     #[test]
     fn finite_difference_matches_batch_gradient() {
