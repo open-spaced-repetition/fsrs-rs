@@ -215,43 +215,58 @@ fn step_forward(
     let curve = curve_forward(w, delta_t, last_s, consts.factor);
     let r = curve.retrievability;
 
-    let hard_penalty = if rating == 2.0 { w[15] } else { 1.0 };
-    let easy_bonus = if rating == 4.0 { w[16] } else { 1.0 };
-    let success_inc = consts.exp_w8
-        * (11.0 - last_d)
-        * last_s.powf(-w[9])
-        * (((1.0 - r) * w[10]).exp() - 1.0)
-        * hard_penalty
-        * easy_bonus;
-    let success = last_s * (success_inc + 1.0);
-
-    let failure_raw = w[11]
-        * last_d.powf(-w[12])
-        * ((last_s + 1.0).powf(w[13]) - 1.0)
-        * ((1.0 - r) * w[14]).exp();
-    let failure_floor = last_s / consts.fail_floor_den;
-    let failure_used_floor = failure_floor < failure_raw;
-    let failure = if failure_used_floor {
-        failure_floor
-    } else {
-        failure_raw
-    };
-
-    let short_raw = (w[17] * (rating - 3.0 + w[18])).exp() * last_s.powf(-w[19]);
-    let short_raw_active = !(rating >= 2.0 && short_raw < 1.0);
-    let short_value = if rating >= 2.0 {
-        short_raw.max(1.0)
-    } else {
-        short_raw
-    };
-    let short = last_s * short_value;
-
     let use_short = delta_t == 0.0;
     let use_failure = rating == 1.0;
-    let mut new_s = if use_failure { failure } else { success };
-    if use_short {
-        new_s = short;
-    }
+    let padding = rating == 0.0;
+    let init_selected = nth == 0 && state.s == 0.0;
+
+    // Only the SELECTED stability branch is evaluated. The forward used to compute all three
+    // branches (success + failure + short = ~5 powf + 3 exp) every step and then pick one; since
+    // the selection and `step_backward` both dispatch on the same flags, computing the unused
+    // branches only wasted transcendentals. Padding / first-review init overwrite `new_s`
+    // entirely, so no branch is needed there at all. Cache fields for the inactive branches keep
+    // dummy values that `step_backward` never reads (it takes the same branch). Bit-for-bit.
+    let mut failure_raw = 0.0;
+    let mut failure_floor = 0.0;
+    let mut failure_used_floor = false;
+    let mut short_raw = 0.0;
+    let mut short_value = 0.0;
+    let mut short_raw_active = false;
+
+    let mut new_s = if padding || init_selected {
+        last_s // placeholder; overwritten by the init/padding blocks below
+    } else if use_short {
+        short_raw = (w[17] * (rating - 3.0 + w[18])).exp() * last_s.powf(-w[19]);
+        short_raw_active = !(rating >= 2.0 && short_raw < 1.0);
+        short_value = if rating >= 2.0 {
+            short_raw.max(1.0)
+        } else {
+            short_raw
+        };
+        last_s * short_value
+    } else if use_failure {
+        failure_raw = w[11]
+            * last_d.powf(-w[12])
+            * ((last_s + 1.0).powf(w[13]) - 1.0)
+            * ((1.0 - r) * w[14]).exp();
+        failure_floor = last_s / consts.fail_floor_den;
+        failure_used_floor = failure_floor < failure_raw;
+        if failure_used_floor {
+            failure_floor
+        } else {
+            failure_raw
+        }
+    } else {
+        let hard_penalty = if rating == 2.0 { w[15] } else { 1.0 };
+        let easy_bonus = if rating == 4.0 { w[16] } else { 1.0 };
+        let success_inc = consts.exp_w8
+            * (11.0 - last_d)
+            * last_s.powf(-w[9])
+            * (((1.0 - r) * w[10]).exp() - 1.0)
+            * hard_penalty
+            * easy_bonus;
+        last_s * (success_inc + 1.0)
+    };
 
     let delta_d = -w[6] * (rating - 3.0);
     let next_d = last_d + (10.0 - last_d) * delta_d / 9.0;
@@ -259,14 +274,12 @@ fn step_forward(
     let mean_d = w[7] * (easy_d - next_d) + next_d;
     let mut new_d = clamp(mean_d, D_MIN, D_MAX);
 
-    let init_selected = nth == 0 && state.s == 0.0;
     let init_rating = clamp(rating, 1.0, 4.0) as usize;
     if init_selected {
         new_s = w[init_rating - 1];
         new_d = clamp(init_difficulty(w, init_rating), D_MIN, D_MAX);
     }
 
-    let padding = rating == 0.0;
     if padding {
         new_s = last_s;
         new_d = last_d;
