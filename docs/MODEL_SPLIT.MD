@@ -53,7 +53,9 @@ while keeping shared model state/config logic in `src/model.rs`.
 - FSRS-7 card-id windowed training can route BCE loss and BCE gradient
   calculation through `analytic_v7`. The shared training loop composes
   schedule/L2 penalties and can apply host-side Adam plus version-aware clipping
-  for that windowed FSRS-7 path.
+  for that windowed FSRS-7 path. Production FSRS-7 windowed batches are
+  host-array-only; Burn tensors are only constructed by test oracles for this
+  path.
 - Version constants are colocated with version logic:
   - `src/model_v6.rs`: `PARAM_LEN`
   - `src/model_v7.rs`: FSRS-7 solver/LUT constants and `PARAM_LEN`
@@ -78,5 +80,5 @@ while keeping shared model state/config logic in `src/model.rs`.
 - Data storage:
   - no new persistence; all values remain in-memory
   - FSRS-7 S90 LUT cache remains process-local memory only
-  - analytic gradient arrays and host Adam moments live only for the current
-    optimization run
+  - shared windowed host batches, analytic gradient arrays, and host Adam
+    moments live only for the current optimization run

@@ -39,9 +39,9 @@ item storage during preprocessing.
   - One review-length-sorted weighted item vector inside `train()`.
   - Burn tensor batch datasets for training and validation, built from that same
     sorted item order when card ids are absent.
-  - FSRS-7 windowed tensor batches when card ids are present. These batches
-    keep both Burn tensors and flat host arrays for the same histories, labels,
-    and weights.
+  - One shared FSRS-7 windowed host batch vector when card ids are present. Each
+    batch stores flat host arrays for histories, labels, and weights; production
+    windowed training no longer creates Burn tensors for those batches.
 - Data updated:
   - The in-memory training config for FSRS-7 card-id optimization, which uses
     learning rate `0.07` and `17` epochs instead of the generic defaults.
@@ -49,14 +49,16 @@ item storage during preprocessing.
   - Training progress state when progress tracking is enabled.
 - Data storage:
   - No persistent storage.
-  - Tensor batches and sorted weighted items are in-memory only for the training
-    call.
+  - Prefix tensor batches, windowed host arrays, and sorted weighted items are
+    in-memory only for the training call.
 
 `compute_parameters()` and `benchmark()` intentionally train and validate on the
 same weighted items. `train()` therefore consumes one weighted item vector and
-builds both train and validation tensor datasets from one sorted order, avoiding
-a redundant outer item clone/sort while preserving the existing Burn tensor
-training path.
+builds both train and validation prefix tensor datasets from one sorted order,
+avoiding a redundant outer item clone/sort while preserving the existing Burn
+tensor training path. For FSRS-7 card-id windowed training, `train()` builds one
+host batch vector and reuses it for both shuffled training and shuffled
+validation passes.
 
 ## Card Ids And Windowed Training
 
@@ -70,8 +72,8 @@ match `train_set`; otherwise `compute_parameters()` returns `InvalidInput`.
   - In-memory `(FSRSItem, card_id)` pairs before preprocessing.
   - In-memory filtered training pairs after outlier filtering.
   - In-memory recency-weighted items retaining their card id.
-  - FSRS-7 windowed tensor batches grouped by card id, where each tensor column
-    is one full card review sequence and loss weights mark the surviving prefix
+  - FSRS-7 windowed host batches grouped by card id, where each batch column is
+    one full card review sequence and loss weights mark the surviving prefix
     prediction timesteps.
   - Transient scalar dual-number values and a 35-parameter BCE gradient array
     for FSRS-7 windowed training batches.
@@ -83,12 +85,16 @@ match `train_set`; otherwise `compute_parameters()` returns `InvalidInput`.
   - FSRS-7 windowed training updates the in-memory host parameter vector with
     the analytic BCE gradient, existing schedule/L2 penalty gradients, freeze
     masks, host Adam, and version-aware parameter clipping.
+  - FSRS-7 analytic window loops update transient memory state only when a later
+    prediction can consume it; the final unused state update in each batch
+    column is skipped.
   - The Burn model parameter tensor is synchronized from the host parameter
     vector for epoch selection and final return.
 - Data storage:
   - Card ids live only for the `compute_parameters()` call.
-  - Windowed host arrays and analytic gradient arrays live only for the current
-    training batch.
+  - Windowed host arrays live only for the current training call and are shared
+    by windowed training and validation passes.
+  - Analytic gradient arrays live only for the current training batch.
   - Analytic validation loss values live only for the current validation batch.
   - Host Adam moments live only for the current FSRS-7 windowed training run.
 

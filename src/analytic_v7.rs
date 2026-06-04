@@ -276,9 +276,9 @@ fn step(
 
 fn bce_loss(r: Dual35, label: f64, weight: f64) -> Dual35 {
     let r = r.clamp(0.0001, 0.9999);
-    let keep = r.ln().mul_const(label);
-    let forget = r.const_sub(1.0).ln().mul_const(1.0 - label);
-    keep.add(forget).mul_const(-weight)
+    debug_assert!(label == 0.0 || label == 1.0);
+    let probability = if label == 0.0 { r.const_sub(1.0) } else { r };
+    probability.ln().mul_const(-weight)
 }
 
 fn init_stability_scalar(w: &[f32], rating: usize) -> f64 {
@@ -377,7 +377,9 @@ fn step_scalar(
 
 fn bce_loss_scalar(r: f64, label: f64, weight: f64) -> f64 {
     let r = r.clamp(0.0001, 0.9999);
-    -weight * (label * r.ln() + (1.0 - label) * (1.0 - r).ln())
+    debug_assert!(label == 0.0 || label == 1.0);
+    let probability = 1.0 - (label - r).abs();
+    -weight * probability.ln()
 }
 
 pub(crate) fn windowed_loss(
@@ -405,7 +407,9 @@ pub(crate) fn windowed_loss(
                 let r = forgetting_curve_scalar(w, delta_t, state.stability);
                 loss += bce_loss_scalar(r, labels[index] as f64, weight);
             }
-            state = step_scalar(w, delta_t, rating, state, row);
+            if row + 1 < seq_len {
+                state = step_scalar(w, delta_t, rating, state, row);
+            }
         }
     }
 
@@ -443,7 +447,9 @@ pub(crate) fn windowed_loss_and_grad(
                     *dst += src;
                 }
             }
-            state = step(&w, delta_t, rating, state, row);
+            if row + 1 < seq_len {
+                state = step(&w, delta_t, rating, state, row);
+            }
         }
     }
 
@@ -452,4 +458,39 @@ pub(crate) fn windowed_loss_and_grad(
         *dst = src as f32;
     }
     (loss, grad_f32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hard_label_bce_scalar_matches_reference() {
+        for (label, expected_probability) in [(0.0, 0.63), (1.0, 0.37)] {
+            let loss = bce_loss_scalar(0.37, label, 2.5);
+            let expected = -2.5 * f64::ln(expected_probability);
+            assert!(
+                (loss - expected).abs() < 1e-12,
+                "label {label} loss {loss}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_hard_label_bce_dual_gradient_matches_reference() {
+        for (label, expected_grad) in [(0.0, 2.5 / 0.63), (1.0, -2.5 / 0.37)] {
+            let loss = bce_loss(Dual35::variable(0.37, 0), label, 2.5);
+            let expected_value = -2.5 * f64::ln(if label == 0.0 { 0.63 } else { 0.37 });
+            assert!(
+                (loss.value - expected_value).abs() < 1e-12,
+                "label {label} loss {}, expected {expected_value}",
+                loss.value
+            );
+            assert!(
+                (loss.grad[0] - expected_grad).abs() < 1e-12,
+                "label {label} grad {}, expected {expected_grad}",
+                loss.grad[0]
+            );
+        }
+    }
 }

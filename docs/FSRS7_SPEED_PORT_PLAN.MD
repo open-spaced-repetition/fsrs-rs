@@ -80,6 +80,20 @@ Current transparent groups already implemented on this branch:
   - Local Criterion after this tuning: `parameters/compute_parameters`
     `462.80 ms..487.68 ms`, reported as a regression versus the preceding
     8-epoch host-Adam path because this intentionally runs 17 epochs.
+- [x] Host-only shared FSRS-7 windowed batches plus hard-label BCE cleanup.
+  - Files: `src/training.rs`, `src/analytic_v7.rs`.
+  - Data-flow doc: `docs/TRAINING_DATA_FLOW.MD`.
+  - The FSRS-7 card-id windowed path now builds one host-array batch vector and
+    reuses it for both training and validation. Production windowed batches no
+    longer store Burn tensors; Burn tensors are only created by test oracles.
+  - The analytic BCE path now uses the hard-label identity so each prediction
+    uses one logarithm instead of computing both keep/forget terms. The
+    analytic loss and gradient loops also skip the final state update for each
+    batch column because no later prediction can consume it. Exp fusion and
+    SIMD remain unimplemented.
+  - Local Criterion after this step: `parameters/compute_parameters`
+    `419.67 ms..429.12 ms`, about `11.4%` faster than the preceding
+    `.07`/17-epoch benchmark around `478.47 ms`.
 
 Verification commands already run after the scalar group:
 
@@ -167,8 +181,8 @@ Not present here:
 - [x] Scalar `src/analytic_v7.rs` hand-written FSRS-7 windowed BCE gradient for
   the current 35-parameter layout.
 - [ ] No `wide` or `bytemuck` SIMD dependencies.
-- [ ] No host-only training batches reused by both train and validation.
-- [x] Card-id-aware O(N) expanding-window training batch layout is present for FSRS-7, Burn-backed.
+- [x] Host-only FSRS-7 windowed training batches are reused by both train and validation.
+- [x] Card-id-aware O(N) expanding-window training batch layout is present for FSRS-7, host-backed.
 - [x] Host-side Adam loop is present for FSRS-7 windowed card-id training.
 
 ## PR 411 Candidate Selection
@@ -183,8 +197,9 @@ Selected next candidates:
   - Scope: add scalar `FSRS` review replay, retrievability prediction, `memory_state`, `historical_memory_states`, `next_states`, and evaluation aggregation while keeping Burn oracle tests.
 - [x] Port direct host batch construction for FSRS-7 card-id windowed training after scalar inference/evaluation.
   - PR 411 impact is part of the `compute_parameters` speedup path and removes tensor batch construction overhead.
-  - Implemented as opt-in card-id windowed host arrays alongside Burn tensors;
-    callers without card ids keep the prefix-item tensor path.
+  - Implemented as opt-in card-id windowed host arrays; production windowed
+    batches no longer carry Burn tensors, and callers without card ids keep the
+    prefix-item tensor path.
 - [x] Port scalar analytic FSRS-7 BCE loss/gradient after host batches.
   - PR 411 impact: `compute_parameters` around `3.0x` without `card_ids`.
   - Implemented as a 35-param scalar dual-number gradient in `src/analytic_v7.rs`
@@ -303,6 +318,7 @@ Baseline and selected production rows:
 | Windowed host Adam default | `0.02` | `8` | `0.49103013` | `0.04523148` | `2.043` | miss | About `12.7x` faster than prefix, but outside gate. |
 | Windowed selected temporary run | `0.07` | `17` | `0.49010426` | not recorded | `3.885` | pass | Selected after LR sweep. |
 | Windowed selected production check | `0.07` | `17` | `0.49010426` | `0.04418439` | `3.970` | pass | About `6.71x` faster than production prefix timing `26.627 s`. |
+| Windowed host-only/BCE/skip-last check | `0.07` | `17` | `0.48997682` | `0.04346088` | `3.917..3.939` | pass | Temp copy of live collection after live DB lock; prepared items `150240`. |
 
 Default-LR epoch-count sweep:
 
@@ -394,6 +410,19 @@ Interpretation:
   the same gate with LogLoss `0.49010426`, had essentially the same runtime as
   lr `0.068`, and is scoped only to FSRS-7 card-id windowed optimization.
 
+Follow-up host-only/BCE/skip-last timing:
+
+- The live profile database was locked during the follow-up timing, so the
+  collection and its WAL/SHM sidecars were copied to
+  `/private/tmp/fsrs-main-profile-collection.anki2*` and opened from there.
+- Temp-copy prefix path: prepared items `150240`, LogLoss `0.48874179`, RMSE
+  bins `0.03781221`, optimization `27.966 s`.
+- Temp-copy windowed path after host-only batches, hard-label BCE, and skip-last:
+  LogLoss `0.48997682`, RMSE bins `0.04346088`, windowed-only optimization
+  `3.917 s` and `3.939 s` on repeated runs.
+- Temp-copy gate: prefix LogLoss `0.48874179` plus `0.0015` = `0.49024179`;
+  the windowed result remains inside the gate.
+
 ## Implementation Checklist
 
 ### 1. Baseline And Gates
@@ -426,9 +455,10 @@ Interpretation:
     card, plus card-id length rejection and preprocessing alignment.
   - Remaining tests: broader host batch layout coverage for padding, skipped
     middle prefixes, and batch ordering.
-- [ ] Reuse one immutable host-batch vector for train and validation when `train_set == test_set`.
+- [x] Reuse one immutable host-batch vector for train and validation when `train_set == test_set`.
   - Current `compute_parameters()` and `benchmark()` pass identical weighted sets.
-  - Tests: deterministic shuffle/order test against `ShuffleDataLoader` behavior.
+  - Tests: existing windowed loss/gradient and validation-loss oracles cover the
+    shared host batch layout against Burn tensors constructed only in tests.
 
 ### 3. Analytic FSRS-7 BCE Kernel
 
@@ -462,16 +492,19 @@ Interpretation:
   - Tests: mismatched card-id length rejection, preprocessing alignment, and windowed loss/gradient oracle.
 - [x] Group all surviving prefix-items for a card into one mini-batch.
   - Source: `group_cards_into_batches()` and `build_batch_host_windowed()`.
-  - Burn-backed grouping is implemented. Remaining host/SIMD grouping tests should cover prediction count, filtered middle prefixes with weight `0`, and padding columns.
+  - Host-backed grouping is implemented. Remaining host/SIMD grouping tests
+    should cover prediction count, filtered middle prefixes with weight `0`,
+    and padding columns.
 - [ ] Port windowed gradient and validation kernels.
   - Source: `card_loss_and_grad_simd()` and `card_loss_simd()`.
   - Gradient status: scalar analytic windowed BCE gradient is implemented.
   - Validation status: scalar analytic windowed BCE validation loss is implemented.
   - Remaining status: SIMD kernels are not implemented.
   - Tests: windowed scalar gradient equals sum of per-prefix gradients, SIMD window grad matches scalar window oracle, validation loss matches scalar oracle.
-- [ ] Add last-step curve-only optimization after the windowed path is correct.
+- [x] Add last-step curve-only optimization after the windowed path is correct.
   - Source: iter24 validation skip-last and iter25 gradient skip-last.
-  - Tests: bit-for-bit or tolerance-proved equality against the unpeeled windowed path.
+  - Tests: windowed scalar loss/gradient still match the Burn oracle after
+    skipping the final unused state update.
 
 ### 6. Host-Side Optimizer
 
@@ -485,9 +518,10 @@ Interpretation:
 
 ### 7. Micro-Optimizations To Layer After Correctness
 
-- [ ] Unified BCE identity `-ln(1 - |label - r|)` for hard labels only.
+- [x] Unified BCE identity `-ln(1 - |label - r|)` for hard labels only.
   - Source: iter20 and Phase 2 iter2.
-  - Tests: labels are strictly `0` or `1`; branchless BCE equals existing BCE on synthetic data.
+  - Tests: scalar BCE value and dual BCE gradient match the hard-label
+    reference for labels `0` and `1`.
 - [ ] Fuse compatible exp pairs in the FSRS-7 recurrence.
   - Source: iter24.
   - Tests: gradient and loss gate because this is a floating-point reassociation.
@@ -534,13 +568,14 @@ Accepted source improvements worth considering:
 
 - [x] Analytic BCE gradient replacing Burn autograd: iter2, `2.1656x`.
 - [ ] Scalar analytic cleanup and hoists: iter5, iter8, iter10, iter13, roughly `1.07x` to `1.20x` each.
-- [ ] Direct host batch building and reuse: iter12 `1.2925x`, iter19 `1.1455x`.
+- [x] Direct host batch building and reuse: iter12 `1.2925x`, iter19 `1.1455x`.
 - [ ] SIMD validation and gradient: iter14 `1.3051x`, iter15 `2.5002x`.
 - [ ] Minimax SIMD transcendentals: iter17 `1.1557x`, iter21 `1.0833x`, iter23 `1.0958x`.
 - [ ] O(N) expanding-window training: iter18 `3.1182x`.
-- [ ] Unified hard-label BCE: iter20 `1.0588x`.
+- [x] Unified hard-label BCE: iter20 `1.0588x`.
 - [x] Host-side Adam: iter22 `1.0773x`.
-- [ ] Exp fusion and last-step skipping: iter24 `1.0526x`, iter25 `1.0541x`.
+- [ ] Exp fusion: iter24 `1.0526x`.
+- [x] Last-step skipping: iter25 `1.0541x`.
 - [ ] Benchmark-specific follow-up: Phase 2 iter1 `1.16x`, iter2 `1.06x`.
 
 Rejected but banked:

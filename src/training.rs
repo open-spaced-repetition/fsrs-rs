@@ -1,13 +1,11 @@
 use crate::batch_shuffle::BatchTensorDataset;
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    FSRSItem, WeightedFSRSItem, filter_outlier_indices, prepare_training_data,
+    FSRSBatch, FSRSItem, WeightedFSRSItem, filter_outlier_indices, prepare_training_data,
     recency_weighted_fsrs_items, sort_items_by_review_length,
 };
 use crate::error::Result;
-use crate::model::{
-    Get, MemoryStateTensors, Model, ModelConfig, ModelVersion, parameters_to_model,
-};
+use crate::model::{Model, ModelConfig, ModelVersion, parameters_to_model};
 use crate::parameter_clipper::{clip_parameters, parameter_clipper};
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
 use crate::parameter_initialization_fsrs7::{
@@ -26,7 +24,6 @@ use burn::tensor::Int;
 use burn::tensor::Tensor;
 use burn::tensor::backend::Backend;
 use burn::tensor::cast::ToElement;
-use burn::tensor::{Shape, TensorData};
 use burn::train::TrainingInterrupter;
 use burn::train::renderer::{MetricState, MetricsRenderer, TrainingProgress};
 use burn::{config::Config, tensor::backend::AutodiffBackend};
@@ -679,84 +676,62 @@ pub fn benchmark(
 }
 
 #[derive(Debug, Clone)]
-struct WindowedFSRSBatch<B: Backend> {
-    t_historys: Tensor<B, 2>,
-    r_historys: Tensor<B, 2>,
-    labels: Tensor<B, 2>,
-    weights: Tensor<B, 2>,
-    t_historys_host: Vec<f32>,
-    r_historys_host: Vec<f32>,
-    labels_host: Vec<f32>,
-    weights_host: Vec<f32>,
+struct WindowedFSRSBatch {
+    t_historys: Vec<f32>,
+    r_historys: Vec<f32>,
+    labels: Vec<f32>,
+    weights: Vec<f32>,
     seq_len: usize,
     batch_size: usize,
     prediction_count: usize,
 }
 
-#[derive(Debug, Clone)]
-enum TrainingBatch<B: Backend> {
-    Prefix(crate::dataset::FSRSBatch<B>),
-    Windowed(WindowedFSRSBatch<B>),
+fn prefix_batch_real_batch_size<B: Backend>(batch: &FSRSBatch<B>) -> usize {
+    batch.delta_ts.shape().dims[0]
 }
 
-impl<B: Backend> TrainingBatch<B> {
+fn prefix_classification_loss<B: Backend>(batch: &FSRSBatch<B>, model: &Model<B>) -> Tensor<B, 1> {
+    model.forward_classification(
+        batch.t_historys.clone(),
+        batch.r_historys.clone(),
+        batch.delta_ts.clone(),
+        batch.labels.clone(),
+        batch.weights.clone(),
+        Reduction::Sum,
+    )
+}
+
+impl WindowedFSRSBatch {
     fn real_batch_size(&self) -> usize {
-        match self {
-            Self::Prefix(batch) => batch.delta_ts.shape().dims[0],
-            Self::Windowed(batch) => batch.prediction_count,
-        }
+        self.prediction_count
     }
 
-    fn classification_loss(&self, model: &Model<B>) -> Tensor<B, 1> {
-        match self {
-            Self::Prefix(batch) => model.forward_classification(
-                batch.t_historys.clone(),
-                batch.r_historys.clone(),
-                batch.delta_ts.clone(),
-                batch.labels.clone(),
-                batch.weights.clone(),
-                Reduction::Sum,
-            ),
-            Self::Windowed(batch) => model.forward_windowed_classification(
-                batch.t_historys.clone(),
-                batch.r_historys.clone(),
-                batch.labels.clone(),
-                batch.weights.clone(),
-            ),
-        }
+    fn analytic_bce_grad(&self, w: &[f32]) -> (f64, [f32; 35]) {
+        crate::analytic_v7::windowed_loss_and_grad(
+            w,
+            &self.t_historys,
+            &self.r_historys,
+            &self.labels,
+            &self.weights,
+            self.seq_len,
+            self.batch_size,
+        )
     }
 
-    fn analytic_windowed_bce_grad(&self, w: &[f32]) -> Option<(f64, [f32; 35])> {
-        match self {
-            Self::Prefix(_) => None,
-            Self::Windowed(batch) => Some(crate::analytic_v7::windowed_loss_and_grad(
-                w,
-                &batch.t_historys_host,
-                &batch.r_historys_host,
-                &batch.labels_host,
-                &batch.weights_host,
-                batch.seq_len,
-                batch.batch_size,
-            )),
-        }
-    }
-
-    fn analytic_windowed_bce_loss(&self, w: &[f32]) -> Option<f64> {
-        match self {
-            Self::Prefix(_) => None,
-            Self::Windowed(batch) => Some(crate::analytic_v7::windowed_loss(
-                w,
-                &batch.t_historys_host,
-                &batch.r_historys_host,
-                &batch.labels_host,
-                &batch.weights_host,
-                batch.seq_len,
-                batch.batch_size,
-            )),
-        }
+    fn analytic_bce_loss(&self, w: &[f32]) -> f64 {
+        crate::analytic_v7::windowed_loss(
+            w,
+            &self.t_historys,
+            &self.r_historys,
+            &self.labels,
+            &self.weights,
+            self.seq_len,
+            self.batch_size,
+        )
     }
 }
 
+#[cfg(test)]
 impl<B: Backend> Model<B> {
     fn forward_windowed_classification(
         &self,
@@ -765,9 +740,11 @@ impl<B: Backend> Model<B> {
         labels: Tensor<B, 2>,
         weights: Tensor<B, 2>,
     ) -> Tensor<B, 1> {
+        use crate::model::Get as _;
+
         let [seq_len, batch_size] = t_historys.dims();
         let device = t_historys.device();
-        let mut state = MemoryStateTensors::zeros(batch_size);
+        let mut state = crate::model::MemoryStateTensors::zeros(batch_size);
         let mut loss = Tensor::<B, 1>::zeros([1], &device);
         for i in 0..seq_len {
             let delta_t = t_historys.get(i).squeeze(0);
@@ -787,10 +764,7 @@ impl<B: Backend> Model<B> {
     }
 }
 
-fn build_windowed_batches<B: Backend>(
-    items: &[WeightedFSRSItem],
-    batch_size: usize,
-) -> Vec<WindowedFSRSBatch<B>> {
+fn build_windowed_batches(items: &[WeightedFSRSItem], batch_size: usize) -> Vec<WindowedFSRSBatch> {
     let mut cards: HashMap<i64, Vec<&WeightedFSRSItem>> = HashMap::new();
     for item in items {
         if let Some(card_id) = item.card_id {
@@ -813,7 +787,7 @@ fn build_windowed_batches<B: Backend>(
     for (_card_id, mut prefixes) in cards {
         prefixes.sort_by_cached_key(|item| item.item.reviews.len());
         if !current.is_empty() && current_predictions + prefixes.len() > batch_size {
-            batches.push(build_windowed_batch::<B>(&current));
+            batches.push(build_windowed_batch(&current));
             current.clear();
             current_predictions = 0;
         }
@@ -821,13 +795,12 @@ fn build_windowed_batches<B: Backend>(
         current.push(prefixes);
     }
     if !current.is_empty() {
-        batches.push(build_windowed_batch::<B>(&current));
+        batches.push(build_windowed_batch(&current));
     }
     batches
 }
 
-fn build_windowed_batch<B: Backend>(cards: &[Vec<&WeightedFSRSItem>]) -> WindowedFSRSBatch<B> {
-    let device = B::Device::default();
+fn build_windowed_batch(cards: &[Vec<&WeightedFSRSItem>]) -> WindowedFSRSBatch {
     let prediction_count = cards.iter().map(Vec::len).sum();
     let batch_size = cards.len();
     let seq_len = cards
@@ -857,24 +830,11 @@ fn build_windowed_batch<B: Backend>(cards: &[Vec<&WeightedFSRSItem>]) -> Windowe
         }
     }
 
-    let shape = Shape {
-        dims: vec![seq_len, batch_size],
-    };
     WindowedFSRSBatch {
-        t_historys: Tensor::from_floats(
-            TensorData::new(t_historys.clone(), shape.clone()),
-            &device,
-        ),
-        r_historys: Tensor::from_floats(
-            TensorData::new(r_historys.clone(), shape.clone()),
-            &device,
-        ),
-        labels: Tensor::from_floats(TensorData::new(labels.clone(), shape.clone()), &device),
-        weights: Tensor::from_floats(TensorData::new(weights.clone(), shape), &device),
-        t_historys_host: t_historys,
-        r_historys_host: r_historys,
-        labels_host: labels,
-        weights_host: weights,
+        t_historys,
+        r_historys,
+        labels,
+        weights,
         seq_len,
         batch_size,
         prediction_count,
@@ -884,20 +844,36 @@ fn build_windowed_batch<B: Backend>(cards: &[Vec<&WeightedFSRSItem>]) -> Windowe
 fn training_batches<B: Backend>(
     train_set: &[WeightedFSRSItem],
     batch_size: usize,
-    windowed: bool,
-) -> Vec<TrainingBatch<B>> {
-    if windowed {
-        build_windowed_batches::<B>(train_set, batch_size)
-            .into_iter()
-            .map(TrainingBatch::Windowed)
-            .collect()
-    } else {
-        BatchTensorDataset::<B>::from_sorted_items(train_set, batch_size)
-            .into_batches()
-            .into_iter()
-            .map(TrainingBatch::Prefix)
-            .collect()
-    }
+) -> Vec<FSRSBatch<B>> {
+    BatchTensorDataset::<B>::from_sorted_items(train_set, batch_size).into_batches()
+}
+
+#[cfg(test)]
+fn windowed_batch_tensors<B: Backend>(
+    batch: &WindowedFSRSBatch,
+    device: &B::Device,
+) -> (Tensor<B, 2>, Tensor<B, 2>, Tensor<B, 2>, Tensor<B, 2>) {
+    let shape = burn::tensor::Shape {
+        dims: vec![batch.seq_len, batch.batch_size],
+    };
+    (
+        Tensor::from_floats(
+            burn::tensor::TensorData::new(batch.t_historys.clone(), shape.clone()),
+            device,
+        ),
+        Tensor::from_floats(
+            burn::tensor::TensorData::new(batch.r_historys.clone(), shape.clone()),
+            device,
+        ),
+        Tensor::from_floats(
+            burn::tensor::TensorData::new(batch.labels.clone(), shape.clone()),
+            device,
+        ),
+        Tensor::from_floats(
+            burn::tensor::TensorData::new(batch.weights.clone(), shape),
+            device,
+        ),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -991,9 +967,21 @@ fn train<B: AutodiffBackend>(
     } else {
         sort_items_by_review_length(train_set)
     };
-    let train_batches = training_batches::<B>(&train_set, config.batch_size, use_windowed);
-    let valid_batches =
-        training_batches::<B::InnerBackend>(&train_set, config.batch_size, use_windowed);
+    let windowed_batches =
+        use_windowed.then(|| build_windowed_batches(&train_set, config.batch_size));
+    let train_batches = if use_windowed {
+        Vec::new()
+    } else {
+        training_batches::<B>(&train_set, config.batch_size)
+    };
+    let valid_batches = if use_windowed {
+        Vec::new()
+    } else {
+        training_batches::<B::InnerBackend>(&train_set, config.batch_size)
+    };
+    let train_batch_count = windowed_batches
+        .as_ref()
+        .map_or(train_batches.len(), Vec::len);
     let mut train_rng = StdRng::seed_from_u64(config.seed);
     let mut valid_rng = StdRng::seed_from_u64(config.seed);
 
@@ -1024,18 +1012,21 @@ fn train<B: AutodiffBackend>(
     let mut best_loss = f64::INFINITY;
     let mut best_model = model.clone();
     for epoch in 1..=config.num_epochs {
-        let mut train_indices = (0..train_batches.len()).collect::<Vec<_>>();
+        let mut train_indices = (0..train_batch_count).collect::<Vec<_>>();
         train_indices.shuffle(&mut train_rng);
         let mut iteration = 0;
         for batch_index in train_indices {
             iteration += 1;
-            let item = &train_batches[batch_index];
-            let real_batch_size = item.real_batch_size();
+            let real_batch_size = windowed_batches.as_ref().map_or_else(
+                || prefix_batch_real_batch_size(&train_batches[batch_index]),
+                |batches| batches[batch_index].real_batch_size(),
+            );
             let lr = LrScheduler::step(&mut lr_scheduler);
-            let progress = Progress::new(iteration, train_batches.len());
+            let progress = Progress::new(iteration, train_batch_count);
             let l2_weight = L2_PENALTY_WEIGHT;
 
             if let Some(host_adam) = host_adam.as_mut() {
+                let item = &windowed_batches.as_ref().expect("windowed batches")[batch_index];
                 let w_vec = host_parameters.as_deref().expect("host parameters");
                 let (_l2_penalty_value, mut manual_grad) = l2_penalty(
                     w_vec,
@@ -1051,9 +1042,7 @@ fn train<B: AutodiffBackend>(
                 for i in 0..manual_grad.len().min(schedule_grad.len()) {
                     manual_grad[i] += (schedule_grad[i] * inv_total) as f32;
                 }
-                let (_loss, bce_grad) = item
-                    .analytic_windowed_bce_grad(w_vec)
-                    .expect("host optimizer is only used for windowed batches");
+                let (_loss, bce_grad) = item.analytic_bce_grad(w_vec);
                 let mut total_grad = vec![0.0f32; w_vec.len()];
                 for (dst, src) in total_grad.iter_mut().zip(bce_grad) {
                     *dst = src;
@@ -1070,6 +1059,7 @@ fn train<B: AutodiffBackend>(
                     !config.model.freeze_short_term_stability,
                 );
             } else {
+                let item = &train_batches[batch_index];
                 let w_vec = model.w.val().to_data().to_vec::<f32>().unwrap();
                 let (_l2_penalty_value, mut manual_grad) = l2_penalty(
                     &w_vec,
@@ -1085,7 +1075,7 @@ fn train<B: AutodiffBackend>(
                 for i in 0..manual_grad.len().min(schedule_grad.len()) {
                     manual_grad[i] += (schedule_grad[i] * inv_total) as f32;
                 }
-                let loss = item.classification_loss(&model);
+                let loss = prefix_classification_loss(item, &model);
                 let mut gradients = loss.backward();
                 gradients = model.add_manual_weight_gradient(gradients, &manual_grad);
                 if config.model.freeze_initial_stability {
@@ -1132,11 +1122,16 @@ fn train<B: AutodiffBackend>(
             None
         };
         let mut loss_valid = 0.0;
-        let mut valid_indices = (0..valid_batches.len()).collect::<Vec<_>>();
+        let valid_batch_count = windowed_batches
+            .as_ref()
+            .map_or(valid_batches.len(), Vec::len);
+        let mut valid_indices = (0..valid_batch_count).collect::<Vec<_>>();
         valid_indices.shuffle(&mut valid_rng);
         for batch_index in valid_indices {
-            let batch = &valid_batches[batch_index];
-            let real_batch_size = batch.real_batch_size();
+            let real_batch_size = windowed_batches.as_ref().map_or_else(
+                || prefix_batch_real_batch_size(&valid_batches[batch_index]),
+                |batches| batches[batch_index].real_batch_size(),
+            );
             let l2_weight = L2_PENALTY_WEIGHT;
             let w_vec = host_parameters
                 .as_deref()
@@ -1153,12 +1148,13 @@ fn train<B: AutodiffBackend>(
             let (schedule_value, _) =
                 schedule_penalty(w_vec, real_batch_size, config.enable_sched_penalties);
             let schedule_penalty = schedule_value / total_size as f64;
-            let loss = batch.analytic_windowed_bce_loss(w_vec).unwrap_or_else(|| {
-                batch
-                    .classification_loss(&model_valid)
+            let loss = if let Some(windowed_batches) = &windowed_batches {
+                windowed_batches[batch_index].analytic_bce_loss(w_vec)
+            } else {
+                prefix_classification_loss(&valid_batches[batch_index], &model_valid)
                     .into_scalar()
                     .to_f64()
-            });
+            };
             loss_valid += loss + l2_penalty_value + schedule_penalty;
 
             if interrupter.should_stop() {
@@ -1365,29 +1361,29 @@ mod tests {
         type B = Autodiff<NdArray<f32>>;
         let device = NdArrayDevice::Cpu;
         let prefix_batch = FSRSBatcher::<B>::new().batch(weighted_items.clone(), &device);
-        let windowed_batch = build_windowed_batches::<B>(&weighted_items, 512)
-            .pop()
-            .unwrap();
+        let windowed_batch = build_windowed_batches(&weighted_items, 512).pop().unwrap();
         let (analytic_loss_value, analytic_grad) = crate::analytic_v7::windowed_loss_and_grad(
             &DEFAULT_PARAMETERS,
-            &windowed_batch.t_historys_host,
-            &windowed_batch.r_historys_host,
-            &windowed_batch.labels_host,
-            &windowed_batch.weights_host,
+            &windowed_batch.t_historys,
+            &windowed_batch.r_historys,
+            &windowed_batch.labels,
+            &windowed_batch.weights,
             windowed_batch.seq_len,
             windowed_batch.batch_size,
         );
         let analytic_loss_only = crate::analytic_v7::windowed_loss(
             &DEFAULT_PARAMETERS,
-            &windowed_batch.t_historys_host,
-            &windowed_batch.r_historys_host,
-            &windowed_batch.labels_host,
-            &windowed_batch.weights_host,
+            &windowed_batch.t_historys,
+            &windowed_batch.r_historys,
+            &windowed_batch.labels,
+            &windowed_batch.weights,
             windowed_batch.seq_len,
             windowed_batch.batch_size,
         );
         let prefix_model = parameters_to_model::<B>(&DEFAULT_PARAMETERS, &device);
         let windowed_model = parameters_to_model::<B>(&DEFAULT_PARAMETERS, &device);
+        let (windowed_t_historys, windowed_r_historys, windowed_labels, windowed_weights) =
+            windowed_batch_tensors::<B>(&windowed_batch, &device);
 
         let prefix_loss = prefix_model.forward_classification(
             prefix_batch.t_historys,
@@ -1398,10 +1394,10 @@ mod tests {
             Reduction::Sum,
         );
         let windowed_loss = windowed_model.forward_windowed_classification(
-            windowed_batch.t_historys,
-            windowed_batch.r_historys,
-            windowed_batch.labels,
-            windowed_batch.weights,
+            windowed_t_historys,
+            windowed_r_historys,
+            windowed_labels,
+            windowed_weights,
         );
         let prefix_loss_value = prefix_loss.clone().into_scalar().to_f32();
         let windowed_loss_value = windowed_loss.clone().into_scalar().to_f32();
@@ -1483,24 +1479,24 @@ mod tests {
 
         type B = NdArray<f32>;
         let device = NdArrayDevice::Cpu;
-        let windowed_batch = build_windowed_batches::<B>(&weighted_items, 512)
-            .pop()
-            .unwrap();
+        let windowed_batch = build_windowed_batches(&weighted_items, 512).pop().unwrap();
         let analytic_loss = crate::analytic_v7::windowed_loss(
             &DEFAULT_PARAMETERS,
-            &windowed_batch.t_historys_host,
-            &windowed_batch.r_historys_host,
-            &windowed_batch.labels_host,
-            &windowed_batch.weights_host,
+            &windowed_batch.t_historys,
+            &windowed_batch.r_historys,
+            &windowed_batch.labels,
+            &windowed_batch.weights,
             windowed_batch.seq_len,
             windowed_batch.batch_size,
         );
         let model = parameters_to_model::<B>(&DEFAULT_PARAMETERS, &device);
+        let (windowed_t_historys, windowed_r_historys, windowed_labels, windowed_weights) =
+            windowed_batch_tensors::<B>(&windowed_batch, &device);
         let burn_loss = model.forward_windowed_classification(
-            windowed_batch.t_historys,
-            windowed_batch.r_historys,
-            windowed_batch.labels,
-            windowed_batch.weights,
+            windowed_t_historys,
+            windowed_r_historys,
+            windowed_labels,
+            windowed_weights,
         );
         let burn_loss = burn_loss.into_scalar().to_f64();
         assert!(
