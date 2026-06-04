@@ -32,7 +32,7 @@ pub use inference::{
     MemoryState, ModelEvaluation, NextStates, current_retrievability,
     evaluate_with_time_series_splits,
 };
-pub use model::FSRS;
+pub use model::{FSRS, check_and_fill_parameters};
 #[cfg(feature = "experimental_cost_adr")]
 pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
