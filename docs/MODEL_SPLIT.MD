@@ -31,6 +31,9 @@ while keeping shared model state/config logic in `src/model.rs`.
 - FSRS-7 analytic training kernel:
   - `src/analytic_v7.rs` computes scalar BCE loss and BCE loss gradients for
     FSRS-7 card-id windowed training batches.
+  - `src/analytic_v7/neon_loss.rs` provides the ARM64 NEON loss-only validation
+    path for the same 35-parameter windowed batch layout. It does not compute
+    BCE gradients.
   - The kernel is parameter-size-specific to the current 35-parameter FSRS-7
     layout and is not shared with FSRS-6.
 - Training initial-stability normalization is version-specific:

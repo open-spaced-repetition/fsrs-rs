@@ -90,10 +90,25 @@ Current transparent groups already implemented on this branch:
     uses one logarithm instead of computing both keep/forget terms. The
     analytic loss and gradient loops also skip the final state update for each
     batch column because no later prediction can consume it. Exp fusion and
-    SIMD remain unimplemented.
+    SIMD gradient remain unimplemented.
   - Local Criterion after this step: `parameters/compute_parameters`
     `419.67 ms..429.12 ms`, about `11.4%` faster than the preceding
     `.07`/17-epoch benchmark around `478.47 ms`.
+- [x] ARM64 NEON FSRS-7 windowed validation loss.
+  - Files: `src/analytic_v7.rs`, `src/analytic_v7/neon_loss.rs`.
+  - Data-flow doc: `docs/TRAINING_DATA_FLOW.MD`.
+  - On `aarch64` targets with `neon`, FSRS-7 card-id windowed validation loss
+    processes four batch columns per `float32x4_t` group. Other targets and
+    ragged remainders use the scalar analytic loss. Training BCE gradient
+    remains scalar.
+  - Main Profile temp-copy timing, windowed-only mode:
+    scalar clone at `0d531b3` optimized in `4.081 s` and `4.436 s`; NEON path
+    optimized in `3.152 s`, `3.284 s`, `3.530 s`, and `3.251 s` across repeated
+    runs. LogLoss remained `0.48997682` and RMSE bins remained about
+    `0.04346088`.
+  - Local Criterion on the small fixture remained noisy and did not detect a
+    significant change: `parameters/compute_parameters` `394.91 ms..425.91 ms`,
+    change `[-7.7517% +2.2041% +10.940%]`.
 
 Verification commands already run after the scalar group:
 
@@ -180,7 +195,7 @@ Not present here:
 
 - [x] Scalar `src/analytic_v7.rs` hand-written FSRS-7 windowed BCE gradient for
   the current 35-parameter layout.
-- [ ] No `wide` or `bytemuck` SIMD dependencies.
+- [x] No `wide` or `bytemuck` SIMD dependencies.
 - [x] Host-only FSRS-7 windowed training batches are reused by both train and validation.
 - [x] Card-id-aware O(N) expanding-window training batch layout is present for FSRS-7, host-backed.
 - [x] Host-side Adam loop is present for FSRS-7 windowed card-id training.
@@ -423,6 +438,18 @@ Follow-up host-only/BCE/skip-last timing:
 - Temp-copy gate: prefix LogLoss `0.48874179` plus `0.0015` = `0.49024179`;
   the windowed result remains inside the gate.
 
+Follow-up ARM64 NEON validation timing:
+
+- A direct `wide::f32x8`/`wide::f32x4` exp probe on Apple Silicon was slower
+  than scalar `f32::exp`, so the accepted path uses the native ARM64
+  `float32x4_t` NEON primitive instead of adding `wide`/`bytemuck`.
+- The NEON path is validation-loss-only. It changes best-epoch selection input
+  through a f32 polynomial `exp`/`ln` approximation but does not change the
+  scalar dual-number training gradient. The Main Profile LogLoss/RMSE gate
+  stayed unchanged in the repeated runs above.
+- Criterion on `tests/data/collection.anki21` did not show a significant change,
+  so the useful evidence is currently the larger Main Profile timing.
+
 ## Implementation Checklist
 
 ### 1. Baseline And Gates
@@ -471,13 +498,17 @@ Follow-up host-only/BCE/skip-last timing:
   - Tests: existing penalty-gradient tests still pass.
 - [ ] Add logging around selected training path at debug/info level only if it helps support: model version, analytic path enabled, batch count, and interruption.
 
-### 4. Portable SIMD
+### 4. ARM64 NEON / Portable SIMD
 
-- [ ] Add `wide` and `bytemuck` only when the SIMD port starts.
+- [x] Avoid `wide`/`bytemuck` for the ARM64 validation path; use native NEON.
   - Source: Phase 1 iter14, iter15, iter17, iter21, iter23, iter24.
-- [ ] Port SIMD `exp8`/`ln8` with explicit tests for approximation bounds.
-- [ ] Port SIMD validation forward.
-  - Tests: SIMD batch loss matches scalar analytic loss within tolerance, including ragged remainders.
+  - Rationale: Apple Silicon probe showed the `wide` exp primitive was slower
+    than scalar on this host.
+- [x] Port ARM64 NEON `float32x4_t` validation forward for the current
+  35-parameter windowed loss.
+  - Tests: NEON windowed loss matches scalar analytic loss within tolerance,
+    including a full 4-lane group plus scalar ragged remainder.
+- [ ] Port portable/x86 SIMD `exp8`/`ln8` with explicit tests for approximation bounds.
 - [ ] Port SIMD gradient forward/backward.
   - Tests: SIMD grad matches scalar analytic grad and finite-difference gross-error guard.
 - [ ] Keep precision-trade variants compile-time selected and clearly documented.

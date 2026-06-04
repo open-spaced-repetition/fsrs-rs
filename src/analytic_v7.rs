@@ -382,7 +382,7 @@ fn bce_loss_scalar(r: f64, label: f64, weight: f64) -> f64 {
     -weight * probability.ln()
 }
 
-pub(crate) fn windowed_loss(
+fn windowed_loss_scalar(
     w: &[f32],
     t_historys: &[f32],
     r_historys: &[f32],
@@ -414,6 +414,33 @@ pub(crate) fn windowed_loss(
     }
 
     loss
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+mod neon_loss;
+
+pub(crate) fn windowed_loss(
+    w: &[f32],
+    t_historys: &[f32],
+    r_historys: &[f32],
+    labels: &[f32],
+    weights: &[f32],
+    seq_len: usize,
+    batch_size: usize,
+) -> f64 {
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        neon_loss::windowed_loss(
+            w, t_historys, r_historys, labels, weights, seq_len, batch_size,
+        )
+    }
+
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    {
+        windowed_loss_scalar(
+            w, t_historys, r_historys, labels, weights, seq_len, batch_size,
+        )
+    }
 }
 
 pub(crate) fn windowed_loss_and_grad(
@@ -492,5 +519,58 @@ mod tests {
                 loss.grad[0]
             );
         }
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    #[test]
+    fn test_neon_windowed_loss_matches_scalar() {
+        let histories = [
+            [(3, 0.0), (4, 1.0), (3, 5.0), (1, 10.0), (3, 2.0), (0, 0.0)],
+            [(1, 0.0), (3, 0.5), (2, 1.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(4, 0.0), (4, 2.0), (3, 4.0), (2, 7.0), (1, 1.0), (3, 3.0)],
+            [(2, 0.0), (3, 1.5), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(3, 0.0), (2, 3.0), (4, 6.0), (1, 2.0), (0, 0.0), (0, 0.0)],
+        ];
+        let seq_len = 6;
+        let batch_size = histories.len();
+        let mut t_historys = vec![0.0; seq_len * batch_size];
+        let mut r_historys = vec![0.0; seq_len * batch_size];
+        let mut labels = vec![0.0; seq_len * batch_size];
+        let mut weights = vec![0.0; seq_len * batch_size];
+        for (column, reviews) in histories.iter().enumerate() {
+            for (row, &(rating, delta_t)) in reviews.iter().enumerate() {
+                let index = row * batch_size + column;
+                t_historys[index] = delta_t;
+                r_historys[index] = rating as f32;
+                if row > 0 && rating != 0 {
+                    labels[index] = if rating == 1 { 0.0 } else { 1.0 };
+                    weights[index] = 0.4 + row as f32 * 0.07 + column as f32 * 0.03;
+                }
+            }
+        }
+
+        let scalar = windowed_loss_scalar(
+            &crate::DEFAULT_PARAMETERS,
+            &t_historys,
+            &r_historys,
+            &labels,
+            &weights,
+            seq_len,
+            batch_size,
+        );
+        let neon = neon_loss::windowed_loss_for_test(
+            &crate::DEFAULT_PARAMETERS,
+            &t_historys,
+            &r_historys,
+            &labels,
+            &weights,
+            seq_len,
+            batch_size,
+        );
+        let relative_error = (scalar - neon).abs() / scalar.max(1.0);
+        assert!(
+            relative_error < 5e-4,
+            "scalar loss {scalar}, neon loss {neon}, relative error {relative_error:e}"
+        );
     }
 }
