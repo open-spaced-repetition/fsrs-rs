@@ -531,12 +531,19 @@ fn prefix_loss_and_grad(
     gw: Option<&mut [f64]>,
 ) -> f64 {
     let mut state = State { s: 0.0, d: 0.0 };
-    let mut caches = Vec::with_capacity(seq_len);
+    let need_grad = gw.is_some();
+    let mut caches = if need_grad {
+        Vec::with_capacity(seq_len)
+    } else {
+        Vec::new()
+    };
     for t in 0..seq_len {
         let idx = t * batch + column;
         let (next, cache) = step_forward(w, state, t_hist[idx], r_hist[idx], t);
         state = next;
-        caches.push(cache);
+        if need_grad {
+            caches.push(cache);
+        }
     }
     let curve = curve_forward(w, delta_t, state.s);
     let (loss, g_r) = bce_loss_and_grad_r(curve.retrievability, label, weight);
@@ -644,9 +651,18 @@ fn card_column_loss_and_grad(
     gw: Option<&mut [f64]>,
 ) -> f64 {
     let mut state = State { s: 0.0, d: 0.0 };
-    let mut caches = Vec::with_capacity(seq_len);
+    let need_grad = gw.is_some();
+    let mut caches = if need_grad {
+        Vec::with_capacity(seq_len)
+    } else {
+        Vec::new()
+    };
     let mut loss = 0.0;
-    let mut g_r_losses = vec![0.0f64; seq_len];
+    let mut g_r_losses = if need_grad {
+        vec![0.0f64; seq_len]
+    } else {
+        Vec::new()
+    };
     for t in 0..seq_len {
         let idx = t * batch + column;
         let (next, cache) = step_forward(w, state, t_hist[idx], r_hist[idx], t);
@@ -656,9 +672,11 @@ fn card_column_loss_and_grad(
             bce_loss_and_grad_r(cache.retrievability, labels[idx], weights[idx])
         };
         loss += step_loss;
-        g_r_losses[t] = g_r;
+        if need_grad {
+            g_r_losses[t] = g_r;
+            caches.push(cache);
+        }
         state = next;
-        caches.push(cache);
     }
     if let Some(gw) = gw {
         let mut g_s = 0.0;
