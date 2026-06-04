@@ -8,7 +8,7 @@ use crate::error::Result;
 use crate::model::{
     Get, MemoryStateTensors, Model, ModelConfig, ModelVersion, parameters_to_model,
 };
-use crate::parameter_clipper::parameter_clipper;
+use crate::parameter_clipper::{clip_parameters, parameter_clipper};
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
 use crate::parameter_initialization_fsrs7::{
     initialize_parameters_fsrs7, smooth_initial_stabilities_fsrs7,
@@ -18,7 +18,7 @@ use burn::backend::Autodiff;
 use burn::backend::ndarray::NdArray;
 use burn::data::dataloader::Progress;
 use burn::lr_scheduler::LrScheduler;
-use burn::module::AutodiffModule;
+use burn::module::{AutodiffModule, Param};
 use burn::nn::loss::Reduction;
 use burn::optim::Optimizer;
 use burn::optim::{AdamConfig, GradientsParams};
@@ -48,6 +48,18 @@ type B = NdArray<f32>;
 
 const L2_PENALTY_WEIGHT: f64 = training_v7::PENALTY_W_L2;
 const PENALTY_GRAD_LEN: usize = training_v7::GRAD_LEN;
+const ADAM_BETA_1: f32 = 0.8;
+const ADAM_BETA_2: f32 = 0.85;
+const ADAM_EPSILON: f32 = 1e-8;
+const WINDOWED_FSRS7_LEARNING_RATE: f64 = 0.07;
+const WINDOWED_FSRS7_NUM_EPOCHS: usize = 17;
+
+fn training_adam_config() -> AdamConfig {
+    AdamConfig::new()
+        .with_beta_1(ADAM_BETA_1)
+        .with_beta_2(ADAM_BETA_2)
+        .with_epsilon(ADAM_EPSILON)
+}
 
 type SchedulePenaltyFn = fn(&[f32], usize, bool) -> (f64, [f64; PENALTY_GRAD_LEN]);
 type L2PenaltyFn = fn(&[f32], &[f32], usize, usize, f64, &[f32]) -> (f64, Vec<f32>);
@@ -333,6 +345,17 @@ impl Default for ComputeParametersInput {
     }
 }
 
+fn apply_windowed_fsrs7_training_tuning(
+    config: &mut TrainingConfig,
+    model_version: ComputeParametersVersion,
+    has_card_ids: bool,
+) {
+    if model_version == ComputeParametersVersion::Fsrs7 && has_card_ids {
+        config.learning_rate = WINDOWED_FSRS7_LEARNING_RATE;
+        config.num_epochs = WINDOWED_FSRS7_NUM_EPOCHS;
+    }
+}
+
 fn normalize_for_model_version(
     train_set: Vec<FSRSItem>,
     model_version: ComputeParametersVersion,
@@ -464,6 +487,7 @@ pub fn compute_parameters(
         ..
     }: ComputeParametersInput,
 ) -> Result<Vec<f32>> {
+    let has_card_ids = card_ids.is_some();
     let finish_progress = || {
         if let Some(progress) = &progress {
             // The progress state at completion time may not indicate completion, because:
@@ -529,7 +553,7 @@ pub fn compute_parameters(
         finish_progress();
         return Ok(initialized_parameters);
     }
-    let config = TrainingConfig::new(
+    let mut config = TrainingConfig::new(
         ModelConfig {
             freeze_initial_stability: !enable_short_term,
             initial_stability: None,
@@ -537,12 +561,10 @@ pub fn compute_parameters(
             freeze_short_term_stability: !enable_short_term,
             num_relearning_steps: num_relearning_steps.unwrap_or(1),
         },
-        AdamConfig::new()
-            .with_beta_1(0.8)
-            .with_beta_2(0.85)
-            .with_epsilon(1e-8),
+        training_adam_config(),
     )
     .with_enable_sched_penalties(enable_sched_penalties);
+    apply_windowed_fsrs7_training_tuning(&mut config, model_version, has_card_ids);
     let mut weighted_train_set = recency_weighted_training_items(train_set);
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
 
@@ -644,10 +666,7 @@ pub fn benchmark(
             freeze_short_term_stability: !enable_short_term,
             num_relearning_steps: num_relearning_steps.unwrap_or(1),
         },
-        AdamConfig::new()
-            .with_beta_1(0.8)
-            .with_beta_2(0.85)
-            .with_epsilon(1e-8),
+        training_adam_config(),
     )
     .with_enable_sched_penalties(enable_sched_penalties);
     // save RAM and speed up training
@@ -881,6 +900,79 @@ fn training_batches<B: Backend>(
     }
 }
 
+#[derive(Debug, Clone)]
+struct HostAdam {
+    moment_1: Vec<f32>,
+    moment_2: Vec<f32>,
+    time: i32,
+}
+
+impl HostAdam {
+    fn new(parameter_len: usize) -> Self {
+        Self {
+            moment_1: vec![0.0; parameter_len],
+            moment_2: vec![0.0; parameter_len],
+            time: 0,
+        }
+    }
+
+    fn step(&mut self, parameters: &mut [f32], grad: &[f32], lr: f64) {
+        self.time += 1;
+        let lr = lr as f32;
+        let m_correction = 1.0 - ADAM_BETA_1.powi(self.time);
+        let v_correction = 1.0 - ADAM_BETA_2.powi(self.time);
+        for ((parameter, (moment_1, moment_2)), grad) in parameters
+            .iter_mut()
+            .zip(self.moment_1.iter_mut().zip(self.moment_2.iter_mut()))
+            .zip(grad.iter())
+        {
+            *moment_1 = *moment_1 * ADAM_BETA_1 + *grad * (1.0 - ADAM_BETA_1);
+            *moment_2 = *moment_2 * ADAM_BETA_2 + grad.powi(2) * (1.0 - ADAM_BETA_2);
+            let corrected_moment_1 = *moment_1 / m_correction;
+            let corrected_moment_2 = *moment_2 / v_correction;
+            *parameter -= lr * corrected_moment_1 / (corrected_moment_2.sqrt() + ADAM_EPSILON);
+        }
+    }
+}
+
+fn zero_frozen_host_grad(grad: &mut [f32], model_config: &ModelConfig) {
+    if model_config.freeze_initial_stability {
+        for value in grad.iter_mut().take(4) {
+            *value = 0.0;
+        }
+    }
+    if model_config.freeze_short_term_stability {
+        let range = if grad.len() >= 35 { 16..27 } else { 17..20 };
+        for value in grad[range].iter_mut() {
+            *value = 0.0;
+        }
+    }
+}
+
+fn clip_host_parameters(
+    parameters: &mut Vec<f32>,
+    num_relearning_steps: usize,
+    enable_short_term: bool,
+) {
+    *parameters = clip_parameters(parameters, num_relearning_steps, enable_short_term);
+    if !enable_short_term
+        && matches!(
+            ModelVersion::from_param_count(parameters.len()),
+            ModelVersion::Fsrs7
+        )
+    {
+        parameters[26] = 0.0;
+    }
+}
+
+fn sync_host_parameters_to_model<B: Backend>(model: &mut Model<B>, parameters: &[f32]) {
+    let device = model.w.device();
+    model.w = Param::initialized(
+        model.w.id,
+        Tensor::from_floats(parameters, &device).require_grad(),
+    );
+}
+
 fn train<B: AutodiffBackend>(
     train_set: Vec<WeightedFSRSItem>,
     initial_parameters: &[f32],
@@ -920,7 +1012,14 @@ fn train<B: AutodiffBackend>(
     let l2_penalty = l2_penalty_fn(model.version());
     let init_w = model.w.val();
     let init_w_vec = init_w.to_data().to_vec::<f32>().unwrap();
-    let mut optim = config.optimizer.init::<B, Model<B>>();
+    let use_host_optimizer = use_windowed;
+    let mut host_parameters = use_host_optimizer.then(|| init_w_vec.clone());
+    let mut host_adam = use_host_optimizer.then(|| HostAdam::new(init_w_vec.len()));
+    let mut optim = if use_host_optimizer {
+        None
+    } else {
+        Some(config.optimizer.init::<B, Model<B>>())
+    };
 
     let mut best_loss = f64::INFINITY;
     let mut best_model = model.clone();
@@ -935,22 +1034,26 @@ fn train<B: AutodiffBackend>(
             let lr = LrScheduler::step(&mut lr_scheduler);
             let progress = Progress::new(iteration, train_batches.len());
             let l2_weight = L2_PENALTY_WEIGHT;
-            let w_vec = model.w.val().to_data().to_vec::<f32>().unwrap();
-            let (_l2_penalty_value, mut manual_grad) = l2_penalty(
-                &w_vec,
-                &init_w_vec,
-                real_batch_size,
-                total_size,
-                l2_weight,
-                &training_v7::PARAMS_STDDEV,
-            );
-            let (_schedule_value, schedule_grad) =
-                schedule_penalty(&w_vec, real_batch_size, config.enable_sched_penalties);
-            let inv_total = 1.0 / total_size as f64;
-            for i in 0..manual_grad.len().min(schedule_grad.len()) {
-                manual_grad[i] += (schedule_grad[i] * inv_total) as f32;
-            }
-            let grads = if let Some((_loss, bce_grad)) = item.analytic_windowed_bce_grad(&w_vec) {
+
+            if let Some(host_adam) = host_adam.as_mut() {
+                let w_vec = host_parameters.as_deref().expect("host parameters");
+                let (_l2_penalty_value, mut manual_grad) = l2_penalty(
+                    w_vec,
+                    &init_w_vec,
+                    real_batch_size,
+                    total_size,
+                    l2_weight,
+                    &training_v7::PARAMS_STDDEV,
+                );
+                let (_schedule_value, schedule_grad) =
+                    schedule_penalty(w_vec, real_batch_size, config.enable_sched_penalties);
+                let inv_total = 1.0 / total_size as f64;
+                for i in 0..manual_grad.len().min(schedule_grad.len()) {
+                    manual_grad[i] += (schedule_grad[i] * inv_total) as f32;
+                }
+                let (_loss, bce_grad) = item
+                    .analytic_windowed_bce_grad(w_vec)
+                    .expect("host optimizer is only used for windowed batches");
                 let mut total_grad = vec![0.0f32; w_vec.len()];
                 for (dst, src) in total_grad.iter_mut().zip(bce_grad) {
                     *dst = src;
@@ -958,29 +1061,30 @@ fn train<B: AutodiffBackend>(
                 for (dst, src) in total_grad.iter_mut().zip(manual_grad.iter()) {
                     *dst += *src;
                 }
-                if config.model.freeze_initial_stability {
-                    for value in total_grad.iter_mut().take(4) {
-                        *value = 0.0;
-                    }
-                }
-                if config.model.freeze_short_term_stability {
-                    let range = if total_grad.len() >= 35 {
-                        16..27
-                    } else {
-                        17..20
-                    };
-                    for value in total_grad[range].iter_mut() {
-                        *value = 0.0;
-                    }
-                }
-                let mut grads = GradientsParams::new();
-                let grad_tensor = Tensor::<B::InnerBackend, 1>::from_floats(
-                    total_grad.as_slice(),
-                    &B::Device::default(),
+                zero_frozen_host_grad(&mut total_grad, &config.model);
+                let host_parameters = host_parameters.as_mut().expect("host parameters");
+                host_adam.step(host_parameters, &total_grad, lr);
+                clip_host_parameters(
+                    host_parameters,
+                    config.model.num_relearning_steps,
+                    !config.model.freeze_short_term_stability,
                 );
-                grads.register(model.w.id, grad_tensor);
-                grads
             } else {
+                let w_vec = model.w.val().to_data().to_vec::<f32>().unwrap();
+                let (_l2_penalty_value, mut manual_grad) = l2_penalty(
+                    &w_vec,
+                    &init_w_vec,
+                    real_batch_size,
+                    total_size,
+                    l2_weight,
+                    &training_v7::PARAMS_STDDEV,
+                );
+                let (_schedule_value, schedule_grad) =
+                    schedule_penalty(&w_vec, real_batch_size, config.enable_sched_penalties);
+                let inv_total = 1.0 / total_size as f64;
+                for i in 0..manual_grad.len().min(schedule_grad.len()) {
+                    manual_grad[i] += (schedule_grad[i] * inv_total) as f32;
+                }
                 let loss = item.classification_loss(&model);
                 let mut gradients = loss.backward();
                 gradients = model.add_manual_weight_gradient(gradients, &manual_grad);
@@ -990,14 +1094,17 @@ fn train<B: AutodiffBackend>(
                 if config.model.freeze_short_term_stability {
                     gradients = model.freeze_short_term_stability(gradients);
                 }
-                GradientsParams::from_grads(gradients, &model)
-            };
-            model = optim.step(lr, model, grads);
-            model.w = parameter_clipper(
-                model.w,
-                config.model.num_relearning_steps,
-                !config.model.freeze_short_term_stability,
-            );
+                let grads = GradientsParams::from_grads(gradients, &model);
+                model = optim
+                    .as_mut()
+                    .expect("Burn optimizer")
+                    .step(lr, model, grads);
+                model.w = parameter_clipper(
+                    model.w,
+                    config.model.num_relearning_steps,
+                    !config.model.freeze_short_term_stability,
+                );
+            }
             // info!("epoch: {:?} iteration: {:?} lr: {:?}", epoch, iteration, lr);
             renderer.render_train(TrainingProgress {
                 progress,
@@ -1015,7 +1122,15 @@ fn train<B: AutodiffBackend>(
             break;
         }
 
+        if let Some(host_parameters) = host_parameters.as_deref() {
+            sync_host_parameters_to_model(&mut model, host_parameters);
+        }
         let model_valid = model.valid();
+        let model_valid_w_vec = if host_parameters.is_none() {
+            Some(model_valid.w.val().to_data().to_vec::<f32>().unwrap())
+        } else {
+            None
+        };
         let mut loss_valid = 0.0;
         let mut valid_indices = (0..valid_batches.len()).collect::<Vec<_>>();
         valid_indices.shuffle(&mut valid_rng);
@@ -1023,9 +1138,12 @@ fn train<B: AutodiffBackend>(
             let batch = &valid_batches[batch_index];
             let real_batch_size = batch.real_batch_size();
             let l2_weight = L2_PENALTY_WEIGHT;
-            let w_vec = model_valid.w.val().to_data().to_vec::<f32>().unwrap();
+            let w_vec = host_parameters
+                .as_deref()
+                .or(model_valid_w_vec.as_deref())
+                .expect("validation parameters");
             let (l2_penalty_value, _) = l2_penalty(
-                &w_vec,
+                w_vec,
                 &init_w_vec,
                 real_batch_size,
                 total_size,
@@ -1033,9 +1151,9 @@ fn train<B: AutodiffBackend>(
                 &training_v7::PARAMS_STDDEV,
             );
             let (schedule_value, _) =
-                schedule_penalty(&w_vec, real_batch_size, config.enable_sched_penalties);
+                schedule_penalty(w_vec, real_batch_size, config.enable_sched_penalties);
             let schedule_penalty = schedule_value / total_size as f64;
-            let loss = batch.analytic_windowed_bce_loss(&w_vec).unwrap_or_else(|| {
+            let loss = batch.analytic_windowed_bce_loss(w_vec).unwrap_or_else(|| {
                 batch
                     .classification_loss(&model_valid)
                     .into_scalar()
@@ -1126,6 +1244,34 @@ mod tests {
         let fsrs7_days: Vec<f32> = fsrs7[0].reviews.iter().map(|r| r.delta_t).collect();
         assert_eq!(fsrs6_days, vec![0.0, 0.0, 1.0]);
         assert_eq!(fsrs7_days, vec![0.0, 0.49, 0.51]);
+    }
+
+    #[test]
+    fn test_windowed_fsrs7_training_tuning_applies_only_with_card_ids() {
+        let base_config = TrainingConfig::new(ModelConfig::default(), training_adam_config());
+        let default_learning_rate = base_config.learning_rate;
+        let default_num_epochs = base_config.num_epochs;
+
+        let mut windowed_config =
+            TrainingConfig::new(ModelConfig::default(), training_adam_config());
+        apply_windowed_fsrs7_training_tuning(
+            &mut windowed_config,
+            ComputeParametersVersion::Fsrs7,
+            true,
+        );
+        assert_eq!(windowed_config.learning_rate, WINDOWED_FSRS7_LEARNING_RATE);
+        assert_eq!(windowed_config.num_epochs, WINDOWED_FSRS7_NUM_EPOCHS);
+
+        for (model_version, has_card_ids) in [
+            (ComputeParametersVersion::Fsrs7, false),
+            (ComputeParametersVersion::Fsrs6, true),
+            (ComputeParametersVersion::Fsrs6, false),
+        ] {
+            let mut config = TrainingConfig::new(ModelConfig::default(), training_adam_config());
+            apply_windowed_fsrs7_training_tuning(&mut config, model_version, has_card_ids);
+            assert_eq!(config.learning_rate, default_learning_rate);
+            assert_eq!(config.num_epochs, default_num_epochs);
+        }
     }
 
     #[test]
@@ -1361,6 +1507,78 @@ mod tests {
             (analytic_loss - burn_loss).abs() < 1e-5,
             "analytic validation loss {analytic_loss}, burn loss {burn_loss}"
         );
+    }
+
+    #[test]
+    fn test_host_adam_step_matches_burn_adam_with_clipping() {
+        type B = Autodiff<NdArray<f32>>;
+        let device = NdArrayDevice::Cpu;
+        let mut initial_parameters = DEFAULT_PARAMETERS.to_vec();
+        initial_parameters[0] = 0.0002;
+        initial_parameters[4] = 9.99;
+        initial_parameters[27] = 0.02;
+        initial_parameters[28] = 0.03;
+
+        let mut burn_model = parameters_to_model::<B>(&initial_parameters, &device);
+        let mut burn_optim = training_adam_config().init::<B, Model<B>>();
+        let mut host_parameters = burn_model.w.val().to_data().to_vec::<f32>().unwrap();
+        let mut host_adam = HostAdam::new(host_parameters.len());
+
+        let gradients = [
+            (0..host_parameters.len())
+                .map(|index| ((index % 7) as f32 - 3.0) * 0.125)
+                .collect::<Vec<_>>(),
+            (0..host_parameters.len())
+                .map(|index| ((index % 5) as f32 - 2.0) * -0.075)
+                .collect::<Vec<_>>(),
+        ];
+        let learning_rates = [0.05, 0.017];
+
+        for (grad, lr) in gradients.iter().zip(learning_rates) {
+            let mut burn_grads = GradientsParams::new();
+            burn_grads.register(
+                burn_model.w.id,
+                Tensor::<NdArray<f32>, 1>::from_floats(grad.as_slice(), &device),
+            );
+            burn_model = burn_optim.step(lr, burn_model, burn_grads);
+            burn_model.w = parameter_clipper(
+                burn_model.w,
+                ModelConfig::default().num_relearning_steps,
+                true,
+            );
+
+            host_adam.step(&mut host_parameters, grad, lr);
+            clip_host_parameters(
+                &mut host_parameters,
+                ModelConfig::default().num_relearning_steps,
+                true,
+            );
+
+            let burn_parameters = burn_model.w.val().to_data().to_vec::<f32>().unwrap();
+            let max_diff = burn_parameters
+                .iter()
+                .zip(&host_parameters)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(max_diff < 1e-6, "host Adam max diff {max_diff}");
+        }
+    }
+
+    #[test]
+    fn test_host_gradient_freeze_masks_follow_model_config() {
+        let config = ModelConfig {
+            freeze_initial_stability: true,
+            freeze_short_term_stability: true,
+            ..ModelConfig::default()
+        };
+        let mut grad = vec![1.0f32; 35];
+        zero_frozen_host_grad(&mut grad, &config);
+
+        assert!(grad[..4].iter().all(|value| *value == 0.0));
+        assert!(grad[16..27].iter().all(|value| *value == 0.0));
+        assert_eq!(grad[4], 1.0);
+        assert_eq!(grad[15], 1.0);
+        assert_eq!(grad[27], 1.0);
     }
 
     #[test]

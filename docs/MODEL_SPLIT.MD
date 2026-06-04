@@ -51,8 +51,9 @@ while keeping shared model state/config logic in `src/model.rs`.
   FSRS-7 penalty behavior are separated without checking parameter length in the
   training loop.
 - FSRS-7 card-id windowed training can route BCE loss and BCE gradient
-  calculation through `analytic_v7`; schedule/L2 penalties, optimizer state, and
-  clipping remain coordinated by the shared training loop.
+  calculation through `analytic_v7`. The shared training loop composes
+  schedule/L2 penalties and can apply host-side Adam plus version-aware clipping
+  for that windowed FSRS-7 path.
 - Version constants are colocated with version logic:
   - `src/model_v6.rs`: `PARAM_LEN`
   - `src/model_v7.rs`: FSRS-7 solver/LUT constants and `PARAM_LEN`
@@ -64,12 +65,18 @@ while keeping shared model state/config logic in `src/model.rs`.
   - runtime tensors (`delta_t`, `rating`, `stability`, `difficulty`)
   - FSRS-7 windowed host arrays (`t_historys`, `r_historys`, labels, weights)
     during analytic training-loss and training-gradient calculation
+  - FSRS-7 card-id windowed training tuning constants: learning rate `0.07`
+    and `17` epochs
 - Data updated:
   - next-step `MemoryStateTensors` during `Model::step()`
   - optimized initial-stability params `0..3` after training, normalized by the
     selected model version before return
-  - transient optimizer gradients registered for FSRS-7 windowed BCE training
+  - transient optimizer gradients and host Adam moment state for FSRS-7 windowed
+    BCE training
+  - transient training config values before progress initialization for the
+    FSRS-7 card-id windowed path
 - Data storage:
   - no new persistence; all values remain in-memory
   - FSRS-7 S90 LUT cache remains process-local memory only
-  - analytic gradient arrays live only for the current optimizer step
+  - analytic gradient arrays and host Adam moments live only for the current
+    optimization run
