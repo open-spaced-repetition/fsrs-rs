@@ -125,7 +125,10 @@ fn curve_forward(w: &[f32], t: f32, s: f32, factor: f32) -> CurveCache {
     let t = t.max(0.0);
     let decay = -w[20];
     let base = t / s * factor + 1.0;
-    let retrievability = base.powf(decay);
+    // Same-day reviews (t == 0) have base == 1 exactly, so retrievability is 1 regardless of decay.
+    // Skip the wasted powf -- `1.powf(x)` is exactly 1, so this is bit-for-bit. Such steps are common
+    // (a card's first step and every same-day learning step).
+    let retrievability = if t == 0.0 { 1.0 } else { base.powf(decay) };
     CurveCache {
         t,
         s,
