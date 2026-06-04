@@ -99,53 +99,275 @@ impl<B: Backend> VersionOps<B> for Fsrs7Ops {
     }
 }
 
-pub(crate) fn fsrs7_forgetting_curve_scalar(w: &[f32], t: f32, s: f32) -> f32 {
-    let s = s.max(super::S_MIN);
-    let t_over_s = t.max(0.0) / s;
-
-    let decay1 = -w[27];
-    let decay2 = -w[28];
-    let base1 = w[29];
-    let base2 = w[30];
-
-    let factor1 = base1.powf(1.0 / decay1) - 1.0;
-    let factor2 = base2.powf(1.0 / decay2) - 1.0;
-    let r1 = (1.0 + factor1 * t_over_s).powf(decay1);
-    let r2 = (1.0 + factor2 * t_over_s).powf(decay2);
-
-    let weight1 = w[31] * s.powf(-w[33]);
-    let weight2 = w[32] * s.powf(w[34]);
-
-    (weight1 * r1 + weight2 * r2) / (weight1 + weight2)
+#[derive(Debug, Clone)]
+pub(crate) struct Fsrs7Runtime {
+    curve: Fsrs7Curve,
+    lut: Arc<Fsrs7S90Lut>,
 }
 
-fn fsrs7_forgetting_curve_and_derivative_scalar(w: &[f32], t: f32, s: f32) -> (f32, f32) {
-    let s = s.max(super::S_MIN);
-    let t = t.max(0.0);
-    let t_over_s = t / s;
+impl Fsrs7Runtime {
+    pub(crate) fn new(w: &[f32]) -> Self {
+        Self {
+            curve: Fsrs7Curve::from_params(w),
+            lut: fsrs7_s90_lut(w),
+        }
+    }
 
-    let decay1 = -w[27];
-    let decay2 = -w[28];
-    let base1 = w[29];
-    let base2 = w[30];
+    pub(crate) fn forgetting_curve(&self, t: f32, s: f32) -> f32 {
+        self.curve.forgetting_curve(t, s)
+    }
 
-    let factor1 = base1.powf(1.0 / decay1) - 1.0;
-    let factor2 = base2.powf(1.0 / decay2) - 1.0;
-    let x1 = 1.0 + factor1 * t_over_s;
-    let x2 = 1.0 + factor2 * t_over_s;
-    let r1 = x1.powf(decay1);
-    let r2 = x2.powf(decay2);
-    let dr1 = r1 * decay1 * factor1 / (s * x1);
-    let dr2 = r2 * decay2 * factor2 / (s * x2);
+    pub(crate) fn next_interval(&self, stability: f32, desired_retention: f32) -> f32 {
+        fsrs7_next_interval_with_curve(&self.curve, stability, desired_retention, &self.lut)
+    }
+}
 
-    let weight1 = w[31] * s.powf(-w[33]);
-    let weight2 = w[32] * s.powf(w[34]);
-    let weight_sum = weight1 + weight2;
+#[derive(Debug, Clone, Copy)]
+struct Fsrs7Curve {
+    decay1: f32,
+    decay2: f32,
+    factor1: f32,
+    factor2: f32,
+    weight1_base: f32,
+    weight2_base: f32,
+    weight1_s_exp: f32,
+    weight2_s_exp: f32,
+}
 
-    (
-        (weight1 * r1 + weight2 * r2) / weight_sum,
-        (weight1 * dr1 + weight2 * dr2) / weight_sum,
+impl Fsrs7Curve {
+    fn from_params(w: &[f32]) -> Self {
+        let decay1 = -w[27];
+        let decay2 = -w[28];
+        Self {
+            decay1,
+            decay2,
+            factor1: w[29].powf(1.0 / decay1) - 1.0,
+            factor2: w[30].powf(1.0 / decay2) - 1.0,
+            weight1_base: w[31],
+            weight2_base: w[32],
+            weight1_s_exp: -w[33],
+            weight2_s_exp: w[34],
+        }
+    }
+
+    fn weights(self, s: f32) -> (f32, f32) {
+        (
+            self.weight1_base * s.powf(self.weight1_s_exp),
+            self.weight2_base * s.powf(self.weight2_s_exp),
+        )
+    }
+
+    fn at_stability(self, s: f32) -> Fsrs7CurveAtStability {
+        let stability = s.max(super::S_MIN);
+        let (weight1, weight2) = self.weights(stability);
+        Fsrs7CurveAtStability {
+            decay1: self.decay1,
+            decay2: self.decay2,
+            factor1: self.factor1,
+            factor2: self.factor2,
+            stability,
+            weight1,
+            weight2,
+            weight_sum: weight1 + weight2,
+        }
+    }
+
+    fn forgetting_curve(self, t: f32, s: f32) -> f32 {
+        self.at_stability(s).forgetting_curve(t)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Fsrs7CurveAtStability {
+    decay1: f32,
+    decay2: f32,
+    factor1: f32,
+    factor2: f32,
+    stability: f32,
+    weight1: f32,
+    weight2: f32,
+    weight_sum: f32,
+}
+
+impl Fsrs7CurveAtStability {
+    fn forgetting_curve(self, t: f32) -> f32 {
+        let t_over_s = t.max(0.0) / self.stability;
+
+        let r1 = (1.0 + self.factor1 * t_over_s).powf(self.decay1);
+        let r2 = (1.0 + self.factor2 * t_over_s).powf(self.decay2);
+
+        (self.weight1 * r1 + self.weight2 * r2) / self.weight_sum
+    }
+
+    fn forgetting_curve_and_derivative(self, t: f32) -> (f32, f32) {
+        let t = t.max(0.0);
+        let t_over_s = t / self.stability;
+
+        let x1 = 1.0 + self.factor1 * t_over_s;
+        let x2 = 1.0 + self.factor2 * t_over_s;
+        let r1 = x1.powf(self.decay1);
+        let r2 = x2.powf(self.decay2);
+        let dr1 = r1 * self.decay1 * self.factor1 / (self.stability * x1);
+        let dr2 = r2 * self.decay2 * self.factor2 / (self.stability * x2);
+
+        (
+            (self.weight1 * r1 + self.weight2 * r2) / self.weight_sum,
+            (self.weight1 * dr1 + self.weight2 * dr2) / self.weight_sum,
+        )
+    }
+}
+
+pub(crate) fn fsrs7_forgetting_curve_scalar(w: &[f32], t: f32, s: f32) -> f32 {
+    Fsrs7Curve::from_params(w).forgetting_curve(t, s)
+}
+
+fn fsrs7_next_interval_bisection_with_curve(
+    curve: Fsrs7Curve,
+    stability: f32,
+    desired_retention: f32,
+    high_hint: Option<f32>,
+) -> f32 {
+    fsrs7_next_interval_bisection_at_stability(
+        curve.at_stability(stability),
+        desired_retention,
+        high_hint,
     )
+}
+
+fn fsrs7_next_interval_bisection_at_stability(
+    stable_curve: Fsrs7CurveAtStability,
+    desired_retention: f32,
+    high_hint: Option<f32>,
+) -> f32 {
+    let desired_retention = desired_retention.clamp(DR_MIN, DR_MAX);
+
+    if desired_retention >= DR_MAX {
+        return 0.0;
+    }
+
+    let mut low = 0.0;
+    let mut high = high_hint
+        .unwrap_or_else(|| stable_curve.stability.max(1.0))
+        .clamp(0.0, super::S_MAX)
+        .max(super::S_MIN);
+
+    while stable_curve.forgetting_curve(high) > desired_retention && high < super::S_MAX {
+        high = (high * 2.0).min(super::S_MAX);
+        if (high - super::S_MAX).abs() < f32::EPSILON {
+            break;
+        }
+    }
+
+    for _ in 0..BISECTION_ITERS {
+        let mid = (low + high) / 2.0;
+        let r = stable_curve.forgetting_curve(mid);
+        if r > desired_retention {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+
+    ((low + high) / 2.0).clamp(0.0, super::S_MAX)
+}
+
+fn fsrs7_next_interval_with_curve(
+    curve: &Fsrs7Curve,
+    stability: f32,
+    desired_retention: f32,
+    lut: &Fsrs7S90Lut,
+) -> f32 {
+    let desired_retention = desired_retention.clamp(DR_MIN, DR_MAX);
+    let stable_curve = curve.at_stability(stability);
+    if desired_retention >= DR_MAX {
+        return 0.0;
+    }
+
+    let mut high = lut
+        .interpolate_t90(stable_curve.stability)
+        .clamp(0.0, super::S_MAX)
+        .max(super::S_MIN);
+    let mut high_r = stable_curve.forgetting_curve(high);
+    if !high_r.is_finite() {
+        return fsrs7_next_interval_bisection_with_curve(
+            *curve,
+            stable_curve.stability,
+            desired_retention,
+            Some(high),
+        );
+    }
+    while high_r > desired_retention && high < super::S_MAX {
+        high = (high * 2.0).min(super::S_MAX);
+        high_r = stable_curve.forgetting_curve(high);
+    }
+    if !high_r.is_finite() {
+        return fsrs7_next_interval_bisection_with_curve(
+            *curve,
+            stable_curve.stability,
+            desired_retention,
+            Some(high),
+        );
+    }
+    if high_r > desired_retention {
+        return super::S_MAX;
+    }
+
+    let mut low = 0.0;
+    let interval_solve_tol = INTERVAL_SOLVE_TOL;
+    let mut t = if desired_retention >= S90_TARGET {
+        let ratio = ((1.0 - desired_retention) / (1.0 - S90_TARGET)).clamp(0.0, 1.0);
+        (high * ratio).clamp(low, high)
+    } else {
+        (low + high) * 0.5
+    };
+
+    for _ in 0..NEWTON_ITERS {
+        let (r, derivative) = stable_curve.forgetting_curve_and_derivative(t);
+        if !(r.is_finite() && derivative.is_finite() && derivative < 0.0) {
+            t = (low + high) * 0.5;
+            continue;
+        }
+        let residual = r - desired_retention;
+        if residual > 0.0 {
+            low = t;
+        } else {
+            high = t;
+        }
+        if high - low <= interval_solve_tol && residual.abs() <= RETENTION_SOLVE_TOL {
+            return ((low + high) * 0.5).clamp(0.0, super::S_MAX);
+        }
+
+        let next = t - residual / derivative;
+        t = if next.is_finite() && low < next && next < high {
+            next
+        } else {
+            (low + high) * 0.5
+        };
+    }
+
+    fsrs7_next_interval_brent_with_curve(stable_curve, desired_retention, low, high)
+}
+
+fn fsrs7_next_interval_brent_with_curve(
+    stable_curve: Fsrs7CurveAtStability,
+    desired_retention: f32,
+    low: f32,
+    high: f32,
+) -> f32 {
+    let mut convergency = roots::SimpleConvergency {
+        eps: 1e-12,
+        max_iter: BRENT_ITERS,
+    };
+    roots::find_root_brent(
+        low as f64,
+        high as f64,
+        |t| stable_curve.forgetting_curve(t as f32) as f64 - desired_retention as f64,
+        &mut convergency,
+    )
+    .map(|interval| (interval as f32).clamp(0.0, super::S_MAX))
+    .unwrap_or_else(|_| {
+        fsrs7_next_interval_bisection_at_stability(stable_curve, desired_retention, Some(high))
+    })
 }
 
 #[derive(Debug)]
@@ -157,6 +379,7 @@ pub(crate) struct Fsrs7S90Lut {
 
 impl Fsrs7S90Lut {
     pub(crate) fn build(w: &[f32]) -> Self {
+        let curve = Fsrs7Curve::from_params(w);
         let log_s_min = LUT_S_MIN.max(super::S_MIN).ln();
         let log_s_max = LUT_S_MAX.min(super::S_MAX).ln();
         let log_s_step = (log_s_max - log_s_min) / (LUT_SIZE - 1) as f32;
@@ -164,7 +387,9 @@ impl Fsrs7S90Lut {
         for i in 0..LUT_SIZE {
             let log_s = log_s_min + i as f32 * log_s_step;
             let s = log_s.exp();
-            t90_grid.push(fsrs7_next_interval_bisection_scalar(w, s, S90_TARGET, None));
+            t90_grid.push(fsrs7_next_interval_bisection_with_curve(
+                curve, s, S90_TARGET, None,
+            ));
         }
         Self {
             log_s_min,
@@ -218,45 +443,19 @@ pub(crate) fn fsrs7_s90_lut(w: &[f32]) -> Arc<Fsrs7S90Lut> {
     guard.entry(key).or_insert_with(|| built.clone()).clone()
 }
 
-pub(crate) fn fsrs7_next_interval_bisection_scalar(
+#[cfg(test)]
+fn fsrs7_next_interval_bisection_scalar(
     w: &[f32],
     stability: f32,
     desired_retention: f32,
     high_hint: Option<f32>,
 ) -> f32 {
-    let desired_retention = desired_retention.clamp(DR_MIN, DR_MAX);
-    let stability = stability.max(super::S_MIN);
-
-    if desired_retention >= DR_MAX {
-        return 0.0;
-    }
-
-    let mut low = 0.0;
-    let mut high = high_hint
-        .unwrap_or_else(|| stability.max(1.0))
-        .clamp(0.0, super::S_MAX)
-        .max(super::S_MIN);
-
-    while fsrs7_forgetting_curve_scalar(w, high, stability) > desired_retention
-        && high < super::S_MAX
-    {
-        high = (high * 2.0).min(super::S_MAX);
-        if (high - super::S_MAX).abs() < f32::EPSILON {
-            break;
-        }
-    }
-
-    for _ in 0..BISECTION_ITERS {
-        let mid = (low + high) / 2.0;
-        let r = fsrs7_forgetting_curve_scalar(w, mid, stability);
-        if r > desired_retention {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-
-    ((low + high) / 2.0).clamp(0.0, super::S_MAX)
+    fsrs7_next_interval_bisection_with_curve(
+        Fsrs7Curve::from_params(w),
+        stability,
+        desired_retention,
+        high_hint,
+    )
 }
 
 pub(crate) fn fsrs7_next_interval_scalar(
@@ -265,65 +464,12 @@ pub(crate) fn fsrs7_next_interval_scalar(
     desired_retention: f32,
     lut: &Fsrs7S90Lut,
 ) -> f32 {
-    let desired_retention = desired_retention.clamp(DR_MIN, DR_MAX);
-    let stability = stability.max(super::S_MIN);
-    if desired_retention >= DR_MAX {
-        return 0.0;
-    }
-
-    let mut high = lut
-        .interpolate_t90(stability)
-        .clamp(0.0, super::S_MAX)
-        .max(super::S_MIN);
-    let mut high_r = fsrs7_forgetting_curve_scalar(w, high, stability);
-    if !high_r.is_finite() {
-        return fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high));
-    }
-    while high_r > desired_retention && high < super::S_MAX {
-        high = (high * 2.0).min(super::S_MAX);
-        high_r = fsrs7_forgetting_curve_scalar(w, high, stability);
-    }
-    if !high_r.is_finite() {
-        return fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high));
-    }
-    if high_r > desired_retention {
-        return super::S_MAX;
-    }
-
-    let mut low = 0.0;
-    let interval_solve_tol = INTERVAL_SOLVE_TOL;
-    let mut t = if desired_retention >= S90_TARGET {
-        let ratio = ((1.0 - desired_retention) / (1.0 - S90_TARGET)).clamp(0.0, 1.0);
-        (high * ratio).clamp(low, high)
-    } else {
-        (low + high) * 0.5
-    };
-
-    for _ in 0..NEWTON_ITERS {
-        let (r, derivative) = fsrs7_forgetting_curve_and_derivative_scalar(w, t, stability);
-        if !(r.is_finite() && derivative.is_finite() && derivative < 0.0) {
-            t = (low + high) * 0.5;
-            continue;
-        }
-        let residual = r - desired_retention;
-        if residual > 0.0 {
-            low = t;
-        } else {
-            high = t;
-        }
-        if high - low <= interval_solve_tol && residual.abs() <= RETENTION_SOLVE_TOL {
-            return ((low + high) * 0.5).clamp(0.0, super::S_MAX);
-        }
-
-        let next = t - residual / derivative;
-        t = if next.is_finite() && low < next && next < high {
-            next
-        } else {
-            (low + high) * 0.5
-        };
-    }
-
-    fsrs7_next_interval_brent_scalar_with_high(w, stability, desired_retention, high)
+    fsrs7_next_interval_with_curve(
+        &Fsrs7Curve::from_params(w),
+        stability,
+        desired_retention,
+        lut,
+    )
 }
 
 #[cfg(test)]
@@ -361,26 +507,19 @@ fn fsrs7_next_interval_brent_scalar(
     fsrs7_next_interval_brent_scalar_with_high(w, stability, desired_retention, high)
 }
 
+#[cfg(test)]
 fn fsrs7_next_interval_brent_scalar_with_high(
     w: &[f32],
     stability: f32,
     desired_retention: f32,
     high: f32,
 ) -> f32 {
-    let mut convergency = roots::SimpleConvergency {
-        eps: 1e-12,
-        max_iter: BRENT_ITERS,
-    };
-    roots::find_root_brent(
-        0.0_f64,
-        high as f64,
-        |t| fsrs7_forgetting_curve_scalar(w, t as f32, stability) as f64 - desired_retention as f64,
-        &mut convergency,
+    fsrs7_next_interval_brent_with_curve(
+        Fsrs7Curve::from_params(w).at_stability(stability),
+        desired_retention,
+        0.0,
+        high,
     )
-    .map(|interval| (interval as f32).clamp(0.0, super::S_MAX))
-    .unwrap_or_else(|_| {
-        fsrs7_next_interval_bisection_scalar(w, stability, desired_retention, Some(high))
-    })
 }
 
 pub(super) fn power_forgetting_curve<B: Backend>(
@@ -763,6 +902,27 @@ mod tests {
         w2[27] += 0.001;
         let lut_c = fsrs7_s90_lut(&w2);
         assert!(!std::sync::Arc::ptr_eq(&lut_a, &lut_c));
+    }
+
+    #[test]
+    fn test_fsrs7_runtime_matches_scalar_helpers() {
+        let w = DEFAULT_PARAMETERS;
+        let lut = Fsrs7S90Lut::build(&w);
+        let runtime = Fsrs7Runtime::new(&w);
+        for stability in [0.2, 1.0, 10.0, 100.0, 1000.0] {
+            for desired in [0.4, 0.7, 0.9, 0.95] {
+                assert_eq!(
+                    runtime.next_interval(stability, desired).to_bits(),
+                    fsrs7_next_interval_scalar(&w, stability, desired, &lut).to_bits()
+                );
+            }
+            for elapsed in [0.0, 1.0, 7.0, 30.0] {
+                assert_eq!(
+                    runtime.forgetting_curve(elapsed, stability).to_bits(),
+                    fsrs7_forgetting_curve_scalar(&w, elapsed, stability).to_bits()
+                );
+            }
+        }
     }
 
     #[test]

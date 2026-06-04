@@ -66,6 +66,10 @@ harness = false
 name = "fsrs7_penalty"
 harness = false
 
+[[bench]]
+name = "cost_adr"
+harness = false
+
 [[example]]
 name = "schedule"
 path = "examples/schedule.rs"

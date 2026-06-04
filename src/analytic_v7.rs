@@ -161,6 +161,9 @@ fn init_difficulty(w: &[Dual35; PARAM_LEN], rating: usize) -> Dual35 {
 }
 
 fn forgetting_curve(w: &[Dual35; PARAM_LEN], t: f64, s: Dual35) -> Dual35 {
+    if t.max(0.0) == 0.0 {
+        return Dual35::constant(1.0);
+    }
     let t_over_s = Dual35::constant(t.max(0.0)).div(s);
     let decay1 = w[27].neg();
     let decay2 = w[28].neg();
@@ -291,6 +294,9 @@ fn init_difficulty_scalar(w: &[f32], rating: usize) -> f64 {
 }
 
 fn forgetting_curve_scalar(w: &[f32], t: f64, s: f64) -> f64 {
+    if t.max(0.0) == 0.0 {
+        return 1.0;
+    }
     let t_over_s = t.max(0.0) / s;
     let decay1 = -(w[27] as f64);
     let decay2 = -(w[28] as f64);
@@ -402,12 +408,15 @@ fn windowed_loss_scalar(
             let index = row * batch_size + column;
             let delta_t = t_historys[index] as f64;
             let rating = r_historys[index] as usize;
+            if rating == 0 {
+                break;
+            }
             let weight = weights[index] as f64;
             if row > 0 && weight != 0.0 {
                 let r = forgetting_curve_scalar(w, delta_t, state.stability);
                 loss += bce_loss_scalar(r, labels[index] as f64, weight);
             }
-            if row + 1 < seq_len {
+            if row + 1 < seq_len && r_historys[(row + 1) * batch_size + column] != 0.0 {
                 state = step_scalar(w, delta_t, rating, state, row);
             }
         }
@@ -469,6 +478,9 @@ pub(crate) fn windowed_loss_and_grad(
             let index = row * batch_size + column;
             let delta_t = t_historys[index] as f64;
             let rating = r_historys[index] as usize;
+            if rating == 0 {
+                break;
+            }
             let weight = weights[index] as f64;
             if row > 0 && weight != 0.0 {
                 let r = forgetting_curve(&w, delta_t, state.stability);
@@ -478,7 +490,7 @@ pub(crate) fn windowed_loss_and_grad(
                     *dst += src;
                 }
             }
-            if row + 1 < seq_len {
+            if row + 1 < seq_len && r_historys[(row + 1) * batch_size + column] != 0.0 {
                 state = step(&w, delta_t, rating, state, row);
             }
         }

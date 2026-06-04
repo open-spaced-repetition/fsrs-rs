@@ -1,199 +1,20 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use super::{D_MAX, D_MIN, PARAM_LEN, S_MAX, S_MIN, windowed_loss_scalar};
-use core::ops::{Add, Div, Mul, Neg, Sub};
-use std::arch::aarch64::*;
-
-const LOG2E: f32 = std::f32::consts::LOG2_E;
-const LN2: f32 = std::f32::consts::LN_2;
-
-#[derive(Clone, Copy)]
-struct F32x4(float32x4_t);
-
-impl F32x4 {
-    #[inline(always)]
-    fn splat(value: f32) -> Self {
-        unsafe { Self(vdupq_n_f32(value)) }
-    }
-
-    #[inline(always)]
-    fn load(values: &[f32], index: usize) -> Self {
-        debug_assert!(index + 4 <= values.len());
-        unsafe { Self(vld1q_f32(values.as_ptr().add(index))) }
-    }
-
-    #[inline(always)]
-    fn sum(self) -> f32 {
-        unsafe { vaddvq_f32(self.0) }
-    }
-
-    #[inline(always)]
-    fn abs(self) -> Self {
-        unsafe { Self(vabsq_f32(self.0)) }
-    }
-
-    #[inline(always)]
-    fn min(self, rhs: Self) -> Self {
-        unsafe { Self(vminq_f32(self.0, rhs.0)) }
-    }
-
-    #[inline(always)]
-    fn max(self, rhs: Self) -> Self {
-        unsafe { Self(vmaxq_f32(self.0, rhs.0)) }
-    }
-
-    #[inline(always)]
-    fn clamp(self, min: f32, max: f32) -> Self {
-        self.max(Self::splat(min)).min(Self::splat(max))
-    }
-
-    #[inline(always)]
-    fn round(self) -> Self {
-        unsafe { Self(vrndnq_f32(self.0)) }
-    }
-
-    #[inline(always)]
-    fn cmp_eq(self, rhs: Self) -> uint32x4_t {
-        unsafe { vceqq_f32(self.0, rhs.0) }
-    }
-
-    #[inline(always)]
-    fn cmp_gt(self, rhs: Self) -> uint32x4_t {
-        unsafe { vcgtq_f32(self.0, rhs.0) }
-    }
-
-    #[inline(always)]
-    fn cmp_lt(self, rhs: Self) -> uint32x4_t {
-        unsafe { vcltq_f32(self.0, rhs.0) }
-    }
-
-    #[inline(always)]
-    fn blend(mask: uint32x4_t, if_true: Self, if_false: Self) -> Self {
-        unsafe { Self(vbslq_f32(mask, if_true.0, if_false.0)) }
-    }
-
-    #[inline(always)]
-    fn exp(self) -> Self {
-        let x = self.clamp(-87.0, 88.0);
-        let n = (x * Self::splat(LOG2E)).round();
-        let r = x - n * Self::splat(LN2);
-        let p = Self::splat(0.99992806)
-            + r * (Self::splat(1.0001642)
-                + r * (Self::splat(0.5049633) + r * Self::splat(0.16566843)));
-        let two_n = unsafe {
-            let n = vcvtq_s32_f32(n.0);
-            let exponent = vshlq_n_s32::<23>(vaddq_s32(n, vdupq_n_s32(127)));
-            Self(vreinterpretq_f32_s32(exponent))
-        };
-        p * two_n
-    }
-
-    #[inline(always)]
-    fn exp_fast(self) -> Self {
-        let x = self.clamp(-87.0, 88.0);
-        let n = (x * Self::splat(LOG2E)).round();
-        let r = x - n * Self::splat(LN2);
-        let p = Self::splat(1.0004431) + r * (Self::splat(1.014861) + r * Self::splat(0.4962586));
-        let two_n = unsafe {
-            let n = vcvtq_s32_f32(n.0);
-            let exponent = vshlq_n_s32::<23>(vaddq_s32(n, vdupq_n_s32(127)));
-            Self(vreinterpretq_f32_s32(exponent))
-        };
-        p * two_n
-    }
-
-    #[inline(always)]
-    fn ln(self) -> Self {
-        let bits = unsafe { vreinterpretq_u32_f32(self.0) };
-        let exponent = unsafe {
-            let raw = vandq_u32(vshrq_n_u32::<23>(bits), vdupq_n_u32(0xff));
-            vsubq_s32(vreinterpretq_s32_u32(raw), vdupq_n_s32(127))
-        };
-        let mantissa = unsafe {
-            let masked = vandq_u32(bits, vdupq_n_u32(0x007f_ffff));
-            let normalized = vorrq_u32(masked, vdupq_n_u32(127 << 23));
-            Self(vreinterpretq_f32_u32(normalized))
-        };
-        let one = Self::splat(1.0);
-        let t = (mantissa - one) / (mantissa + one);
-        let t2 = t * t;
-        let poly = Self::splat(2.0)
-            * t
-            * (Self::splat(1.0000073)
-                + t2 * (Self::splat(0.33217952) + t2 * Self::splat(0.22657777)));
-        let exponent = unsafe { Self(vcvtq_f32_s32(exponent)) };
-        exponent * Self::splat(LN2) + poly
-    }
-
-    #[inline(always)]
-    fn ln_fast(self) -> Self {
-        let bits = unsafe { vreinterpretq_u32_f32(self.0) };
-        let exponent = unsafe {
-            let raw = vandq_u32(vshrq_n_u32::<23>(bits), vdupq_n_u32(0xff));
-            vsubq_s32(vreinterpretq_s32_u32(raw), vdupq_n_s32(127))
-        };
-        let mantissa = unsafe {
-            let masked = vandq_u32(bits, vdupq_n_u32(0x007f_ffff));
-            let normalized = vorrq_u32(masked, vdupq_n_u32(127 << 23));
-            Self(vreinterpretq_f32_u32(normalized))
-        };
-        let one = Self::splat(1.0);
-        let t = (mantissa - one) / (mantissa + one);
-        let t2 = t * t;
-        let poly = Self::splat(2.0) * t * (Self::splat(0.99965036) + t2 * Self::splat(0.35748693));
-        let exponent = unsafe { Self(vcvtq_f32_s32(exponent)) };
-        exponent * Self::splat(LN2) + poly
-    }
-}
+use crate::neon_math::F32x4;
+use std::arch::aarch64::{uint32x4_t, vandq_u32};
 
 #[inline(always)]
 fn mask_and(lhs: uint32x4_t, rhs: uint32x4_t) -> uint32x4_t {
     unsafe { vandq_u32(lhs, rhs) }
 }
 
-impl Add for F32x4 {
-    type Output = Self;
-
-    #[inline(always)]
-    fn add(self, rhs: Self) -> Self::Output {
-        unsafe { Self(vaddq_f32(self.0, rhs.0)) }
-    }
-}
-
-impl Sub for F32x4 {
-    type Output = Self;
-
-    #[inline(always)]
-    fn sub(self, rhs: Self) -> Self::Output {
-        unsafe { Self(vsubq_f32(self.0, rhs.0)) }
-    }
-}
-
-impl Mul for F32x4 {
-    type Output = Self;
-
-    #[inline(always)]
-    fn mul(self, rhs: Self) -> Self::Output {
-        unsafe { Self(vmulq_f32(self.0, rhs.0)) }
-    }
-}
-
-impl Div for F32x4 {
-    type Output = Self;
-
-    #[inline(always)]
-    fn div(self, rhs: Self) -> Self::Output {
-        unsafe { Self(vdivq_f32(self.0, rhs.0)) }
-    }
-}
-
-impl Neg for F32x4 {
-    type Output = Self;
-
-    #[inline(always)]
-    fn neg(self) -> Self::Output {
-        Self::splat(0.0) - self
-    }
+#[inline(always)]
+fn four_non_positive(values: &[f32], index: usize) -> bool {
+    values[index] <= 0.0
+        && values[index + 1] <= 0.0
+        && values[index + 2] <= 0.0
+        && values[index + 3] <= 0.0
 }
 
 struct Params {
@@ -207,6 +28,8 @@ struct Params {
     ln_w30: f32,
     init_difficulty_easy: f32,
     exp3w5: f32,
+    long_success_prefactor: f32,
+    short_success_prefactor: f32,
 }
 
 impl Params {
@@ -229,6 +52,17 @@ impl Params {
             ln_w30,
             init_difficulty_easy: w[4] - exp3w5 + 1.0,
             exp3w5,
+            long_success_prefactor: (w[7] - 1.5).exp(),
+            short_success_prefactor: (w[16] - 1.5).exp(),
+        }
+    }
+
+    #[inline(always)]
+    fn success_prefactor(&self, start: usize) -> f32 {
+        if start == 7 {
+            self.long_success_prefactor
+        } else {
+            self.short_success_prefactor
         }
     }
 }
@@ -260,29 +94,36 @@ fn init_difficulty(w: &[f32], rating: F32x4) -> F32x4 {
 
 #[inline(always)]
 fn forgetting_curve(w: &[f32], params: &Params, t: F32x4, s: F32x4) -> F32x4 {
+    forgetting_curve_with_ln(w, params, t, s, s.ln())
+}
+
+#[inline(always)]
+fn forgetting_curve_with_ln(w: &[f32], params: &Params, t: F32x4, s: F32x4, ln_s: F32x4) -> F32x4 {
     let t_over_s = t.max(F32x4::splat(0.0)) / s;
-    let r1 = (F32x4::splat(1.0) + t_over_s * F32x4::splat(params.factor1))
-        .ln()
-        .mul(F32x4::splat(params.decay1))
-        .exp();
-    let r2 = (F32x4::splat(1.0) + t_over_s * F32x4::splat(params.factor2))
-        .ln()
-        .mul(F32x4::splat(params.decay2))
-        .exp();
-    let ln_s = s.ln();
+    let r1 = ((F32x4::splat(1.0) + t_over_s * F32x4::splat(params.factor1)).ln()
+        * F32x4::splat(params.decay1))
+    .exp();
+    let r2 = ((F32x4::splat(1.0) + t_over_s * F32x4::splat(params.factor2)).ln()
+        * F32x4::splat(params.decay2))
+    .exp();
     let weight1 = F32x4::splat(w[31]) * (ln_s * F32x4::splat(-w[33])).exp();
     let weight2 = F32x4::splat(w[32]) * (ln_s * F32x4::splat(w[34])).exp();
     (weight1 * r1 + weight2 * r2) / (weight1 + weight2)
 }
 
 #[inline(always)]
-fn stability_for_set(
+#[allow(clippy::too_many_arguments)]
+fn stability_for_set_with_logs(
     w: &[f32],
+    params: &Params,
     s: F32x4,
     r: F32x4,
     d: F32x4,
     rating: F32x4,
     start: usize,
+    ln_s: F32x4,
+    ln_d: F32x4,
+    ln_s1: F32x4,
 ) -> F32x4 {
     let one = F32x4::splat(1.0);
     let hard_penalty = F32x4::blend(
@@ -296,13 +137,13 @@ fn stability_for_set(
         one,
     );
     let new_s_fail = F32x4::splat(w[start + 3])
-        * (d.ln() * F32x4::splat(-w[start + 4])).exp()
-        * (((s + one).ln() * F32x4::splat(w[start + 5])).exp() - one)
+        * (ln_d * F32x4::splat(-w[start + 4])).exp()
+        * ((ln_s1 * F32x4::splat(w[start + 5])).exp() - one)
         * ((one - r) * F32x4::splat(w[start + 6])).exp();
     let pls = s.min(new_s_fail);
-    let sinc = (F32x4::splat(w[start] - 1.5)).exp()
+    let sinc = F32x4::splat(params.success_prefactor(start))
         * (F32x4::splat(11.0) - d)
-        * (s.ln() * F32x4::splat(-w[start + 1])).exp()
+        * (ln_s * F32x4::splat(-w[start + 1])).exp()
         * (((one - r) * F32x4::splat(w[start + 2])).exp() - one)
         * hard_penalty
         * easy_bonus
@@ -328,6 +169,7 @@ fn step(
     s: F32x4,
     d: F32x4,
     nth: usize,
+    same_day: bool,
 ) -> (F32x4, F32x4) {
     let last_s = s.clamp(S_MIN as f32, S_MAX as f32);
     let last_d = d.clamp(D_MIN as f32, D_MAX as f32);
@@ -338,9 +180,19 @@ fn step(
         )
     } else {
         let delta_t = delta_t.max(F32x4::splat(0.0));
-        let r = forgetting_curve(w, params, delta_t, last_s);
-        let long = stability_for_set(w, last_s, r, last_d, rating, 7);
-        let short = stability_for_set(w, last_s, r, last_d, rating, 16);
+        let ln_s = last_s.ln();
+        let r = if same_day {
+            F32x4::splat(1.0)
+        } else {
+            forgetting_curve_with_ln(w, params, delta_t, last_s, ln_s)
+        };
+        let ln_d = last_d.ln();
+        let ln_s1 = (last_s + F32x4::splat(1.0)).ln();
+        let long =
+            stability_for_set_with_logs(w, params, last_s, r, last_d, rating, 7, ln_s, ln_d, ln_s1);
+        let short = stability_for_set_with_logs(
+            w, params, last_s, r, last_d, rating, 16, ln_s, ln_d, ln_s1,
+        );
         let coefficient =
             F32x4::splat(1.0) - F32x4::splat(w[26]) * (F32x4::splat(-w[25]) * delta_t).exp();
         (
@@ -363,6 +215,7 @@ fn bce_loss(r: F32x4, label: F32x4, weight: F32x4) -> F32x4 {
 }
 
 struct Curve4 {
+    same_day: bool,
     out: F32x4,
     t_over_s: F32x4,
     b1: F32x4,
@@ -378,6 +231,30 @@ struct Curve4 {
     wsum: F32x4,
     ret: F32x4,
     ln_s: F32x4,
+}
+
+#[inline(always)]
+fn curve4_same_day() -> Curve4 {
+    let zero = F32x4::splat(0.0);
+    let one = F32x4::splat(1.0);
+    Curve4 {
+        same_day: true,
+        out: one,
+        t_over_s: zero,
+        b1: one,
+        b2: one,
+        r1: one,
+        r2: one,
+        ln_b1: zero,
+        ln_b2: zero,
+        p33: one,
+        p34: one,
+        weight1: zero,
+        weight2: zero,
+        wsum: one,
+        ret: one,
+        ln_s: zero,
+    }
 }
 
 #[inline(always)]
@@ -403,6 +280,7 @@ fn curve4_fwd_with_ln(w: &[f32], params: &Params, t: F32x4, s: F32x4, ln_s: F32x
     let num = weight1 * r1 + weight2 * r2;
     let ret = num / wsum;
     Curve4 {
+        same_day: false,
         out: ret,
         t_over_s,
         b1,
@@ -431,6 +309,10 @@ fn curve4_bwd(
     g_out: F32x4,
     grad: &mut [F32x4; PARAM_LEN],
 ) -> F32x4 {
+    if cache.same_day {
+        return F32x4::splat(0.0);
+    }
+
     let zero = F32x4::splat(0.0);
     let g_num = g_out / cache.wsum;
     let g_wsum = (zero - g_out) * cache.ret / cache.wsum;
@@ -495,6 +377,7 @@ struct Stab4 {
 #[inline(always)]
 fn stab4_fwd_with_logs(
     w: &[f32],
+    params: &Params,
     s: F32x4,
     r: F32x4,
     d: F32x4,
@@ -520,7 +403,7 @@ fn stab4_fwd_with_logs(
     let qbase = (ln_s1 * F32x4::splat(w[start + 5])).exp_fast();
     let nsf_fail = F32x4::splat(w[start + 3]) * pr * (qbase - one);
     let pls = s.min(nsf_fail);
-    let aa = F32x4::splat(w[start] - 1.5).exp_fast();
+    let aa = F32x4::splat(params.success_prefactor(start));
     let bb = F32x4::splat(11.0) - d;
     let cc = (ln_s * F32x4::splat(-w[start + 1])).exp_fast();
     let expr = ((one - r) * F32x4::splat(w[start + 2])).exp_fast();
@@ -704,6 +587,7 @@ fn step4_fwd(
     s: F32x4,
     d: F32x4,
     nth: usize,
+    same_day: bool,
 ) -> ((F32x4, F32x4), Step4) {
     let last_s = s.clamp(S_MIN as f32, S_MAX as f32);
     let last_d = d.clamp(D_MIN as f32, D_MAX as f32);
@@ -739,9 +623,17 @@ fn step4_fwd(
     let ln_s = last_s.ln_fast();
     let ln_d = last_d.ln_fast();
     let ln_s1 = (last_s + F32x4::splat(1.0)).ln_fast();
-    let curve = curve4_fwd_with_ln(w, params, dt, last_s, ln_s);
-    let long = stab4_fwd_with_logs(w, last_s, curve.out, last_d, rating, 7, ln_s, ln_d, ln_s1);
-    let short = stab4_fwd_with_logs(w, last_s, curve.out, last_d, rating, 16, ln_s, ln_d, ln_s1);
+    let curve = if same_day {
+        curve4_same_day()
+    } else {
+        curve4_fwd_with_ln(w, params, dt, last_s, ln_s)
+    };
+    let long = stab4_fwd_with_logs(
+        w, params, last_s, curve.out, last_d, rating, 7, ln_s, ln_d, ln_s1,
+    );
+    let short = stab4_fwd_with_logs(
+        w, params, last_s, curve.out, last_d, rating, 16, ln_s, ln_d, ln_s1,
+    );
     let transition_exp = (F32x4::splat(-w[25]) * dt).exp_fast();
     let coefficient = F32x4::splat(1.0) - F32x4::splat(w[26]) * transition_exp;
     let new_s_pre = coefficient * long.out + (F32x4::splat(1.0) - coefficient) * short.out;
@@ -939,6 +831,9 @@ fn add_scalar_column_grad(
         let index = row * batch_size + column;
         let delta_t = t_historys[index] as f64;
         let rating = r_historys[index] as usize;
+        if rating == 0 {
+            break;
+        }
         let weight = weights[index] as f64;
         if row > 0 && weight != 0.0 {
             let r = super::forgetting_curve(&w, delta_t, state.stability);
@@ -947,7 +842,7 @@ fn add_scalar_column_grad(
                 *dst += src;
             }
         }
-        if row + 1 < seq_len {
+        if row + 1 < seq_len && r_historys[(row + 1) * batch_size + column] != 0.0 {
             state = super::step(&w, delta_t, rating, state, row);
         }
     }
@@ -996,20 +891,34 @@ pub(super) fn windowed_loss(
     let mut loss = 0.0;
     for group in 0..group_count {
         let column = group * 4;
+        let active_seq_len = group_active_seq_len(r_historys, seq_len, batch_size, column);
         let mut s = F32x4::splat(0.0);
         let mut d = F32x4::splat(0.0);
-        for row in 0..seq_len {
+        for row in 0..active_seq_len {
             let index = row * batch_size + column;
             let delta_t = F32x4::load(t_historys, index);
             let rating = F32x4::load(r_historys, index);
             if row > 0 {
-                let r = forgetting_curve(w, &params, delta_t, s.clamp(S_MIN as f32, S_MAX as f32))
-                    .clamp(0.0001, 0.9999);
+                let r = if four_non_positive(t_historys, index) {
+                    F32x4::splat(1.0)
+                } else {
+                    forgetting_curve(w, &params, delta_t, s.clamp(S_MIN as f32, S_MAX as f32))
+                }
+                .clamp(0.0001, 0.9999);
                 loss += bce_loss(r, F32x4::load(labels, index), F32x4::load(weights, index)).sum()
                     as f64;
             }
-            if row + 1 < seq_len {
-                (s, d) = step(w, &params, delta_t, rating, s, d, row);
+            if row + 1 < active_seq_len {
+                (s, d) = step(
+                    w,
+                    &params,
+                    delta_t,
+                    rating,
+                    s,
+                    d,
+                    row,
+                    four_non_positive(t_historys, index),
+                );
             }
         }
     }
@@ -1023,12 +932,15 @@ pub(super) fn windowed_loss(
             let index = row * batch_size + column;
             let delta_t = t_historys[index] as f64;
             let rating = r_historys[index] as usize;
+            if rating == 0 {
+                break;
+            }
             let weight = weights[index] as f64;
             if row > 0 && weight != 0.0 {
                 let r = super::forgetting_curve_scalar(w, delta_t, state.stability);
                 loss += super::bce_loss_scalar(r, labels[index] as f64, weight);
             }
-            if row + 1 < seq_len {
+            if row + 1 < seq_len && r_historys[(row + 1) * batch_size + column] != 0.0 {
                 state = super::step_scalar(w, delta_t, rating, state, row);
             }
         }
@@ -1086,6 +998,7 @@ pub(super) fn windowed_grad(
                     s,
                     d,
                     row,
+                    four_non_positive(t_historys, index),
                 );
                 s = next_state.0;
                 d = next_state.1;
@@ -1094,7 +1007,11 @@ pub(super) fn windowed_grad(
 
             let last_index = (active_seq_len - 1) * batch_size + column;
             let last_s = s.clamp(S_MIN as f32, S_MAX as f32);
-            let last_curve = curve4_fwd(w, &params, F32x4::load(t_historys, last_index), last_s);
+            let last_curve = if four_non_positive(t_historys, last_index) {
+                curve4_same_day()
+            } else {
+                curve4_fwd(w, &params, F32x4::load(t_historys, last_index), last_s)
+            };
             let mut group_grad = [F32x4::splat(0.0); PARAM_LEN];
             let g_last_r = bce_retrievability_grad(
                 last_curve.out,

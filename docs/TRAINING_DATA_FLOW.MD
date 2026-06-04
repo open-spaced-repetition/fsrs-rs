@@ -27,6 +27,24 @@ initialization-item indices for kept buckets instead of storing full grouped
 and filtered train set semantically unchanged while avoiding duplicated grouped
 item storage during preprocessing.
 
+## FSRS-7 Initialization
+
+- Data read:
+  - In-memory first-rating, delta-t bucket, recall, and count arrays created
+    from initialization candidates.
+  - FSRS-7 forgetting-curve candidate parameters.
+- Data created:
+  - Temporary scalar predicted recall and log-loss values during each
+    ternary-search evaluation.
+- Data updated:
+  - Best in-memory initial stability and forgetting-curve candidate selection.
+- Data storage:
+  - No persistent storage.
+
+FSRS-7 initialization evaluates `loss_with_curve()` by streaming over the
+existing bucket arrays. It no longer creates temporary ndarray prediction and
+log arrays for every ternary-search step.
+
 ## Training Batch Construction
 
 - Data read:
@@ -103,6 +121,12 @@ indices to both review histories and card ids. This keeps card ids aligned with
 their surviving prefix items through filtering, recency weighting, max sequence
 length filtering, and batching.
 
+`examples/fsrs7_adr_collection.rs` also builds aligned card ids while converting
+collection revlogs into FSRS prefix items. FSRS-7 ADR collection runs pass those
+ids to `compute_parameters()` so they use the same windowed host batch path as
+Anki collection optimization. FSRS-6 ADR collection runs keep `card_ids` absent
+to avoid changing their prefix-item training path.
+
 The windowed path is currently FSRS-7-only. If card ids are absent, or if FSRS-6
 training is requested, optimization uses the existing prefix-item tensor path.
 When FSRS-7 card ids are present, `compute_parameters()` rewrites the transient
@@ -119,8 +143,14 @@ gradient reuses per-step recurrent logarithms, fuses the stability fail-path
 `d`/retrievability exponentials, skips all-padding trailing rows per four-lane
 group, and uses a faster approximate NEON `exp`/`ln` variant for recurrence
 math. The NEON validation-loss path keeps the more accurate approximation.
-Ragged remainders stay scalar, and non-NEON targets keep the scalar analytic
-path. FSRS-7 windowed optimizer steps use host-side Adam with the same
+Windowed host batches pad their physical column count to a multiple of four so
+production NEON training avoids scalar remainder columns; the logical batch size
+used for loss and penalty scaling remains the real prefix prediction count.
+FSRS-7 validation computes the schedule-penalty value with a scalar value-only
+rollout; training still uses the dual-number penalty path because it needs
+gradients for optimizer updates.
+Non-NEON targets keep the scalar analytic path. FSRS-7 windowed optimizer steps
+use host-side Adam with the same
 `beta_1=0.8`, `beta_2=0.85`, and `epsilon=1e-8` settings as the Burn optimizer,
 followed by the same version-aware clipping rules. Prefix-item training, FSRS-6
 training, and callers without card ids remain on the existing Burn tensor loss

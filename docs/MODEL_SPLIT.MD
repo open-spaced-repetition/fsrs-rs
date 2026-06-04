@@ -38,6 +38,8 @@ while keeping shared model state/config logic in `src/model.rs`.
     approximate `exp`/`ln` recurrence. The validation-loss path keeps the more
     accurate approximation. The exact scalar dual-number gradient remains the
     oracle and non-NEON fallback.
+  - `src/neon_math.rs` contains the shared ARM64 `float32x4_t` wrapper and
+    approximate `exp`/`ln` helpers used by NEON kernels.
   - The kernel is parameter-size-specific to the current 35-parameter FSRS-7
     layout and is not shared with FSRS-6.
 - Training initial-stability normalization is version-specific:
@@ -66,6 +68,10 @@ while keeping shared model state/config logic in `src/model.rs`.
 - Version constants are colocated with version logic:
   - `src/model_v6.rs`: `PARAM_LEN`
   - `src/model_v7.rs`: FSRS-7 solver/LUT constants and `PARAM_LEN`
+- FSRS-7 repeated runtime math can use `src/model_v7.rs::Fsrs7Runtime` to
+  combine the cached S90 LUT with precomputed forgetting-curve constants. This
+  keeps the public scalar helper behavior unchanged while avoiding repeated
+  parameter-derived constant setup in simulator rollouts.
 
 ## Data Flow
 
@@ -77,6 +83,8 @@ while keeping shared model state/config logic in `src/model.rs`.
   - FSRS-7 windowed padding ratings during NEON group active-length detection
   - FSRS-7 card-id windowed training tuning constants: learning rate `0.07`
     and `17` epochs
+  - FSRS-7 runtime contexts read the model parameter vector and cached S90 LUT
+    during repeated simulator retrievability and interval calculations
 - Data updated:
   - next-step `MemoryStateTensors` during `Model::step()`
   - optimized initial-stability params `0..3` after training, normalized by the
@@ -88,5 +96,6 @@ while keeping shared model state/config logic in `src/model.rs`.
 - Data storage:
   - no new persistence; all values remain in-memory
   - FSRS-7 S90 LUT cache remains process-local memory only
+  - FSRS-7 runtime contexts are transient and are not persisted
   - shared windowed host batches, analytic gradient arrays, and host Adam
     moments live only for the current optimization run

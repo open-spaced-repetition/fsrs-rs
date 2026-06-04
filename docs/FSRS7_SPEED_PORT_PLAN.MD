@@ -95,7 +95,8 @@ Current transparent groups already implemented on this branch:
     `419.67 ms..429.12 ms`, about `11.4%` faster than the preceding
     `.07`/17-epoch benchmark around `478.47 ms`.
 - [x] ARM64 NEON FSRS-7 windowed validation loss.
-  - Files: `src/analytic_v7.rs`, `src/analytic_v7/neon_loss.rs`.
+  - Files: `src/analytic_v7.rs`, `src/analytic_v7/neon_loss.rs`,
+    `src/neon_math.rs`.
   - Data-flow doc: `docs/TRAINING_DATA_FLOW.MD`.
   - On `aarch64` targets with `neon`, FSRS-7 card-id windowed validation loss
     processes four batch columns per `float32x4_t` group. Other targets and
@@ -110,7 +111,7 @@ Current transparent groups already implemented on this branch:
     change `[-7.7517% +2.2041% +10.940%]`.
 - [x] ARM64 NEON FSRS-7 windowed BCE gradient.
   - Files: `src/analytic_v7.rs`, `src/analytic_v7/neon_loss.rs`,
-    `src/training.rs`.
+    `src/neon_math.rs`, `src/training.rs`.
   - Data-flow doc: `docs/TRAINING_DATA_FLOW.MD`.
   - Training now calls a gradient-only analytic entrypoint. On ARM64 NEON,
     four windowed batch columns are differentiated together with a native
@@ -125,7 +126,8 @@ Current transparent groups already implemented on this branch:
     `0.48999852`, RMSE bins about `0.04345194`, optimization `0.685 s` and
     `0.688 s` on repeated warm runs.
 - [x] ARM64 NEON FSRS-7 windowed gradient micro-optimizations.
-  - Files: `src/analytic_v7.rs`, `src/analytic_v7/neon_loss.rs`.
+  - Files: `src/analytic_v7.rs`, `src/analytic_v7/neon_loss.rs`,
+    `src/neon_math.rs`.
   - Data-flow doc: `docs/TRAINING_DATA_FLOW.MD`.
   - The NEON training-gradient path now hoists the shared recurrent `ln(s)`,
     `ln(d)`, and `ln(s+1)` values per step, fuses the stability fail-path
@@ -146,6 +148,99 @@ Current transparent groups already implemented on this branch:
     `0.48992801`, RMSE bins about `0.04356728`, optimization samples `0.657 s`,
     `0.946 s`, `0.807 s`, `0.995 s`, and `0.666 s`. Treat this as noisy but
     gate-passing; the previous accepted gate was `0.49024179`.
+- [x] ADR-facing FSRS-7 NEON reuse and simulator metric range accumulation.
+  - Files: `examples/fsrs7_adr_collection.rs`, `src/simulation.rs`,
+    `src/simulation/neon.rs`, `src/neon_math.rs`, `benches/cost_adr.rs`,
+    `Cargo.toml`.
+  - Data-flow docs: `docs/COST_ADR.MD`, `docs/TRAINING_DATA_FLOW.MD`.
+  - The ADR collection example now preserves aligned card ids while converting
+    revlogs into FSRS prefix items and passes them to `compute_parameters()` for
+    FSRS-7 parameter training. This lets ADR collection runs reuse the existing
+    FSRS-7 card-id windowed NEON training path.
+  - Cost ADR policy training now has a dedicated Criterion benchmark:
+    `cargo bench --bench cost_adr`.
+  - Simulation metric accumulation now uses an ARM64 NEON helper for FSRS-7
+    `memorized_cnt_per_day` range updates. Scheduling decisions, RNG
+    thresholds, priority queues, card state updates, and interval selection stay
+    scalar.
+  - Local sequential Criterion after this step: `cost_adr/train_single_user`
+    `433.17 ms..478.47 ms`. Treat this as the first recorded baseline for the
+    dedicated Cost ADR training benchmark because that benchmark did not exist
+    before this pass.
+  - The filtered `simulation parallel_simulate` benchmark has a real pre/post
+    comparison: previous baseline `431.57 ms..485.85 ms`; after the simulator
+    NEON helper `391.52 ms..434.60 ms`, Criterion change
+    `[-22.953% -16.213% -8.7944%]`, reported as a significant improvement.
+- [x] ADR simulator FSRS-7 runtime context and per-rollout policy evaluator.
+  - Files: `src/model_v7.rs`, `src/simulation.rs`, `src/cost_adr.rs`.
+  - Data-flow docs: `docs/COST_ADR.MD`, `docs/S90_RETRIEVAL.MD`,
+    `docs/MODEL_SPLIT.MD`.
+  - FSRS-7 simulator rollouts now reuse a transient `Fsrs7Runtime` containing
+    the cached S90 LUT plus parameter-derived forgetting-curve constants.
+    Public scalar helpers retain the same behavior and tests compare the
+    runtime path against the scalar helper outputs.
+  - Cost ADR rollouts now reuse a per-cost-weight policy evaluator with cached
+    normalized cost weight, bounds transforms, and retention span.
+  - Deterministic hypervolume check:
+    `cargo run --release --example cost_adr -- --days 180 --deck 1500 --learn-limit 20 --review-limit 9999 --cost-limit-minutes 720 --pop 4 --gen 3 --seed 42`.
+    Hypervolume stayed unchanged before/after: baseline `12719.048828`, best
+    `12293.481445`, delta `-425.567383`. Training wall time moved from
+    `1.233 s` to `0.998 s`.
+  - Local sequential Criterion for `cost_adr/train_single_user`: previous
+    accepted current-tree baseline `418.22 ms..423.67 ms`; after the runtime
+    context and evaluator `366.77 ms..377.68 ms`, Criterion change
+    `[-13.105% -11.864% -10.166%]`, reported as a significant improvement.
+  - Follow-up `sample` profile on release `examples/cost_adr` default profile,
+    sampled for `15s` after startup, showed `fsrs7_next_interval_with_curve`
+    and system `powf` as the dominant active entries. The next large non-wait
+    target was `PriorityQueue::heapify`, then NEON metric range accumulation,
+    Brent fallback, `simulate_inner`, and `stability_for_set_scalar`.
+    `CostAdrPolicyEvaluator::evaluate_retention` was much smaller after the
+    evaluator pass. Profile report path for this run:
+    `/private/tmp/cost_adr_profile.sample.txt`.
+- [x] ADR interval-cache and simulator heap specialization.
+  - Files: `src/model_v7.rs`, `src/simulation.rs`.
+  - Data-flow doc: `docs/COST_ADR.MD`.
+  - FSRS-7 interval solving now builds a stability-dependent curve cache once
+    per interval candidate and reuses it across high-bound bracketing, Newton,
+    and Brent fallback. The scalar arithmetic shape was kept stable after an
+    intermediate reciprocal-multiply variant changed deterministic output by a
+    tiny amount.
+  - Simulator card scheduling now uses a local indexed heap specialized to card
+    indices and `CardPriority`. It preserves the previous strict `>` heap
+    comparison behavior, including equal-priority swap order, while removing the
+    generic `PriorityQueue` hash/index-map layer that appeared in the profile.
+  - Deterministic hypervolume check stayed unchanged: baseline `12719.048828`,
+    best `12293.481445`, delta `-425.567383`. The same command's training wall
+    time was `0.970 s` in this run.
+  - Interval-cache-only Criterion after preserving scalar arithmetic:
+    `cost_adr/train_single_user` `366.77 ms..378.07 ms`, change
+    `[-1.9543% +0.2665% +2.2112%]`, reported as no detected performance change.
+  - After the specialized simulator heap, Criterion moved to
+    `349.04 ms..353.52 ms`, change `[-7.2023% -5.5660% -4.1185%]`, reported as
+    a significant improvement.
+  - Follow-up `sample` report `/private/tmp/cost_adr_after_heap.sample.txt`
+    showed the previous `PriorityQueue::heapify` symbol removed. The local
+    `CardPriorityQueue::heapify` still appears because scheduling remains a
+    heap operation, but it was `6377` samples versus `12183` in the prior
+    generic-queue profile. The remaining largest entries were
+    `fsrs7_next_interval_with_curve`, system `powf`, Brent, and
+    `stability_for_set_scalar`.
+- [x] ADR FSRS-7 narrowed Brent fallback bracket.
+  - Files: `src/model_v7.rs`.
+  - Data-flow docs: `docs/COST_ADR.MD`, `docs/S90_RETRIEVAL.MD`.
+  - Newton interval solving already maintains a valid bracket. When Newton
+    reaches its iteration limit, the Brent fallback now starts from that
+    narrowed `(low, high)` range instead of restarting from `0..high`.
+  - Deterministic hypervolume and default-policy rollout rows stayed unchanged:
+    baseline `12719.048828`, best `12293.481445`, delta `-425.567383`.
+  - Criterion for `cost_adr/train_single_user`: first run after the bracket
+    change `339.06 ms..345.49 ms`, significant improvement versus the
+    specialized-heap baseline; follow-up run `338.82 ms..342.38 ms`, no
+    detected change versus the immediately prior solver benchmark.
+  - Rejected experiment: lowering `NEWTON_ITERS` from `12` to `8`. Accuracy
+    tests passed and final training hypervolume stayed unchanged, but
+    default-policy rollout rows changed, so the solver keeps `12` Newton steps.
 
 Verification commands already run after the scalar group:
 
@@ -197,9 +292,13 @@ Do not port next:
 
 Recommended next implementation:
 
-1. Profile the remaining FSRS-7 card-id optimization time after the NEON
-   gradient pass before adding more math kernels.
-2. Prefer changes that keep the current 35-parameter data contract and can be
+1. Evaluate and port the bit-for-bit pieces from
+   [open-spaced-repetition/fsrs-rs#417](https://github.com/open-spaced-repetition/fsrs-rs/pull/417)
+   into the current `src/analytic_v7.rs` / `src/analytic_v7/neon_loss.rs`
+   layout.
+2. Profile the remaining FSRS-7 card-id optimization time after the PR #417
+   pass before adding more math kernels.
+3. Prefer changes that keep the current 35-parameter data contract and can be
    checked against the repo fixture plus Main Profile temp-copy gates.
 
 ## Compatibility Gate
@@ -515,6 +614,51 @@ Repo fixture selected production check after the ARM64 NEON gradient:
 - Repo-fixture gate: prefix LogLoss `0.20300646` plus `0.0015` =
   `0.20450646`; the windowed selected path remains inside the gate.
 
+Main Profile checkpoint rerun on the 2026-06-04 snapshot:
+
+- Collection source:
+  `/Users/jschoreels/Library/Application Support/Anki2/Main Profile/collection.anki2`.
+- Data access: the live collection was copied with SQLite `.backup` to
+  `/private/tmp/fsrs-main-profile-collection-backup.anki2`; benchmark commands
+  read only that temporary backup. No Anki profile data was written or modified.
+- Snapshot validation: `revlog` rows with review ease `1..=4`: `248819`;
+  prepared FSRS items: `183178`.
+- Command shape: temporary release harness using the same collection conversion
+  logic as `examples/fsrs7_adr_collection.rs`, then `compute_parameters()` with
+  FSRS-7, short-term enabled, schedule penalties enabled, and either no
+  `card_ids` for the prefix baseline or aligned `card_ids` for the windowed
+  path. The harness reports `optimize_seconds`, so cold worktree compilation is
+  excluded from the timing table.
+- Gate: prefix LogLoss `0.48780313` plus `0.0015` = `0.48930313`.
+- The first row after the prefix baseline combines the earlier accepted
+  analytic gradient, scalar validation, and host Adam work because those were
+  not all retained as separate durable checkpoints in this branch history.
+
+| Checkpoint / path | Optimize s | LogLoss | RMSE bins | Gate | Step gain vs previous row | Cumulative gain vs prefix | Speedup vs prefix |
+| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |
+| Prefix-item baseline, current tree | `28.628651` | `0.48780313` | `0.03665148` | baseline | baseline | `0.0%` | `1.0x` |
+| `7bfc8ee` windowed training | `2.367539` | `0.48982984` | `0.04184988` | miss by `0.000527` | `91.7%` | `91.7%` | `12.1x` |
+| `cd6d3d0` LR `0.07`, 17 epochs | `4.757196` | `0.48816797` | `0.03709807` | pass | `-100.9%` | `83.4%` | `6.0x` |
+| `0d531b3` host-only/BCE/skip-last | `4.627972` | `0.48816797` | `0.03709807` | pass | `2.7%` | `83.8%` | `6.2x` |
+| `18125f9` NEON validation | `3.830542` | `0.48816797` | `0.03709807` | pass | `17.2%` | `86.6%` | `7.5x` |
+| `245c2f3` first NEON gradient | `0.778492` | `0.49151888` | `0.04087845` | miss by `0.002216` | `79.7%` | `97.3%` | `36.8x` |
+| `aed38e2` NEON gradient micro-optimizations | `0.761803` | `0.48805517` | `0.03721301` | pass | `2.1%` | `97.3%` | `37.6x` |
+| Current dirty tree, padding plus scalar validation penalty/init work | `0.524652` | `0.48805487` | `0.03720748` | pass | `31.1%` | `98.2%` | `54.6x` |
+
+Interpretation:
+
+- The largest acceptable jump is still moving from the prefix-item path to the
+  optimized windowed path: the current tree is `54.6x` faster than prefix on
+  this snapshot while staying inside the LogLoss gate.
+- The LR/epoch tuning intentionally gives back runtime versus the 8-epoch
+  checkpoint because the 8-epoch row misses the quality gate on this collection.
+- The first NEON-gradient checkpoint is a useful speed signal but not an
+  acceptable endpoint here; the later micro-optimization checkpoint restores the
+  gate while keeping the NEON-gradient speed.
+- This table should not be compared directly against the older Main Profile
+  rows above, which used a smaller temporary copy with about `150k` prepared
+  items.
+
 ## Implementation Checklist
 
 ### 1. Baseline And Gates
@@ -622,6 +766,172 @@ Repo fixture selected production check after the ARM64 NEON gradient:
   - Source: iter20 and Phase 2 iter2.
   - Tests: scalar BCE value and dual BCE gradient match the hard-label
     reference for labels `0` and `1`.
+- [ ] Port PR #417 bit-for-bit windowed analytic-gradient optimizations.
+  - Source:
+    [open-spaced-repetition/fsrs-rs#417](https://github.com/open-spaced-repetition/fsrs-rs/pull/417),
+    `perf: speed up compute_parameters (windowed analytic gradient)`.
+  - PR #417 is open as of 2026-06-04 and targets the card-grouped
+    `card_ids` analytic-gradient path that dominates `compute_parameters`,
+    building on the analytic gradient from PR #411.
+  - Candidate pieces to adapt to this repo's current 35-parameter
+    `src/analytic_v7.rs` shape:
+    - Hoist parameter-only transcendentals out of per-step recurrence:
+      forgetting-curve factors, success/failure prefactors, and easy-rating
+      initial difficulty.
+    - Evaluate only the selected stability branch in the forward step instead
+      of computing success, lapse, and same-day branches before selecting one.
+    - Stop each card column at the first trailing padding rating `0`.
+    - Skip the forgetting-curve `powf` for same-day reviews where
+      `delta_t == 0` and retrievability is exactly `1`.
+  - PR-reported benchmark on a roughly 600k-review collection:
+    `compute_parameters` windowed path about `-22%`, and
+    `compute_parameters_without_card_ids` about `-30%`.
+  - Local pre-port profile baseline, collected on 2026-06-04 with
+    `rtk cargo bench --bench parameters compute_parameters -- --profile-time 25 --noplot`
+    plus macOS `sample` for 18 seconds:
+    `/private/tmp/fsrs_compute_parameters.sample.txt`.
+    Top symbol sample counts:
+    - `analytic_v7::neon_loss::windowed_grad`: `1830`
+    - `analytic_v7::windowed_loss`: `1638`
+    - `training_v7::Dual35::pow`: `809`
+    - `training_v7::fsrs7_fc_r_dual`: `488`
+    - `training_v7::fsrs7_next_s_good_dual`: `472`
+    - `parameter_initialization_fsrs7::loss_with_curve`: `454`
+    - `training_v7::maybe_schedule_penalty_value_and_grad`: `104`
+    - `training::build_windowed_batch`: `17`
+    Interpretation: optimize the windowed gradient and validation-loss
+    recurrence first, then revisit the schedule-penalty dual path. Batch
+    construction is not currently a meaningful hotspot.
+  - Partial local port result, 2026-06-04:
+    - Implemented same-day forgetting-curve skips for scalar/dual analytic
+      loss and all-lane NEON same-day rows.
+    - Implemented trailing-padding stop for scalar columns, NEON validation
+      groups, and NEON scalar remainder columns.
+    - Hoisted NEON validation recurrence logs (`ln(s)`, `ln(d)`, `ln(s+1)`)
+      and the long/short success prefactors already held in the per-call
+      `Params`.
+    - Did not port upstream's active-branch-only forward recurrence directly:
+      this branch's current FSRS-7 recurrence blends long and short stability
+      branches, so skipping one branch is not behavior-preserving here.
+    - First Criterion run for `parameters/compute_parameters` after the partial port:
+      `68.600 ms..69.207 ms`, change `[-7.9665% -3.7143% +0.6230%]`,
+      reported as no detected performance change.
+    - Final current-tree Criterion rerun after cleanup:
+      `69.713 ms..72.647 ms`, change `[-2.1824% +0.7379% +3.3625%]`,
+      also reported as no detected performance change.
+    - Follow-up `sample` report:
+      `/private/tmp/fsrs_compute_parameters_after_pr417_pass.sample.txt`.
+      Top symbol sample counts remained concentrated in
+      `analytic_v7::neon_loss::windowed_grad` (`1963`) and
+      `analytic_v7::windowed_loss` (`1557`). The next visible target is the
+      FSRS-7 schedule-penalty dual path: `training_v7::Dual35::pow` (`848`),
+      `training_v7::fsrs7_fc_r_dual` (`532`), and
+      `training_v7::fsrs7_next_s_good_dual` (`527`).
+  - Schedule-penalty dual constant hoist, 2026-06-04:
+    - Files: `src/training_v7.rs`, `docs/FSRS7_PENALTY.MD`.
+    - Added a transient per-call `PenaltyConsts` value for FSRS-7 schedule
+      penalties. It hoists scalar and dual forgetting-curve constants plus
+      long/short success prefactors out of the penalty rollout loops.
+    - Correctness gates:
+      `rtk cargo test test_manual_schedule_penalty_matches_autodiff_gradient`,
+      `rtk cargo test test_manual_penalty_gradient_matches_autodiff_combined_objective`,
+      `rtk cargo test fsrs7_schedule_penalty`, and
+      `rtk cargo test training_v7` passed.
+    - Criterion for `parameters/compute_parameters`:
+      `68.116 ms..71.818 ms`, change `[-3.5302% -0.8091% +2.2313%]`,
+      reported as no detected performance change.
+    - Follow-up `sample` report:
+      `/private/tmp/fsrs_compute_parameters_after_penalty_consts.sample.txt`.
+      Top symbol sample counts: `analytic_v7::neon_loss::windowed_grad`
+      (`1981`), `analytic_v7::windowed_loss` (`1661`),
+      `training_v7::Dual35::pow` (`636`), `training_v7::fsrs7_next_s_good_dual`
+      (`556`), `parameter_initialization_fsrs7::loss_with_curve` (`518`), and
+      `training_v7::fsrs7_fc_r_dual` (`448`). The targeted curve-dual symbols
+      shrank, but the end-to-end benchmark stayed within noise.
+  - Windowed host-batch physical padding, 2026-06-04:
+    - Files: `src/training.rs`, `docs/TRAINING_DATA_FLOW.MD`.
+    - Windowed FSRS-7 host batches now pad their physical column count to a
+      multiple of four while keeping `prediction_count` as the logical batch
+      size used for loss and penalty scaling.
+    - This keeps production ARM64 NEON training on full four-lane groups and
+      avoids the scalar dual fallback for 1-3 ragged card columns.
+    - Tests now cover the single-card padded shape and use the existing
+      NEON-relative tolerance for validation loss comparisons that now exercise
+      the NEON path instead of the scalar remainder path.
+    - Criterion for `parameters/compute_parameters`:
+      `63.599 ms..63.986 ms`, change `[-11.019% -8.6524% -6.6517%]`,
+      reported as a significant improvement.
+    - Follow-up `sample` report:
+      `/private/tmp/fsrs_compute_parameters_after_window_padding.sample.txt`.
+      Top symbol sample counts: `analytic_v7::neon_loss::windowed_grad`
+      (`2095`), `analytic_v7::windowed_loss` (`1660`),
+      `training_v7::Dual35::pow` (`744`),
+      `parameter_initialization_fsrs7::loss_with_curve` (`563`),
+      `training_v7::fsrs7_next_s_good_dual` (`539`), and
+      `training_v7::fsrs7_fc_r_dual` (`480`). The former
+      `analytic_v7::Dual35::pow` scalar-remainder signal is no longer a top
+      entry after padding.
+  - FSRS-7 validation schedule-penalty value-only rollout, 2026-06-04:
+    - Files: `src/training.rs`, `src/training_v7.rs`,
+      `docs/FSRS7_PENALTY.MD`, and `docs/TRAINING_DATA_FLOW.MD`.
+    - Validation now calls a scalar `schedule_penalty_value()` path for FSRS-7
+      instead of computing schedule-penalty dual gradients and discarding them.
+      Training still uses `schedule_penalty_value_and_grad()` so optimizer
+      updates are unchanged.
+    - Added coverage that the scalar value-only path matches the existing
+      value+gradient path for several batch sizes.
+    - Criterion for `parameters/compute_parameters`:
+      `59.445 ms..60.367 ms`, change `[-7.2033% -6.5411% -5.8939%]`,
+      reported as a significant improvement versus the padded run.
+    - Follow-up `sample` report:
+      `/private/tmp/fsrs_compute_parameters_after_validation_value.sample.txt`.
+      Top symbol sample counts: `analytic_v7::neon_loss::windowed_grad`
+      (`1676`), `analytic_v7::windowed_loss` (`1372`),
+      `parameter_initialization_fsrs7::loss_with_curve` (`452`),
+      `training_v7::Dual35::pow` (`279`),
+      `training_v7::fsrs7_next_s_good_dual` (`240`), and
+      `training_v7::fsrs7_fc_r_dual` (`208`). Schedule-penalty dual work is
+      materially lower than the post-padding profile because validation no
+      longer computes unused schedule gradients.
+  - FSRS-7 initialization scalar `loss_with_curve()`, 2026-06-04:
+    - Files: `src/parameter_initialization_fsrs7.rs`,
+      `docs/TRAINING_DATA_FLOW.MD`, and `docs/FSRS7_SPEED_PORT_PLAN.MD`.
+    - Replaced temporary ndarray prediction/log arrays inside
+      `loss_with_curve()` with a scalar loop over the existing bucket arrays.
+      The initialization data read and selected best candidate semantics are
+      unchanged.
+    - Added a fixed-value regression test for the initialization loss helper.
+    - Criterion for `parameters/compute_parameters`:
+      `45.246 ms..45.364 ms`, change `[-24.489% -23.368% -21.650%]`,
+      reported as a significant improvement versus the validation-value run.
+    - Follow-up `sample` report:
+      `/private/tmp/fsrs_compute_parameters_after_init_scalar_loss.sample.txt`.
+      Top symbol sample counts: `analytic_v7::neon_loss::windowed_grad`
+      (`2441`), `analytic_v7::windowed_loss` (`1924`),
+      `parameter_initialization_fsrs7::loss_with_curve` (`507`),
+      `training_v7::Dual35::pow` (`380`),
+      `training_v7::fsrs7_next_s_good_dual` (`310`), and
+      `training_v7::fsrs7_fc_r_dual` (`282`). Interpret these as the new
+      post-`45ms` distribution, not a direct absolute comparison with older
+      fixed-duration samples.
+  - Maintenance notes:
+    - Do not copy the patch literally: upstream PR #417 edits `src/analytic.rs`,
+      while this branch uses split FSRS-7 modules and native NEON helpers.
+    - Check each candidate against existing NEON hoists and skip-last logic to
+      avoid duplicating code or adding dead branches.
+    - Keep the scalar implementation as the oracle for NEON; update NEON only
+      after scalar A/B is bit-for-bit.
+  - Required gates:
+    - `rtk cargo test test_analytic_loss_and_grad_matches_burn`
+    - `rtk cargo test windowed_matches_sum_of_prefixes`
+    - `rtk cargo test finite_difference_matches_batch_gradient`
+    - `rtk cargo bench --bench parameters compute_parameters`
+    - Repo collection A/B: trained parameters and log loss unchanged.
+  - PR #417 follow-up not included by default: skipping the BCE loss value in
+    training may save another reported `~7%`, but it would require either a
+    training-only `SCORE_LOSS` split or changing tests that currently assert
+    returned loss. Treat that as a separate explicit decision, not part of the
+    bit-for-bit port.
 - [ ] Fuse compatible exp pairs in the FSRS-7 recurrence.
   - Source: iter24.
   - Tests: gradient and loss gate because this is a floating-point reassociation.
@@ -659,8 +969,9 @@ Repo fixture selected production check after the ARM64 NEON gradient:
 6. [x] Add host-side Adam.
 7. [ ] Add SIMD validation and gradient tests.
 8. [x] Add card-id O(N) windowing.
-9. [ ] Layer precision/micro-optimizations one at a time.
-10. [ ] Re-run full tests and performance harness.
+9. [ ] Port PR #417 bit-for-bit analytic-gradient micro-optimizations.
+10. [ ] Layer remaining precision/micro-optimizations one at a time.
+11. [ ] Re-run full tests and performance harness.
 
 ## Source Improvement Summary
 
@@ -668,6 +979,11 @@ Accepted source improvements worth considering:
 
 - [x] Analytic BCE gradient replacing Burn autograd: iter2, `2.1656x`.
 - [ ] Scalar analytic cleanup and hoists: iter5, iter8, iter10, iter13, roughly `1.07x` to `1.20x` each.
+- [ ] PR #417 bit-for-bit windowed analytic-gradient cleanup:
+  parameter-only transcendental hoists, active-branch-only forward recurrence,
+  trailing-padding skip, and same-day `powf` skip. PR-reported collection
+  benchmark: windowed `compute_parameters` about `-22%`; without card ids about
+  `-30%`.
 - [x] Direct host batch building and reuse: iter12 `1.2925x`, iter19 `1.1455x`.
 - [ ] SIMD validation and gradient: iter14 `1.3051x`, iter15 `2.5002x`.
 - [ ] Minimax SIMD transcendentals: iter17 `1.1557x`, iter21 `1.0833x`, iter23 `1.0958x`.

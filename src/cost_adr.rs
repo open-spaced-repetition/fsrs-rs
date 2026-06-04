@@ -108,6 +108,30 @@ pub struct CostAdrItemState {
     pub desired_retention: f32,
 }
 
+pub(crate) struct CostAdrPolicyEvaluator<'a> {
+    policy: &'a CostAdrPolicy,
+    z: f32,
+    z2: f32,
+    log_s_min: f32,
+    log_s_span: f32,
+    difficulty_span: f32,
+    retention_span: f32,
+}
+
+impl CostAdrPolicyEvaluator<'_> {
+    pub(crate) fn evaluate_retention(&self, stability: f32, difficulty: f32) -> f32 {
+        let stability = stability.clamp(self.policy.bounds.s_min, self.policy.bounds.s_max);
+        let difficulty = difficulty.clamp(self.policy.bounds.d_min, self.policy.bounds.d_max);
+        let x_s = ((stability.ln() - self.log_s_min) / self.log_s_span).clamp(0.0, 1.0);
+        let x_d = ((difficulty - self.policy.bounds.d_min) / self.difficulty_span).clamp(0.0, 1.0);
+        let phi = [1.0, x_s, x_d, x_s * x_d, x_s * x_s];
+        let base = dot(&self.policy.coefficients[0..5], &phi);
+        let z_effect = softplus(dot(&self.policy.coefficients[5..10], &phi)) * self.z;
+        let z2_effect = softplus(dot(&self.policy.coefficients[10..15], &phi)) * self.z2;
+        self.policy.retention_min + self.retention_span * sigmoid(base - z_effect - z2_effect)
+    }
+}
+
 impl CostAdrPolicy {
     pub fn train_single_user(
         config: &SimulatorConfig,
@@ -244,13 +268,8 @@ impl CostAdrPolicy {
     }
 
     pub fn evaluate_retention(&self, stability: f32, difficulty: f32, cost_weight: f32) -> f32 {
-        let phi = self.state_features(stability, difficulty);
-        let z = self.normalized_cost_weight(cost_weight);
-        let base = dot(&self.coefficients[0..5], &phi);
-        let z_effect = softplus(dot(&self.coefficients[5..10], &phi)) * z;
-        let z2_effect = softplus(dot(&self.coefficients[10..15], &phi)) * z * z;
-        self.retention_min
-            + (self.retention_max - self.retention_min) * sigmoid(base - z_effect - z2_effect)
+        self.evaluator_for_cost_weight(cost_weight)
+            .evaluate_retention(stability, difficulty)
     }
 
     pub fn retention_grid(
@@ -458,15 +477,19 @@ impl CostAdrPolicy {
         })
     }
 
-    fn state_features(&self, stability: f32, difficulty: f32) -> [f32; 5] {
-        let stability = stability.clamp(self.bounds.s_min, self.bounds.s_max);
-        let difficulty = difficulty.clamp(self.bounds.d_min, self.bounds.d_max);
+    pub(crate) fn evaluator_for_cost_weight(&self, cost_weight: f32) -> CostAdrPolicyEvaluator<'_> {
         let log_s_min = self.bounds.s_min.ln();
         let log_s_span = self.bounds.s_max.ln() - log_s_min;
-        let x_s = ((stability.ln() - log_s_min) / log_s_span).clamp(0.0, 1.0);
-        let x_d = ((difficulty - self.bounds.d_min) / (self.bounds.d_max - self.bounds.d_min))
-            .clamp(0.0, 1.0);
-        [1.0, x_s, x_d, x_s * x_d, x_s * x_s]
+        let z = self.normalized_cost_weight(cost_weight);
+        CostAdrPolicyEvaluator {
+            policy: self,
+            z,
+            z2: z * z,
+            log_s_min,
+            log_s_span,
+            difficulty_span: self.bounds.d_max - self.bounds.d_min,
+            retention_span: self.retention_max - self.retention_min,
+        }
     }
 
     fn normalized_cost_weight(&self, cost_weight: f32) -> f32 {
@@ -1936,6 +1959,24 @@ mod tests {
         assert!(low > high);
         assert!((0.30..=0.995).contains(&low));
         assert!((0.30..=0.995).contains(&high));
+    }
+
+    #[test]
+    fn test_policy_evaluator_matches_direct_retention() {
+        let policy = CostAdrPolicy::default_initial();
+        let evaluator = policy.evaluator_for_cost_weight(64.0);
+        for stability in [0.01, 1.0, 10.0, 1000.0] {
+            for difficulty in [1.0, 5.0, 10.0] {
+                assert_eq!(
+                    evaluator
+                        .evaluate_retention(stability, difficulty)
+                        .to_bits(),
+                    policy
+                        .evaluate_retention(stability, difficulty, 64.0)
+                        .to_bits()
+                );
+            }
+        }
     }
 
     #[test]

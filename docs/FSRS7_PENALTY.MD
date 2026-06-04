@@ -43,12 +43,20 @@ The schedule interval inversion still uses the same two-phase math:
 1. Phase 1: Newton solve in `u = log(t)` scalar space.
 2. Phase 2: one implicit-differentiation lift step around `t*`.
 
-The derivative is propagated by an internal dual-number engine for 35 params.
+Training derivatives are propagated by an internal dual-number engine for 35
+params. Validation uses a scalar value-only rollout because validation never
+consumes schedule-penalty gradients. During each schedule-penalty call,
+parameter-only curve constants and success-prefactors are created once and
+passed through the rollout helpers. They are transient in-memory values only;
+they do not change the penalty formula or persisted model data.
 
 ## Data Flow
 
 - Data created:
-  - temporary scalar penalty values and dual gradients during each train/valid batch.
+  - temporary scalar penalty values and dual gradients during each train batch.
+  - temporary scalar-only penalty values during validation batches.
+  - temporary per-call schedule-penalty constants derived from the current
+    model weights.
 - Data read:
   - current model weights (`w[0..34]`), plus batch size for scaling.
   - input flag `enable_sched_penalties` to decide whether schedule penalties are computed.

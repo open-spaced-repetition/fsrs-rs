@@ -10,6 +10,8 @@ mod dataset;
 mod error;
 mod inference;
 mod model;
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+mod neon_math;
 mod parameter_clipper;
 mod parameter_initialization;
 mod parameter_initialization_fsrs7;

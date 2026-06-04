@@ -26,16 +26,28 @@ Expose a derived stability-like interval for integrations that still want a
 - Data created:
   - An in-memory `S90` lookup table (LUT) indexed by log-scaled stability.
   - LUT size is `256` points.
+  - Transient FSRS-7 runtime contexts can pair the cached LUT with precomputed
+    forgetting-curve constants for repeated simulator interval solves.
+  - Each FSRS-7 interval solve creates a transient stability-specific curve
+    view that caches the stability-dependent mixture weights used by Newton,
+    Brent, and bisection paths.
 - Data read:
   - When solving `next_interval()`, the LUT provides a warm-start interval for
     bracketing.
   - LUT points are sampled over a practical stability band (`0.03..3000`) to
     avoid over-allocating points to extreme tails.
+  - Runtime contexts read the same parameter vector and do not change the
+    interval solver's Newton/Brent/bisection behavior.
+  - If Newton reaches its iteration limit, Brent reads the narrowed bracket
+    produced by Newton instead of rebuilding the search range from zero.
+  - Stability-specific curve views are local to a single interval solve and are
+    discarded after that solve completes.
 - Data updated:
   - The cache map is updated lazily the first time a parameter set is used.
 - Data storage:
   - Process-local memory only (`static` cache in `fsrs-rs`), keyed by FSRS-7
     parameter hash.
+  - Runtime contexts are per-call/per-simulation values and are not persisted.
   - No persistence to disk and no Anki-side storage required.
 
 ## API

@@ -31,7 +31,7 @@ fn main() -> fsrs::Result<()> {
     if let Some(first_grade) = args.first_grade {
         revlogs = filter_revlogs_by_first_grade(&revlogs, first_grade);
     }
-    let fsrs_items = revlogs_to_fsrs_items(&revlogs, day_cutoff);
+    let (fsrs_items, fsrs_card_ids) = revlogs_to_fsrs_items_with_card_ids(&revlogs, day_cutoff);
     let collection_seconds = collection_started.elapsed().as_secs_f32();
 
     let unique_cards = revlogs
@@ -103,10 +103,16 @@ fn main() -> fsrs::Result<()> {
         );
         read_params(params_file)?
     } else {
+        let use_card_ids = matches!(args.model_version, ModelChoice::Fsrs7);
+        println!(
+            "{}_parameter_training_card_ids={}",
+            args.model_version.label(),
+            if use_card_ids { "enabled" } else { "disabled" }
+        );
         let fsrs_started = Instant::now();
         let parameters = compute_parameters(ComputeParametersInput {
             train_set: fsrs_items,
-            card_ids: None,
+            card_ids: use_card_ids.then_some(fsrs_card_ids),
             progress: Some(CombinedProgressState::new_shared()),
             enable_short_term: true,
             enable_sched_penalties: true,
@@ -508,13 +514,17 @@ fn row_to_revlog(row: &Row<'_>) -> rusqlite::Result<RevlogEntry> {
     })
 }
 
-fn revlogs_to_fsrs_items(revlogs: &[RevlogEntry], day_cutoff: i64) -> Vec<FSRSItem> {
+fn revlogs_to_fsrs_items_with_card_ids(
+    revlogs: &[RevlogEntry],
+    day_cutoff: i64,
+) -> (Vec<FSRSItem>, Vec<i64>) {
     let mut grouped = BTreeMap::<i64, Vec<RevlogEntry>>::new();
     for &entry in revlogs {
         grouped.entry(entry.cid).or_default().push(entry);
     }
 
     let mut items = Vec::new();
+    let mut card_ids = Vec::new();
     for entries in grouped.into_values() {
         let entries = remove_before_last_first_learning(entries);
         if entries.len() < 2 {
@@ -537,10 +547,11 @@ fn revlogs_to_fsrs_items(revlogs: &[RevlogEntry], day_cutoff: i64) -> Vec<FSRSIt
                 items.push(FSRSItem {
                     reviews: reviews.clone(),
                 });
+                card_ids.push(entry.cid);
             }
         }
     }
-    items
+    (items, card_ids)
 }
 
 fn filter_revlogs_by_first_grade(revlogs: &[RevlogEntry], first_grade: u8) -> Vec<RevlogEntry> {
@@ -587,6 +598,44 @@ fn active_new_card_days(revlogs: &[RevlogEntry], day_cutoff: i64) -> usize {
 
 fn real_day(timestamp_millis: i64, day_cutoff: i64) -> i64 {
     (timestamp_millis / 1000 - day_cutoff) / 86400
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn revlog(cid: i64, day: i64, rating: u8, review_kind: RevlogReviewKind) -> RevlogEntry {
+        RevlogEntry {
+            id: day * 86400 * 1000,
+            cid,
+            usn: 0,
+            button_chosen: rating,
+            interval: 0,
+            last_interval: 0,
+            ease_factor: 0,
+            taken_millis: 1000,
+            review_kind,
+        }
+    }
+
+    #[test]
+    fn revlogs_to_fsrs_items_keeps_card_ids_aligned() {
+        let revlogs = vec![
+            revlog(10, 0, 3, RevlogReviewKind::Learning),
+            revlog(10, 1, 4, RevlogReviewKind::Review),
+            revlog(20, 0, 1, RevlogReviewKind::Learning),
+            revlog(20, 2, 3, RevlogReviewKind::Review),
+            revlog(20, 3, 2, RevlogReviewKind::Review),
+        ];
+
+        let (items, card_ids) = revlogs_to_fsrs_items_with_card_ids(&revlogs, 0);
+
+        assert_eq!(card_ids, vec![10, 20, 20]);
+        assert_eq!(items.len(), card_ids.len());
+        assert_eq!(items[0].reviews.len(), 2);
+        assert_eq!(items[1].reviews.len(), 2);
+        assert_eq!(items[2].reviews.len(), 3);
+    }
 }
 
 fn write_policy(output_dir: &Path, policy: &CostAdrPolicy) -> fsrs::Result<()> {

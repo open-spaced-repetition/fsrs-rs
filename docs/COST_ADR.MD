@@ -27,15 +27,25 @@
 
 - Data read:
   - FSRS parameter vector.
+  - Optional revlog card ids when `examples/fsrs7_adr_collection.rs` trains
+    FSRS-7 parameters from collection data.
   - Post-review internal `MemoryState { stability, difficulty }`.
   - Runtime cost weight.
   - Cost ADR policy coefficients and bounds.
+  - Per-rollout cached ADR cost-weight evaluator values.
+  - Per-simulation cached FSRS-7 interval/runtime context when parameters use
+    the 35-parameter FSRS-7 shape.
 - Data created:
+  - Aligned `(FSRSItem, card_id)` vectors for FSRS-7 parameter training in the
+    collection example.
   - A per-user Cost ADR policy trained against that user's FSRS parameters and simulator configuration.
   - Evaluation metrics comparing fixed desired-retention baselines to Cost ADR rollouts.
   - Optional plot/export grid rows for `(stability, difficulty, cost_weight, desired_retention)`.
 - Data updated:
   - The per-card desired retention selected for the next interval.
+  - Simulation `memorized_cnt_per_day` metric ranges. On ARM64 FSRS-7 this
+    range accumulation can use NEON; card state updates, RNG decisions,
+    scheduling priority, and interval selection remain scalar.
   - No FSRS memory-state update logic is changed by Cost ADR.
 - Data storage:
   - Persist policy metadata separately from FSRS model parameters.
@@ -81,6 +91,104 @@
 - Calibration first evaluates endpoint weights `0` and `1024`. If their average ADR DR span is below `0.005` retention, it persists only those endpoints because extra bisection points do not give users a meaningful target range.
 - Optional endpoint training penalties can target a broad simulated average ADR DR range. Example: `w=0 -> 0.90`, `w=1024 -> 0.50`, with `penalty=10`, subtracts `10 * ((avg_dr(w=0)-0.90)^2 + (avg_dr(w=1024)-0.50)^2)` from each candidate score.
 - ADR training treats `generations` as a maximum. By default, it can stop after at least `10` generations when the best optimizer score (`hypervolume_delta - endpoint_penalty`) improves by less than `1%` over the last `4` generations. Set `early_stop_patience_generations=0` to force all configured generations. Increase `early_stop_min_generations`, `early_stop_patience_generations`, or lower `early_stop_min_relative_gain` to bias toward longer/higher-quality runs.
+
+## Performance Notes
+
+- `examples/fsrs7_adr_collection.rs` now passes aligned card ids to
+  `compute_parameters()` for FSRS-7 runs that train parameters from collection
+  revlogs. This lets the ADR collection workflow reuse the FSRS-7 card-id
+  windowed path and its ARM64 NEON optimization. FSRS-6 runs keep the prefix
+  path to avoid changing their training behavior.
+- `benches/cost_adr.rs` benchmarks `CostAdrPolicy::train_single_user` directly
+  with a deterministic small profile: `deck_size=1500`, `learn_span=180`,
+  `population_size=4`, `generations=3`, cost weights `0/64/1024`, and baseline
+  desired retentions `0.70/0.85/0.95`.
+- The simulator has an ARM64 NEON helper for FSRS-7 `memorized_cnt_per_day`
+  range accumulation. It uses the same higher-accuracy NEON `exp`/`ln`
+  approximation as validation loss, and only updates aggregate metrics after a
+  card's scheduling decision has already been made.
+- Cost ADR rollouts now build a per-simulation FSRS-7 runtime context and a
+  per-rollout ADR policy evaluator. The FSRS-7 context reuses the cached S90 LUT
+  plus precomputed forgetting-curve constants for retrievability and interval
+  solving. The ADR evaluator reuses the normalized cost weight and policy bound
+  transforms for all cards in the same cost-weight rollout.
+- FSRS-7 interval solving now caches the stability-dependent forgetting-curve
+  weights once per interval candidate and reuses them across the Newton and
+  Brent paths. This keeps the same scalar arithmetic shape for behavior
+  stability; local Criterion did not detect a significant standalone win after
+  this sub-step.
+- Simulator card scheduling now uses a local indexed heap specialized to card
+  indices and `CardPriority` values. It preserves the previous strict heap
+  comparison semantics and observed simulator outputs while avoiding the generic
+  `PriorityQueue` hash/index-map maintenance overhead.
+- Local sequential benchmark after adding the Cost ADR bench and simulator NEON
+  helper: `cost_adr/train_single_user` `433.17 ms..478.47 ms`. Treat this as
+  the first recorded baseline for the dedicated Cost ADR training benchmark, not
+  as a before/after result, because this benchmark did not exist before this
+  pass.
+- Filtered sequential simulation benchmark after the simulator NEON helper:
+  `parallel_simulate` `391.52 ms..434.60 ms`, Criterion change
+  `[-22.953% -16.213% -8.7944%]`, reported as a significant improvement.
+- Local sequential Cost ADR runtime-context check after the FSRS-7 runtime
+  context and ADR evaluator:
+  - Deterministic hypervolume command:
+    `cargo run --release --example cost_adr -- --days 180 --deck 1500 --learn-limit 20 --review-limit 9999 --cost-limit-minutes 720 --pop 4 --gen 3 --seed 42`.
+  - Hypervolume before and after was unchanged: baseline `12719.048828`, best
+    `12293.481445`, delta `-425.567383`.
+  - The same command's training wall time moved from `1.233 s` to `0.998 s`.
+  - Criterion `cost_adr/train_single_user` moved from `418.22 ms..423.67 ms`
+    to `366.77 ms..377.68 ms`, change
+    `[-13.105% -11.864% -10.166%]`, reported as a significant improvement.
+- Local sequential check after the interval-cache and specialized simulator
+  heap pass:
+  - The deterministic hypervolume command above stayed unchanged: baseline
+    `12719.048828`, best `12293.481445`, delta `-425.567383`.
+  - The same command's training wall time was `0.970 s` in this run.
+  - Criterion `cost_adr/train_single_user` moved from `366.77 ms..378.07 ms`
+    after the interval-cache-only run to `349.04 ms..353.52 ms` after the
+    specialized heap, change `[-7.2023% -5.5660% -4.1185%]`, reported as a
+    significant improvement.
+  - Follow-up `sample` report `/private/tmp/cost_adr_after_heap.sample.txt`
+    showed the old `PriorityQueue::heapify` symbol removed. The specialized
+    `CardPriorityQueue::heapify` entry was `6377` samples versus `12183` for
+    the previous generic queue profile. The remaining top entries were still
+    `fsrs7_next_interval_with_curve` `16527`, system `powf` `11459`, Brent
+    `2268`, and `stability_for_set_scalar` `1457`.
+- Local sequential check after narrowing the FSRS-7 Brent fallback bracket:
+  - Newton already maintains a valid `(low, high)` bracket, so the Brent
+    fallback now starts from that narrowed range instead of restarting from
+    `0..high`.
+  - The deterministic hypervolume command above stayed unchanged, including
+    default-policy rollout rows: baseline `12719.048828`, best `12293.481445`,
+    delta `-425.567383`.
+  - Criterion `cost_adr/train_single_user` was `339.06 ms..345.49 ms` on the
+    first run after this change, reported as a significant improvement versus
+    the specialized-heap baseline. A follow-up run measured
+    `338.82 ms..342.38 ms` and reported no change versus the immediately prior
+    solver benchmark.
+  - Reducing Newton iterations from `12` to `8` was rejected: interval accuracy
+    tests still passed and final training hypervolume stayed unchanged, but
+    default-policy rollout rows changed for some cost weights, so the solver
+    iteration count remains `12`.
+- Local `sample` profile after the runtime-context/evaluator pass:
+  - Command shape: release `examples/cost_adr` default profile, sampled for
+    `15s` with `1ms` interval after startup; report file
+    `/private/tmp/cost_adr_profile.sample.txt`.
+  - Top active stack entries were dominated by FSRS-7 interval solving:
+    `fsrs7_next_interval_with_curve` `23385` samples and system `powf`
+    `17314` samples.
+  - Next largest non-wait entry was priority-queue maintenance:
+    `PriorityQueue::heapify` `12183` samples, followed by
+    `simulation::neon::add_fsrs7_forgetting_curve_range` `4716`,
+    `roots::find_root_brent` `3461`, `simulate_inner` `2628`,
+    and `stability_for_set_scalar` `1970`.
+  - `CostAdrPolicyEvaluator::evaluate_retention` was much smaller at `810`
+    samples, so the per-rollout evaluator helped enough that policy evaluation
+    is no longer a primary target.
+  - Recommended next target from this profile: reduce FSRS-7 interval solver
+    cost and `powf` calls before attempting larger simulator data-structure
+    rewrites. Priority queue changes are the next visible non-math target, but
+    carry higher maintenance risk.
 
 ## Early Stop Experiment
 

@@ -117,7 +117,7 @@ fn prepare_dataset_for_initialization(
     results
 }
 
-fn forgetting_curve_with_params(t: &Array1<f64>, s: f64, params: &[f32; 8]) -> Array1<f64> {
+fn forgetting_curve_with_params(t: f64, s: f64, params: &[f32; 8]) -> f64 {
     let decay1 = -(params[0] as f64);
     let decay2 = -(params[1] as f64);
     let base1 = params[2] as f64;
@@ -130,8 +130,8 @@ fn forgetting_curve_with_params(t: &Array1<f64>, s: f64, params: &[f32; 8]) -> A
     let t_over_s = t / s;
     let factor1 = base1.powf(1.0 / decay1) - 1.0;
     let factor2 = base2.powf(1.0 / decay2) - 1.0;
-    let r1 = (t_over_s.clone() * factor1 + 1.0).mapv(|v| v.powf(decay1));
-    let r2 = (t_over_s * factor2 + 1.0).mapv(|v| v.powf(decay2));
+    let r1 = (t_over_s * factor1 + 1.0).powf(decay1);
+    let r2 = (t_over_s * factor2 + 1.0).powf(decay2);
 
     let weight1 = base_weight1 * s.powf(-swp1);
     let weight2 = base_weight2 * s.powf(swp2);
@@ -147,12 +147,16 @@ fn loss_with_curve(
     default_s0: f64,
     params: &[f32; 8],
 ) -> f64 {
-    let y_pred = forgetting_curve_with_params(delta_t, init_s0, params);
-    let y_pred = y_pred.mapv(|v| v.clamp(0.0001, 0.9999));
-    let logloss = (-(recall * y_pred.clone().mapv_into(|v| v.ln())
-        + (1.0 - recall) * (1.0 - &y_pred).mapv_into(|v| v.ln()))
-        * count)
-        .sum();
+    let logloss = delta_t
+        .iter()
+        .zip(recall)
+        .zip(count)
+        .map(|((&delta_t, &recall), &count)| {
+            let y_pred =
+                forgetting_curve_with_params(delta_t, init_s0, params).clamp(0.0001, 0.9999);
+            -(recall * y_pred.ln() + (1.0 - recall) * (1.0 - y_pred).ln()) * count
+        })
+        .sum::<f64>();
     let l1 = (init_s0 - default_s0).abs() / 16.0;
     logloss + l1
 }
@@ -346,5 +350,17 @@ mod tests {
     fn test_smooth_initial_stabilities_fsrs7_clamps_bounds() {
         let actual = smooth_initial_stabilities_fsrs7([0.0, 0.00005, 0.001, 200.0]).unwrap();
         assert_eq!(actual, [0.0001, 0.0001, 0.001, 100.0]);
+    }
+
+    #[test]
+    fn test_loss_with_curve_matches_reference_value() {
+        let delta_t = Array1::from_vec(vec![1.0, 3.0, 12.0]);
+        let recall = Array1::from_vec(vec![0.8, 0.6, 0.25]);
+        let count = Array1::from_vec(vec![10.0, 5.0, 4.0]);
+        let params = FSRS7_FORGETTING_CURVE_CANDIDATES[0];
+
+        let actual = loss_with_curve(&delta_t, &recall, &count, 2.5, 1.2, &params);
+
+        assert!((actual - 14.793305051722285).abs() < 1e-12);
     }
 }

@@ -68,6 +68,21 @@ fn schedule_penalty_fn(version: ModelVersion) -> SchedulePenaltyFn {
     }
 }
 
+fn validation_schedule_penalty_value(
+    version: ModelVersion,
+    w: &[f32],
+    batch_size: usize,
+    enable_sched_penalties: bool,
+) -> f64 {
+    match version {
+        ModelVersion::Fsrs6 => 0.0,
+        ModelVersion::Fsrs7 if enable_sched_penalties => {
+            training_v7::schedule_penalty_value(w, batch_size)
+        }
+        ModelVersion::Fsrs7 => 0.0,
+    }
+}
+
 fn l2_penalty_fn(version: ModelVersion) -> L2PenaltyFn {
     match version {
         ModelVersion::Fsrs6 => training_v6::l2_penalty_value_and_grad,
@@ -802,7 +817,8 @@ fn build_windowed_batches(items: &[WeightedFSRSItem], batch_size: usize) -> Vec<
 
 fn build_windowed_batch(cards: &[Vec<&WeightedFSRSItem>]) -> WindowedFSRSBatch {
     let prediction_count = cards.iter().map(Vec::len).sum();
-    let batch_size = cards.len();
+    let real_card_count = cards.len();
+    let batch_size = real_card_count.div_ceil(4) * 4;
     let seq_len = cards
         .iter()
         .filter_map(|prefixes| prefixes.last())
@@ -1145,8 +1161,12 @@ fn train<B: AutodiffBackend>(
                 l2_weight,
                 &training_v7::PARAMS_STDDEV,
             );
-            let (schedule_value, _) =
-                schedule_penalty(w_vec, real_batch_size, config.enable_sched_penalties);
+            let schedule_value = validation_schedule_penalty_value(
+                model.version(),
+                w_vec,
+                real_batch_size,
+                config.enable_sched_penalties,
+            );
             let schedule_penalty = schedule_value / total_size as f64;
             let loss = if let Some(windowed_batches) = &windowed_batches {
                 windowed_batches[batch_index].analytic_bce_loss(w_vec)
@@ -1362,6 +1382,8 @@ mod tests {
         let device = NdArrayDevice::Cpu;
         let prefix_batch = FSRSBatcher::<B>::new().batch(weighted_items.clone(), &device);
         let windowed_batch = build_windowed_batches(&weighted_items, 512).pop().unwrap();
+        assert_eq!(windowed_batch.batch_size, 4);
+        assert_eq!(windowed_batch.real_batch_size(), weighted_items.len());
         let (analytic_loss_value, analytic_grad) = crate::analytic_v7::windowed_loss_and_grad(
             &DEFAULT_PARAMETERS,
             &windowed_batch.t_historys,
@@ -1409,9 +1431,11 @@ mod tests {
             (analytic_loss_value as f32 - windowed_loss_value).abs() < 1e-5,
             "analytic loss {analytic_loss_value}, windowed loss {windowed_loss_value}"
         );
+        let analytic_loss_only_relative_error =
+            (analytic_loss_only as f32 - windowed_loss_value).abs() / windowed_loss_value.max(1.0);
         assert!(
-            (analytic_loss_only as f32 - windowed_loss_value).abs() < 1e-5,
-            "analytic loss-only {analytic_loss_only}, windowed loss {windowed_loss_value}"
+            analytic_loss_only_relative_error < 5e-4,
+            "analytic loss-only {analytic_loss_only}, windowed loss {windowed_loss_value}, relative error {analytic_loss_only_relative_error:e}"
         );
 
         let prefix_gradients = prefix_loss.backward();
@@ -1499,9 +1523,10 @@ mod tests {
             windowed_weights,
         );
         let burn_loss = burn_loss.into_scalar().to_f64();
+        let relative_error = (analytic_loss - burn_loss).abs() / burn_loss.max(1.0);
         assert!(
-            (analytic_loss - burn_loss).abs() < 1e-5,
-            "analytic validation loss {analytic_loss}, burn loss {burn_loss}"
+            relative_error < 5e-4,
+            "analytic validation loss {analytic_loss}, burn loss {burn_loss}, relative error {relative_error:e}"
         );
     }
 

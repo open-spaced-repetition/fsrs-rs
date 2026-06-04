@@ -5,17 +5,19 @@ use crate::inference::{ItemProgress, Parameters};
 use crate::model::{ModelVersion, check_and_fill_parameters, model_v6, model_v7};
 use itertools::{Itertools, izip};
 use ndarray::{Array1, Array2, Array3};
-use priority_queue::PriorityQueue;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use std::cmp::Reverse;
+use std::cmp::{Ordering, Reverse};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+mod neon;
 
 #[derive(Debug)]
 pub struct SimulationResult {
@@ -119,6 +121,113 @@ impl std::fmt::Debug for ReviewPriorityFn {
 impl Default for ReviewPriorityFn {
     fn default() -> Self {
         Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
+    }
+}
+
+type CardPriority = Reverse<(i32, bool, i32)>;
+
+struct CardPriorityQueue {
+    heap: Vec<usize>,
+    positions: Vec<usize>,
+    priorities: Vec<CardPriority>,
+    active: Vec<bool>,
+}
+
+impl CardPriorityQueue {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            heap: Vec::with_capacity(capacity),
+            positions: vec![0; capacity],
+            priorities: vec![Reverse((0, false, 0)); capacity],
+            active: vec![false; capacity],
+        }
+    }
+
+    fn push(&mut self, card_index: usize, priority: CardPriority) {
+        debug_assert!(!self.active[card_index]);
+        self.active[card_index] = true;
+        self.priorities[card_index] = priority;
+        let position = self.heap.len();
+        self.positions[card_index] = position;
+        self.heap.push(card_index);
+        self.bubble_up(position);
+    }
+
+    fn peek_index(&self) -> Option<usize> {
+        self.heap.first().copied()
+    }
+
+    fn pop(&mut self) {
+        if self.heap.is_empty() {
+            return;
+        }
+
+        let card_index = self.heap.swap_remove(0);
+        self.active[card_index] = false;
+        if let Some(&root_card_index) = self.heap.first() {
+            self.positions[root_card_index] = 0;
+            self.heapify(0);
+        }
+    }
+
+    fn change_priority(&mut self, card_index: usize, priority: CardPriority) {
+        debug_assert!(self.active[card_index]);
+        self.priorities[card_index] = priority;
+        let position = self.positions[card_index];
+        let position = self.bubble_up(position);
+        self.heapify(position);
+    }
+
+    fn bubble_up(&mut self, mut position: usize) -> usize {
+        let card_index = self.heap[position];
+        let priority = self.priorities[card_index];
+
+        while position > 0 {
+            let parent = (position - 1) / 2;
+            let parent_index = self.heap[parent];
+            if self.priorities[parent_index].cmp(&priority) != Ordering::Less {
+                break;
+            }
+            self.heap[position] = parent_index;
+            self.positions[parent_index] = position;
+            position = parent;
+        }
+
+        self.heap[position] = card_index;
+        self.positions[card_index] = position;
+        position
+    }
+
+    fn heapify(&mut self, mut position: usize) {
+        loop {
+            let left = 2 * position + 1;
+            if left >= self.heap.len() {
+                break;
+            }
+
+            let right = left + 1;
+            let mut largest = position;
+            let mut largest_priority = self.priorities[self.heap[position]];
+
+            let left_priority = self.priorities[self.heap[left]];
+            if left_priority > largest_priority {
+                largest = left;
+                largest_priority = left_priority;
+            }
+
+            if right < self.heap.len() && self.priorities[self.heap[right]] > largest_priority {
+                largest = right;
+            }
+
+            if largest == position {
+                break;
+            }
+
+            self.heap.swap(position, largest);
+            self.positions[self.heap[position]] = position;
+            self.positions[self.heap[largest]] = largest;
+            position = largest;
+        }
     }
 }
 
@@ -268,7 +377,7 @@ trait SimulatedFsrs {
         w: &[f32],
         stability: f32,
         desired_retention: f32,
-        fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
+        fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
     ) -> f32;
 }
 
@@ -313,16 +422,13 @@ impl SimulatedFsrs for SimulatedFsrs7 {
         w: &[f32],
         stability: f32,
         desired_retention: f32,
-        fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
+        fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
     ) -> f32 {
-        let owned_lut;
-        let lut = if let Some(lut) = fsrs7_lut {
-            lut
+        if let Some(runtime) = fsrs7_runtime {
+            runtime.next_interval(stability, desired_retention)
         } else {
-            owned_lut = model_v7::fsrs7_s90_lut(w);
-            owned_lut.as_ref()
-        };
-        model_v7::fsrs7_next_interval_scalar(w, stability, desired_retention, lut)
+            model_v7::Fsrs7Runtime::new(w).next_interval(stability, desired_retention)
+        }
     }
 }
 
@@ -364,7 +470,7 @@ impl SimulatedFsrs for LegacySimulatedFsrs {
         w: &[f32],
         stability: f32,
         desired_retention: f32,
-        _fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
+        _fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
     ) -> f32 {
         model_v6::next_interval_scalar(w, stability, desired_retention)
     }
@@ -531,6 +637,73 @@ fn power_forgetting_curve_with_fsrs(fsrs: &dyn SimulatedFsrs, w: &[f32], t: f32,
     fsrs.power_forgetting_curve(w, t, s)
 }
 
+fn power_forgetting_curve_with_runtime(
+    fsrs: &dyn SimulatedFsrs,
+    w: &[f32],
+    fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
+    t: f32,
+    s: f32,
+) -> f32 {
+    fsrs7_runtime
+        .map(|runtime| runtime.forgetting_curve(t, s))
+        .unwrap_or_else(|| fsrs.power_forgetting_curve(w, t, s))
+}
+
+fn add_forgetting_curve_range_scalar(
+    fsrs: &dyn SimulatedFsrs,
+    w: &[f32],
+    fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
+    days: &mut [f32],
+    start_day: usize,
+    last_date: f32,
+    stability: f32,
+) {
+    for (offset, day) in days.iter_mut().enumerate() {
+        *day += power_forgetting_curve_with_runtime(
+            fsrs,
+            w,
+            fsrs7_runtime,
+            (start_day + offset) as f32 - last_date,
+            stability,
+        );
+    }
+}
+
+fn add_forgetting_curve_range(
+    fsrs: &dyn SimulatedFsrs,
+    w: &[f32],
+    fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
+    memorized_cnt_per_day: &mut [f32],
+    start_day: usize,
+    end_day: usize,
+    last_date: f32,
+    stability: f32,
+) {
+    let end_day = end_day.min(memorized_cnt_per_day.len());
+    let Some(days) = memorized_cnt_per_day.get_mut(start_day..end_day) else {
+        return;
+    };
+    if days.is_empty() {
+        return;
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    if ModelVersion::from_param_count(w.len()) == ModelVersion::Fsrs7 {
+        neon::add_fsrs7_forgetting_curve_range(w, days, start_day, last_date, stability);
+        return;
+    }
+
+    add_forgetting_curve_range_scalar(
+        fsrs,
+        w,
+        fsrs7_runtime,
+        days,
+        start_day,
+        last_date,
+        stability,
+    );
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 fn power_forgetting_curve(w: &[f32], t: f32, s: f32) -> f32 {
@@ -544,22 +717,28 @@ fn next_interval_with_fsrs(
     w: &[f32],
     stability: f32,
     desired_retention: f32,
-    fsrs7_lut: Option<&model_v7::Fsrs7S90Lut>,
+    fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
 ) -> f32 {
-    fsrs.next_interval(w, stability, desired_retention, fsrs7_lut)
+    fsrs.next_interval(w, stability, desired_retention, fsrs7_runtime)
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
 fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
     let fsrs = simulated_fsrs(w);
-    let fsrs7_lut = fsrs7_interval_lut(w);
-    next_interval_with_fsrs(fsrs, w, stability, desired_retention, fsrs7_lut.as_deref())
+    let fsrs7_runtime = fsrs7_runtime(w);
+    next_interval_with_fsrs(
+        fsrs,
+        w,
+        stability,
+        desired_retention,
+        fsrs7_runtime.as_ref(),
+    )
 }
 
-fn fsrs7_interval_lut(w: &[f32]) -> Option<Arc<model_v7::Fsrs7S90Lut>> {
+fn fsrs7_runtime(w: &[f32]) -> Option<model_v7::Fsrs7Runtime> {
     (ModelVersion::from_param_count(w.len()) == ModelVersion::Fsrs7)
-        .then(|| model_v7::fsrs7_s90_lut(w))
+        .then(|| model_v7::Fsrs7Runtime::new(w))
 }
 
 /// Dynamic programming-based workload estimator
@@ -654,7 +833,7 @@ impl WorkloadEstimator {
     fn precompute_cost_matrix(&mut self, desired_retention: f32, w: &Parameters) {
         self.desired_retention = desired_retention;
         let fsrs = simulated_fsrs(w);
-        let fsrs7_lut = fsrs7_interval_lut(w);
+        let fsrs7_runtime = fsrs7_runtime(w);
         // Cache precomputed values using ndarray
         let mut transition_probs = Array2::zeros((4, self.s_size));
         let mut next_s_indices = Array3::zeros((4, self.s_size, self.d_size));
@@ -665,10 +844,11 @@ impl WorkloadEstimator {
         for s_idx in 0..self.s_size {
             let s = self.s_state[s_idx];
             // Calculate interval and retrievability once and cache them
-            let ivl = next_interval_with_fsrs(fsrs, w, s, desired_retention, fsrs7_lut.as_deref())
-                .max(1.0)
-                .round();
-            let r = power_forgetting_curve_with_fsrs(fsrs, w, ivl, s);
+            let ivl =
+                next_interval_with_fsrs(fsrs, w, s, desired_retention, fsrs7_runtime.as_ref())
+                    .max(1.0)
+                    .round();
+            let r = power_forgetting_curve_with_runtime(fsrs, w, fsrs7_runtime.as_ref(), ivl, s);
             for rating in 1..=4 {
                 if rating == 1 {
                     transition_probs[[rating - 1, s_idx]] = 1.0 - r;
@@ -690,7 +870,7 @@ impl WorkloadEstimator {
                         w,
                         next_s,
                         desired_retention,
-                        fsrs7_lut.as_deref(),
+                        fsrs7_runtime.as_ref(),
                     )
                     .max(1.0)
                     .round() as usize;
@@ -743,7 +923,7 @@ impl WorkloadEstimator {
             return 0.0;
         }
         let fsrs = simulated_fsrs(w);
-        let fsrs7_lut = fsrs7_interval_lut(w);
+        let fsrs7_runtime = fsrs7_runtime(w);
         let mut total_cost = 0.0;
         for rating in 1..=4 {
             let s = init_s(w, rating);
@@ -751,7 +931,7 @@ impl WorkloadEstimator {
             let s_idx = self.s2i(s);
             let d_idx = self.d2i(d);
             let ivl =
-                next_interval_with_fsrs(fsrs, w, s, self.desired_retention, fsrs7_lut.as_deref())
+                next_interval_with_fsrs(fsrs, w, s, self.desired_retention, fsrs7_runtime.as_ref())
                     .max(1.0)
                     .round() as usize;
             let t_idx = (due + ivl).min(self.t_size);
@@ -776,7 +956,7 @@ impl WorkloadEstimator {
             return 0.0;
         }
         let fsrs = simulated_fsrs(w);
-        let fsrs7_lut = fsrs7_interval_lut(w);
+        let fsrs7_runtime = fsrs7_runtime(w);
 
         let real_due = card.due.max(0.0);
 
@@ -784,7 +964,13 @@ impl WorkloadEstimator {
         let ivl = real_due - card.last_date;
 
         // Calculate retrievability at the time of upcoming review
-        let retrievability = power_forgetting_curve_with_fsrs(fsrs, w, ivl, card.stability);
+        let retrievability = power_forgetting_curve_with_runtime(
+            fsrs,
+            w,
+            fsrs7_runtime.as_ref(),
+            ivl,
+            card.stability,
+        );
 
         // Calculate rating probabilities
         let mut rating_probs = [0.0; 4];
@@ -843,7 +1029,7 @@ impl WorkloadEstimator {
                 w,
                 new_stability,
                 self.desired_retention,
-                fsrs7_lut.as_deref(),
+                fsrs7_runtime.as_ref(),
             )
             .max(1.0)
             .round() as usize;
@@ -1042,7 +1228,9 @@ fn simulate_inner(
     goal_cost_weight: f32,
 ) -> Result<CostAdrSimulationResult, FSRSError> {
     let w = Arc::new(check_and_fill_parameters(w)?);
-    let fsrs7_lut = fsrs7_interval_lut(&w);
+    let fsrs7_runtime = fsrs7_runtime(&w);
+    let cost_adr_evaluator =
+        cost_adr_policy.map(|policy| policy.evaluator_for_cost_weight(goal_cost_weight));
     if config.deck_size == 0 {
         return Err(FSRSError::InvalidDeckSize);
     }
@@ -1115,7 +1303,7 @@ fn simulate_inner(
         cards.extend(init_ratings);
     }
 
-    let mut card_priorities = PriorityQueue::new();
+    let mut card_priorities = CardPriorityQueue::with_capacity(cards.len());
     let max_lapses = config.suspend_after_lapses.unwrap_or(u32::MAX);
 
     let review_priority_fn = config.review_priority_fn.clone().unwrap_or_default();
@@ -1124,7 +1312,7 @@ fn simulate_inner(
         card.due.max(0.0) as i32
     }
 
-    fn card_priority(card: &Card, learn: bool, cb: &ReviewPriorityFn) -> Reverse<(i32, bool, i32)> {
+    fn card_priority(card: &Card, learn: bool, cb: &ReviewPriorityFn) -> CardPriority {
         let priority = cb(card);
         // high priority for early due, review, custom priority
         Reverse((effective_due_day(card), learn, priority))
@@ -1142,11 +1330,11 @@ fn simulate_inner(
     }
 
     // Main simulation loop
-    while let Some((&card_index, _)) = card_priorities.peek() {
+    while let Some(card_index) = card_priorities.peek_index() {
         let card = &mut cards[card_index];
         let fsrs = simulated_fsrs(&card.parameters);
-        let card_fsrs7_lut = if Arc::ptr_eq(&card.parameters, &w) {
-            fsrs7_lut.as_deref()
+        let card_fsrs7_runtime = if Arc::ptr_eq(&card.parameters, &w) {
+            fsrs7_runtime.as_ref()
         } else {
             None
         };
@@ -1160,21 +1348,16 @@ fn simulate_inner(
         // Guards
         if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
             if !is_learn {
-                let delta_t = config.learn_span.max(last_date_index) - last_date_index;
-                // last_date..next_date
-                for (i, day) in memorized_cnt_per_day
-                    .iter_mut()
-                    .enumerate()
-                    .skip(last_date_index)
-                    .take(delta_t)
-                {
-                    *day += power_forgetting_curve_with_fsrs(
-                        fsrs,
-                        &card.parameters,
-                        i as f32 - card.last_date,
-                        card.stability,
-                    );
-                }
+                add_forgetting_curve_range(
+                    fsrs,
+                    &card.parameters,
+                    card_fsrs7_runtime,
+                    &mut memorized_cnt_per_day,
+                    last_date_index,
+                    config.learn_span.max(last_date_index),
+                    card.last_date,
+                    card.stability,
+                );
             }
             card_priorities.pop();
             continue;
@@ -1200,7 +1383,7 @@ fn simulate_inner(
             }
             card.due = day_index as f32 + 1.0;
             card_priorities.change_priority(
-                &card_index,
+                card_index,
                 card_priority(card, is_learn, &review_priority_fn),
             );
             continue;
@@ -1241,8 +1424,13 @@ fn simulate_inner(
             let ivl = day_index as f32 - card.last_date;
 
             // Calculate retrievability for entries where has_learned is true
-            let retrievability =
-                power_forgetting_curve_with_fsrs(fsrs, &card.parameters, ivl, card.stability);
+            let retrievability = power_forgetting_curve_with_runtime(
+                fsrs,
+                &card.parameters,
+                card_fsrs7_runtime,
+                ivl,
+                card.stability,
+            );
 
             // Create 'forget' mask
             let forget = !rng.random_bool(retrievability as f64);
@@ -1312,28 +1500,23 @@ fn simulate_inner(
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
-            // last_date_index..day_index
-            for (i, day) in memorized_cnt_per_day
-                .iter_mut()
-                .enumerate()
-                .take(day_index)
-                .skip(last_date_index)
-            {
-                *day += power_forgetting_curve_with_fsrs(
-                    fsrs,
-                    &card.parameters,
-                    i as f32 - card.last_date,
-                    card.stability,
-                );
-            }
+            add_forgetting_curve_range(
+                fsrs,
+                &card.parameters,
+                card_fsrs7_runtime,
+                &mut memorized_cnt_per_day,
+                last_date_index,
+                day_index,
+                card.last_date,
+                card.stability,
+            );
 
             card.stability = new_s;
             card.difficulty = new_d;
         }
 
-        if let Some(policy) = cost_adr_policy {
-            card.desired_retention =
-                policy.evaluate_retention(card.stability, card.difficulty, goal_cost_weight);
+        if let Some(evaluator) = &cost_adr_evaluator {
+            card.desired_retention = evaluator.evaluate_retention(card.stability, card.difficulty);
         }
         desired_retention_sum += card.desired_retention;
         desired_retention_count += 1;
@@ -1343,7 +1526,7 @@ fn simulate_inner(
             &card.parameters,
             card.stability,
             card.desired_retention,
-            card_fsrs7_lut,
+            card_fsrs7_runtime,
         )
         .round()
         .clamp(1.0, config.max_ivl);
@@ -1363,7 +1546,7 @@ fn simulate_inner(
         }
 
         card_priorities
-            .change_priority(&card_index, card_priority(card, false, &review_priority_fn));
+            .change_priority(card_index, card_priority(card, false, &review_priority_fn));
     }
 
     /*dbg!((
@@ -1921,6 +2104,99 @@ mod tests {
     const LEARN_COST: f32 = 42.;
     const REVIEW_COST: f32 = 43.;
     const DEFAULT_PARAMETERS: [f32; 21] = FSRS6_DEFAULT_PARAMETERS;
+
+    #[test]
+    fn test_card_priority_queue_updates_existing_card_priority() {
+        let mut queue = CardPriorityQueue::with_capacity(3);
+        queue.push(0, Reverse((3, false, 0)));
+        queue.push(1, Reverse((2, false, 0)));
+        queue.push(2, Reverse((4, false, 0)));
+
+        assert_eq!(queue.peek_index(), Some(1));
+        queue.change_priority(0, Reverse((1, false, 0)));
+        assert_eq!(queue.peek_index(), Some(0));
+
+        queue.pop();
+        assert_eq!(queue.peek_index(), Some(1));
+        queue.change_priority(2, Reverse((0, false, 0)));
+        assert_eq!(queue.peek_index(), Some(2));
+
+        queue.pop();
+        assert_eq!(queue.peek_index(), Some(1));
+        queue.pop();
+        assert_eq!(queue.peek_index(), None);
+    }
+
+    #[test]
+    fn test_card_priority_queue_ties_match_heap_swap_order() {
+        let mut queue = CardPriorityQueue::with_capacity(3);
+        let priority = Reverse((5, false, 0));
+        queue.push(0, priority);
+        queue.push(1, priority);
+        queue.push(2, priority);
+
+        assert_eq!(queue.peek_index(), Some(0));
+        queue.pop();
+        assert_eq!(queue.peek_index(), Some(2));
+        queue.pop();
+        assert_eq!(queue.peek_index(), Some(1));
+    }
+
+    #[test]
+    fn test_add_forgetting_curve_range_scalar_matches_previous_loop() {
+        let w = DEFAULT_PARAMETERS;
+        let fsrs = simulated_fsrs(&w);
+        let start_day = 3;
+        let last_date = 2.0;
+        let stability = 12.0;
+        let mut expected = vec![0.0; 20];
+        let mut actual = vec![0.0; 20];
+
+        for (offset, day) in expected[3..17].iter_mut().enumerate() {
+            *day += power_forgetting_curve_with_fsrs(
+                fsrs,
+                &w,
+                (start_day + offset) as f32 - last_date,
+                stability,
+            );
+        }
+        add_forgetting_curve_range(fsrs, &w, None, &mut actual, 3, 17, last_date, stability);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    #[test]
+    fn test_neon_fsrs7_forgetting_curve_range_matches_scalar() {
+        let w = crate::DEFAULT_PARAMETERS;
+        let fsrs = simulated_fsrs(&w);
+        let start_day = 5;
+        let last_date = 3.25;
+        let stability = 17.5;
+        let mut scalar = vec![1.0; 37];
+        let mut neon = scalar.clone();
+
+        add_forgetting_curve_range_scalar(
+            fsrs,
+            &w,
+            None,
+            &mut scalar,
+            start_day,
+            last_date,
+            stability,
+        );
+        super::neon::add_fsrs7_forgetting_curve_range(
+            &w, &mut neon, start_day, last_date, stability,
+        );
+
+        for (index, (scalar, neon)) in scalar.iter().zip(neon).enumerate() {
+            let relative_error = (*scalar - neon).abs() / scalar.abs().max(1.0);
+            assert!(
+                relative_error < 5e-4,
+                "index {index}, scalar {scalar}, neon {neon}, relative error {relative_error:e}"
+            );
+        }
+    }
 
     #[test]
     fn test_memory_state_short_term() {
