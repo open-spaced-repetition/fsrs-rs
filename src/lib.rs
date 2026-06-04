@@ -1,5 +1,6 @@
 #![allow(clippy::single_range_in_vec_init)]
 
+mod analytic_v7;
 mod batch_shuffle;
 #[cfg(test)]
 mod convertor_tests;

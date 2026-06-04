@@ -28,6 +28,11 @@ while keeping shared model state/config logic in `src/model.rs`.
     no-op)
   - `src/training_v7.rs` (FSRS-7 penalty math/gradients)
   - shared training loop/objective composition in `src/training.rs`
+- FSRS-7 analytic training kernel:
+  - `src/analytic_v7.rs` computes scalar BCE loss and BCE loss gradients for
+    FSRS-7 card-id windowed training batches.
+  - The kernel is parameter-size-specific to the current 35-parameter FSRS-7
+    layout and is not shared with FSRS-6.
 - Training initial-stability normalization is version-specific:
   - FSRS-6 uses the legacy data-derived initializer and `smooth_and_fill()`.
   - FSRS-7 uses its FSRS-7 initializer/fill logic for params `0..3`.
@@ -45,6 +50,9 @@ while keeping shared model state/config logic in `src/model.rs`.
 - Training penalty routing now also uses `ModelVersion` dispatch, so FSRS-6 and
   FSRS-7 penalty behavior are separated without checking parameter length in the
   training loop.
+- FSRS-7 card-id windowed training can route BCE loss and BCE gradient
+  calculation through `analytic_v7`; schedule/L2 penalties, optimizer state, and
+  clipping remain coordinated by the shared training loop.
 - Version constants are colocated with version logic:
   - `src/model_v6.rs`: `PARAM_LEN`
   - `src/model_v7.rs`: FSRS-7 solver/LUT constants and `PARAM_LEN`
@@ -54,10 +62,14 @@ while keeping shared model state/config logic in `src/model.rs`.
 - Data read:
   - model parameter vector `w`
   - runtime tensors (`delta_t`, `rating`, `stability`, `difficulty`)
+  - FSRS-7 windowed host arrays (`t_historys`, `r_historys`, labels, weights)
+    during analytic training-loss and training-gradient calculation
 - Data updated:
   - next-step `MemoryStateTensors` during `Model::step()`
   - optimized initial-stability params `0..3` after training, normalized by the
     selected model version before return
+  - transient optimizer gradients registered for FSRS-7 windowed BCE training
 - Data storage:
   - no new persistence; all values remain in-memory
   - FSRS-7 S90 LUT cache remains process-local memory only
+  - analytic gradient arrays live only for the current optimizer step

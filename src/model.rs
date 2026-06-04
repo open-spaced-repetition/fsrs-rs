@@ -111,9 +111,11 @@ type IntervalAtRetrievabilityFn<B> = fn(&Model<B>, f32, f32) -> f32;
 struct VersionFns<B: Backend> {
     apply_freeze_short_term: ApplyFreezeShortTermFn,
     power_forgetting_curve: PowerForgettingCurveFn<B>,
+    #[allow(dead_code)]
     next_interval: NextIntervalFn<B>,
     update_state: UpdateStateFn<B>,
     memory_state_from_sm2: MemoryStateFromSm2Fn<B>,
+    #[allow(dead_code)]
     interval_at_retrievability: IntervalAtRetrievabilityFn<B>,
 }
 
@@ -193,6 +195,7 @@ impl<B: Backend> Model<B> {
         (ops.power_forgetting_curve)(self, t, s)
     }
 
+    #[allow(dead_code)]
     pub fn next_interval(
         &self,
         stability: Tensor<B, 1>,
@@ -202,6 +205,7 @@ impl<B: Backend> Model<B> {
         (ops.next_interval)(self, stability, desired_retention)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn interval_at_retrievability(
         &self,
         stability: f32,
@@ -228,6 +232,7 @@ impl<B: Backend> Model<B> {
         difficulty.clone() + self.linear_damping(delta_d, difficulty)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn step(
         &self,
         delta_t: Tensor<B, 1>,
@@ -318,6 +323,7 @@ impl<B: Backend> MemoryStateTensors<B> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_state(state: MemoryState) -> Self {
         let device = B::Device::default();
         Self {
@@ -351,6 +357,8 @@ impl ModelConfig {
 #[derive(Debug, Clone)]
 pub struct FSRS<B: Backend = NdArray> {
     model: Model<B>,
+    parameters: Vec<f32>,
+    version: ModelVersion,
 }
 
 impl Default for FSRS<NdArray> {
@@ -374,12 +382,26 @@ impl<B: Backend> FSRS<B> {
     ) -> Result<FSRS<B2>> {
         let parameters = check_and_fill_parameters(parameters)?;
         let model = parameters_to_model::<B2>(&parameters, device);
+        let version = model.version();
+        let parameters = model.w.val().to_data().to_vec::<f32>().unwrap();
 
-        Ok(FSRS { model })
+        Ok(FSRS {
+            model,
+            parameters,
+            version,
+        })
     }
 
     pub(crate) fn model(&self) -> &Model<B> {
         &self.model
+    }
+
+    pub(crate) fn parameters(&self) -> &[f32] {
+        &self.parameters
+    }
+
+    pub(crate) fn version(&self) -> ModelVersion {
+        self.version
     }
 
     pub(crate) fn device(&self) -> B::Device {

@@ -132,6 +132,43 @@ fn convert_to_fsrs_items(
     )
 }
 
+fn convert_to_fsrs_items_with_card_ids(
+    mut entries: Vec<RevlogEntry>,
+    next_day_starts_at: i64,
+    timezone: Tz,
+) -> Option<Vec<(i64, i64, FSRSItem)>> {
+    entries = remove_revlog_before_last_first_learn(entries);
+    if entries.is_empty() {
+        return None;
+    }
+
+    for i in 1..entries.len() {
+        let date_current = convert_to_date(entries[i].id, next_day_starts_at, timezone);
+        let date_previous = convert_to_date(entries[i - 1].id, next_day_starts_at, timezone);
+        entries[i].last_interval = (date_current - date_previous).num_days() as i32;
+    }
+
+    Some(
+        entries
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(idx, entry)| {
+                let reviews = entries
+                    .iter()
+                    .take(idx + 1)
+                    .map(|r| FSRSReview {
+                        rating: r.button_chosen as u32,
+                        delta_t: r.last_interval.max(0) as f32,
+                    })
+                    .collect();
+                (entry.id, entry.cid, FSRSItem { reviews })
+            })
+            .filter(|(_, _, item)| item.reviews.last().is_some_and(|r| r.delta_t > 0.0))
+            .collect(),
+    )
+}
+
 fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
     let mut revlogs_by_card = revlogs
         .into_iter()
@@ -144,6 +181,23 @@ fn anki_to_fsrs(revlogs: Vec<RevlogEntry>) -> Vec<FSRSItem> {
         .collect_vec();
     revlogs_by_card.sort_by_cached_key(|(id, _)| *id);
     revlogs_by_card.into_iter().map(|(_, item)| item).collect()
+}
+
+fn anki_to_fsrs_with_card_ids(revlogs: Vec<RevlogEntry>) -> (Vec<FSRSItem>, Vec<i64>) {
+    let mut revlogs_by_card = revlogs
+        .into_iter()
+        .chunk_by(|r| r.cid)
+        .into_iter()
+        .filter_map(|(_cid, entries)| {
+            convert_to_fsrs_items_with_card_ids(entries.collect(), 4, Tz::Asia__Shanghai)
+        })
+        .flatten()
+        .collect_vec();
+    revlogs_by_card.sort_by_cached_key(|(id, _, _)| *id);
+    revlogs_by_card
+        .into_iter()
+        .map(|(_, card_id, item)| (item, card_id))
+        .unzip()
 }
 
 fn read_collection_inline() -> SqlResult<Vec<RevlogEntry>> {
@@ -204,6 +258,20 @@ fn load_and_prepare_data() -> Vec<FSRSItem> {
     [pretrain_set, train_set].concat()
 }
 
+fn load_and_prepare_data_with_card_ids() -> (Vec<FSRSItem>, Vec<i64>) {
+    let (items, card_ids) = anki_to_fsrs_with_card_ids(
+        read_collection_inline().expect("read error for inlined function"),
+    );
+    let filtered = items
+        .into_iter()
+        .zip(card_ids)
+        .filter(|(item, _)| {
+            !item.reviews.is_empty() && item.reviews.len() > 1 && item.reviews[0].delta_t == 0.0
+        })
+        .collect::<Vec<_>>();
+    filtered.into_iter().unzip()
+}
+
 fn benchmark_evaluate(c: &mut Criterion) {
     let items = load_and_prepare_data();
     // Evaluate uses the FSRS instance's existing parameters.
@@ -244,9 +312,10 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
 }
 
 fn benchmark_compute_parameters(c: &mut Criterion) {
-    let items = load_and_prepare_data();
+    let (items, card_ids) = load_and_prepare_data_with_card_ids();
     let input = ComputeParametersInput {
         train_set: items.clone(), // Using the full prepared dataset
+        card_ids: Some(card_ids),
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value

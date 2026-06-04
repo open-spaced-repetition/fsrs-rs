@@ -106,6 +106,7 @@ fn main() -> fsrs::Result<()> {
         let fsrs_started = Instant::now();
         let parameters = compute_parameters(ComputeParametersInput {
             train_set: fsrs_items,
+            card_ids: None,
             progress: Some(CombinedProgressState::new_shared()),
             enable_short_term: true,
             enable_sched_penalties: true,

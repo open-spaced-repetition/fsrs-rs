@@ -1,13 +1,20 @@
+#[cfg(test)]
 use std::sync::Mutex;
 
 use burn::data::dataloader::batcher::Batcher;
+#[cfg(test)]
 use burn::data::dataloader::{DataLoaderIterator, Progress};
 use burn::prelude::Backend;
+#[cfg(test)]
 use rand::SeedableRng;
+#[cfg(test)]
 use rand::rngs::StdRng;
+#[cfg(test)]
 use rand::seq::SliceRandom;
 
-use crate::dataset::{FSRSBatch, FSRSBatcher, FSRSDataset};
+#[cfg(test)]
+use crate::dataset::FSRSDataset;
+use crate::dataset::{FSRSBatch, FSRSBatcher, WeightedFSRSItem};
 
 #[derive(Clone)]
 pub(crate) struct BatchTensorDataset<B: Backend> {
@@ -16,18 +23,27 @@ pub(crate) struct BatchTensorDataset<B: Backend> {
 
 impl<B: Backend> BatchTensorDataset<B> {
     /// Creates a new shuffled dataset.
+    #[cfg(test)]
     pub fn new(dataset: FSRSDataset, batch_size: usize) -> Self {
+        Self::from_sorted_items(&dataset.items, batch_size)
+    }
+
+    pub(crate) fn from_sorted_items(items: &[WeightedFSRSItem], batch_size: usize) -> Self {
         let device = B::Device::default();
         let batcher = FSRSBatcher::<B>::new();
-        let dataset = dataset
-            .items
+        let dataset = items
             .chunks(batch_size)
             .map(|items| batcher.batch(items.to_vec(), &device))
             .collect();
         Self { dataset }
     }
+
+    pub(crate) fn into_batches(self) -> Vec<FSRSBatch<B>> {
+        self.dataset
+    }
 }
 
+#[cfg(test)]
 impl<B: Backend> BatchTensorDataset<B> {
     fn get(&self, index: usize) -> Option<FSRSBatch<B>> {
         self.dataset.get(index).cloned()
@@ -38,11 +54,13 @@ impl<B: Backend> BatchTensorDataset<B> {
     }
 }
 
+#[cfg(test)]
 pub struct ShuffleDataLoader<B: Backend> {
     dataset: BatchTensorDataset<B>,
     rng: Mutex<StdRng>,
 }
 
+#[cfg(test)]
 impl<B: Backend> ShuffleDataLoader<B> {
     pub fn new(dataset: BatchTensorDataset<B>, seed: u64) -> Self {
         Self {
@@ -52,12 +70,14 @@ impl<B: Backend> ShuffleDataLoader<B> {
     }
 }
 
+#[cfg(test)]
 pub(crate) struct ShuffleDataLoaderIterator<B: Backend> {
     current_index: usize,
     indices: Vec<usize>,
     dataset: BatchTensorDataset<B>,
 }
 
+#[cfg(test)]
 impl<B: Backend> ShuffleDataLoaderIterator<B> {
     pub(crate) fn new(dataset: BatchTensorDataset<B>, indices: Vec<usize>) -> Self {
         Self {
@@ -66,15 +86,9 @@ impl<B: Backend> ShuffleDataLoaderIterator<B> {
             dataset,
         }
     }
-
-    pub(crate) fn progress(&self) -> Progress {
-        Progress {
-            items_processed: self.current_index,
-            items_total: self.dataset.len(),
-        }
-    }
 }
 
+#[cfg(test)]
 impl<B: Backend> Iterator for ShuffleDataLoaderIterator<B> {
     type Item = FSRSBatch<B>;
 
@@ -87,12 +101,14 @@ impl<B: Backend> Iterator for ShuffleDataLoaderIterator<B> {
     }
 }
 
+#[cfg(test)]
 impl<B: Backend> DataLoaderIterator<FSRSBatch<B>> for ShuffleDataLoaderIterator<B> {
     fn progress(&self) -> Progress {
         Progress::new(self.current_index, self.dataset.len())
     }
 }
 
+#[cfg(test)]
 impl<B: Backend> ShuffleDataLoader<B> {
     pub(crate) fn iter(&self) -> ShuffleDataLoaderIterator<B> {
         let mut indices: Vec<_> = (0..self.dataset.len()).collect();
