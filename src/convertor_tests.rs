@@ -89,7 +89,6 @@ fn convert_to_date(timestamp: i64, next_day_starts_at: i64, timezone: Tz) -> Nai
 
 /// Given a list of revlog entries for a single card with length n, we create
 /// n-1 FSRS items, where each item contains the history of the preceding reviews.
-
 fn convert_to_fsrs_items(
     mut entries: Vec<RevlogEntry>,
     next_day_starts_at: i64,

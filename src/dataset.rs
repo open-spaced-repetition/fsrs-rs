@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
+#[cfg(test)]
 use burn::data::dataloader::batcher::Batcher;
-use burn::{
-    data::dataset::Dataset,
-    tensor::{Float, Int, Tensor, TensorData, backend::Backend},
-};
+#[cfg(test)]
+use burn::data::dataset::Dataset;
+#[cfg(test)]
+use burn::tensor::{Float, Int, Tensor, TensorData, backend::Backend};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ pub struct FSRSItem {
 #[derive(Debug, Clone)]
 pub(crate) struct WeightedFSRSItem {
     pub weight: f32,
+    pub card_id: i64,
     pub item: FSRSItem,
 }
 
@@ -77,11 +79,13 @@ impl FSRSItem {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct FSRSBatcher<B: Backend> {
     _backend: core::marker::PhantomData<B>,
 }
 
+#[cfg(test)]
 impl<B: Backend> FSRSBatcher<B> {
     pub const fn new() -> Self {
         Self {
@@ -90,6 +94,7 @@ impl<B: Backend> FSRSBatcher<B> {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct FSRSBatch<B: Backend> {
     pub t_historys: Tensor<B, 2, Float>,
@@ -99,6 +104,7 @@ pub(crate) struct FSRSBatch<B: Backend> {
     pub weights: Tensor<B, 1, Float>,
 }
 
+#[cfg(test)]
 impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, device: &B::Device) -> FSRSBatch<B> {
         let batch_size = weighted_items.len();
@@ -153,10 +159,12 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     }
 }
 
+#[cfg(test)]
 pub(crate) struct FSRSDataset {
     pub(crate) items: Vec<WeightedFSRSItem>,
 }
 
+#[cfg(test)]
 impl Dataset<WeightedFSRSItem> for FSRSDataset {
     fn len(&self) -> usize {
         self.items.len()
@@ -168,6 +176,7 @@ impl Dataset<WeightedFSRSItem> for FSRSDataset {
     }
 }
 
+#[cfg(test)]
 impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     fn from(items: Vec<WeightedFSRSItem>) -> Self {
         Self {
@@ -243,6 +252,7 @@ pub(crate) fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec
     (dataset_for_initialization, trainset)
 }
 
+#[cfg(test)]
 pub(crate) fn sort_items_by_review_length(
     mut weighted_items: Vec<WeightedFSRSItem>,
 ) -> Vec<WeightedFSRSItem> {
@@ -253,7 +263,11 @@ pub(crate) fn sort_items_by_review_length(
 pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
     items
         .into_iter()
-        .map(|item| WeightedFSRSItem { weight: 1.0, item })
+        .map(|item| WeightedFSRSItem {
+            weight: 1.0,
+            card_id: -1,
+            item,
+        })
         .collect()
 }
 
@@ -265,6 +279,24 @@ pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedF
         .enumerate()
         .map(|(idx, item)| WeightedFSRSItem {
             weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
+            card_id: -1,
+            item,
+        })
+        .collect()
+}
+
+pub(crate) fn recency_weighted_fsrs_items_with_card_ids(
+    items: Vec<FSRSItem>,
+    card_ids: Vec<i64>,
+) -> Vec<WeightedFSRSItem> {
+    let length = (items.len() as f32 - 1.0).max(1.0);
+    items
+        .into_iter()
+        .zip(card_ids)
+        .enumerate()
+        .map(|(idx, (item, card_id))| WeightedFSRSItem {
+            weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
+            card_id,
             item,
         })
         .collect()
@@ -375,7 +407,11 @@ mod tests {
         ];
         let items = items
             .into_iter()
-            .map(|item| WeightedFSRSItem { weight: 1.0, item })
+            .map(|item| WeightedFSRSItem {
+                weight: 1.0,
+                card_id: -1,
+                item,
+            })
             .collect();
         let batch = batcher.batch(items, &DEVICE);
         batch.t_historys.to_data().assert_approx_eq::<f32>(

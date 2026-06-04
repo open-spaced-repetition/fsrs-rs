@@ -13,6 +13,7 @@ target/
 .vscode/settings.json
 
 tmp/
+artifacts/
 *.anki21
 *.anki21.zip
 /tests
