@@ -1,5 +1,4 @@
 use itertools::izip;
-use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
@@ -67,14 +66,6 @@ struct RMatrixValue {
     actual: f32,
     count: f32,
     weight: f32,
-}
-
-struct SplitEvaluation {
-    index: usize,
-    predictions: Vec<f32>,
-    labels: Vec<f32>,
-    weights: Vec<f32>,
-    r_matrix: HashMap<(u32, u32, u32), RMatrixValue>,
 }
 
 fn validate_state(state: MemoryState) -> Result<MemoryState> {
@@ -479,70 +470,40 @@ where
         return Err(FSRSError::NotEnoughData);
     }
     let split_count = splits.len();
-    let mut split_evaluations = splits
-        .into_par_iter()
-        .enumerate()
-        .map(|(index, split)| {
-            let input = ComputeParametersInput {
-                train_set: split.train_items,
-                card_ids: None,
-                enable_short_term,
-                num_relearning_steps,
-                progress: None,
-            };
-            let parameters = training::compute_parameters(input)?;
-            let fsrs = FSRS::new(&parameters)?;
-            let mut predictions = Vec::with_capacity(split.test_items.len());
-            let mut labels = Vec::with_capacity(split.test_items.len());
-            let mut weights = Vec::with_capacity(split.test_items.len());
-            let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
-            for item in &split.test_items {
-                let pred = predict_retrievability(&fsrs, item)?;
-                let label = if item.current().rating > 1 { 1.0 } else { 0.0 };
-                let bin = item.r_matrix_index();
-                let value = r_matrix.entry(bin).or_default();
-                value.predicted += pred;
-                value.actual += label;
-                value.count += 1.0;
-                value.weight += 1.0;
-                predictions.push(pred);
-                labels.push(label);
-                weights.push(1.0);
-            }
-            Ok(SplitEvaluation {
-                index,
-                predictions,
-                labels,
-                weights,
-                r_matrix,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    split_evaluations.sort_by_key(|evaluation| evaluation.index);
-
-    let prediction_count = split_evaluations
-        .iter()
-        .map(|evaluation| evaluation.predictions.len())
-        .sum::<usize>();
-    let mut predictions = Vec::with_capacity(prediction_count);
-    let mut labels = Vec::with_capacity(prediction_count);
-    let mut weights = Vec::with_capacity(prediction_count);
+    let mut predictions = Vec::new();
+    let mut labels = Vec::new();
+    let mut weights = Vec::new();
     let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
     let mut progress_info = ItemProgress {
         current: 0,
         total: split_count,
     };
 
-    for split in split_evaluations {
-        predictions.extend(split.predictions);
-        labels.extend(split.labels);
-        weights.extend(split.weights);
-        for (bin, value) in split.r_matrix {
-            let aggregate = r_matrix.entry(bin).or_default();
-            aggregate.predicted += value.predicted;
-            aggregate.actual += value.actual;
-            aggregate.count += value.count;
-            aggregate.weight += value.weight;
+    for split in splits {
+        let input = ComputeParametersInput {
+            train_set: split.train_items,
+            card_ids: None,
+            enable_short_term,
+            num_relearning_steps,
+            progress: None,
+        };
+        let parameters = training::compute_parameters(input)?;
+        let fsrs = FSRS::new(&parameters)?;
+        predictions.reserve(split.test_items.len());
+        labels.reserve(split.test_items.len());
+        weights.reserve(split.test_items.len());
+        for item in &split.test_items {
+            let pred = predict_retrievability(&fsrs, item)?;
+            let label = if item.current().rating > 1 { 1.0 } else { 0.0 };
+            let bin = item.r_matrix_index();
+            let value = r_matrix.entry(bin).or_default();
+            value.predicted += pred;
+            value.actual += label;
+            value.count += 1.0;
+            value.weight += 1.0;
+            predictions.push(pred);
+            labels.push(label);
+            weights.push(1.0);
         }
 
         progress_info.current += 1;
@@ -1031,6 +992,40 @@ mod tests {
         );
         assert!(result.is_err());
         Ok(())
+    }
+
+    #[test]
+    fn test_evaluate_with_time_series_splits_cancels_before_later_split_work() {
+        fn valid_item() -> FSRSItem {
+            FSRSItem {
+                reviews: vec![
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 0,
+                    },
+                    FSRSReview {
+                        rating: 3,
+                        delta_t: 1,
+                    },
+                ],
+            }
+        }
+
+        let mut items = vec![valid_item(); 6];
+        items[2] = FSRSItem { reviews: vec![] };
+        let input = ComputeParametersInput {
+            train_set: items,
+            card_ids: None,
+            progress: None,
+            enable_short_term: true,
+            num_relearning_steps: None,
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            evaluate_with_time_series_splits(input, |_| false)
+        }));
+
+        assert!(matches!(result.unwrap(), Err(FSRSError::Interrupted)));
     }
 
     #[test]

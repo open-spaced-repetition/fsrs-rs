@@ -345,12 +345,25 @@ fn stability_short_term(w: &[f32], s: f32, rating: usize) -> f32 {
     new_s.clamp(S_MIN, S_MAX)
 }
 
-fn step_transition_dists(step_transitions: &[[f32; 4]; 3]) -> [WeightedIndex<f32>; 3] {
-    [
-        WeightedIndex::new(step_transitions[0]).unwrap(),
-        WeightedIndex::new(step_transitions[1]).unwrap(),
-        WeightedIndex::new(step_transitions[2]).unwrap(),
-    ]
+struct StepTransitionDists<'a> {
+    step_transitions: &'a [[f32; 4]; 3],
+    dists: [Option<WeightedIndex<f32>>; 3],
+}
+
+impl<'a> StepTransitionDists<'a> {
+    fn new(step_transitions: &'a [[f32; 4]; 3]) -> Self {
+        Self {
+            step_transitions,
+            dists: std::array::from_fn(|_| None),
+        }
+    }
+
+    fn sample(&mut self, rating: usize, rng: &mut StdRng) -> usize {
+        let rating_idx = rating - 1;
+        let dist = self.dists[rating_idx]
+            .get_or_insert_with(|| WeightedIndex::new(self.step_transitions[rating_idx]).unwrap());
+        RATINGS[dist.sample(rng)]
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -360,7 +373,7 @@ fn memory_state_short_term(
     d: f32,
     init_rating: Option<usize>,
     rating_costs: &[f32; 4],
-    step_transition_dists: &[WeightedIndex<f32>; 3],
+    step_transition_dists: &mut StepTransitionDists<'_>,
     step_count: usize,
     rng: &mut StdRng,
 ) -> (f32, f32, f32) {
@@ -382,7 +395,7 @@ fn memory_state_short_term(
         if consecutive >= consecutive_max || rating >= 4 {
             break;
         }
-        rating = RATINGS[step_transition_dists[rating - 1].sample(rng)];
+        rating = step_transition_dists.sample(rating, rng);
         new_s = stability_short_term(w, new_s, rating);
         new_d = next_d(w, new_d, rating);
         cost += rating_costs[rating - 1];
@@ -1035,9 +1048,10 @@ fn simulate_inner(
 
     let review_rating_choices = &RATINGS[1..];
     let review_rating_dist = WeightedIndex::new(config.review_rating_prob).unwrap();
-    let learning_step_transition_dists = step_transition_dists(&config.learning_step_transitions);
-    let relearning_step_transition_dists =
-        step_transition_dists(&config.relearning_step_transitions);
+    let mut learning_step_transition_dists =
+        StepTransitionDists::new(&config.learning_step_transitions);
+    let mut relearning_step_transition_dists =
+        StepTransitionDists::new(&config.relearning_step_transitions);
 
     let mut rng = StdRng::seed_from_u64(seed.unwrap_or(42));
 
@@ -1181,7 +1195,7 @@ fn simulate_inner(
                 init_difficulty,
                 Some(init_rating),
                 &config.state_rating_costs[LEARNING],
-                &learning_step_transition_dists,
+                &mut learning_step_transition_dists,
                 config.learning_step_count,
                 &mut rng,
             );
@@ -1231,7 +1245,7 @@ fn simulate_inner(
                     post_lapse_difficulty,
                     None,
                     &config.state_rating_costs[RELEARNING],
-                    &relearning_step_transition_dists,
+                    &mut relearning_step_transition_dists,
                     config.relearning_step_count,
                     &mut rng,
                 );
@@ -1863,10 +1877,10 @@ mod tests {
         let w = DEFAULT_PARAMETERS;
         let config = SimulatorConfig::default();
         let mut rng = StdRng::seed_from_u64(42);
-        let learning_step_transition_dists =
-            step_transition_dists(&config.learning_step_transitions);
-        let relearning_step_transition_dists =
-            step_transition_dists(&config.relearning_step_transitions);
+        let mut learning_step_transition_dists =
+            StepTransitionDists::new(&config.learning_step_transitions);
+        let mut relearning_step_transition_dists =
+            StepTransitionDists::new(&config.relearning_step_transitions);
 
         // Expected results for each init_rating
         let expected_results = [
@@ -1888,7 +1902,7 @@ mod tests {
                 d,
                 Some(init_rating),
                 &config.state_rating_costs[LEARNING],
-                &learning_step_transition_dists,
+                &mut learning_step_transition_dists,
                 config.learning_step_count,
                 &mut rng,
             );
@@ -1910,11 +1924,32 @@ mod tests {
             post_lapse_d,
             None,
             &config.state_rating_costs[RELEARNING],
-            &relearning_step_transition_dists,
+            &mut relearning_step_transition_dists,
             config.relearning_step_count,
             &mut rng,
         );
         assert_eq!(result, (1.4311036, 8.3286495, 12.32));
+    }
+
+    #[test]
+    fn test_disabled_short_term_steps_do_not_touch_invalid_transition_matrices() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_span: 1,
+            learn_limit: 1,
+            review_limit: usize::MAX,
+            max_cost_perday: f32::INFINITY,
+            learning_step_count: 0,
+            relearning_step_count: 0,
+            learning_step_transitions: [[0.0; 4]; 3],
+            relearning_step_transitions: [[0.0; 4]; 3],
+            ..Default::default()
+        };
+
+        let result = simulate(&config, &DEFAULT_PARAMETERS, 0.9, Some(42), None)?;
+
+        assert_eq!(result.learn_cnt_per_day, vec![1]);
+        Ok(())
     }
 
     #[test]
