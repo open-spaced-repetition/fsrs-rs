@@ -706,8 +706,8 @@ impl WindowedFSRSBatch {
         self.prediction_count
     }
 
-    fn analytic_bce_grad(&self, w: &[f32]) -> (f64, [f32; 35]) {
-        crate::analytic_v7::windowed_loss_and_grad(
+    fn analytic_bce_grad(&self, w: &[f32]) -> [f32; 35] {
+        crate::analytic_v7::windowed_grad(
             w,
             &self.t_historys,
             &self.r_historys,
@@ -1042,7 +1042,7 @@ fn train<B: AutodiffBackend>(
                 for i in 0..manual_grad.len().min(schedule_grad.len()) {
                     manual_grad[i] += (schedule_grad[i] * inv_total) as f32;
                 }
-                let (_loss, bce_grad) = item.analytic_bce_grad(w_vec);
+                let bce_grad = item.analytic_bce_grad(w_vec);
                 let mut total_grad = vec![0.0f32; w_vec.len()];
                 for (dst, src) in total_grad.iter_mut().zip(bce_grad) {
                     *dst = src;

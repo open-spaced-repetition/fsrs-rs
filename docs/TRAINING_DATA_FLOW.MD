@@ -112,11 +112,11 @@ learning-rate schedule, and the training loop all use learning rate `0.07` and
 `TrainingConfig` defaults used by FSRS-6 or prefix-item training.
 FSRS-7 windowed training now computes the BCE loss gradient from host arrays in
 `src/analytic_v7.rs`, then composes the existing penalty gradients in
-`src/training.rs`. FSRS-7 windowed validation reads the same host arrays through
-the scalar analytic loss on most targets and through `src/analytic_v7/neon_loss.rs`
-on ARM64 targets with NEON, where four batch columns are processed per native
-`float32x4_t` group and ragged remainders stay scalar. FSRS-7 windowed optimizer
-steps use host-side Adam with the same `beta_1=0.8`, `beta_2=0.85`, and
-`epsilon=1e-8` settings as the Burn optimizer, followed by the same
+`src/training.rs`. On ARM64 targets with NEON, `src/analytic_v7/neon_loss.rs`
+processes four batch columns per native `float32x4_t` group for both the
+windowed validation loss and the training BCE gradient. Ragged remainders stay
+scalar, and non-NEON targets keep the scalar analytic path. FSRS-7 windowed
+optimizer steps use host-side Adam with the same `beta_1=0.8`, `beta_2=0.85`,
+and `epsilon=1e-8` settings as the Burn optimizer, followed by the same
 version-aware clipping rules. Prefix-item training, FSRS-6 training, and callers
 without card ids remain on the existing Burn tensor loss and optimizer path.

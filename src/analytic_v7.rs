@@ -443,6 +443,10 @@ pub(crate) fn windowed_loss(
     }
 }
 
+#[cfg_attr(
+    all(target_arch = "aarch64", target_feature = "neon"),
+    allow(dead_code)
+)]
 pub(crate) fn windowed_loss_and_grad(
     w: &[f32],
     t_historys: &[f32],
@@ -485,6 +489,31 @@ pub(crate) fn windowed_loss_and_grad(
         *dst = src as f32;
     }
     (loss, grad_f32)
+}
+
+pub(crate) fn windowed_grad(
+    w: &[f32],
+    t_historys: &[f32],
+    r_historys: &[f32],
+    labels: &[f32],
+    weights: &[f32],
+    seq_len: usize,
+    batch_size: usize,
+) -> [f32; PARAM_LEN] {
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        neon_loss::windowed_grad(
+            w, t_historys, r_historys, labels, weights, seq_len, batch_size,
+        )
+    }
+
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    {
+        windowed_loss_and_grad(
+            w, t_historys, r_historys, labels, weights, seq_len, batch_size,
+        )
+        .1
+    }
 }
 
 #[cfg(test)]
@@ -571,6 +600,77 @@ mod tests {
         assert!(
             relative_error < 5e-4,
             "scalar loss {scalar}, neon loss {neon}, relative error {relative_error:e}"
+        );
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    #[test]
+    fn test_neon_windowed_grad_matches_scalar() {
+        let histories = [
+            [(3, 0.0), (4, 1.0), (3, 5.0), (1, 10.0), (3, 2.0), (0, 0.0)],
+            [(1, 0.0), (3, 0.5), (2, 1.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(4, 0.0), (4, 2.0), (3, 4.0), (2, 7.0), (1, 1.0), (3, 3.0)],
+            [(2, 0.0), (3, 1.5), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(3, 0.0), (2, 3.0), (4, 6.0), (1, 2.0), (0, 0.0), (0, 0.0)],
+        ];
+        let seq_len = 6;
+        let batch_size = histories.len();
+        let mut t_historys = vec![0.0; seq_len * batch_size];
+        let mut r_historys = vec![0.0; seq_len * batch_size];
+        let mut labels = vec![0.0; seq_len * batch_size];
+        let mut weights = vec![0.0; seq_len * batch_size];
+        for (column, reviews) in histories.iter().enumerate() {
+            for (row, &(rating, delta_t)) in reviews.iter().enumerate() {
+                let index = row * batch_size + column;
+                t_historys[index] = delta_t;
+                r_historys[index] = rating as f32;
+                if row > 0 && rating != 0 {
+                    labels[index] = if rating == 1 { 0.0 } else { 1.0 };
+                    weights[index] = 0.4 + row as f32 * 0.07 + column as f32 * 0.03;
+                }
+            }
+        }
+
+        let (_, scalar) = windowed_loss_and_grad(
+            &crate::DEFAULT_PARAMETERS,
+            &t_historys,
+            &r_historys,
+            &labels,
+            &weights,
+            seq_len,
+            batch_size,
+        );
+        let neon = neon_loss::windowed_grad_for_test(
+            &crate::DEFAULT_PARAMETERS,
+            &t_historys,
+            &r_historys,
+            &labels,
+            &weights,
+            seq_len,
+            batch_size,
+        );
+        let numerator = scalar
+            .iter()
+            .zip(neon)
+            .map(|(scalar, neon)| {
+                let diff = (*scalar - neon) as f64;
+                diff * diff
+            })
+            .sum::<f64>()
+            .sqrt();
+        let denominator = scalar
+            .iter()
+            .map(|value| {
+                let value = *value as f64;
+                value * value
+            })
+            .sum::<f64>()
+            .sqrt()
+            .max(1.0);
+        let relative_l2 = numerator / denominator;
+        assert!(
+            relative_l2 < 2e-2,
+            "relative gradient L2 {relative_l2:e}\nscalar={scalar:?}\nneon={neon:?}"
         );
     }
 }
