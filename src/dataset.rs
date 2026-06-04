@@ -185,6 +185,67 @@ impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     }
 }
 
+fn compute_outlier_analysis(items: &[FSRSItem]) -> ([HashSet<u32>; 5], Vec<usize>) {
+    let mut groups = HashMap::<u32, HashMap<u32, Vec<usize>>>::new();
+
+    // group by rating of first review and delta_t of second review
+    for (index, item) in items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.long_term_review_cnt() == 1)
+    {
+        let (first_review, second_review) = (item.reviews.first().unwrap(), item.current());
+        let rating_group = groups.entry(first_review.rating).or_default();
+        rating_group
+            .entry(second_review.delta_t)
+            .or_default()
+            .push(index);
+    }
+
+    let mut removed_pairs: [HashSet<_>; 5] = Default::default();
+    let mut kept_initialization_indices = Vec::new();
+
+    for (rating, delta_t_groups) in groups.into_iter().sorted_by_key(|&(k, _)| k) {
+        let mut sub_groups = delta_t_groups.into_iter().collect::<Vec<_>>();
+
+        // order by size of sub group ascending and delta_t descending
+        sub_groups.sort_by(|(delta_t_a, indices_a), (delta_t_b, indices_b)| {
+            indices_b
+                .len()
+                .cmp(&indices_a.len())
+                .then(delta_t_b.cmp(delta_t_a))
+        });
+
+        let total = sub_groups
+            .iter()
+            .map(|(_, indices)| indices.len())
+            .sum::<usize>();
+        let mut has_been_removed = 0;
+
+        for (delta_t, indices) in sub_groups.iter().rev() {
+            // remove 5% items (20 at least) of each group
+            if has_been_removed + indices.len() >= 20.max(total / 20) {
+                // keep the sub_group if it includes at least six items
+                // and the delta_t is less than 100 days if rating is not 4
+                // or less than 365 days if rating is 4
+                if indices.len() >= 6 && *delta_t <= if rating != 4 { 100 } else { 365 } {
+                    kept_initialization_indices.extend_from_slice(indices);
+                } else {
+                    removed_pairs[rating as usize].insert(*delta_t);
+                }
+            } else {
+                has_been_removed += indices.len();
+                removed_pairs[rating as usize].insert(*delta_t);
+            }
+        }
+    }
+    (removed_pairs, kept_initialization_indices)
+}
+
+fn train_item_survives_outlier(item: &FSRSItem, removed_pairs: &[HashSet<u32>; 5]) -> bool {
+    !removed_pairs[item.reviews[0].rating as usize].contains(&item.first_long_term_review().delta_t)
+}
+
 pub fn filter_outlier(
     dataset_for_initialization: Vec<FSRSItem>,
     mut trainset: Vec<FSRSItem>,
@@ -234,22 +295,64 @@ pub fn filter_outlier(
         }
     }
     // keep the items in trainset if they are not removed from filtered_items
-    trainset.retain(|item| {
-        !removed_pairs[item.reviews[0].rating as usize]
-            .contains(&item.first_long_term_review().delta_t)
-    });
+    trainset.retain(|item| train_item_survives_outlier(item, &removed_pairs));
     (filtered_items, trainset)
 }
 
 pub(crate) fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
-    let (mut dataset_for_initialization, mut trainset) = items
-        .clone()
+    if std::env::var("FSRS_NO_OUTLIER").is_ok() {
+        return items
+            .into_iter()
+            .partition(|item| item.long_term_review_cnt() == 1);
+    }
+
+    let (removed_pairs, kept_initialization_indices) = compute_outlier_analysis(&items);
+    let dataset_for_initialization = kept_initialization_indices
         .into_iter()
-        .partition(|item| item.long_term_review_cnt() == 1);
-    if std::env::var("FSRS_NO_OUTLIER").is_err() {
-        (dataset_for_initialization, trainset) = filter_outlier(dataset_for_initialization, items);
+        .map(|index| items[index].clone())
+        .collect();
+    let mut trainset = Vec::with_capacity(items.len());
+    for item in items {
+        if train_item_survives_outlier(&item, &removed_pairs) {
+            trainset.push(item);
+        }
     }
     (dataset_for_initialization, trainset)
+}
+
+pub(crate) fn prepare_training_data_with_card_ids(
+    items: Vec<FSRSItem>,
+    card_ids: Vec<i64>,
+) -> (Vec<FSRSItem>, Vec<FSRSItem>, Vec<i64>) {
+    if std::env::var("FSRS_NO_OUTLIER").is_ok() {
+        let mut dataset_for_initialization = Vec::new();
+        let mut trainset = Vec::new();
+        let mut trainset_card_ids = Vec::new();
+        for (item, card_id) in items.into_iter().zip(card_ids) {
+            if item.long_term_review_cnt() == 1 {
+                dataset_for_initialization.push(item);
+            } else {
+                trainset.push(item);
+                trainset_card_ids.push(card_id);
+            }
+        }
+        return (dataset_for_initialization, trainset, trainset_card_ids);
+    }
+
+    let (removed_pairs, kept_initialization_indices) = compute_outlier_analysis(&items);
+    let dataset_for_initialization = kept_initialization_indices
+        .into_iter()
+        .map(|index| items[index].clone())
+        .collect();
+    let mut trainset = Vec::with_capacity(items.len());
+    let mut trainset_card_ids = Vec::with_capacity(card_ids.len());
+    for (item, card_id) in items.into_iter().zip(card_ids) {
+        if train_item_survives_outlier(&item, &removed_pairs) {
+            trainset.push(item);
+            trainset_card_ids.push(card_id);
+        }
+    }
+    (dataset_for_initialization, trainset, trainset_card_ids)
 }
 
 #[cfg(test)]

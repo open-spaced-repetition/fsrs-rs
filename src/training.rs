@@ -1,14 +1,16 @@
 use crate::analytic;
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    FSRSItem, WeightedFSRSItem, prepare_training_data, recency_weighted_fsrs_items,
-    recency_weighted_fsrs_items_with_card_ids,
+    FSRSItem, WeightedFSRSItem, prepare_training_data, prepare_training_data_with_card_ids,
+    recency_weighted_fsrs_items, recency_weighted_fsrs_items_with_card_ids,
 };
 use crate::error::Result;
 #[cfg(test)]
 use crate::model::Model;
 use crate::model::ModelConfig;
+#[cfg(test)]
 use crate::parameter_clipper::clip_parameters;
+use crate::parameter_clipper::clip_parameters_in_place;
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
 use crate::{DEFAULT_PARAMETERS, FSRSError};
 #[cfg(test)]
@@ -280,16 +282,16 @@ pub fn compute_parameters(
         return Err(FSRSError::InvalidInput);
     }
 
-    let (dataset_for_initialization, train_set) = prepare_training_data(original_train_set.clone());
-    let train_card_ids = match card_ids {
-        Some(card_ids) => match align_card_ids(&original_train_set, &card_ids, &train_set) {
-            Ok(card_ids) => Some(card_ids),
-            Err(err) => {
-                finish_progress();
-                return Err(err);
-            }
-        },
-        None => None,
+    let (dataset_for_initialization, train_set, train_card_ids) = match card_ids {
+        Some(card_ids) => {
+            let (dataset_for_initialization, train_set, train_card_ids) =
+                prepare_training_data_with_card_ids(original_train_set, card_ids);
+            (dataset_for_initialization, train_set, Some(train_card_ids))
+        }
+        None => {
+            let (dataset_for_initialization, train_set) = prepare_training_data(original_train_set);
+            (dataset_for_initialization, train_set, None)
+        }
     };
     let average_recall = calculate_average_recall(&train_set);
     if train_set.len() < 8 {
@@ -333,8 +335,8 @@ pub fn compute_parameters(
         progress.lock().unwrap().reset(vec![progress_state]);
     }
     let optimized_parameters = train(
-        weighted_train_set.clone(),
         weighted_train_set,
+        None,
         &training_initial_parameters,
         &config,
         progress.clone().map(|p| ProgressCollector::new(p, 0)),
@@ -403,7 +405,7 @@ pub fn benchmark(
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
     train(
         weighted_train_set.clone(),
-        weighted_train_set,
+        Some(weighted_train_set),
         &initialized_parameters,
         &config,
         None,
@@ -411,30 +413,12 @@ pub fn benchmark(
     .unwrap()
 }
 
-fn align_card_ids(
-    original_items: &[FSRSItem],
-    original_card_ids: &[i64],
-    retained_items: &[FSRSItem],
-) -> Result<Vec<i64>> {
-    let mut retained_idx = 0;
-    let mut retained_card_ids = Vec::with_capacity(retained_items.len());
-    for (item, card_id) in original_items.iter().zip(original_card_ids) {
-        if retained_idx < retained_items.len() && item == &retained_items[retained_idx] {
-            retained_card_ids.push(*card_id);
-            retained_idx += 1;
-        }
-    }
-    if retained_idx != retained_items.len() {
-        return Err(FSRSError::InvalidInput);
-    }
-    Ok(retained_card_ids)
-}
-
 #[derive(Clone)]
 struct BatchHost {
     seq_len: usize,
     batch_size: usize,
     real_batch_size: usize,
+    column_lengths: Vec<usize>,
     t_historys: Vec<f32>,
     r_historys: Vec<f32>,
     delta_ts: Vec<f32>,
@@ -455,8 +439,10 @@ fn build_plain_batch(items: &[WeightedFSRSItem]) -> BatchHost {
     let mut delta_ts = Vec::with_capacity(batch_size);
     let mut labels = Vec::with_capacity(batch_size);
     let mut weights = Vec::with_capacity(batch_size);
+    let mut column_lengths = Vec::with_capacity(batch_size);
 
     for (column, weighted_item) in items.iter().enumerate() {
+        column_lengths.push(weighted_item.item.reviews.len() - 1);
         for (t, review) in weighted_item.item.history().enumerate() {
             let idx = t * batch_size + column;
             t_historys[idx] = review.delta_t as f32;
@@ -472,6 +458,7 @@ fn build_plain_batch(items: &[WeightedFSRSItem]) -> BatchHost {
         seq_len,
         batch_size,
         real_batch_size: batch_size,
+        column_lengths,
         t_historys,
         r_historys,
         delta_ts,
@@ -494,9 +481,11 @@ fn build_windowed_batch(cards: &[Vec<WeightedFSRSItem>]) -> BatchHost {
     let delta_ts = Vec::new();
     let mut labels = vec![0.0; seq_len * batch_size];
     let mut weights = vec![0.0; seq_len * batch_size];
+    let mut column_lengths = Vec::with_capacity(batch_size);
 
     for (column, card) in cards.iter().enumerate() {
         let full_reviews = &card.last().expect("empty card group").item.reviews;
+        column_lengths.push(full_reviews.len());
         for (t, review) in full_reviews.iter().enumerate() {
             let idx = t * batch_size + column;
             t_historys[idx] = review.delta_t as f32;
@@ -515,6 +504,7 @@ fn build_windowed_batch(cards: &[Vec<WeightedFSRSItem>]) -> BatchHost {
         seq_len,
         batch_size,
         real_batch_size,
+        column_lengths,
         t_historys,
         r_historys,
         delta_ts,
@@ -582,6 +572,7 @@ fn batch_loss(batch: &BatchHost, parameters: &[f32]) -> f64 {
             &batch.r_historys,
             batch.seq_len,
             batch.batch_size,
+            &batch.column_lengths,
             &batch.labels,
             &batch.weights,
         )
@@ -592,6 +583,7 @@ fn batch_loss(batch: &BatchHost, parameters: &[f32]) -> f64 {
             &batch.r_historys,
             batch.seq_len,
             batch.batch_size,
+            &batch.column_lengths,
             &batch.delta_ts,
             &batch.labels,
             &batch.weights,
@@ -607,6 +599,7 @@ fn batch_loss_and_grad(batch: &BatchHost, parameters: &[f32], grad: &mut [f64]) 
             &batch.r_historys,
             batch.seq_len,
             batch.batch_size,
+            &batch.column_lengths,
             &batch.labels,
             &batch.weights,
             grad,
@@ -618,6 +611,7 @@ fn batch_loss_and_grad(batch: &BatchHost, parameters: &[f32], grad: &mut [f64]) 
             &batch.r_historys,
             batch.seq_len,
             batch.batch_size,
+            &batch.column_lengths,
             &batch.delta_ts,
             &batch.labels,
             &batch.weights,
@@ -714,16 +708,18 @@ fn render_progress(
 
 fn train(
     train_set: Vec<WeightedFSRSItem>,
-    test_set: Vec<WeightedFSRSItem>,
+    test_set: Option<Vec<WeightedFSRSItem>>,
     initial_parameters: &[f32],
     config: &TrainingConfig,
     progress: Option<ProgressCollector>,
 ) -> Result<Vec<f32>> {
     let total_size = train_set.len();
-    let test_size = test_set.len();
     let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
     let train_batches = build_host_batches(train_set, config.batch_size);
-    let valid_batches = build_host_batches(test_set, config.batch_size);
+    let valid_batches = test_set.map(|test_set| build_host_batches(test_set, config.batch_size));
+    let test_size = valid_batches.as_ref().map_or(total_size, |batches| {
+        batches.iter().map(|batch| batch.real_batch_size).sum()
+    });
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let mut progress = progress;
 
@@ -732,11 +728,14 @@ fn train(
     let mut best_loss = f64::INFINITY;
     let mut best_parameters = parameters.clone();
     let mut rng = StdRng::seed_from_u64(config.seed);
+    let mut batch_order = (0..train_batches.len()).collect::<Vec<_>>();
     for epoch in 1..=config.num_epochs {
-        let mut batch_order = (0..train_batches.len()).collect::<Vec<_>>();
+        for (slot, idx) in batch_order.iter_mut().zip(0..) {
+            *slot = idx;
+        }
         batch_order.shuffle(&mut rng);
         let mut items_processed = 0;
-        for batch_idx in batch_order {
+        for batch_idx in batch_order.iter().copied() {
             let batch = &train_batches[batch_idx];
             let lr = lr_scheduler.step();
             let mut grad = [0.0; 21];
@@ -756,8 +755,8 @@ fn train(
                 grad[17..20].fill(0.0);
             }
             adam.step(&mut parameters, &grad, lr);
-            parameters = clip_parameters(
-                &parameters,
+            clip_parameters_in_place(
+                &mut parameters,
                 config.model.num_relearning_steps,
                 !config.model.freeze_short_term_stability,
             );
@@ -775,7 +774,7 @@ fn train(
         }
 
         let mut loss_valid = 0.0;
-        for batch in &valid_batches {
+        for batch in valid_batches.as_ref().unwrap_or(&train_batches) {
             loss_valid += batch_loss(batch, &parameters)
                 + l2_penalty(
                     &parameters,
@@ -1125,6 +1124,7 @@ mod tests {
 
         let t_flat = t_historys.iter().flatten().copied().collect::<Vec<_>>();
         let r_flat = r_historys.iter().flatten().copied().collect::<Vec<_>>();
+        let seq_lens = vec![6; 4];
         let mut analytic_grad = [0.0; 21];
         let analytic_loss = crate::analytic::batch_loss_and_grad(
             &DEFAULT_PARAMETERS,
@@ -1132,6 +1132,7 @@ mod tests {
             &r_flat,
             6,
             4,
+            &seq_lens,
             &delta_ts,
             &labels,
             &weights,
