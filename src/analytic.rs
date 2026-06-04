@@ -715,6 +715,13 @@ fn card_column_loss_and_grad(
     };
     for t in 0..seq_len {
         let idx = t * batch + column;
+        // Trailing padding (rating 0) is a no-op passthrough: it scores nothing (weight 0) and
+        // carries a zero adjoint back through the state clamp, so it contributes neither loss nor
+        // gradient. A column's reviews are contiguous and then padded, so once the first padding
+        // step is hit the rest are all padding — stop at the card's real length. Bit-for-bit.
+        if r_hist[idx] == 0.0 {
+            break;
+        }
         let (next, cache) = step_forward(w, consts, state, t_hist[idx], r_hist[idx], t);
         let (step_loss, g_r) = if t == 0 {
             (0.0, 0.0)
