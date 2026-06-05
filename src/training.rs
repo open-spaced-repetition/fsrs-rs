@@ -336,7 +336,6 @@ pub fn compute_parameters(
     }
     let optimized_parameters = train(
         weighted_train_set,
-        None,
         &training_initial_parameters,
         &config,
         progress.clone().map(|p| ProgressCollector::new(p, 0)),
@@ -403,14 +402,7 @@ pub fn benchmark(
         _ => recency_weighted_fsrs_items(train_set),
     };
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
-    train(
-        weighted_train_set.clone(),
-        Some(weighted_train_set),
-        &initialized_parameters,
-        &config,
-        None,
-    )
-    .unwrap()
+    train(weighted_train_set, &initialized_parameters, &config, None).unwrap()
 }
 
 #[derive(Clone)]
@@ -708,7 +700,6 @@ fn render_progress(
 
 fn train(
     train_set: Vec<WeightedFSRSItem>,
-    test_set: Option<Vec<WeightedFSRSItem>>,
     initial_parameters: &[f32],
     config: &TrainingConfig,
     progress: Option<ProgressCollector>,
@@ -716,10 +707,6 @@ fn train(
     let total_size = train_set.len();
     let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
     let train_batches = build_host_batches(train_set, config.batch_size);
-    let valid_batches = test_set.map(|test_set| build_host_batches(test_set, config.batch_size));
-    let test_size = valid_batches.as_ref().map_or(total_size, |batches| {
-        batches.iter().map(|batch| batch.real_batch_size).sum()
-    });
     let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let mut progress = progress;
 
@@ -774,7 +761,7 @@ fn train(
         }
 
         let mut loss_valid = 0.0;
-        for batch in valid_batches.as_ref().unwrap_or(&train_batches) {
+        for batch in &train_batches {
             loss_valid += batch_loss(batch, &parameters)
                 + l2_penalty(
                     &parameters,
@@ -791,7 +778,7 @@ fn train(
                 return Err(FSRSError::Interrupted);
             }
         }
-        loss_valid /= test_size as f64;
+        loss_valid /= total_size as f64;
         info!("epoch: {:?} loss: {:?}", epoch, loss_valid);
         if loss_valid < best_loss {
             best_loss = loss_valid;
