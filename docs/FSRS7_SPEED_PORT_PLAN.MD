@@ -1266,6 +1266,92 @@ Interpretation:
         fixture. The largest remaining profile symbol is still
         `neon_loss::windowed_grad`, but the next larger NEON changes are likely
         to be more invasive than cache compaction.
+    - Current post-cache/profile baseline, 2026-06-05:
+      - Commit profiled: `f387f75` (`Optimize FSRS-7 gradient cache and setup`).
+      - Data access: sampled a repeated release run against the SQLite backup
+        copy at `/private/tmp/fsrs-main-profile-collection-backup.anki2`; no
+        live Anki profile data was written or modified.
+      - Command shape: temporary release example repeating FSRS-7
+        `compute_parameters()` with aligned `card_ids`, short-term enabled, and
+        schedule penalties enabled. The repeated run covered `80`
+        optimizations, `248819` review rows, and `183178` prepared FSRS items.
+      - Timing: `80` optimizations in `25.569938 s`; most warm
+        `optimize_seconds` samples were around `0.30..0.33 s`, with a few
+        outliers around `0.39..0.41 s`.
+      - Follow-up `sample` report:
+        `/private/tmp/fsrs_compute_parameters_f387f75.sample.txt`.
+        Top symbol sample counts from the top-of-stack collapsed view:
+        - `analytic_v7::neon_loss::windowed_grad`: `2825`
+        - `pow` from `libsystem_m`: `1365`
+        - `training_v7::fsrs7_next_s_good_dual`: `526`
+        - `training_v7::fsrs7_fc_r_dual`: `516`
+        - `analytic_v7::windowed_loss`: `431`
+        - `log` from `libsystem_m`: `363`
+        - `exp` from `libsystem_m`: `182`
+        - `parameter_initialization_fsrs7::loss_with_curve`: `180`
+        - `training_v7::fsrs7_interval_differentiable_dual`: `144`
+        - `training_v7::maybe_schedule_penalty_value_and_grad`: `102`
+        - `training::build_windowed_batch`: `50`
+      - Assessment: `windowed_grad` remains the largest single repo symbol, but
+        the obvious compact-cache pass is already done and deeper NEON recurrence
+        changes now carry higher maintenance risk. The best lower-risk next
+        target is schedule-penalty/interval math, especially
+        `fsrs7_next_s_good_dual`, `fsrs7_fc_r_dual`, and
+        `fsrs7_interval_differentiable_dual`, because they still combine with
+        visible system `pow`/`log`/`exp` time. Initialization
+        `loss_with_curve()` is still measurable, but the golden-section search
+        already removed the largest repeated-loss waste, so any further
+        initialization work should be isolated behind fixed-output and
+        collection gates. `build_windowed_batch` is too small in this profile to
+        prioritize.
+      - Recommended next order: first inspect schedule-penalty dual recurrence
+        and interval residual algebra for reused values or reduced dual
+        transcendental calls; then consider initialization `pow`/`log` cleanup;
+        only then take on another NEON `windowed_grad` pass if the scalar-oracle
+        and collection gates can justify the extra complexity.
+    - Rejected schedule-penalty dual `ln(base)` reuse experiment, 2026-06-05:
+      - Experiment: add a specialized positive-base dual power helper and reuse
+        `ln(s)`, `ln(d)`, `ln(s + 1)`, and forgetting-curve inner logs inside
+        `fsrs7_fc_r_dual()` and `fsrs7_next_s_good_dual()`.
+      - Focused correctness check: `rtk cargo test training_v7` passed with
+        `10` tests.
+      - Isolated Criterion improved:
+        `fsrs7_penalty/compute_parameters` `59.325 ms..61.169 ms`, change
+        `[-11.122% -7.2081% -2.5350%]`, `p = 0.01 < 0.05`.
+      - Full Criterion did not detect a significant change:
+        `parameters/compute_parameters` `26.523 ms..27.103 ms`, change
+        `[-19.621% -9.5093% -1.9346%]`, `p = 0.09 > 0.05`.
+      - Collection quality was unchanged on the temporary metrics harness:
+        repo fixture LogLoss `0.20312741`, RMSE bins `0.02343636`; Main Profile
+        backup LogLoss `0.48804972`, RMSE bins about `0.03719570`.
+      - Collection timing did not show a reliable win. Repo fixture selected
+        optimization samples included `0.031856 s`, `0.051215 s`, and
+        `0.028835 s`, versus the prior documented warm row `0.027030 s`. Main
+        Profile backup metrics-harness samples included `0.319589 s`,
+        `0.330334 s`, `0.374061 s`, and `0.363118 s`; the existing ADR
+        collection example printed `0.376 s` on a warm direct run. Prior
+        accepted rows were around `0.323606 s` for the metrics harness and
+        `0.301..0.310 s` for nearby ADR-example warm timings.
+      - Decision: reverted. This is useful evidence that schedule-penalty
+        micro-optimizations can move the isolated penalty benchmark, but the
+        remaining schedule-penalty share is too small to justify extra dual
+        helper complexity without a collection-level timing win.
+    - Rejected NEON all-zero-weight BCE skip experiment, 2026-06-05:
+      - Experiment: skip NEON BCE loss/gradient work in `windowed_loss()` and
+        `windowed_grad()` when all four lanes in a row had zero prediction
+        weight. This is behavior-preserving in principle because zero-weight BCE
+        contributes zero loss and zero gradient.
+      - Focused correctness checks passed:
+        `rtk cargo test test_neon_windowed_grad`,
+        `rtk cargo test test_windowed_validation_loss_matches_burn_with_padding`,
+        and
+        `rtk cargo test test_windowed_loss_and_grad_match_prefix_batch_for_single_card`.
+      - Criterion for full `parameters/compute_parameters` regressed:
+        `27.622 ms..28.239 ms`, change `[+1.8564% +4.2706% +6.7212%]`,
+        `p = 0.00 < 0.05`.
+      - Decision: reverted. The extra branch/load pattern is worse than doing
+        the existing arithmetic on the small repo fixture, and there is no
+        reason to accept the added complexity without a benchmark win.
   - Required gates:
     - `rtk cargo test test_analytic_loss_and_grad_matches_burn`
     - `rtk cargo test windowed_matches_sum_of_prefixes`
