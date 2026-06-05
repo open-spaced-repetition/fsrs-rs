@@ -42,19 +42,27 @@ pub(crate) fn clip_parameters(
     enable_short_term: bool,
 ) -> Vec<f32> {
     let mut parameters = parameters.to_vec();
+    clip_parameters_in_place(&mut parameters, num_relearning_steps, enable_short_term);
+    parameters
+}
+
+pub(crate) fn clip_parameters_in_place(
+    parameters: &mut [f32],
+    num_relearning_steps: usize,
+    enable_short_term: bool,
+) {
     match ModelVersion::from_param_count(parameters.len()) {
         ModelVersion::Fsrs7 => {
-            parameter_clipper_v7::clip_fsrs7_parameters(&mut parameters);
+            parameter_clipper_v7::clip_fsrs7_parameters(parameters);
         }
         ModelVersion::Fsrs6 => {
             parameter_clipper_v6::clip_fsrs6_parameters(
-                &mut parameters,
+                parameters,
                 num_relearning_steps,
                 enable_short_term,
             );
         }
     }
-    parameters
 }
 
 #[cfg(test)]
@@ -105,6 +113,15 @@ mod tests {
         assert!(clipped[3] >= clipped[2]);
         assert!(clipped[28] >= clipped[27]);
         assert!(clipped[30] >= clipped[29]);
+    }
+
+    #[test]
+    fn test_clip_parameters_in_place_matches_allocating_wrapper() {
+        let params = vec![1000.0; 35];
+        let expected = clip_parameters(&params, 1, true);
+        let mut actual = params;
+        clip_parameters_in_place(&mut actual, 1, true);
+        assert_eq!(actual, expected);
     }
 
     #[test]

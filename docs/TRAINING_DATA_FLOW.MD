@@ -97,31 +97,43 @@ match `train_set`; otherwise `compute_parameters()` returns `InvalidInput`.
     prediction timesteps.
   - Transient scalar dual-number values and a 35-parameter BCE gradient array
     for FSRS-7 windowed training batches.
+  - Transient scalar FSRS-7 runtime constants for the non-NEON fallback and
+    scalar remainder-column validation path.
+  - Transient ARM64 NEON per-row forward caches for FSRS-7 windowed training
+    gradient backpropagation. These caches keep only values consumed by the
+    reverse pass; raw pre-clamp state duplicates are not stored.
   - Transient scalar loss values for FSRS-7 windowed validation batches.
   - Transient FSRS-7 windowed host Adam state: first moment, second moment, and
     step count for the current optimization run.
+  - Transient train/validation shuffle index buffers reused across epochs in the
+    current training call.
 - Data updated:
   - No persistent card-id data is written.
   - FSRS-7 windowed training updates the in-memory host parameter vector with
     the analytic BCE gradient, existing schedule/L2 penalty gradients, freeze
-    masks, host Adam, and version-aware parameter clipping.
+    masks, host Adam, and in-place version-aware parameter clipping.
   - FSRS-7 analytic window loops update transient memory state only when a later
     prediction can consume it; the final unused state update in each batch
     column is skipped.
+  - Training updates the transient shuffle index buffers before shuffling each
+    train or validation pass; no ordering data is persisted.
   - The Burn model parameter tensor is synchronized from the host parameter
     vector for epoch selection and final return.
 - Data storage:
   - Card ids live only for the `compute_parameters()` call.
   - Windowed host arrays live only for the current training call and are shared
     by windowed training and validation passes.
-  - Analytic gradient arrays live only for the current training batch.
+  - Analytic gradient arrays and NEON forward caches live only for the current
+    training batch.
   - Analytic validation loss values live only for the current validation batch.
   - Host Adam moments live only for the current FSRS-7 windowed training run.
 
 Outlier filtering computes kept/removed item indices once and applies those
 indices to both review histories and card ids. This keeps card ids aligned with
 their surviving prefix items through filtering, recency weighting, max sequence
-length filtering, and batching.
+length filtering, and batching. The FSRS-7 card-id path applies those indices
+while moving the retained transient training pairs, avoiding a separate cloned
+training-history buffer and a post-filter card-id realignment pass.
 
 `examples/fsrs7_adr_collection.rs` also builds aligned card ids while converting
 collection revlogs into FSRS prefix items. FSRS-7 ADR collection runs pass those
@@ -142,9 +154,10 @@ FSRS-7 windowed training now computes the BCE loss gradient from host arrays in
 processes four batch columns per native `float32x4_t` group for both the
 windowed validation loss and the training BCE gradient. The NEON training
 gradient reuses per-step recurrent logarithms, fuses the stability fail-path
-`d`/retrievability exponentials, skips all-padding trailing rows per four-lane
-group, and uses a faster approximate NEON `exp`/`ln` variant for recurrence
-math. The NEON validation-loss path keeps the more accurate approximation.
+`d`/retrievability exponentials, keeps a compact forward cache for
+backpropagation, skips all-padding trailing rows per four-lane group, and uses
+a faster approximate NEON `exp`/`ln` variant for recurrence math. The NEON
+validation-loss path keeps the more accurate approximation.
 Windowed host batches pad their physical column count to a multiple of four so
 production NEON training avoids scalar remainder columns; the logical batch size
 used for loss and penalty scaling remains the real prefix prediction count.

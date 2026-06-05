@@ -1,12 +1,12 @@
 use crate::batch_shuffle::BatchTensorDataset;
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    FSRSBatch, FSRSItem, WeightedFSRSItem, filter_outlier_indices, prepare_training_data,
+    FSRSBatch, FSRSItem, WeightedFSRSItem, filter_outlier_train_indices, prepare_training_data,
     recency_weighted_fsrs_items, sort_items_by_review_length,
 };
 use crate::error::Result;
 use crate::model::{Model, ModelConfig, ModelVersion, parameters_to_model};
-use crate::parameter_clipper::{clip_parameters, parameter_clipper};
+use crate::parameter_clipper::{clip_parameters_in_place, parameter_clipper};
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
 use crate::parameter_initialization_fsrs7::{
     initialize_parameters_fsrs7, smooth_initial_stabilities_fsrs7,
@@ -447,12 +447,10 @@ fn prepare_training_data_with_card_ids(
         return (dataset_for_initialization, trainset);
     }
 
-    let all_items = items
-        .iter()
-        .map(|item| item.item.clone())
-        .collect::<Vec<_>>();
-    let (initialization_indices, train_indices) =
-        filter_outlier_indices(&dataset_for_initialization, &all_items);
+    let (initialization_indices, train_indices) = filter_outlier_train_indices(
+        &dataset_for_initialization,
+        items.iter().map(|item| &item.item),
+    );
     let filtered_initialization = initialization_indices
         .into_iter()
         .map(|index| {
@@ -460,14 +458,15 @@ fn prepare_training_data_with_card_ids(
             items[source_index].item.clone()
         })
         .collect();
-    let mut training_items = items
-        .into_iter()
-        .map(Some)
-        .collect::<Vec<Option<TrainingFSRSItem>>>();
-    let trainset = train_indices
-        .into_iter()
-        .map(|index| training_items[index].take().unwrap())
-        .collect();
+    let mut train_indices = train_indices.into_iter();
+    let mut next_train_index = train_indices.next();
+    let mut trainset = Vec::new();
+    for (index, item) in items.into_iter().enumerate() {
+        if next_train_index == Some(index) {
+            trainset.push(item);
+            next_train_index = train_indices.next();
+        }
+    }
     (filtered_initialization, trainset)
 }
 
@@ -951,7 +950,7 @@ fn clip_host_parameters(
     num_relearning_steps: usize,
     enable_short_term: bool,
 ) {
-    *parameters = clip_parameters(parameters, num_relearning_steps, enable_short_term);
+    clip_parameters_in_place(parameters, num_relearning_steps, enable_short_term);
     if !enable_short_term
         && matches!(
             ModelVersion::from_param_count(parameters.len()),
@@ -1029,14 +1028,18 @@ fn train<B: AutodiffBackend>(
     } else {
         Some(config.optimizer.init::<B, Model<B>>())
     };
+    let mut train_indices = (0..train_batch_count).collect::<Vec<_>>();
+    let mut valid_indices = Vec::new();
 
     let mut best_loss = f64::INFINITY;
     let mut best_model = model.clone();
     for epoch in 1..=config.num_epochs {
-        let mut train_indices = (0..train_batch_count).collect::<Vec<_>>();
+        for (slot, index) in train_indices.iter_mut().zip(0..) {
+            *slot = index;
+        }
         train_indices.shuffle(&mut train_rng);
         let mut iteration = 0;
-        for batch_index in train_indices {
+        for batch_index in train_indices.iter().copied() {
             iteration += 1;
             let real_batch_size = windowed_batches.as_ref().map_or_else(
                 || prefix_batch_real_batch_size(&train_batches[batch_index]),
@@ -1149,9 +1152,10 @@ fn train<B: AutodiffBackend>(
         let valid_batch_count = windowed_batches
             .as_ref()
             .map_or(valid_batches.len(), Vec::len);
-        let mut valid_indices = (0..valid_batch_count).collect::<Vec<_>>();
+        valid_indices.clear();
+        valid_indices.extend(0..valid_batch_count);
         valid_indices.shuffle(&mut valid_rng);
-        for batch_index in valid_indices {
+        for batch_index in valid_indices.iter().copied() {
             let real_batch_size = windowed_batches.as_ref().map_or_else(
                 || prefix_batch_real_batch_size(&valid_batches[batch_index]),
                 |batches| batches[batch_index].real_batch_size(),
@@ -1379,6 +1383,38 @@ mod tests {
             vec![11, 22]
         );
         assert_eq!(trainset[1].item.current().rating, 2);
+    }
+
+    #[test]
+    fn test_prepare_training_data_with_card_ids_filters_outlier_bucket_without_losing_alignment() {
+        fn item(card_id: i64, reviews: &[(u32, f32)]) -> TrainingFSRSItem {
+            TrainingFSRSItem {
+                item: FSRSItem {
+                    reviews: reviews
+                        .iter()
+                        .map(|&(rating, delta_t)| crate::FSRSReview { rating, delta_t })
+                        .collect(),
+                },
+                card_id: Some(card_id),
+            }
+        }
+
+        let mut items = vec![item(999, &[(3, 0.0), (3, 200.0)])];
+        for i in 0..20 {
+            items.push(item(100 + i, &[(3, 0.0), (3, 5.0)]));
+        }
+        items.push(item(1000, &[(3, 0.0), (3, 200.0), (2, 2.0)]));
+
+        let (initialization, trainset) = prepare_training_data_with_card_ids(items);
+
+        assert_eq!(initialization.len(), 20);
+        assert_eq!(
+            trainset
+                .iter()
+                .map(|item| item.card_id.unwrap())
+                .collect::<Vec<_>>(),
+            (100..120).collect::<Vec<_>>()
+        );
     }
 
     #[test]

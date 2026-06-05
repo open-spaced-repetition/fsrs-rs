@@ -647,12 +647,13 @@ Main Profile checkpoint rerun on the 2026-06-04 snapshot:
 | Validation interval 8 | `0.411935` | `0.48805487` | `0.03720748` | pass | `21.5%` | `98.6%` | `69.5x` |
 | Schedule-penalty derivative `pow` reuse | `0.391581` | `0.48805487` | `0.03720748` | pass | `4.9%` | `98.6%` | `73.1x` |
 | Golden-section initialization search | `0.337453` | `0.48804972` | `0.03719569` | pass | `13.8%` | `98.8%` | `84.8x` |
+| NEON gradient compact forward cache | `0.323606` | `0.48804972` | `0.03719569` | pass | `4.1%` | `98.9%` | `88.5x` |
 
 Interpretation:
 
 - The largest acceptable jump is still moving from the prefix-item path to the
   optimized windowed path, but later validation cadence and initialization work
-  compound materially: the latest tree is `84.8x` faster than prefix on this
+  compound materially: the latest tree is `88.5x` faster than prefix on this
   snapshot while staying inside the LogLoss gate.
 - The LR/epoch tuning intentionally gives back runtime versus the 8-epoch
   checkpoint because the 8-epoch row misses the quality gate on this collection.
@@ -665,7 +666,35 @@ Interpretation:
 - The last two rows use the temporary read-only metrics harness timing for
   consistent LogLoss/RMSE reporting; nearby `examples/fsrs7_adr_collection`
   warm timing samples were `0.372..0.381 s` after schedule-penalty derivative
-  reuse and `0.313..0.331 s` after golden-section initialization search.
+  reuse, `0.313..0.331 s` after golden-section initialization search, and
+  `0.328 s` after the NEON compact-cache pass.
+
+Repo fixture checkpoint rerun on the same current tree:
+
+- Collection: `tests/data/collection.anki21`.
+- Command shape: temporary release harness using the same fixture conversion
+  logic as `benches/parameters.rs`, then `compute_parameters()` with FSRS-7,
+  short-term enabled, schedule penalties enabled, and either no `card_ids` for
+  the prefix baseline or aligned `card_ids` for the selected windowed path.
+- Gate: prefix LogLoss `0.20300648` plus `0.0015` = `0.20450648`.
+
+| Path | Optimize s | LogLoss | RMSE bins | Gate | Gain vs prefix | Speedup vs prefix |
+| --- | ---: | ---: | ---: | --- | ---: | ---: |
+| Prefix-item baseline, current tree | `0.703239` | `0.20300648` | `0.02412599` | baseline | `0.0%` | `1.0x` |
+| NEON gradient compact forward cache, current tree | `0.027576` | `0.20312741` | `0.02343636` | pass | `96.1%` | `25.5x` |
+
+Interpretation:
+
+- The current selected path is also fast on the in-repo collection fixture, not
+  only on the larger Main Profile backup.
+- Compared with the older documented repo-fixture selected row after the ARM64
+  NEON gradient (`0.074 s`), the current tree is `62.7%` faster on this fixture.
+  Because the intermediate validation, penalty, initialization, and compact-cache
+  changes were not all separately remeasured on the repo fixture, do not attribute
+  the full repo-fixture delta to the compact-cache change alone.
+- Going forward, each accepted collection-optimization note should include both
+  the Main Profile backup and the in-repo fixture collection when the fixture is
+  locally available.
 
 ## Implementation Checklist
 
@@ -678,6 +707,8 @@ Interpretation:
   - [ ] No API/data-shape change without a doc update in `docs/*.MD`.
   - [ ] Unit tests cover every new data path.
   - [ ] Performance result reported against the previous accepted step, not only against the original baseline.
+  - [ ] Collection-optimization timing documented for both the Main Profile
+        backup and `tests/data/collection.anki21` when both are available.
   - [ ] Math-preserving changes must produce identical A/B results.
   - [ ] Precision-trading changes must keep aggregate log loss within absolute `+/-0.0015` of the original baseline.
   - [ ] For the known `compute_parameters.py` baseline, mean LogLoss must stay in `[0.3083, 0.3113]`.
@@ -1198,6 +1229,43 @@ Interpretation:
         deeper `neon_loss::windowed_grad` changes may have larger upside but
         are higher maintenance and require strict scalar-oracle and collection
         quality gates.
+    - ARM64 NEON gradient compact forward cache, 2026-06-05:
+      - Files: `src/analytic_v7/neon_loss.rs`,
+        `docs/TRAINING_DATA_FLOW.MD`, and `docs/FSRS7_SPEED_PORT_PLAN.MD`.
+      - The NEON training-gradient `Step4` cache no longer stores raw `s0` and
+        `d0` inputs. The reverse pass uses the already stored clamped
+        `last_s`/`last_d` values for the same open-clamp checks. Active lanes
+        have the same clamp-open behavior because previous step outputs are
+        already clamped; inactive first-step backpropagation output is unused.
+      - Focused correctness checks:
+        `rtk cargo test test_neon_windowed_grad`,
+        `rtk cargo test test_windowed_loss_and_grad_match_prefix_batch_for_single_card`,
+        `rtk cargo test test_windowed_validation_loss_matches_burn_with_padding`,
+        and `rtk cargo test test_loss_and_grad` passed.
+      - Criterion for full `parameters/compute_parameters`:
+        `27.208 ms..27.364 ms`, change
+        `[-4.2905% -0.4859% +3.2993%]`, `p = 0.83 > 0.05`, reported as no
+        detected performance change on the small fixture.
+      - Main Profile backup metrics from a temporary read-only metrics harness:
+        LogLoss `0.48804972`, RMSE bins `0.03719569`, optimization
+        `0.323606 s`. The selected parameter vector matched the
+        golden-section row.
+      - Main Profile backup timing from `examples/fsrs7_adr_collection` before
+        its intentionally invalid `--pop 1 --gen 1` ADR phase: FSRS-7 parameter
+        training `0.328 s`.
+      - Repo fixture metrics from a temporary read-only metrics harness:
+        prefix baseline optimization `0.703239 s`, LogLoss `0.20300648`, RMSE
+        bins `0.02412599`; current selected windowed optimization `0.027576 s`,
+        LogLoss `0.20312741`, RMSE bins `0.02343636`; selected path remains
+        inside the fixture gate and is `25.5x` faster than prefix.
+      - Interpretation: this is a modest collection win from reducing per-row
+        NEON gradient cache traffic on the Main Profile backup, with no quality
+        change. The repo fixture also remains inside its gate on the same current
+        tree, but its `62.7%` improvement versus the older `0.074 s` row includes
+        intervening changes that were not all remeasured separately on that
+        fixture. The largest remaining profile symbol is still
+        `neon_loss::windowed_grad`, but the next larger NEON changes are likely
+        to be more invasive than cache compaction.
   - Required gates:
     - `rtk cargo test test_analytic_loss_and_grad_matches_burn`
     - `rtk cargo test windowed_matches_sum_of_prefixes`
@@ -1207,6 +1275,79 @@ Interpretation:
   - PR #417 follow-up: the ARM64 NEON training path already has the
     training-only gradient split. A similar split may still matter for the
     non-NEON fallback, but it is not a Mac/NEON collection-optimization win.
+  - PR #419 follow-up, 2026-06-05:
+    - Source PR: `open-spaced-repetition/fsrs-rs#419`, "Speed up
+      compute_parameters without SIMD", merged into `main`.
+    - PR-reported Apple Silicon benchmark: `compute_parameters`
+      `27.756 ms -> 17.103 ms`; `compute_parameters_without_card_ids`
+      `79.110 ms -> 53.394 ms`; best observed retained-code runs
+      `16.036 ms` and `47.157 ms`.
+    - Already covered or superseded in this branch for FSRS-7 card-id collection
+      optimization:
+      - Windowed validation reuses the immutable `windowed_batches` vector.
+      - Windowed batches are physically padded to a multiple of four for NEON.
+      - NEON validation and gradient paths skip trailing all-padding row groups.
+      - NEON recurrence code already hoists runtime constants into `Params`.
+      - NEON gradient already reuses one forward-cache vector across four-lane
+        groups.
+      - Host Adam is already used for the FSRS-7 windowed training path.
+    - Implemented in this branch after review:
+      - In-place host parameter clipping. `clip_host_parameters()` now calls
+        `clip_parameters_in_place()` and keeps the FSRS-7 short-term-disabled
+        `w[26] = 0.0` rule in the host wrapper.
+      - Clone-reduced outlier filtering and card-id retention. The card-id path
+        now asks `dataset` for surviving indices over borrowed training items,
+        then moves retained `TrainingFSRSItem`s once instead of cloning all
+        review histories into an `all_items` buffer and wrapping every item in
+        `Option`.
+      - Reused train/validation shuffle index buffers across epochs instead of
+        allocating fresh vectors per epoch/validation pass.
+      - Hoisted scalar FSRS-7 fallback runtime constants in `analytic_v7.rs`
+        (`factor1`, `factor2`, easy difficulty, and success exponent bases).
+        This mostly benefits non-NEON fallback and scalar remainder-column code;
+        the ARM64 NEON production path already has `Params`.
+      - Focused tests:
+        `rtk cargo test test_clip_parameters_in_place_matches_allocating_wrapper`
+        and
+        `rtk cargo test test_prepare_training_data_with_card_ids_filters_outlier_bucket_without_losing_alignment`
+        passed before the final small follow-up. After the final follow-up,
+        `rtk cargo test test_windowed_validation_loss_matches_burn_with_padding`,
+        `rtk cargo test test_windowed_loss_and_grad_match_prefix_batch_for_single_card`,
+        `rtk cargo test test_neon_windowed_grad`, and
+        `rtk cargo test test_host_adam_step_matches_burn_adam_with_clipping`
+        passed.
+      - Main Profile backup timing from `examples/fsrs7_adr_collection` before
+        its intentionally invalid `--pop 1 --gen 1` ADR phase:
+        `fsrs7_parameter_training_seconds=0.301`, versus `0.328` after the NEON
+        compact-cache pass (`8.2%` faster on this warm timing shape).
+      - Repo fixture metrics from a temporary read-only metrics harness:
+        prefix baseline optimization `0.765983 s`, LogLoss `0.20300648`, RMSE
+        bins `0.02412599`; current selected windowed optimization `0.027030 s`,
+        LogLoss `0.20312741`, RMSE bins `0.02343636`; selected path remains
+        inside the fixture gate and is `28.3x` faster than prefix. Versus the
+        previous documented selected repo-fixture row (`0.027576 s`), this is an
+        observed `2.0%` warm timing improvement.
+      - Interpretation: the Main Profile improvement is visible because these
+        changes reduce per-step host clipping allocation and setup work before
+        windowed batching. The repo fixture delta is small and should be treated
+        as warm-run signal rather than a standalone Criterion result.
+      - Final small-follow-up timing: Main Profile backup warm timing
+        `fsrs7_parameter_training_seconds=0.310`, which is inside run-to-run
+        noise and slower than the previous `0.301` warm sample. Repo fixture
+        Criterion `parameters/compute_parameters`: `27.788 ms..31.494 ms`,
+        change `[-1.1380% +7.5178% +20.759%]`, `p = 0.28 > 0.05`, reported as
+        no detected performance change. Do not add this final small follow-up to
+        the cumulative collection-speed table.
+    - Still worth testing on this branch:
+      - Reusing prefix validation batches for the non-windowed path. This is not
+        a Mac/NEON card-id collection win, but it can speed FSRS-6,
+        no-card-id FSRS-7, and benchmark-only paths. It is not a direct small
+        port here because the non-windowed training batches use the autodiff
+        backend while validation batches use `B::InnerBackend` after
+        `model.valid()`.
+    - Recommended next order: stop mining PR #419 for the current ARM64 NEON
+      collection path unless broader no-card-id/FSRS-6 benchmark speed becomes a
+      goal.
 - [ ] Fuse compatible exp pairs in the FSRS-7 recurrence.
   - Source: iter24.
   - Tests: gradient and loss gate because this is a floating-point reassociation.

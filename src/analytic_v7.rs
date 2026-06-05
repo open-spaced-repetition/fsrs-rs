@@ -146,6 +146,37 @@ struct MemoryStateScalar {
     difficulty: f64,
 }
 
+#[derive(Clone, Copy)]
+struct ScalarParams {
+    factor1: f64,
+    factor2: f64,
+    easy_d: f64,
+    long_sinc_exp: f64,
+    short_sinc_exp: f64,
+}
+
+impl ScalarParams {
+    fn new(w: &[f32]) -> Self {
+        let decay1 = -(w[27] as f64);
+        let decay2 = -(w[28] as f64);
+        Self {
+            factor1: (w[29] as f64).powf(1.0 / decay1) - 1.0,
+            factor2: (w[30] as f64).powf(1.0 / decay2) - 1.0,
+            easy_d: init_difficulty_scalar(w, 4),
+            long_sinc_exp: ((w[7] as f64) - 1.5).exp(),
+            short_sinc_exp: ((w[16] as f64) - 1.5).exp(),
+        }
+    }
+
+    fn sinc_exp(self, start: usize) -> f64 {
+        if start == 7 {
+            self.long_sinc_exp
+        } else {
+            self.short_sinc_exp
+        }
+    }
+}
+
 fn dual_params(w: &[f32]) -> [Dual35; PARAM_LEN] {
     core::array::from_fn(|index| Dual35::variable(w[index] as f64, index))
 }
@@ -293,23 +324,29 @@ fn init_difficulty_scalar(w: &[f32], rating: usize) -> f64 {
     w[4] as f64 - (w[5] as f64 * (rating - 1) as f64).exp() + 1.0
 }
 
-fn forgetting_curve_scalar(w: &[f32], t: f64, s: f64) -> f64 {
+fn forgetting_curve_scalar(w: &[f32], params: &ScalarParams, t: f64, s: f64) -> f64 {
     if t.max(0.0) == 0.0 {
         return 1.0;
     }
     let t_over_s = t.max(0.0) / s;
     let decay1 = -(w[27] as f64);
     let decay2 = -(w[28] as f64);
-    let factor1 = (w[29] as f64).powf(1.0 / decay1) - 1.0;
-    let factor2 = (w[30] as f64).powf(1.0 / decay2) - 1.0;
-    let r1 = (1.0 + t_over_s * factor1).powf(decay1);
-    let r2 = (1.0 + t_over_s * factor2).powf(decay2);
+    let r1 = (1.0 + t_over_s * params.factor1).powf(decay1);
+    let r2 = (1.0 + t_over_s * params.factor2).powf(decay2);
     let weight1 = w[31] as f64 * s.powf(-(w[33] as f64));
     let weight2 = w[32] as f64 * s.powf(w[34] as f64);
     (weight1 * r1 + weight2 * r2) / (weight1 + weight2)
 }
 
-fn stability_for_set_scalar(w: &[f32], s: f64, r: f64, d: f64, rating: usize, start: usize) -> f64 {
+fn stability_for_set_scalar(
+    w: &[f32],
+    params: &ScalarParams,
+    s: f64,
+    r: f64,
+    d: f64,
+    rating: usize,
+    start: usize,
+) -> f64 {
     let hard_penalty = if rating == 2 {
         w[start + 7] as f64
     } else {
@@ -328,7 +365,7 @@ fn stability_for_set_scalar(w: &[f32], s: f64, r: f64, d: f64, rating: usize, st
     if rating <= 1 {
         return pls;
     }
-    let sinc = ((w[start] as f64) - 1.5).exp()
+    let sinc = params.sinc_exp(start)
         * (11.0 - d)
         * s.powf(-(w[start + 1] as f64))
         * (((1.0 - r) * w[start + 2] as f64).exp() - 1.0)
@@ -342,14 +379,15 @@ fn transition_scalar(w: &[f32], delta_t: f64) -> f64 {
     1.0 - w[26] as f64 * (-(w[25] as f64) * delta_t.max(0.0)).exp()
 }
 
-fn next_difficulty_scalar(w: &[f32], d: f64, rating: usize) -> f64 {
+fn next_difficulty_scalar(w: &[f32], params: &ScalarParams, d: f64, rating: usize) -> f64 {
     let delta_d = -(w[6] as f64) * (rating as f64 - 3.0);
     let new_d = d + (10.0 - d) * delta_d / 9.0;
-    (init_difficulty_scalar(w, 4) * 0.01 + new_d * 0.99).clamp(D_MIN, D_MAX)
+    (params.easy_d * 0.01 + new_d * 0.99).clamp(D_MIN, D_MAX)
 }
 
 fn step_scalar(
     w: &[f32],
+    params: &ScalarParams,
     delta_t: f64,
     rating: usize,
     state: MemoryStateScalar,
@@ -371,13 +409,13 @@ fn step_scalar(
     }
 
     let delta_t = delta_t.max(0.0);
-    let r = forgetting_curve_scalar(w, delta_t, last_s);
-    let long = stability_for_set_scalar(w, last_s, r, last_d, rating, 7);
-    let short = stability_for_set_scalar(w, last_s, r, last_d, rating, 16);
+    let r = forgetting_curve_scalar(w, params, delta_t, last_s);
+    let long = stability_for_set_scalar(w, params, last_s, r, last_d, rating, 7);
+    let short = stability_for_set_scalar(w, params, last_s, r, last_d, rating, 16);
     let coefficient = transition_scalar(w, delta_t);
     MemoryStateScalar {
         stability: (coefficient * long + (1.0 - coefficient) * short).clamp(S_MIN, S_MAX),
-        difficulty: next_difficulty_scalar(w, last_d, rating),
+        difficulty: next_difficulty_scalar(w, params, last_d, rating),
     }
 }
 
@@ -398,6 +436,7 @@ fn windowed_loss_scalar(
     batch_size: usize,
 ) -> f64 {
     let mut loss = 0.0;
+    let params = ScalarParams::new(w);
 
     for column in 0..batch_size {
         let mut state = MemoryStateScalar {
@@ -413,11 +452,11 @@ fn windowed_loss_scalar(
             }
             let weight = weights[index] as f64;
             if row > 0 && weight != 0.0 {
-                let r = forgetting_curve_scalar(w, delta_t, state.stability);
+                let r = forgetting_curve_scalar(w, &params, delta_t, state.stability);
                 loss += bce_loss_scalar(r, labels[index] as f64, weight);
             }
             if row + 1 < seq_len && r_historys[(row + 1) * batch_size + column] != 0.0 {
-                state = step_scalar(w, delta_t, rating, state, row);
+                state = step_scalar(w, &params, delta_t, rating, state, row);
             }
         }
     }

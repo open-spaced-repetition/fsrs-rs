@@ -298,9 +298,16 @@ pub(crate) fn filter_outlier_indices(
     dataset_for_initialization: &[FSRSItem],
     trainset: &[FSRSItem],
 ) -> (Vec<usize>, Vec<usize>) {
+    filter_outlier_train_indices(dataset_for_initialization, trainset.iter())
+}
+
+pub(crate) fn filter_outlier_train_indices<'a>(
+    dataset_for_initialization: &[FSRSItem],
+    trainset: impl IntoIterator<Item = &'a FSRSItem>,
+) -> (Vec<usize>, Vec<usize>) {
     let decisions = compute_outlier_bucket_decisions(dataset_for_initialization.iter());
     let train_indices = trainset
-        .iter()
+        .into_iter()
         .enumerate()
         .filter_map(|(index, item)| {
             item_survives_outlier(item, &decisions.removed_pairs).then_some(index)

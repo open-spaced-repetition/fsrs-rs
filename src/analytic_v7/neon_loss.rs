@@ -540,10 +540,6 @@ fn next_difficulty4_bwd(
 
 enum Step4 {
     First {
-        s0: F32x4,
-        d0: F32x4,
-        last_s: F32x4,
-        last_d: F32x4,
         rating: F32x4,
         rc: F32x4,
         init_s_pre: F32x4,
@@ -551,8 +547,6 @@ enum Step4 {
         init_d_exp: F32x4,
     },
     Full {
-        s0: F32x4,
-        d0: F32x4,
         last_s: F32x4,
         last_d: F32x4,
         rating: F32x4,
@@ -606,10 +600,6 @@ fn step4_fwd(
                 F32x4::blend(padding, last_d, next_d),
             ),
             Step4::First {
-                s0: s,
-                d0: d,
-                last_s,
-                last_d,
                 rating,
                 rc,
                 init_s_pre,
@@ -646,8 +636,6 @@ fn step4_fwd(
             F32x4::blend(padding, last_d, next_d),
         ),
         Step4::Full {
-            s0: s,
-            d0: d,
             last_s,
             last_d,
             rating,
@@ -676,10 +664,6 @@ fn step4_bwd(
     let zero = F32x4::splat(0.0);
     match cache {
         Step4::First {
-            s0,
-            d0,
-            last_s,
-            last_d,
             rating,
             rc,
             init_s_pre,
@@ -687,8 +671,8 @@ fn step4_bwd(
             init_d_exp,
         } => {
             let active = rating.cmp_gt(zero);
-            let mut g_last_s = F32x4::blend(active, zero, g_out.0);
-            let mut g_last_d = F32x4::blend(active, zero, g_out.1);
+            let g_last_s = F32x4::blend(active, zero, g_out.0);
+            let g_last_d = F32x4::blend(active, zero, g_out.1);
             let init_s_open = mask_and(
                 init_s_pre.cmp_gt(F32x4::splat(S_MIN as f32)),
                 init_s_pre.cmp_lt(F32x4::splat(S_MAX as f32)),
@@ -709,22 +693,10 @@ fn step4_bwd(
             }
             grad[4] = grad[4] + g_init_d;
             grad[5] = grad[5] + g_init_d * (zero - *init_d_exp * (*rc - F32x4::splat(1.0)));
-            let s_open = mask_and(
-                s0.cmp_gt(F32x4::splat(S_MIN as f32)),
-                s0.cmp_lt(F32x4::splat(S_MAX as f32)),
-            );
-            let d_open = mask_and(
-                d0.cmp_gt(F32x4::splat(D_MIN as f32)),
-                d0.cmp_lt(F32x4::splat(D_MAX as f32)),
-            );
-            g_last_s = F32x4::blend(s_open, g_last_s, zero);
-            g_last_d = F32x4::blend(d_open, g_last_d, zero);
-            let _ = (last_s, last_d, g_r_loss);
+            let _ = (g_last_s, g_last_d, g_r_loss);
             (g_last_s, g_last_d)
         }
         Step4::Full {
-            s0,
-            d0,
             last_s,
             last_d,
             rating,
@@ -782,12 +754,12 @@ fn step4_bwd(
             g_last_s = g_last_s + g_s_long + g_s_short + g_s_curve;
             g_last_d = g_last_d + g_d_long + g_d_short + g_d_next;
             let s_open = mask_and(
-                s0.cmp_gt(F32x4::splat(S_MIN as f32)),
-                s0.cmp_lt(F32x4::splat(S_MAX as f32)),
+                last_s.cmp_gt(F32x4::splat(S_MIN as f32)),
+                last_s.cmp_lt(F32x4::splat(S_MAX as f32)),
             );
             let d_open = mask_and(
-                d0.cmp_gt(F32x4::splat(D_MIN as f32)),
-                d0.cmp_lt(F32x4::splat(D_MAX as f32)),
+                last_d.cmp_gt(F32x4::splat(D_MIN as f32)),
+                last_d.cmp_lt(F32x4::splat(D_MAX as f32)),
             );
             (
                 F32x4::blend(s_open, g_last_s, zero),
@@ -923,6 +895,7 @@ pub(super) fn windowed_loss(
         }
     }
 
+    let scalar_params = super::ScalarParams::new(w);
     for column in (group_count * 4)..batch_size {
         let mut state = super::MemoryStateScalar {
             stability: 0.0,
@@ -937,11 +910,11 @@ pub(super) fn windowed_loss(
             }
             let weight = weights[index] as f64;
             if row > 0 && weight != 0.0 {
-                let r = super::forgetting_curve_scalar(w, delta_t, state.stability);
+                let r = super::forgetting_curve_scalar(w, &scalar_params, delta_t, state.stability);
                 loss += super::bce_loss_scalar(r, labels[index] as f64, weight);
             }
             if row + 1 < seq_len && r_historys[(row + 1) * batch_size + column] != 0.0 {
-                state = super::step_scalar(w, delta_t, rating, state, row);
+                state = super::step_scalar(w, &scalar_params, delta_t, rating, state, row);
             }
         }
     }
