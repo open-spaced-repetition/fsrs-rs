@@ -118,6 +118,7 @@ fn evaluate_time_series_split(
     split: TimeSeriesSplit,
     enable_short_term: bool,
     num_relearning_steps: Option<usize>,
+    training_config: Option<training::TrainingConfig>,
     progress: Option<SharedTrainingProgress>,
 ) -> Result<SplitEvaluation> {
     if progress
@@ -132,6 +133,7 @@ fn evaluate_time_series_split(
         card_ids: None,
         enable_short_term,
         num_relearning_steps,
+        training_config,
         progress: progress.clone(),
     };
     let parameters = training::compute_parameters(input)?;
@@ -546,6 +548,7 @@ pub fn evaluate_with_time_series_splits<F>(
         train_set,
         enable_short_term,
         num_relearning_steps,
+        training_config,
         ..
     }: ComputeParametersInput,
     mut progress: F,
@@ -590,6 +593,7 @@ where
                     split,
                     enable_short_term,
                     num_relearning_steps,
+                    training_config,
                     Some(progress),
                 );
                 let _ = tx.send((index, result));
@@ -1102,6 +1106,7 @@ mod tests {
             progress: None,
             enable_short_term: true,
             num_relearning_steps: None,
+            training_config: None,
         };
 
         let metrics = evaluate_with_time_series_splits(input.clone(), |_| true).unwrap();
@@ -1115,6 +1120,7 @@ mod tests {
                 progress: None,
                 enable_short_term: true,
                 num_relearning_steps: None,
+                training_config: None,
             },
             |_| true,
         );
@@ -1147,6 +1153,7 @@ mod tests {
             progress: None,
             enable_short_term: true,
             num_relearning_steps: None,
+            training_config: None,
         };
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

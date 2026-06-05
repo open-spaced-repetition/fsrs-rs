@@ -167,9 +167,9 @@ impl ProgressState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct TrainingConfig {
-    pub model: ModelConfig,
+/// Hyperparameters used when training FSRS parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrainingConfig {
     pub num_epochs: usize,
     pub batch_size: usize,
     pub seed: u64,
@@ -178,10 +178,9 @@ pub(crate) struct TrainingConfig {
     pub gamma: f64,
 }
 
-impl TrainingConfig {
-    fn new(model: ModelConfig) -> Self {
+impl Default for TrainingConfig {
+    fn default() -> Self {
         Self {
-            model,
             num_epochs: 5,
             batch_size: 512,
             seed: 2023,
@@ -190,6 +189,19 @@ impl TrainingConfig {
             gamma: 1.0,
         }
     }
+}
+
+fn validate_training_config(config: &TrainingConfig) -> Result<()> {
+    if config.batch_size == 0 || !config.learning_rate.is_finite() || !config.gamma.is_finite() {
+        return Err(FSRSError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn benchmark_invalid_training_config() -> ! {
+    panic!(
+        "invalid training config: batch_size must be greater than 0, and learning_rate and gamma must be finite"
+    );
 }
 
 pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
@@ -222,6 +234,8 @@ pub struct ComputeParametersInput {
     pub enable_short_term: bool,
     /// Number of relearning steps
     pub num_relearning_steps: Option<usize>,
+    /// Optional training hyperparameters
+    pub training_config: Option<TrainingConfig>,
 }
 
 impl Default for ComputeParametersInput {
@@ -232,6 +246,7 @@ impl Default for ComputeParametersInput {
             progress: None,
             enable_short_term: true,
             num_relearning_steps: None,
+            training_config: None,
         }
     }
 }
@@ -251,6 +266,7 @@ pub fn compute_parameters(
         progress,
         enable_short_term,
         num_relearning_steps,
+        training_config,
         ..
     }: ComputeParametersInput,
 ) -> Result<Vec<f32>> {
@@ -263,6 +279,12 @@ pub fn compute_parameters(
             progress.lock().unwrap().mark_finished();
         }
     };
+
+    let training_config = training_config.unwrap_or_default();
+    if let Err(error) = validate_training_config(&training_config) {
+        finish_progress();
+        return Err(error);
+    }
 
     let original_train_set = train_set;
     if let Some(card_ids) = &card_ids
@@ -312,22 +334,22 @@ pub fn compute_parameters(
         finish_progress();
         return Ok(initialized_parameters);
     }
-    let config = TrainingConfig::new(ModelConfig {
+    let model_config = ModelConfig {
         freeze_initial_stability: !enable_short_term,
         initial_stability: Some(initial_stability),
         freeze_short_term_stability: !enable_short_term,
         num_relearning_steps: num_relearning_steps.unwrap_or(1),
-    });
-    let training_initial_parameters = config.model.initial_parameters().to_vec();
+    };
+    let training_initial_parameters = model_config.initial_parameters().to_vec();
     let mut weighted_train_set = match train_card_ids {
         Some(card_ids) => recency_weighted_fsrs_items_with_card_ids(train_set, card_ids),
         None => recency_weighted_fsrs_items(train_set),
     };
-    weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
+    weighted_train_set.retain(|item| item.item.reviews.len() <= training_config.max_seq_len);
 
     if let Some(progress) = &progress {
         let progress_state = ProgressState {
-            epoch_total: config.num_epochs,
+            epoch_total: training_config.num_epochs,
             items_total: weighted_train_set.len(),
             epoch: 0,
             items_processed: 0,
@@ -337,7 +359,8 @@ pub fn compute_parameters(
     let optimized_parameters = train(
         weighted_train_set,
         &training_initial_parameters,
-        &config,
+        &training_config,
+        &model_config,
         progress.clone().map(|p| ProgressCollector::new(p, 0)),
     )
     .inspect_err(|_e| {
@@ -374,9 +397,15 @@ pub fn benchmark(
         card_ids,
         enable_short_term,
         num_relearning_steps,
+        training_config,
         ..
     }: ComputeParametersInput,
 ) -> Vec<f32> {
+    let training_config = training_config.unwrap_or_default();
+    if validate_training_config(&training_config).is_err() {
+        benchmark_invalid_training_config();
+    }
+
     let average_recall = calculate_average_recall(&train_set);
     let (dataset_for_initialization, _next_train_set) = train_set
         .clone()
@@ -386,23 +415,28 @@ pub fn benchmark(
         initialize_stability_parameters(dataset_for_initialization, average_recall)
             .unwrap()
             .0;
-    let mut config = TrainingConfig::new(ModelConfig {
+    let model_config = ModelConfig {
         freeze_initial_stability: !enable_short_term,
         initial_stability: Some(initial_stability),
         freeze_short_term_stability: !enable_short_term,
         num_relearning_steps: num_relearning_steps.unwrap_or(1),
-    });
-    let initialized_parameters = config.model.initial_parameters().to_vec();
-    // save RAM and speed up training
-    config.max_seq_len = 64;
+    };
+    let initialized_parameters = model_config.initial_parameters().to_vec();
     let mut weighted_train_set = match card_ids {
         Some(card_ids) if card_ids.len() == train_set.len() => {
             recency_weighted_fsrs_items_with_card_ids(train_set, card_ids)
         }
         _ => recency_weighted_fsrs_items(train_set),
     };
-    weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
-    train(weighted_train_set, &initialized_parameters, &config, None).unwrap()
+    weighted_train_set.retain(|item| item.item.reviews.len() <= training_config.max_seq_len);
+    train(
+        weighted_train_set,
+        &initialized_parameters,
+        &training_config,
+        &model_config,
+        None,
+    )
+    .unwrap()
 }
 
 #[derive(Clone)]
@@ -701,22 +735,24 @@ fn render_progress(
 fn train(
     train_set: Vec<WeightedFSRSItem>,
     initial_parameters: &[f32],
-    config: &TrainingConfig,
+    training_config: &TrainingConfig,
+    model_config: &ModelConfig,
     progress: Option<ProgressCollector>,
 ) -> Result<Vec<f32>> {
     let total_size = train_set.len();
-    let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
-    let train_batches = build_host_batches(train_set, config.batch_size);
-    let mut lr_scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
+    let iterations = (total_size / training_config.batch_size + 1) * training_config.num_epochs;
+    let train_batches = build_host_batches(train_set, training_config.batch_size);
+    let mut lr_scheduler =
+        CosineAnnealingLR::init(iterations as f64, training_config.learning_rate);
     let mut progress = progress;
 
     let mut parameters = initial_parameters.to_vec();
     let mut adam = HostAdam::new();
     let mut best_loss = f64::INFINITY;
     let mut best_parameters = parameters.clone();
-    let mut rng = StdRng::seed_from_u64(config.seed);
+    let mut rng = StdRng::seed_from_u64(training_config.seed);
     let mut batch_order = (0..train_batches.len()).collect::<Vec<_>>();
-    for epoch in 1..=config.num_epochs {
+    for epoch in 1..=training_config.num_epochs {
         for (slot, idx) in batch_order.iter_mut().zip(0..) {
             *slot = idx;
         }
@@ -732,26 +768,26 @@ fn train(
                 initial_parameters,
                 batch.real_batch_size,
                 total_size,
-                config.gamma,
+                training_config.gamma,
                 &mut grad,
             );
-            if config.model.freeze_initial_stability {
+            if model_config.freeze_initial_stability {
                 grad[..4].fill(0.0);
             }
-            if config.model.freeze_short_term_stability {
+            if model_config.freeze_short_term_stability {
                 grad[17..20].fill(0.0);
             }
             adam.step(&mut parameters, &grad, lr);
             clip_parameters_in_place(
                 &mut parameters,
-                config.model.num_relearning_steps,
-                !config.model.freeze_short_term_stability,
+                model_config.num_relearning_steps,
+                !model_config.freeze_short_term_stability,
             );
             items_processed += batch.real_batch_size;
             let keep_going = render_progress(
                 &mut progress,
                 epoch,
-                config.num_epochs,
+                training_config.num_epochs,
                 items_processed.min(total_size),
                 total_size,
             );
@@ -768,7 +804,7 @@ fn train(
                     initial_parameters,
                     batch.real_batch_size,
                     total_size,
-                    config.gamma,
+                    training_config.gamma,
                 );
 
             if progress
@@ -896,15 +932,15 @@ mod tests {
             0.27700496,
         ]);
 
-        let config = TrainingConfig::new(ModelConfig::default());
+        let model_config = ModelConfig::default();
         let mut optim = AdamConfig::new().with_epsilon(1e-8).init::<B, Model<B>>();
         let lr = 0.04;
         let grads = GradientsParams::from_grads(gradients, &model);
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(
             model.w,
-            config.model.num_relearning_steps,
-            !config.model.freeze_short_term_stability,
+            model_config.num_relearning_steps,
+            !model_config.freeze_short_term_stability,
         );
         model
             .w
@@ -1037,8 +1073,8 @@ mod tests {
         model = optim.step(lr, model, grads);
         model.w = parameter_clipper(
             model.w,
-            config.model.num_relearning_steps,
-            !config.model.freeze_short_term_stability,
+            model_config.num_relearning_steps,
+            !model_config.freeze_short_term_stability,
         );
         model
             .w
@@ -1379,6 +1415,7 @@ mod tests {
             progress: None,
             enable_short_term: true,
             num_relearning_steps: None,
+            training_config: None,
         })
         .unwrap();
         let without_card_ids = compute_parameters(ComputeParametersInput {
@@ -1387,6 +1424,7 @@ mod tests {
             progress: None,
             enable_short_term: true,
             num_relearning_steps: None,
+            training_config: None,
         })
         .unwrap();
 
@@ -1465,6 +1503,56 @@ mod tests {
         initialization_items.chain(training_items).collect()
     }
 
+    fn long_sequence_regression_items() -> Vec<FSRSItem> {
+        let initialization_items = (0..30).map(|idx| FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: if idx % 7 == 0 { 1 } else { 3 },
+                    delta_t: 2,
+                },
+            ],
+        });
+        let short_training_items = (0..40).map(|idx| FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: if idx % 5 == 0 { 1 } else { 3 },
+                    delta_t: 2,
+                },
+                FSRSReview {
+                    rating: if idx % 6 == 0 { 1 } else { 4 },
+                    delta_t: idx * 3 % 14 + 1,
+                },
+            ],
+        });
+        let long_training_items = (0..40).map(|idx| {
+            let mut reviews = Vec::with_capacity(65);
+            reviews.push(FSRSReview {
+                rating: 3,
+                delta_t: 0,
+            });
+            for review_idx in 1..65 {
+                reviews.push(FSRSReview {
+                    rating: if (idx + review_idx) % 11 == 0 { 1 } else { 3 },
+                    delta_t: review_idx as u32 % 17 + 1,
+                });
+            }
+            FSRSItem { reviews }
+        });
+
+        initialization_items
+            .chain(short_training_items)
+            .chain(long_training_items)
+            .collect()
+    }
+
     #[test]
     fn test_disabled_short_term_benchmark_zeroes_short_term_parameters() {
         let parameters = benchmark(ComputeParametersInput {
@@ -1486,6 +1574,63 @@ mod tests {
         .unwrap();
 
         assert_eq!(&parameters[17..20], &[0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_compute_parameters_uses_custom_max_seq_len() {
+        fn retained_training_items(items: Vec<FSRSItem>, max_seq_len: usize) -> usize {
+            let progress = CombinedProgressState::new_shared();
+            compute_parameters(ComputeParametersInput {
+                train_set: items,
+                progress: Some(progress.clone()),
+                training_config: Some(TrainingConfig {
+                    num_epochs: 0,
+                    max_seq_len,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap();
+
+            progress.lock().unwrap().splits[0].items_total
+        }
+
+        let items = disabled_short_term_regression_items();
+        let default_retained = retained_training_items(items.clone(), 256);
+        let short_retained = retained_training_items(items, 2);
+
+        assert!(short_retained < default_retained);
+    }
+
+    #[test]
+    fn test_benchmark_uses_training_config_max_seq_len() {
+        let items = long_sequence_regression_items();
+        let included_long_sequences = benchmark(ComputeParametersInput {
+            train_set: items.clone(),
+            training_config: Some(TrainingConfig {
+                num_epochs: 1,
+                max_seq_len: 256,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let excluded_long_sequences = benchmark(ComputeParametersInput {
+            train_set: items,
+            training_config: Some(TrainingConfig {
+                num_epochs: 1,
+                max_seq_len: 64,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let max_parameter_diff = included_long_sequences
+            .iter()
+            .zip(&excluded_long_sequences)
+            .map(|(&with_long, &without_long)| (with_long - without_long).abs())
+            .fold(0.0f32, f32::max);
+
+        assert!(max_parameter_diff > 1e-6);
     }
 
     #[test]
@@ -1523,6 +1668,30 @@ mod tests {
         for item in [empty_item, invalid_rating_item] {
             let result = compute_parameters(ComputeParametersInput {
                 train_set: vec![item],
+                ..Default::default()
+            });
+            assert!(matches!(result, Err(FSRSError::InvalidInput)));
+        }
+    }
+
+    #[test]
+    fn test_compute_parameters_rejects_invalid_training_config() {
+        for training_config in [
+            TrainingConfig {
+                batch_size: 0,
+                ..Default::default()
+            },
+            TrainingConfig {
+                learning_rate: f64::NAN,
+                ..Default::default()
+            },
+            TrainingConfig {
+                gamma: f64::INFINITY,
+                ..Default::default()
+            },
+        ] {
+            let result = compute_parameters(ComputeParametersInput {
+                training_config: Some(training_config),
                 ..Default::default()
             });
             assert!(matches!(result, Err(FSRSError::InvalidInput)));
@@ -1575,6 +1744,7 @@ mod tests {
                     progress: progress2,
                     enable_short_term,
                     num_relearning_steps: None,
+                    training_config: None,
                 })
                 .unwrap();
                 dbg!(&parameters);

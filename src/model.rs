@@ -12,7 +12,6 @@ use burn::{
 };
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ModelConfig {
     pub freeze_initial_stability: bool,
     pub initial_stability: Option<[f32; 4]>,
@@ -347,7 +346,6 @@ impl<B: Backend> Model<B> {
         (t / s * factor + 1.0).powf(decay)
     }
 
-    #[allow(dead_code)]
     pub fn next_interval(
         &self,
         stability: Tensor<B, 1>,
@@ -602,6 +600,30 @@ mod tests {
             .collect::<Vec<_>>();
 
         retrievability.assert_approx_eq([1.0, 0.9403443, 0.9253786, 0.9185229, 0.9, 0.8261359]);
+    }
+
+    #[test]
+    fn test_tensor_next_interval_matches_scalar() {
+        let model = Model::new(ModelConfig::default());
+        let fsrs = FSRS::default();
+        let stabilities = [1.0, 2.0, 5.0, 121.01552];
+        let desired_retentions = [0.6, 0.8, 0.9, 0.95];
+        let burn_intervals = model
+            .next_interval(
+                Tensor::from_floats(stabilities, &DEVICE),
+                Tensor::from_floats(desired_retentions, &DEVICE),
+            )
+            .to_data()
+            .to_vec::<f32>()
+            .unwrap();
+        let scalar_intervals = [
+            fsrs.next_interval_for_stability(stabilities[0], desired_retentions[0]),
+            fsrs.next_interval_for_stability(stabilities[1], desired_retentions[1]),
+            fsrs.next_interval_for_stability(stabilities[2], desired_retentions[2]),
+            fsrs.next_interval_for_stability(stabilities[3], desired_retentions[3]),
+        ];
+
+        burn_intervals.assert_approx_eq(scalar_intervals);
     }
 
     #[test]
