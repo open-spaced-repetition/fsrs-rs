@@ -33,6 +33,15 @@ pub(crate) fn clip_parameters(
     enable_short_term: bool,
 ) -> Vec<f32> {
     let mut parameters = parameters.to_vec();
+    clip_parameters_in_place(&mut parameters, num_relearning_steps, enable_short_term);
+    parameters
+}
+
+pub(crate) fn clip_parameters_in_place(
+    parameters: &mut [f32],
+    num_relearning_steps: usize,
+    enable_short_term: bool,
+) {
     // PLS = w11 * D ^ -w12 * [(S + 1) ^ w13 - 1] * e ^ (w14 * (1 - R))
     // PLS * e ^ (num_relearning_steps * w17 * w18) should be <= S
     // Given D = 1, R = 0.7, S = 1, PLS is equal to w11 * (2 ^ w13 - 1) * e ^ (w14 * 0.3)
@@ -78,7 +87,6 @@ pub(crate) fn clip_parameters(
         .iter_mut()
         .zip(clamps)
         .for_each(|(w, (low, high))| *w = w.clamp(low, high));
-    parameters
 }
 
 #[cfg(test)]

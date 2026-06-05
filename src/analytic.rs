@@ -43,6 +43,44 @@ struct State {
     d: f32,
 }
 
+#[derive(Clone, Copy)]
+struct RuntimeParams<'a> {
+    w: &'a [f32],
+    curve_decay: f32,
+    curve_factor: f32,
+    curve_dfactor_ddecay: f64,
+    exp_w8: f32,
+    exp_w8_f64: f64,
+    failure_floor_divisor: f32,
+    easy_d: f32,
+    easy_d_f64: f64,
+    exp_3w5_f64: f64,
+}
+
+impl<'a> RuntimeParams<'a> {
+    #[inline]
+    fn new(w: &'a [f32]) -> Self {
+        let curve_decay = -w[20];
+        let curve_factor = ((0.9f32.ln()) / curve_decay).exp() - 1.0;
+        let decay = curve_decay as f64;
+        let c = 0.9f64.ln();
+        let exp_term = (c / decay).exp();
+        let easy_d = init_difficulty(w, 4);
+        Self {
+            w,
+            curve_decay,
+            curve_factor,
+            curve_dfactor_ddecay: exp_term * (-c / (decay * decay)),
+            exp_w8: w[8].exp(),
+            exp_w8_f64: (w[8] as f64).exp(),
+            failure_floor_divisor: (w[17] * w[18]).exp(),
+            easy_d,
+            easy_d_f64: easy_d as f64,
+            exp_3w5_f64: (3.0 * w[5] as f64).exp(),
+        }
+    }
+}
+
 #[inline]
 fn clamp(x: f32, min: f32, max: f32) -> f32 {
     x.clamp(min, max)
@@ -93,10 +131,10 @@ fn bce_loss_and_grad_r(r_raw: f32, label: f32, weight: f32) -> (f64, f64) {
 /// `R(t, s) = (1 + max(t, 0) / s * factor)^decay`. The factor is chosen so that
 /// `R(s, s) = 0.9`, matching the FSRS definition of stability as the elapsed
 /// days at 90% retrievability.
-fn curve_forward(w: &[f32], t: f32, s: f32) -> CurveCache {
+fn curve_forward(p: &RuntimeParams<'_>, t: f32, s: f32) -> CurveCache {
     let t = t.max(0.0);
-    let decay = -w[20];
-    let factor = ((0.9f32.ln()) / decay).exp() - 1.0;
+    let decay = p.curve_decay;
+    let factor = p.curve_factor;
     let base = t / s * factor + 1.0;
     let retrievability = base.powf(decay);
     CurveCache {
@@ -117,7 +155,7 @@ fn curve_forward(w: &[f32], t: f32, s: f32) -> CurveCache {
 /// continue backpropagating into the previous memory state. Since the forward
 /// curve uses `decay = -w[20]`, the derivative with respect to `w[20]` is the
 /// negative derivative with respect to `decay`.
-fn curve_backward(w: &[f32], cache: CurveCache, g_r: f64, gw: &mut [f64]) -> f64 {
+fn curve_backward(p: &RuntimeParams<'_>, cache: CurveCache, g_r: f64, gw: &mut [f64]) -> f64 {
     if g_r == 0.0 {
         return 0.0;
     }
@@ -127,20 +165,15 @@ fn curve_backward(w: &[f32], cache: CurveCache, g_r: f64, gw: &mut [f64]) -> f64
     let t = cache.t as f64;
     let s = cache.s as f64;
     let factor = cache.factor as f64;
-    let c = 0.9f64.ln();
 
     let db_ds = -t * factor / (s * s);
     let g_s = g_r * r * decay / base * db_ds;
 
-    let exp_term = (c / decay).exp();
-    let dfactor_ddecay = exp_term * (-c / (decay * decay));
+    let dfactor_ddecay = p.curve_dfactor_ddecay;
     let db_ddecay = t / s * dfactor_ddecay;
     let dr_ddecay = r * (base.ln() + decay / base * db_ddecay);
     add(gw, 20, -g_r * dr_ddecay);
 
-    // `w` is intentionally part of the signature so the curve remains tied to the
-    // same parameter slice as the other backward helpers.
-    let _ = w;
     g_s
 }
 
@@ -176,73 +209,134 @@ fn init_difficulty(w: &[f32], rating: usize) -> f32 {
 /// the previous state. The returned [`StepCache`] stores the active branch and
 /// pre-clamp values so `step_backward` can use the same non-smooth path.
 fn step_forward(
-    w: &[f32],
+    p: &RuntimeParams<'_>,
     state: State,
     delta_t: f32,
     rating: f32,
     nth: usize,
 ) -> (State, StepCache) {
+    let w = p.w;
     let last_s = clamp(state.s, S_MIN, S_MAX);
     let last_d = clamp(state.d, D_MIN, D_MAX);
-    let curve = curve_forward(w, delta_t, last_s);
-    let r = curve.retrievability;
 
-    let hard_penalty = if rating == 2.0 { w[15] } else { 1.0 };
-    let easy_bonus = if rating == 4.0 { w[16] } else { 1.0 };
-    let success_inc = w[8].exp()
-        * (11.0 - last_d)
-        * last_s.powf(-w[9])
-        * (((1.0 - r) * w[10]).exp() - 1.0)
-        * hard_penalty
-        * easy_bonus;
-    let success = last_s * (success_inc + 1.0);
-
-    let failure_raw = w[11]
-        * last_d.powf(-w[12])
-        * ((last_s + 1.0).powf(w[13]) - 1.0)
-        * ((1.0 - r) * w[14]).exp();
-    let failure_floor = last_s / (w[17] * w[18]).exp();
-    let failure_used_floor = failure_floor < failure_raw;
-    let failure = if failure_used_floor {
-        failure_floor
-    } else {
-        failure_raw
-    };
-
-    let short_raw = (w[17] * (rating - 3.0 + w[18])).exp() * last_s.powf(-w[19]);
-    let short_raw_active = !(rating >= 2.0 && short_raw < 1.0);
-    let short_value = if rating >= 2.0 {
-        short_raw.max(1.0)
-    } else {
-        short_raw
-    };
-    let short = last_s * short_value;
-
-    let use_short = delta_t == 0.0;
-    let use_failure = rating == 1.0;
-    let mut new_s = if use_failure { failure } else { success };
-    if use_short {
-        new_s = short;
+    let padding = rating == 0.0;
+    if padding {
+        let out = State {
+            s: last_s,
+            d: last_d,
+        };
+        return (
+            out,
+            StepCache {
+                state_s: state.s,
+                state_d: state.d,
+                last_s,
+                last_d,
+                delta_t,
+                rating,
+                retrievability: 0.0,
+                failure_raw: 0.0,
+                failure_floor: 0.0,
+                failure_used_floor: false,
+                short_raw: 0.0,
+                short_value: 0.0,
+                short_raw_active: false,
+                use_short: false,
+                use_failure: false,
+                init_selected: false,
+                padding: true,
+                pre_clamp_s: last_s,
+                mean_pre_clamp_d: last_d,
+                init_rating: 1,
+            },
+        );
     }
-
-    let delta_d = -w[6] * (rating - 3.0);
-    let next_d = last_d + (10.0 - last_d) * delta_d / 9.0;
-    let easy_d = init_difficulty(w, 4);
-    let mean_d = w[7] * (easy_d - next_d) + next_d;
-    let mut new_d = clamp(mean_d, D_MIN, D_MAX);
 
     let init_selected = nth == 0 && state.s == 0.0;
     let init_rating = clamp(rating, 1.0, 4.0) as usize;
     if init_selected {
-        new_s = w[init_rating - 1];
-        new_d = clamp(init_difficulty(w, init_rating), D_MIN, D_MAX);
+        let new_s = w[init_rating - 1];
+        let raw_d = init_difficulty(w, init_rating);
+        let out = State {
+            s: clamp(new_s, S_MIN, S_MAX),
+            d: clamp(raw_d, D_MIN, D_MAX),
+        };
+        return (
+            out,
+            StepCache {
+                state_s: state.s,
+                state_d: state.d,
+                last_s,
+                last_d,
+                delta_t,
+                rating,
+                retrievability: 0.0,
+                failure_raw: 0.0,
+                failure_floor: 0.0,
+                failure_used_floor: false,
+                short_raw: 0.0,
+                short_value: 0.0,
+                short_raw_active: false,
+                use_short: false,
+                use_failure: false,
+                init_selected: true,
+                padding: false,
+                pre_clamp_s: new_s,
+                mean_pre_clamp_d: raw_d,
+                init_rating,
+            },
+        );
     }
 
-    let padding = rating == 0.0;
-    if padding {
-        new_s = last_s;
-        new_d = last_d;
-    }
+    let curve = curve_forward(p, delta_t, last_s);
+    let r = curve.retrievability;
+
+    let use_short = delta_t == 0.0;
+    let use_failure = rating == 1.0;
+    let mut failure_raw = 0.0;
+    let mut failure_floor = 0.0;
+    let mut failure_used_floor = false;
+    let mut short_raw = 0.0;
+    let mut short_value = 0.0;
+    let mut short_raw_active = false;
+
+    let new_s = if use_short {
+        short_raw = (w[17] * (rating - 3.0 + w[18])).exp() * last_s.powf(-w[19]);
+        short_raw_active = !(rating >= 2.0 && short_raw < 1.0);
+        short_value = if rating >= 2.0 {
+            short_raw.max(1.0)
+        } else {
+            short_raw
+        };
+        last_s * short_value
+    } else if use_failure {
+        failure_raw = w[11]
+            * last_d.powf(-w[12])
+            * ((last_s + 1.0).powf(w[13]) - 1.0)
+            * ((1.0 - r) * w[14]).exp();
+        failure_floor = last_s / p.failure_floor_divisor;
+        failure_used_floor = failure_floor < failure_raw;
+        if failure_used_floor {
+            failure_floor
+        } else {
+            failure_raw
+        }
+    } else {
+        let hard_penalty = if rating == 2.0 { w[15] } else { 1.0 };
+        let easy_bonus = if rating == 4.0 { w[16] } else { 1.0 };
+        let success_inc = p.exp_w8
+            * (11.0 - last_d)
+            * last_s.powf(-w[9])
+            * (((1.0 - r) * w[10]).exp() - 1.0)
+            * hard_penalty
+            * easy_bonus;
+        last_s * (success_inc + 1.0)
+    };
+
+    let delta_d = -w[6] * (rating - 3.0);
+    let next_d = last_d + (10.0 - last_d) * delta_d / 9.0;
+    let mean_d = w[7] * (p.easy_d - next_d) + next_d;
+    let new_d = clamp(mean_d, D_MIN, D_MAX);
 
     let pre_clamp_s = new_s;
     let out = State {
@@ -284,15 +378,21 @@ fn step_forward(
 /// `w[8]`, `w[9]`, `w[10]`, and conditionally `w[15]`/`w[16]`, then returns
 /// gradients with respect to the previous stability, previous difficulty, and
 /// retrievability `(dL/ds, dL/dd, dL/dr)`.
-fn backward_success(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f64, f64) {
+fn backward_success(
+    p: &RuntimeParams<'_>,
+    c: &StepCache,
+    g: f64,
+    gw: &mut [f64],
+) -> (f64, f64, f64) {
     if g == 0.0 {
         return (0.0, 0.0, 0.0);
     }
+    let w = p.w;
     let s = c.last_s as f64;
     let d = c.last_d as f64;
     let r = c.retrievability as f64;
     let rating = c.rating;
-    let a = (w[8] as f64).exp();
+    let a = p.exp_w8_f64;
     let b = 11.0 - d;
     let c_s = s.powf(-(w[9] as f64));
     let e = (((1.0 - r) * w[10] as f64).exp()) - 1.0;
@@ -330,10 +430,16 @@ fn backward_success(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f
 ///
 /// Returns gradients with respect to previous stability, previous difficulty,
 /// and retrievability.
-fn backward_failure(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f64, f64) {
+fn backward_failure(
+    p: &RuntimeParams<'_>,
+    c: &StepCache,
+    g: f64,
+    gw: &mut [f64],
+) -> (f64, f64, f64) {
     if g == 0.0 {
         return (0.0, 0.0, 0.0);
     }
+    let w = p.w;
     let s = c.last_s as f64;
     let d = c.last_d as f64;
     let r = c.retrievability as f64;
@@ -372,10 +478,11 @@ fn backward_failure(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> (f64, f
 /// derivative of `s'` with respect to `s` remains.
 ///
 /// Returns the gradient with respect to the previous stability.
-fn backward_short(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> f64 {
+fn backward_short(p: &RuntimeParams<'_>, c: &StepCache, g: f64, gw: &mut [f64]) -> f64 {
     if g == 0.0 {
         return 0.0;
     }
+    let w = p.w;
     let s = c.last_s as f64;
     let mut g_s = g * c.short_value as f64;
     if c.short_raw_active {
@@ -400,10 +507,11 @@ fn backward_short(w: &[f32], c: &StepCache, g: f64, gw: &mut [f64]) -> f64 {
 /// The gradient is stopped when the output difficulty clamp is active. Otherwise
 /// this helper accumulates gradients for `w[4]`, `w[5]`, `w[6]`, and `w[7]`, and
 /// returns `d(loss) / d(previous_difficulty)`.
-fn backward_difficulty(w: &[f32], c: &StepCache, g_out: f64, gw: &mut [f64]) -> f64 {
+fn backward_difficulty(p: &RuntimeParams<'_>, c: &StepCache, g_out: f64, gw: &mut [f64]) -> f64 {
     if g_out == 0.0 {
         return 0.0;
     }
+    let w = p.w;
     let g_mean = g_out * clamp_grad(c.mean_pre_clamp_d, D_MIN, D_MAX);
     if g_mean == 0.0 {
         return 0.0;
@@ -412,15 +520,11 @@ fn backward_difficulty(w: &[f32], c: &StepCache, g_out: f64, gw: &mut [f64]) -> 
     let last_d = c.last_d as f64;
     let delta_d = -(w[6] as f64) * rating_minus_3;
     let next_d = last_d + (10.0 - last_d) * delta_d / 9.0;
-    let easy_d = init_difficulty(w, 4) as f64;
+    let easy_d = p.easy_d_f64;
 
     add(gw, 7, g_mean * (easy_d - next_d));
     add(gw, 4, g_mean * w[7] as f64);
-    add(
-        gw,
-        5,
-        g_mean * (w[7] as f64) * -3.0 * (3.0 * w[5] as f64).exp(),
-    );
+    add(gw, 5, g_mean * (w[7] as f64) * -3.0 * p.exp_3w5_f64);
 
     let g_next = g_mean * (1.0 - w[7] as f64);
     add(gw, 6, g_next * (10.0 - last_d) * (-(rating_minus_3)) / 9.0);
@@ -433,7 +537,8 @@ fn backward_difficulty(w: &[f32], c: &StepCache, g_out: f64, gw: &mut [f64]) -> 
 /// difficulty uses [`init_difficulty`] and the same difficulty clamp as the
 /// forward pass. This helper accumulates gradients into `w[0..4]` for stability
 /// and `w[4]`/`w[5]` for difficulty.
-fn backward_init(w: &[f32], rating: usize, g_s: f64, g_d: f64, gw: &mut [f64]) {
+fn backward_init(p: &RuntimeParams<'_>, rating: usize, g_s: f64, g_d: f64, gw: &mut [f64]) {
+    let w = p.w;
     add(gw, rating - 1, g_s);
     let raw_d = init_difficulty(w, rating);
     let g_raw_d = g_d * clamp_grad(raw_d, D_MIN, D_MAX);
@@ -458,7 +563,7 @@ fn backward_init(w: &[f32], rating: usize, g_s: f64, g_d: f64, gw: &mut [f64]) {
 /// stability and `w[20]`. State clamps are treated as hard stops at their
 /// boundaries.
 fn step_backward(
-    w: &[f32],
+    p: &RuntimeParams<'_>,
     c: &StepCache,
     g_out_s: f64,
     g_out_d: f64,
@@ -475,33 +580,34 @@ fn step_backward(
         g_last_s += g_pre_s;
         g_last_d += g_pre_d;
     } else if c.init_selected {
-        backward_init(w, c.init_rating, g_pre_s, g_pre_d, gw);
+        backward_init(p, c.init_rating, g_pre_s, g_pre_d, gw);
     } else {
         if c.use_short {
-            g_last_s += backward_short(w, c, g_pre_s, gw);
+            g_last_s += backward_short(p, c, g_pre_s, gw);
         } else if c.use_failure {
-            let (gs, gd, gr) = backward_failure(w, c, g_pre_s, gw);
+            let (gs, gd, gr) = backward_failure(p, c, g_pre_s, gw);
             g_last_s += gs;
             g_last_d += gd;
             g_r += gr;
         } else {
-            let (gs, gd, gr) = backward_success(w, c, g_pre_s, gw);
+            let (gs, gd, gr) = backward_success(p, c, g_pre_s, gw);
             g_last_s += gs;
             g_last_d += gd;
             g_r += gr;
         }
-        g_last_d += backward_difficulty(w, c, g_pre_d, gw);
+        g_last_d += backward_difficulty(p, c, g_pre_d, gw);
     }
 
+    let t = c.delta_t.max(0.0);
     let curve = CurveCache {
-        t: c.delta_t.max(0.0),
+        t,
         s: c.last_s,
-        decay: -w[20],
-        factor: ((0.9f32.ln()) / -w[20]).exp() - 1.0,
-        base: c.delta_t.max(0.0) / c.last_s * (((0.9f32.ln()) / -w[20]).exp() - 1.0) + 1.0,
+        decay: p.curve_decay,
+        factor: p.curve_factor,
+        base: t / c.last_s * p.curve_factor + 1.0,
         retrievability: c.retrievability,
     };
-    g_last_s += curve_backward(w, curve, g_r, gw);
+    g_last_s += curve_backward(p, curve, g_r, gw);
 
     let g_state_s = g_last_s * clamp_grad(c.state_s, S_MIN, S_MAX);
     let g_state_d = g_last_d * clamp_grad(c.state_d, D_MIN, D_MAX);
@@ -521,7 +627,7 @@ fn step_backward(
 /// gradient buffer by first differentiating the final forgetting curve and then
 /// walking the cached review steps in reverse.
 fn prefix_loss_and_grad(
-    w: &[f32],
+    p: &RuntimeParams<'_>,
     t_hist: &[f32],
     r_hist: &[f32],
     seq_len: usize,
@@ -531,29 +637,28 @@ fn prefix_loss_and_grad(
     label: f32,
     weight: f32,
     gw: Option<&mut [f64]>,
+    caches: &mut Vec<StepCache>,
 ) -> f64 {
     let mut state = State { s: 0.0, d: 0.0 };
     let need_grad = gw.is_some();
-    let mut caches = if need_grad {
-        Vec::with_capacity(seq_len)
-    } else {
-        Vec::new()
-    };
+    if need_grad {
+        caches.clear();
+    }
     for t in 0..seq_len {
         let idx = t * batch + column;
-        let (next, cache) = step_forward(w, state, t_hist[idx], r_hist[idx], t);
+        let (next, cache) = step_forward(p, state, t_hist[idx], r_hist[idx], t);
         state = next;
         if need_grad {
             caches.push(cache);
         }
     }
-    let curve = curve_forward(w, delta_t, state.s);
+    let curve = curve_forward(p, delta_t, state.s);
     let (loss, g_r) = bce_loss_and_grad_r(curve.retrievability, label, weight);
     if let Some(gw) = gw {
-        let mut g_s = curve_backward(w, curve, g_r, gw);
+        let mut g_s = curve_backward(p, curve, g_r, gw);
         let mut g_d = 0.0;
         for cache in caches.iter().rev() {
-            let (prev_s, prev_d) = step_backward(w, cache, g_s, g_d, 0.0, gw);
+            let (prev_s, prev_d) = step_backward(p, cache, g_s, g_d, 0.0, gw);
             g_s = prev_s;
             g_d = prev_d;
         }
@@ -574,24 +679,29 @@ pub(crate) fn batch_loss_and_grad(
     r_hist: &[f32],
     seq_len: usize,
     batch: usize,
+    seq_lens: &[usize],
     delta_ts: &[f32],
     labels: &[f32],
     weights: &[f32],
     gw: &mut [f64],
 ) -> f64 {
     let mut loss = 0.0;
+    let params = RuntimeParams::new(w);
+    let mut caches = Vec::new();
     for column in 0..batch {
+        let column_seq_len = seq_lens[column].min(seq_len);
         loss += prefix_loss_and_grad(
-            w,
+            &params,
             t_hist,
             r_hist,
-            seq_len,
+            column_seq_len,
             batch,
             column,
             delta_ts[column],
             labels[column],
             weights[column],
             Some(gw),
+            &mut caches,
         );
     }
     loss
@@ -609,23 +719,28 @@ pub(crate) fn batch_loss(
     r_hist: &[f32],
     seq_len: usize,
     batch: usize,
+    seq_lens: &[usize],
     delta_ts: &[f32],
     labels: &[f32],
     weights: &[f32],
 ) -> f64 {
     let mut loss = 0.0;
+    let params = RuntimeParams::new(w);
+    let mut caches = Vec::new();
     for column in 0..batch {
+        let column_seq_len = seq_lens[column].min(seq_len);
         loss += prefix_loss_and_grad(
-            w,
+            &params,
             t_hist,
             r_hist,
-            seq_len,
+            column_seq_len,
             batch,
             column,
             delta_ts[column],
             labels[column],
             weights[column],
             None,
+            &mut caches,
         );
     }
     loss
@@ -642,7 +757,7 @@ pub(crate) fn batch_loss(
 /// When gradients are requested, per-step `dL/dR` values are stored and then
 /// propagated backward through the entire cached card trajectory.
 fn card_column_loss_and_grad(
-    w: &[f32],
+    p: &RuntimeParams<'_>,
     t_hist: &[f32],
     r_hist: &[f32],
     seq_len: usize,
@@ -650,24 +765,45 @@ fn card_column_loss_and_grad(
     column: usize,
     labels: &[f32],
     weights: &[f32],
-    gw: Option<&mut [f64]>,
+    mut gw: Option<&mut [f64]>,
+    caches: &mut Vec<StepCache>,
+    g_r_losses: &mut Vec<f64>,
 ) -> f64 {
     let mut state = State { s: 0.0, d: 0.0 };
     let need_grad = gw.is_some();
-    let mut caches = if need_grad {
-        Vec::with_capacity(seq_len)
-    } else {
-        Vec::new()
-    };
     let mut loss = 0.0;
-    let mut g_r_losses = if need_grad {
-        vec![0.0f64; seq_len]
-    } else {
-        Vec::new()
-    };
+    if need_grad {
+        caches.clear();
+        g_r_losses.clear();
+        g_r_losses.resize(seq_len, 0.0);
+    }
     for t in 0..seq_len {
         let idx = t * batch + column;
-        let (next, cache) = step_forward(w, state, t_hist[idx], r_hist[idx], t);
+        if t + 1 == seq_len {
+            let mut final_g_s = 0.0;
+            if t != 0 && weights[idx] != 0.0 {
+                let curve = curve_forward(p, t_hist[idx], clamp(state.s, S_MIN, S_MAX));
+                let (step_loss, g_r) =
+                    bce_loss_and_grad_r(curve.retrievability, labels[idx], weights[idx]);
+                loss += step_loss;
+                if let Some(gw) = gw.as_deref_mut() {
+                    final_g_s = curve_backward(p, curve, g_r, gw);
+                    final_g_s *= clamp_grad(state.s, S_MIN, S_MAX);
+                }
+            }
+            if let Some(gw) = gw {
+                let mut g_s = final_g_s;
+                let mut g_d = 0.0;
+                for (t, cache) in caches.iter().enumerate().rev() {
+                    let (prev_s, prev_d) = step_backward(p, cache, g_s, g_d, g_r_losses[t], gw);
+                    g_s = prev_s;
+                    g_d = prev_d;
+                }
+            }
+            return loss;
+        }
+
+        let (next, cache) = step_forward(p, state, t_hist[idx], r_hist[idx], t);
         let (step_loss, g_r) = if t == 0 {
             (0.0, 0.0)
         } else {
@@ -679,15 +815,6 @@ fn card_column_loss_and_grad(
             caches.push(cache);
         }
         state = next;
-    }
-    if let Some(gw) = gw {
-        let mut g_s = 0.0;
-        let mut g_d = 0.0;
-        for (t, cache) in caches.iter().enumerate().rev() {
-            let (prev_s, prev_d) = step_backward(w, cache, g_s, g_d, g_r_losses[t], gw);
-            g_s = prev_s;
-            g_d = prev_d;
-        }
     }
     loss
 }
@@ -705,22 +832,29 @@ pub(crate) fn card_loss_and_grad(
     r_hist: &[f32],
     seq_len: usize,
     batch: usize,
+    seq_lens: &[usize],
     labels: &[f32],
     weights: &[f32],
     gw: &mut [f64],
 ) -> f64 {
     let mut loss = 0.0;
+    let params = RuntimeParams::new(w);
+    let mut caches = Vec::new();
+    let mut g_r_losses = Vec::new();
     for column in 0..batch {
+        let column_seq_len = seq_lens[column].min(seq_len);
         loss += card_column_loss_and_grad(
-            w,
+            &params,
             t_hist,
             r_hist,
-            seq_len,
+            column_seq_len,
             batch,
             column,
             labels,
             weights,
             Some(gw),
+            &mut caches,
+            &mut g_r_losses,
         );
     }
     loss
@@ -738,13 +872,28 @@ pub(crate) fn card_loss(
     r_hist: &[f32],
     seq_len: usize,
     batch: usize,
+    seq_lens: &[usize],
     labels: &[f32],
     weights: &[f32],
 ) -> f64 {
     let mut loss = 0.0;
+    let params = RuntimeParams::new(w);
+    let mut caches = Vec::new();
+    let mut g_r_losses = Vec::new();
     for column in 0..batch {
+        let column_seq_len = seq_lens[column].min(seq_len);
         loss += card_column_loss_and_grad(
-            w, t_hist, r_hist, seq_len, batch, column, labels, weights, None,
+            &params,
+            t_hist,
+            r_hist,
+            column_seq_len,
+            batch,
+            column,
+            labels,
+            weights,
+            None,
+            &mut caches,
+            &mut g_r_losses,
         );
     }
     loss
@@ -774,16 +923,23 @@ mod tests {
         let dts = vec![7.0, 9.0];
         let labels = vec![1.0, 0.0];
         let weights = vec![1.0, 0.7];
+        let seq_lens = vec![seq; batch];
         let mut grad = [0.0; 21];
-        batch_loss_and_grad(&w, &th, &rh, seq, batch, &dts, &labels, &weights, &mut grad);
+        batch_loss_and_grad(
+            &w, &th, &rh, seq, batch, &seq_lens, &dts, &labels, &weights, &mut grad,
+        );
         for i in 0..21 {
             let eps = 1e-3f32.max(w[i].abs() * 1e-3);
             let mut wp = w.clone();
             let mut wm = w.clone();
             wp[i] += eps;
             wm[i] -= eps;
-            let lp = batch_loss(&wp, &th, &rh, seq, batch, &dts, &labels, &weights);
-            let lm = batch_loss(&wm, &th, &rh, seq, batch, &dts, &labels, &weights);
+            let lp = batch_loss(
+                &wp, &th, &rh, seq, batch, &seq_lens, &dts, &labels, &weights,
+            );
+            let lm = batch_loss(
+                &wm, &th, &rh, seq, batch, &seq_lens, &dts, &labels, &weights,
+            );
             let numeric = (lp - lm) / (2.0 * eps as f64);
             let diff = (numeric - grad[i]).abs();
             let scale = numeric.abs().max(grad[i].abs()).max(1.0);
@@ -811,12 +967,14 @@ mod tests {
         weights_card[2] = 0.7;
         weights_card[3] = 1.1;
         let mut g_card = [0.0; 21];
+        let seq_lens_card = vec![seq; batch];
         let l_card = card_loss_and_grad(
             &w,
             &th_card,
             &rh_card,
             seq,
             batch,
+            &seq_lens_card,
             &labels_card,
             &weights_card,
             &mut g_card,
@@ -831,12 +989,14 @@ mod tests {
             let dts = vec![th_card[prefix_len - 1]];
             let labels = vec![labels_card[prefix_len - 1]];
             let weights = vec![weights_card[prefix_len - 1]];
+            let seq_lens = vec![hist_len];
             l_prefix += batch_loss_and_grad(
                 &w,
                 &th,
                 &rh,
                 hist_len,
                 1,
+                &seq_lens,
                 &dts,
                 &labels,
                 &weights,
