@@ -241,6 +241,7 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
+        training_config: None,
     };
 
     let mut group = c.benchmark_group("parameters");
@@ -262,6 +263,7 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
+        training_config: None,
     };
     let input_without_card_ids = ComputeParametersInput {
         train_set: items.clone(), // Using the full prepared dataset
@@ -269,6 +271,7 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
+        training_config: None,
     };
 
     let mut group = c.benchmark_group("parameters");

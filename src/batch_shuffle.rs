@@ -66,13 +66,6 @@ impl<B: Backend> ShuffleDataLoaderIterator<B> {
             dataset,
         }
     }
-
-    pub(crate) fn progress(&self) -> Progress {
-        Progress {
-            items_processed: self.current_index,
-            items_total: self.dataset.len(),
-        }
-    }
 }
 
 impl<B: Backend> Iterator for ShuffleDataLoaderIterator<B> {

@@ -2,7 +2,6 @@
 #![allow(clippy::needless_range_loop)]
 mod analytic;
 #[cfg(test)]
-#[allow(dead_code)]
 mod batch_shuffle;
 #[cfg(test)]
 mod convertor_tests;
@@ -40,4 +39,6 @@ pub use simulation::{
     RevlogReviewKind, SimulationResult, SimulatorConfig, expected_workload,
     expected_workload_with_existing_cards, extract_simulator_config, optimal_retention, simulate,
 };
-pub use training::{CombinedProgressState, ComputeParametersInput, benchmark, compute_parameters};
+pub use training::{
+    CombinedProgressState, ComputeParametersInput, TrainingConfig, benchmark, compute_parameters,
+};
