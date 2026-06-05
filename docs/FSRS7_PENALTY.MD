@@ -53,6 +53,10 @@ The scalar dual-number helper evaluates variable-exponent powers with a fused
 single-pass derivative formula, instead of materializing separate dual `log`,
 multiply, and `exp` intermediates. Constant-exponent dual powers reuse the
 already-computed power value for their derivative coefficient.
+Scalar forgetting-curve derivative helpers reuse the already-computed
+`inner.powf(decay)` value as `decay * r / inner`, instead of evaluating
+`inner.powf(decay - 1)` separately. This keeps the Newton and residual
+derivative equations equivalent while reducing transient `pow` calls.
 On the FSRS-7 windowed optimization path, validation penalty values are computed
 only on the validation epochs selected by the training loop cadence. The
 training penalty gradient is still computed for every train batch.
@@ -66,6 +70,8 @@ training penalty gradient is still computed for every train batch.
     model weights.
   - temporary fused dual-power values and gradients during schedule-penalty
     rollout.
+  - temporary reused scalar forgetting-curve powers during schedule-penalty
+    Newton and residual derivative calculations.
 - Data read:
   - current model weights (`w[0..34]`), plus batch size for scaling.
   - input flag `enable_sched_penalties` to decide whether schedule penalties are computed.

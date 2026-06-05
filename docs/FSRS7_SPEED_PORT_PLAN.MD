@@ -643,13 +643,17 @@ Main Profile checkpoint rerun on the 2026-06-04 snapshot:
 | `18125f9` NEON validation | `3.830542` | `0.48816797` | `0.03709807` | pass | `17.2%` | `86.6%` | `7.5x` |
 | `245c2f3` first NEON gradient | `0.778492` | `0.49151888` | `0.04087845` | miss by `0.002216` | `79.7%` | `97.3%` | `36.8x` |
 | `aed38e2` NEON gradient micro-optimizations | `0.761803` | `0.48805517` | `0.03721301` | pass | `2.1%` | `97.3%` | `37.6x` |
-| Current dirty tree, padding plus scalar validation penalty/init work | `0.524652` | `0.48805487` | `0.03720748` | pass | `31.1%` | `98.2%` | `54.6x` |
+| Padding plus scalar validation penalty/init work | `0.524652` | `0.48805487` | `0.03720748` | pass | `31.1%` | `98.2%` | `54.6x` |
+| Validation interval 8 | `0.411935` | `0.48805487` | `0.03720748` | pass | `21.5%` | `98.6%` | `69.5x` |
+| Schedule-penalty derivative `pow` reuse | `0.391581` | `0.48805487` | `0.03720748` | pass | `4.9%` | `98.6%` | `73.1x` |
+| Golden-section initialization search | `0.337453` | `0.48804972` | `0.03719569` | pass | `13.8%` | `98.8%` | `84.8x` |
 
 Interpretation:
 
 - The largest acceptable jump is still moving from the prefix-item path to the
-  optimized windowed path: the current tree is `54.6x` faster than prefix on
-  this snapshot while staying inside the LogLoss gate.
+  optimized windowed path, but later validation cadence and initialization work
+  compound materially: the latest tree is `84.8x` faster than prefix on this
+  snapshot while staying inside the LogLoss gate.
 - The LR/epoch tuning intentionally gives back runtime versus the 8-epoch
   checkpoint because the 8-epoch row misses the quality gate on this collection.
 - The first NEON-gradient checkpoint is a useful speed signal but not an
@@ -658,6 +662,10 @@ Interpretation:
 - This table should not be compared directly against the older Main Profile
   rows above, which used a smaller temporary copy with about `150k` prepared
   items.
+- The last two rows use the temporary read-only metrics harness timing for
+  consistent LogLoss/RMSE reporting; nearby `examples/fsrs7_adr_collection`
+  warm timing samples were `0.372..0.381 s` after schedule-penalty derivative
+  reuse and `0.313..0.331 s` after golden-section initialization search.
 
 ## Implementation Checklist
 
@@ -1014,17 +1022,156 @@ Interpretation:
       on the user's collection, but interval 8 is the selected cadence because
       it keeps one intermediate best-model checkpoint before the final epoch and
       still provides most of the validation-cost reduction.
+    - Post-interval-8 profile, 2026-06-05:
+      - Data access: sampled a repeated release run against the SQLite backup
+        copy at `/private/tmp/fsrs-main-profile-collection-backup.anki2`; no
+        live Anki profile data was written or modified.
+      - Command shape: temporary release example repeating FSRS-7
+        `compute_parameters()` with aligned `card_ids`, short-term enabled, and
+        schedule penalties enabled. The repeated run covered `80`
+        optimizations, `248819` review rows, and `183178` prepared FSRS items.
+      - Timing: `80` optimizations in `33.372017 s`; later warm
+        `optimize_seconds` samples were usually around `0.38..0.40 s`.
+      - Follow-up `sample` report:
+        `/private/tmp/fsrs_compute_parameters_after_validation8.sample.txt`.
+        Top symbol sample counts from the main-thread call graph:
+        - `analytic_v7::neon_loss::windowed_grad`: `4683`
+        - `pow` from `libsystem_m`: `4361`
+        - `training_v7::fsrs7_fc_r_dual`: `862`
+        - `training_v7::fsrs7_next_s_good_dual`: `845`
+        - `analytic_v7::windowed_loss`: `677`
+        - `parameter_initialization_fsrs7::loss_with_curve`: `664`
+        - `exp` from `libsystem_m`: `212`
+        - `training_v7::maybe_schedule_penalty_value_and_grad`: `181`
+        - `training::build_windowed_batch`: `84`
+        - `training_v7::schedule_penalty_value`: `5`
+      - Interpretation: validation cadence reduced the visible
+        `windowed_loss` share from the previous Main Profile sample (`3035`
+        samples before the cadence change, `677` after). The ARM64 NEON
+        training path already calls `neon_loss::windowed_grad()`, which is a
+        gradient-only kernel and does not accumulate the BCE loss value. The
+        next Mac/NEON target should therefore be schedule-penalty/interval
+        `pow` work or deeper `windowed_grad` recurrence math, not another
+        training-loss split. The non-NEON fallback still routes
+        `windowed_grad()` through `windowed_loss_and_grad(...).1`.
+    - Schedule-penalty scalar derivative `pow` reduction, 2026-06-05:
+      - Files: `src/training_v7.rs` and `docs/FSRS7_PENALTY.MD`.
+      - The scalar forgetting-curve derivative code in
+        `fsrs7_fc_r_and_drdt_scalar()`,
+        `fsrs7_interval_differentiable_dual()`, and
+        `fsrs7_interval_differentiable_scalar()` now reuses the already
+        computed `inner.powf(decay)` value for `dr/dt` as
+        `decay * r * c / (s * inner)`. This removes the matching
+        `inner.powf(decay - 1)` calls from the schedule-penalty scalar Newton
+        and residual helpers.
+      - Data access for collection validation: read only the SQLite backup copy
+        at `/private/tmp/fsrs-main-profile-collection-backup.anki2`; no live
+        Anki profile data was written or modified.
+      - Focused correctness check: `rtk cargo test training_v7` passed with `9`
+        tests.
+      - Criterion for `fsrs7_penalty/compute_parameters`:
+        `63.547 ms..64.911 ms`, change
+        `[-24.005% -21.938% -19.345%]`, `p = 0.00 < 0.05`, reported as a
+        performance improvement.
+      - Criterion for full `parameters/compute_parameters`:
+        `35.833 ms..37.728 ms`, change
+        `[-2.9822% +6.4063% +21.830%]`, `p = 0.50 > 0.05`, reported as no
+        detected performance change.
+      - Main Profile backup metrics from a temporary read-only metrics harness:
+        LogLoss `0.48805487`, RMSE bins `0.03720748`, optimization
+        `0.391581 s`. The same parameters were selected as the interval-8
+        validation run.
+      - Main Profile backup timing from `examples/fsrs7_adr_collection` before
+        its intentionally invalid `--pop 1 --gen 1` ADR phase: FSRS-7 parameter
+        training samples `0.372 s`, `0.381 s`, and `0.373 s`.
+      - Interpretation: this is a clear win for the schedule-penalty-heavy
+        bench and a smaller but visible collection timing improvement versus
+        the interval-8 samples (`0.424084 s` and `0.411935 s`). The small repo
+        `parameters` fixture is now dominated by other costs/noise.
+    - Post-schedule-penalty profile, 2026-06-05:
+      - Data access: sampled a repeated release run against the SQLite backup
+        copy at `/private/tmp/fsrs-main-profile-collection-backup.anki2`; no
+        live Anki profile data was written or modified.
+      - Command shape: temporary release example repeating FSRS-7
+        `compute_parameters()` with aligned `card_ids`, short-term enabled, and
+        schedule penalties enabled. The repeated run covered `80`
+        optimizations, `248819` review rows, and `183178` prepared FSRS items.
+      - Timing: `80` optimizations in `31.794874 s`; later warm
+        `optimize_seconds` samples were mostly around `0.36..0.39 s`, with one
+        `0.615597 s` outlier.
+      - Follow-up `sample` report:
+        `/private/tmp/fsrs_compute_parameters_after_pow_derivative_reuse.sample.txt`.
+        Top symbol sample counts from the top-of-stack collapsed view:
+        - `analytic_v7::neon_loss::windowed_grad`: `4893`
+        - `pow` from `libsystem_m`: `4005`
+        - `log` from `libsystem_m`: `1153`
+        - `training_v7::fsrs7_next_s_good_dual`: `881`
+        - `training_v7::fsrs7_fc_r_dual`: `851`
+        - `analytic_v7::windowed_loss`: `742`
+        - `parameter_initialization_fsrs7::loss_with_curve`: `628`
+        - `exp` from `libsystem_m`: `278`
+        - `training_v7::fsrs7_interval_differentiable_dual`: `263`
+        - `training_v7::maybe_schedule_penalty_value_and_grad`: `202`
+        - `training::build_windowed_batch`: `90`
+      - Interpretation: the scalar derivative reuse lowered the top-stack
+        system `pow` count from the previous `4361` sample to `4005`, while
+        total repeated-run time moved from `33.372017 s` to `31.794874 s`.
+        The remaining `pow` is now split between schedule-penalty dual
+        residuals and FSRS-7 initialization. The call graph showed
+        `initialize_parameters_fsrs7()` at `5249` samples under
+        `compute_parameters()`, with `loss_with_curve()` children dominated by
+        system `pow` and `log`.
+      - Next candidate: FSRS-7 initialization search. The current ternary
+        search evaluates two full `loss_with_curve()` calls per iteration, then
+        one final loss, for every first-rating bucket and every forgetting-curve
+        candidate. A golden-section style search could reuse one interior loss
+        each iteration and roughly halve initialization loss evaluations, but
+        it changes the floating-point search path and must be treated as a
+        behavior-sensitive experiment with fixed-output and collection gates.
+        Do not change the candidate set or remove initialization data.
+    - FSRS-7 initialization golden-section search, 2026-06-05:
+      - Files: `src/parameter_initialization_fsrs7.rs`,
+        `docs/TRAINING_DATA_FLOW.MD`, and `docs/FSRS7_SPEED_PORT_PLAN.MD`.
+      - The initial-stability search now uses a golden-section interval shrink
+        over the existing `S_MIN..INIT_S_MAX` bounds. It keeps two interior
+        points live and reuses one `loss_with_curve()` result per iteration,
+        instead of recomputing both interior losses as the old ternary search
+        did. The forgetting-curve candidate set, initialization data
+        preparation, monotonic fill/smoothing, and final midpoint
+        `loss_with_curve()` evaluation remain in place.
+      - Added a ternary-reference regression test on a synthetic
+        first-rating/delta-t dataset. It checks rating counts exactly, total
+        loss within `1e-8`, and per-rating stabilities within `1e-4`.
+      - Data access for collection validation: read only the SQLite backup copy
+        at `/private/tmp/fsrs-main-profile-collection-backup.anki2`; no live
+        Anki profile data was written or modified.
+      - Focused correctness check:
+        `rtk cargo test parameter_initialization_fsrs7` passed with `4` tests.
+      - Criterion for full `parameters/compute_parameters`:
+        `27.098 ms..27.482 ms`, change
+        `[-38.454% -29.152% -22.199%]`, `p = 0.00 < 0.05`, reported as a
+        performance improvement versus the previous Criterion run.
+      - Main Profile backup metrics from a temporary read-only metrics harness:
+        LogLoss `0.48804972`, RMSE bins `0.03719569`, optimization
+        `0.337453 s`. The previous post-schedule-penalty metrics were LogLoss
+        `0.48805487`, RMSE bins `0.03720748`, and optimization `0.391581 s`.
+      - Main Profile backup timing from `examples/fsrs7_adr_collection` before
+        its intentionally invalid `--pop 1 --gen 1` ADR phase: FSRS-7 parameter
+        training samples `0.331 s`, `0.315 s`, and `0.313 s`.
+      - Interpretation: this is a real collection-optimization win, with a
+        slightly different selected parameter vector and slightly better
+        evaluation metrics on the user's collection backup. Because the search
+        path is not bit-for-bit identical to ternary search, keep collection
+        quality gates with this change.
   - Required gates:
     - `rtk cargo test test_analytic_loss_and_grad_matches_burn`
     - `rtk cargo test windowed_matches_sum_of_prefixes`
     - `rtk cargo test finite_difference_matches_batch_gradient`
     - `rtk cargo bench --bench parameters compute_parameters`
     - Repo collection A/B: trained parameters and log loss unchanged.
-  - PR #417 follow-up not included by default: skipping the BCE loss value in
-    training may save another reported `~7%`, but it would require either a
-    training-only `SCORE_LOSS` split or changing tests that currently assert
-    returned loss. Treat that as a separate explicit decision, not part of the
-    bit-for-bit port.
+  - PR #417 follow-up: the ARM64 NEON training path already has the
+    training-only gradient split. A similar split may still matter for the
+    non-NEON fallback, but it is not a Mac/NEON collection-optimization win.
 - [ ] Fuse compatible exp pairs in the FSRS-7 recurrence.
   - Source: iter24.
   - Tests: gradient and loss gate because this is a floating-point reassociation.

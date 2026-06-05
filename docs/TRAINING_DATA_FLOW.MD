@@ -35,15 +35,17 @@ item storage during preprocessing.
   - FSRS-7 forgetting-curve candidate parameters.
 - Data created:
   - Temporary scalar predicted recall and log-loss values during each
-    ternary-search evaluation.
+    golden-section search evaluation.
 - Data updated:
   - Best in-memory initial stability and forgetting-curve candidate selection.
 - Data storage:
   - No persistent storage.
 
 FSRS-7 initialization evaluates `loss_with_curve()` by streaming over the
-existing bucket arrays. It no longer creates temporary ndarray prediction and
-log arrays for every ternary-search step.
+existing bucket arrays. It uses a golden-section search for each initial
+stability bucket so one interior loss can be reused on each interval-shrink
+step. It no longer creates temporary ndarray prediction and log arrays for
+every search step.
 
 ## Training Batch Construction
 

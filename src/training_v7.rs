@@ -315,12 +315,8 @@ fn fsrs7_fc_r_and_drdt_scalar(t: f64, s: f64, consts: &PenaltyConsts) -> (f64, f
     let wt_sum = (wt1 + wt2).max(1e-9);
     let r = ((wt1 * r1 + wt2 * r2) / wt_sum).clamp(0.0, 1.0);
 
-    let dr1_dt = consts.scalar_decay1
-        * inner1.powf(consts.scalar_decay1 - 1.0)
-        * (consts.scalar_c1 / s_safe);
-    let dr2_dt = consts.scalar_decay2
-        * inner2.powf(consts.scalar_decay2 - 1.0)
-        * (consts.scalar_c2 / s_safe);
+    let dr1_dt = consts.scalar_decay1 * r1 * consts.scalar_c1 / (s_safe * inner1);
+    let dr2_dt = consts.scalar_decay2 * r2 * consts.scalar_c2 / (s_safe * inner2);
     let dr_dt = ((wt1 * dr1_dt + wt2 * dr2_dt) / wt_sum).clamp(-1e9, 0.0);
     (r, dr_dt)
 }
@@ -488,11 +484,11 @@ fn fsrs7_interval_differentiable_dual(
         let tos = t / s_f;
         let i1 = (1.0 + consts.scalar_c1 * tos).max(1e-9);
         let i2 = (1.0 + consts.scalar_c2 * tos).max(1e-9);
-        let r = (wt1 * i1.powf(consts.scalar_decay1) + wt2 * i2.powf(consts.scalar_decay2)) / wts;
-        let dr1 =
-            consts.scalar_decay1 * i1.powf(consts.scalar_decay1 - 1.0) * consts.scalar_c1 / s_f;
-        let dr2 =
-            consts.scalar_decay2 * i2.powf(consts.scalar_decay2 - 1.0) * consts.scalar_c2 / s_f;
+        let r1 = i1.powf(consts.scalar_decay1);
+        let r2 = i2.powf(consts.scalar_decay2);
+        let r = (wt1 * r1 + wt2 * r2) / wts;
+        let dr1 = consts.scalar_decay1 * r1 * consts.scalar_c1 / (s_f * i1);
+        let dr2 = consts.scalar_decay2 * r2 * consts.scalar_c2 / (s_f * i2);
         let drdt = (wt1 * dr1 + wt2 * dr2) / wts;
         let dfdu = (drdt * t).min(-1e-12);
         u -= (r - target) / dfdu;
@@ -526,11 +522,11 @@ fn fsrs7_interval_differentiable_scalar(
         let tos = t / s_f;
         let i1 = (1.0 + consts.scalar_c1 * tos).max(1e-9);
         let i2 = (1.0 + consts.scalar_c2 * tos).max(1e-9);
-        let r = (wt1 * i1.powf(consts.scalar_decay1) + wt2 * i2.powf(consts.scalar_decay2)) / wts;
-        let dr1 =
-            consts.scalar_decay1 * i1.powf(consts.scalar_decay1 - 1.0) * consts.scalar_c1 / s_f;
-        let dr2 =
-            consts.scalar_decay2 * i2.powf(consts.scalar_decay2 - 1.0) * consts.scalar_c2 / s_f;
+        let r1 = i1.powf(consts.scalar_decay1);
+        let r2 = i2.powf(consts.scalar_decay2);
+        let r = (wt1 * r1 + wt2 * r2) / wts;
+        let dr1 = consts.scalar_decay1 * r1 * consts.scalar_c1 / (s_f * i1);
+        let dr2 = consts.scalar_decay2 * r2 * consts.scalar_c2 / (s_f * i2);
         let drdt = (wt1 * dr1 + wt2 * dr2) / wts;
         let dfdu = (drdt * t).min(-1e-12);
         u -= (r - target) / dfdu;
