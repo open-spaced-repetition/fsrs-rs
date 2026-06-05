@@ -1163,6 +1163,41 @@ Interpretation:
         evaluation metrics on the user's collection backup. Because the search
         path is not bit-for-bit identical to ternary search, keep collection
         quality gates with this change.
+    - Post-golden-section profile, 2026-06-05:
+      - Commit profiled: `6e88b65` (`Optimize FSRS-7 pow and initialization
+        search`).
+      - Data access: sampled a repeated release run against the SQLite backup
+        copy at `/private/tmp/fsrs-main-profile-collection-backup.anki2`; no
+        live Anki profile data was written or modified.
+      - Command shape: temporary release example repeating FSRS-7
+        `compute_parameters()` with aligned `card_ids`, short-term enabled, and
+        schedule penalties enabled. The repeated run covered `80`
+        optimizations, `248819` review rows, and `183178` prepared FSRS items.
+      - Timing: `80` optimizations in `26.795139 s`; warm
+        `optimize_seconds` samples were mostly around `0.32..0.34 s`.
+      - Follow-up `sample` report:
+        `/private/tmp/fsrs_compute_parameters_after_golden_section.sample.txt`.
+        Top symbol sample counts from the top-of-stack collapsed view:
+        - `analytic_v7::neon_loss::windowed_grad`: `5698`
+        - `pow` from `libsystem_m`: `2827`
+        - `training_v7::fsrs7_fc_r_dual`: `1083`
+        - `training_v7::fsrs7_next_s_good_dual`: `1005`
+        - `analytic_v7::windowed_loss`: `870`
+        - `log` from `libsystem_m`: `738`
+        - `parameter_initialization_fsrs7::loss_with_curve`: `373`
+        - `training_v7::fsrs7_interval_differentiable_dual`: `305`
+        - `training_v7::maybe_schedule_penalty_value_and_grad`: `192`
+        - `training::build_windowed_batch`: `84`
+      - Interpretation: golden-section initialization search reduced
+        initialization's remaining top-stack `loss_with_curve()` signal from
+        `628` to `373`, and system `pow` from `4005` to `2827`. The largest
+        remaining repo symbol is now the ARM64 NEON windowed training gradient.
+        The next lower-risk math target is still schedule-penalty dual
+        recurrence/interval work (`fsrs7_fc_r_dual`,
+        `fsrs7_next_s_good_dual`, and `fsrs7_interval_differentiable_dual`);
+        deeper `neon_loss::windowed_grad` changes may have larger upside but
+        are higher maintenance and require strict scalar-oracle and collection
+        quality gates.
   - Required gates:
     - `rtk cargo test test_analytic_loss_and_grad_matches_burn`
     - `rtk cargo test windowed_matches_sum_of_prefixes`
