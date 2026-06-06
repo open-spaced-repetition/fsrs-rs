@@ -233,11 +233,19 @@ fn benchmark_evaluate(c: &mut Criterion) {
 }
 
 fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
-    let items = load_and_prepare_data();
+    let (items, card_ids) = load_and_prepare_data_with_card_ids();
     // evaluate_with_time_series_splits computes parameters internally for each split.
     let input = ComputeParametersInput {
         train_set: items.clone(),
         card_ids: None,
+        progress: None,
+        enable_short_term: true,    // Default/typical value
+        num_relearning_steps: None, // Default/typical value
+        training_config: None,
+    };
+    let input_with_card_ids = ComputeParametersInput {
+        train_set: items.clone(),
+        card_ids: Some(card_ids),
         progress: None,
         enable_short_term: true,    // Default/typical value
         num_relearning_steps: None, // Default/typical value
@@ -250,6 +258,13 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
     group.bench_function("evaluate_with_time_series_splits", |b| {
         b.iter(|| {
             evaluate_with_time_series_splits(black_box(input.clone()), |_| true).unwrap();
+        })
+    });
+
+    group.bench_function("evaluate_with_time_series_splits_with_card_ids", |b| {
+        b.iter(|| {
+            evaluate_with_time_series_splits(black_box(input_with_card_ids.clone()), |_| true)
+                .unwrap();
         })
     });
     group.finish();
