@@ -12,7 +12,7 @@ use rand::{Rng, SeedableRng};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::{Ordering, Reverse};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 
@@ -36,6 +36,147 @@ pub(crate) struct CostAdrSimulationResult {
     pub average_desired_retention: Option<f32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IntervalBucketConfig {
+    pub log_stability_step: f32,
+    pub desired_retention_step: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntervalBucketSummary {
+    pub config: IntervalBucketConfig,
+    pub unique_keys: usize,
+    pub estimated_hits: usize,
+    pub estimated_hit_rate: f32,
+    pub conflicting_keys: usize,
+    pub estimated_interval_misses: usize,
+    pub estimated_interval_miss_rate: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntervalBucketStats {
+    pub total_scheduled_intervals: usize,
+    pub exact_unique_keys: usize,
+    pub exact_estimated_hits: usize,
+    pub exact_estimated_hit_rate: f32,
+    pub bucket_summaries: Vec<IntervalBucketSummary>,
+}
+
+struct IntervalBucketRecorder {
+    total_scheduled_intervals: usize,
+    exact_keys: HashSet<(u32, u32)>,
+    bucket_configs: Vec<IntervalBucketConfig>,
+    bucket_keys: Vec<HashMap<(i32, i32), IntervalBucketValue>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IntervalBucketValue {
+    first_interval_bits: u32,
+    count: usize,
+    miss_count: usize,
+}
+
+impl IntervalBucketRecorder {
+    fn new(bucket_configs: &[IntervalBucketConfig]) -> Result<Self> {
+        if bucket_configs.iter().any(|config| {
+            !(config.log_stability_step.is_finite()
+                && config.desired_retention_step.is_finite()
+                && config.log_stability_step > 0.0
+                && config.desired_retention_step > 0.0)
+        }) {
+            return Err(FSRSError::InvalidInput);
+        }
+        Ok(Self {
+            total_scheduled_intervals: 0,
+            exact_keys: HashSet::new(),
+            bucket_configs: bucket_configs.to_vec(),
+            bucket_keys: vec![HashMap::new(); bucket_configs.len()],
+        })
+    }
+
+    fn record(&mut self, stability: f32, desired_retention: f32, scheduled_interval: f32) {
+        self.total_scheduled_intervals += 1;
+        self.exact_keys
+            .insert((stability.to_bits(), desired_retention.to_bits()));
+        for (index, config) in self.bucket_configs.iter().enumerate() {
+            let key = (
+                bucket_index(stability.max(S_MIN).ln(), config.log_stability_step),
+                bucket_index(desired_retention, config.desired_retention_step),
+            );
+            let interval_bits = scheduled_interval.to_bits();
+            self.bucket_keys[index]
+                .entry(key)
+                .and_modify(|value| {
+                    value.count += 1;
+                    if value.first_interval_bits != interval_bits {
+                        value.miss_count += 1;
+                    }
+                })
+                .or_insert(IntervalBucketValue {
+                    first_interval_bits: interval_bits,
+                    count: 1,
+                    miss_count: 0,
+                });
+        }
+    }
+
+    fn finish(self) -> IntervalBucketStats {
+        let exact_unique_keys = self.exact_keys.len();
+        let exact_estimated_hits = self.total_scheduled_intervals - exact_unique_keys;
+        let bucket_summaries = self
+            .bucket_configs
+            .into_iter()
+            .zip(self.bucket_keys)
+            .map(|(config, buckets)| {
+                let unique_keys = buckets.len();
+                let estimated_hits = self.total_scheduled_intervals - unique_keys;
+                let conflicting_keys = buckets
+                    .values()
+                    .filter(|value| value.miss_count > 0)
+                    .count();
+                let estimated_interval_misses =
+                    buckets.values().map(|value| value.miss_count).sum();
+                IntervalBucketSummary {
+                    config,
+                    unique_keys,
+                    estimated_hits,
+                    estimated_hit_rate: hit_rate(estimated_hits, self.total_scheduled_intervals),
+                    conflicting_keys,
+                    estimated_interval_misses,
+                    estimated_interval_miss_rate: hit_rate(
+                        estimated_interval_misses,
+                        self.total_scheduled_intervals,
+                    ),
+                }
+            })
+            .collect();
+        IntervalBucketStats {
+            total_scheduled_intervals: self.total_scheduled_intervals,
+            exact_unique_keys,
+            exact_estimated_hits,
+            exact_estimated_hit_rate: hit_rate(
+                exact_estimated_hits,
+                self.total_scheduled_intervals,
+            ),
+            bucket_summaries,
+        }
+    }
+}
+
+fn bucket_index(value: f32, step: f32) -> i32 {
+    (value / step)
+        .round()
+        .clamp(i32::MIN as f32, i32::MAX as f32) as i32
+}
+
+fn hit_rate(hits: usize, total: usize) -> f32 {
+    if total == 0 {
+        0.0
+    } else {
+        hits as f32 / total as f32
+    }
+}
+
 trait Round {
     fn to_2_decimal(self) -> f32;
 }
@@ -57,6 +198,9 @@ pub(crate) const LEARNING: usize = 0;
 pub(crate) const REVIEW: usize = 1;
 pub(crate) const RELEARNING: usize = 2;
 pub(crate) const MAX_STEPS: usize = 5;
+const CERTIFIED_INTERVAL_CACHE_LOG_S_STEP: f32 = 0.001;
+const CERTIFIED_INTERVAL_CACHE_DR_STEP: f32 = 0.0005;
+const CERTIFIED_INTERVAL_CACHE_ROUNDING_MARGIN: f32 = 0.05;
 
 /// Function type for post scheduling operations that takes interval, maximum interval,
 /// current day index, due counts per day, and a random number generator,
@@ -722,6 +866,103 @@ fn next_interval_with_fsrs(
     fsrs.next_interval(w, stability, desired_retention, fsrs7_runtime)
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+struct CertifiedIntervalCacheKey {
+    log_stability_bucket: i32,
+    desired_retention_bucket: i32,
+}
+
+#[derive(Debug)]
+struct CertifiedIntervalCache {
+    intervals: HashMap<CertifiedIntervalCacheKey, f32>,
+}
+
+impl CertifiedIntervalCache {
+    fn new() -> Self {
+        Self {
+            intervals: HashMap::new(),
+        }
+    }
+
+    fn scheduled_interval(
+        &mut self,
+        fsrs: &dyn SimulatedFsrs,
+        w: &[f32],
+        stability: f32,
+        desired_retention: f32,
+        fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
+        max_ivl: f32,
+    ) -> f32 {
+        let key = CertifiedIntervalCacheKey {
+            log_stability_bucket: bucket_index(
+                stability.max(S_MIN).ln(),
+                CERTIFIED_INTERVAL_CACHE_LOG_S_STEP,
+            ),
+            desired_retention_bucket: bucket_index(
+                desired_retention,
+                CERTIFIED_INTERVAL_CACHE_DR_STEP,
+            ),
+        };
+        if let Some(&interval) = self.intervals.get(&key) {
+            if certifies_rounded_interval(
+                fsrs,
+                w,
+                stability,
+                desired_retention,
+                fsrs7_runtime,
+                interval,
+                max_ivl,
+            ) {
+                return interval;
+            }
+        }
+
+        let interval =
+            next_interval_with_fsrs(fsrs, w, stability, desired_retention, fsrs7_runtime)
+                .round()
+                .clamp(1.0, max_ivl);
+        self.intervals.insert(key, interval);
+        interval
+    }
+}
+
+fn certifies_rounded_interval(
+    fsrs: &dyn SimulatedFsrs,
+    w: &[f32],
+    stability: f32,
+    desired_retention: f32,
+    fsrs7_runtime: Option<&model_v7::Fsrs7Runtime>,
+    interval: f32,
+    max_ivl: f32,
+) -> bool {
+    if !(stability.is_finite()
+        && desired_retention.is_finite()
+        && interval.is_finite()
+        && max_ivl.is_finite())
+    {
+        return false;
+    }
+
+    if interval <= 1.0 {
+        let upper = (1.5 - CERTIFIED_INTERVAL_CACHE_ROUNDING_MARGIN).min(max_ivl);
+        let upper_r = power_forgetting_curve_with_runtime(fsrs, w, fsrs7_runtime, upper, stability);
+        return upper_r.is_finite() && upper_r < desired_retention;
+    }
+
+    if interval >= max_ivl {
+        return false;
+    }
+
+    let lower = (interval - 0.5 + CERTIFIED_INTERVAL_CACHE_ROUNDING_MARGIN).max(0.0);
+    let upper = interval + 0.5 - CERTIFIED_INTERVAL_CACHE_ROUNDING_MARGIN;
+    let lower_r = power_forgetting_curve_with_runtime(fsrs, w, fsrs7_runtime, lower, stability);
+    let upper_r = power_forgetting_curve_with_runtime(fsrs, w, fsrs7_runtime, upper, stability);
+    lower_r.is_finite()
+        && upper_r.is_finite()
+        && lower_r >= desired_retention
+        && upper_r < desired_retention
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 fn next_interval(w: &[f32], stability: f32, desired_retention: f32) -> f32 {
@@ -1175,6 +1416,7 @@ pub fn simulate(
         existing_cards,
         None,
         0.0,
+        None,
     )?
     .result)
 }
@@ -1215,7 +1457,32 @@ pub(crate) fn simulate_with_cost_adr_policy_for_evaluation(
         existing_cards,
         Some(policy),
         goal_cost_weight,
+        None,
     )
+}
+
+pub fn simulate_cost_adr_interval_bucket_stats(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    policy: &CostAdrPolicy,
+    goal_cost_weight: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+    bucket_configs: &[IntervalBucketConfig],
+) -> Result<IntervalBucketStats, FSRSError> {
+    policy.validate()?;
+    let mut recorder = IntervalBucketRecorder::new(bucket_configs)?;
+    let _ = simulate_inner(
+        config,
+        w,
+        policy.retention_max,
+        seed,
+        existing_cards,
+        Some(policy),
+        goal_cost_weight,
+        Some(&mut recorder),
+    )?;
+    Ok(recorder.finish())
 }
 
 fn simulate_inner(
@@ -1226,9 +1493,13 @@ fn simulate_inner(
     existing_cards: Option<Vec<Card>>,
     cost_adr_policy: Option<&CostAdrPolicy>,
     goal_cost_weight: f32,
+    mut interval_bucket_recorder: Option<&mut IntervalBucketRecorder>,
 ) -> Result<CostAdrSimulationResult, FSRSError> {
     let w = Arc::new(check_and_fill_parameters(w)?);
     let fsrs7_runtime = fsrs7_runtime(&w);
+    let mut certified_interval_cache = fsrs7_runtime
+        .as_ref()
+        .map(|_| CertifiedIntervalCache::new());
     let cost_adr_evaluator =
         cost_adr_policy.map(|policy| policy.evaluator_for_cost_weight(goal_cost_weight));
     if config.deck_size == 0 {
@@ -1521,15 +1792,29 @@ fn simulate_inner(
         desired_retention_sum += card.desired_retention;
         desired_retention_count += 1;
 
-        let mut ivl = next_interval_with_fsrs(
-            fsrs,
-            &card.parameters,
-            card.stability,
-            card.desired_retention,
-            card_fsrs7_runtime,
-        )
-        .round()
-        .clamp(1.0, config.max_ivl);
+        let mut ivl = if let Some(cache) = certified_interval_cache.as_mut() {
+            cache.scheduled_interval(
+                fsrs,
+                &card.parameters,
+                card.stability,
+                card.desired_retention,
+                card_fsrs7_runtime,
+                config.max_ivl,
+            )
+        } else {
+            next_interval_with_fsrs(
+                fsrs,
+                &card.parameters,
+                card.stability,
+                card.desired_retention,
+                card_fsrs7_runtime,
+            )
+            .round()
+            .clamp(1.0, config.max_ivl)
+        };
+        if let Some(recorder) = interval_bucket_recorder.as_deref_mut() {
+            recorder.record(card.stability, card.desired_retention, ivl);
+        }
 
         card.last_date = day_index as f32;
         card.interval = ivl;
@@ -2163,6 +2448,94 @@ mod tests {
         add_forgetting_curve_range(fsrs, &w, None, &mut actual, 3, 17, last_date, stability);
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_interval_bucket_recorder_counts_exact_and_bucketed_hits() -> Result<()> {
+        let bucket_configs = [IntervalBucketConfig {
+            log_stability_step: 0.01,
+            desired_retention_step: 0.01,
+        }];
+        let mut recorder = IntervalBucketRecorder::new(&bucket_configs)?;
+        recorder.record(10.0, 0.86, 8.0);
+        recorder.record(10.0, 0.86, 8.0);
+        recorder.record(10.0001, 0.8601, 9.0);
+
+        let stats = recorder.finish();
+        assert_eq!(stats.total_scheduled_intervals, 3);
+        assert_eq!(stats.exact_unique_keys, 2);
+        assert_eq!(stats.exact_estimated_hits, 1);
+        assert_eq!(stats.bucket_summaries[0].unique_keys, 1);
+        assert_eq!(stats.bucket_summaries[0].estimated_hits, 2);
+        assert_eq!(stats.bucket_summaries[0].conflicting_keys, 1);
+        assert_eq!(stats.bucket_summaries[0].estimated_interval_misses, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cost_adr_interval_bucket_stats_smoke() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 10,
+            learn_span: 14,
+            learn_limit: 2,
+            review_limit: 9999,
+            ..SimulatorConfig::default()
+        };
+        let policy = CostAdrPolicy::new(vec![0.0; 15])?;
+        let stats = simulate_cost_adr_interval_bucket_stats(
+            &config,
+            &DEFAULT_PARAMETERS,
+            &policy,
+            64.0,
+            Some(42),
+            None,
+            &[IntervalBucketConfig {
+                log_stability_step: 0.01,
+                desired_retention_step: 0.01,
+            }],
+        )?;
+
+        assert!(stats.total_scheduled_intervals > 0);
+        assert!(stats.exact_unique_keys <= stats.total_scheduled_intervals);
+        assert_eq!(stats.bucket_summaries.len(), 1);
+        assert!(stats.bucket_summaries[0].unique_keys <= stats.total_scheduled_intervals);
+        Ok(())
+    }
+
+    #[test]
+    fn test_certified_interval_cache_matches_direct_solver() {
+        let w = DEFAULT_PARAMETERS;
+        let fsrs = simulated_fsrs(&w);
+        let fsrs7_runtime = fsrs7_runtime(&w);
+        let mut cache = CertifiedIntervalCache::new();
+        let max_ivl = 36500.0;
+
+        for stability in [2.0, 2.0005, 10.0, 10.002, 100.0, 100.01] {
+            for desired_retention in [0.8, 0.8002, 0.86, 0.8602, 0.9, 0.9002] {
+                let direct = next_interval_with_fsrs(
+                    fsrs,
+                    &w,
+                    stability,
+                    desired_retention,
+                    fsrs7_runtime.as_ref(),
+                )
+                .round()
+                .clamp(1.0, max_ivl);
+                let cached = cache.scheduled_interval(
+                    fsrs,
+                    &w,
+                    stability,
+                    desired_retention,
+                    fsrs7_runtime.as_ref(),
+                    max_ivl,
+                );
+                assert_eq!(
+                    cached.to_bits(),
+                    direct.to_bits(),
+                    "stability={stability}, desired_retention={desired_retention}"
+                );
+            }
+        }
     }
 
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]

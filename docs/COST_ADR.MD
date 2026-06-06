@@ -35,18 +35,28 @@
   - Per-rollout cached ADR cost-weight evaluator values.
   - Per-simulation cached FSRS-7 interval/runtime context when parameters use
     the 35-parameter FSRS-7 shape.
+  - Per-simulation certified FSRS-7 rounded-interval cache entries keyed by
+    bucketed `(log_stability, desired_retention)` scheduling inputs.
+  - Optional interval bucket diagnostics read post-update `(stability,
+    desired_retention)` scheduling inputs during an explicit profiling replay.
 - Data created:
   - Aligned `(FSRSItem, card_id)` vectors for FSRS-7 parameter training in the
     collection example.
   - A per-user Cost ADR policy trained against that user's FSRS parameters and simulator configuration.
   - Evaluation metrics comparing fixed desired-retention baselines to Cost ADR rollouts.
   - Optional plot/export grid rows for `(stability, difficulty, cost_weight, desired_retention)`.
+  - Optional interval bucket diagnostic summaries with exact unique key counts
+    and estimated hit rates for configured `(log_stability, desired_retention)`
+    bucket sizes.
 - Data updated:
   - The per-card desired retention selected for the next interval.
   - Simulation `memorized_cnt_per_day` metric ranges. On ARM64 FSRS-7 this
     range accumulation can use NEON; card state updates, RNG decisions,
     scheduling priority, and interval selection remain scalar.
   - No FSRS memory-state update logic is changed by Cost ADR.
+  - FSRS-7 interval cache entries may be added or replaced during a simulation
+    run. Reuse is accepted only when forgetting-curve boundary checks certify
+    that the cached rounded interval matches the current scheduling input.
 - Data storage:
   - Persist policy metadata separately from FSRS model parameters.
   - Persist at least policy version, coefficients, retention bounds, cost-weight bounds/default, and training/evaluation summary.
@@ -86,11 +96,20 @@
 - `average_desired_retention`: arithmetic average of the ADR desired retention selected across simulated reviews.
 - `fixed_fsrs_equivalent_desired_retention` (`FSRS Eq. DR`, displayed as `FSRS6 Eq. DR` or `FSRS7 Eq. DR`): fixed-FSRS desired retention that reaches the same simulated Memorized target for the selected model, interpolated from the fixed-DR baseline frontier.
 - `same_target_time_saved_percent`: time saved by ADR compared with that fixed-FSRS equivalent desired retention at the same Memorized target.
+- Default fixed-FSRS baseline retention rollouts span `0.30` to `0.90` across 16 points. This keeps Cost ADR training cost unchanged while giving `fixed_fsrs_equivalent_desired_retention` coverage for lower-retention ADR policies.
 - `cost_weight_for_average_desired_retention(target)`: inferred ADR cost weight for a target average ADR desired retention. It interpolates in `ln(1 + weight)` space when only persisted calibration points are available.
 - `calibrate_cost_weight_for_average_desired_retention(target)`: computes a simulation-backed closest ADR cost weight by bisection in `ln(1 + weight)` space. This is used after policy training to persist a denser, target-oriented calibration table instead of relying on coarse fixed weights like `0, 64, 128`.
 - Calibration first evaluates endpoint weights `0` and `1024`. If their average ADR DR span is below `0.005` retention, it persists only those endpoints because extra bisection points do not give users a meaningful target range.
 - Optional endpoint training penalties can target a broad simulated average ADR DR range. Example: `w=0 -> 0.90`, `w=1024 -> 0.50`, with `penalty=10`, subtracts `10 * ((avg_dr(w=0)-0.90)^2 + (avg_dr(w=1024)-0.50)^2)` from each candidate score.
-- ADR training treats `generations` as a maximum. By default, it can stop after at least `10` generations when the best optimizer score (`hypervolume_delta - endpoint_penalty`) improves by less than `1%` over the last `4` generations. Set `early_stop_patience_generations=0` to force all configured generations. Increase `early_stop_min_generations`, `early_stop_patience_generations`, or lower `early_stop_min_relative_gain` to bias toward longer/higher-quality runs.
+- ADR training treats `generations` as a maximum. The default maximum is `10`
+  generations. By default, it can stop after at least `10` generations when the
+  best optimizer score (`hypervolume_delta - endpoint_penalty`) improves by less
+  than `1%` over the last `4` generations. Set
+  `early_stop_patience_generations=0` to force all configured generations.
+  Increase `early_stop_min_generations`, `early_stop_patience_generations`, or
+  lower `early_stop_min_relative_gain` to bias toward longer/higher-quality
+  runs.
+- The collection profiling example prints one `cost_adr_generation_hypervolume` line per completed generation. `best_hypervolume` is reconstructed as `baseline_hypervolume + best_hypervolume_delta`, and `best_hypervolume_change_percent` divides that delta by the baseline hypervolume. This output is derived from the in-memory `CostAdrTrainingResult.history`; it does not rerun optimization or write collection data.
 
 ## Performance Notes
 

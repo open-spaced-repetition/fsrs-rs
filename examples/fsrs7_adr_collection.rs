@@ -1,7 +1,8 @@
 use fsrs::{
     CombinedProgressState, ComputeParametersInput, ComputeParametersVersion, CostAdrPolicy,
-    CostAdrTrainingConfig, FSRSItem, FSRSReview, RevlogEntry, RevlogReviewKind, compute_parameters,
-    extract_simulator_config,
+    CostAdrTrainingConfig, FSRS, FSRSItem, FSRSReview, IntervalBucketConfig, RevlogEntry,
+    RevlogReviewKind, compute_parameters, extract_simulator_config,
+    simulate_cost_adr_interval_bucket_stats,
 };
 use rusqlite::{Connection, Row};
 use std::collections::{BTreeMap, HashSet};
@@ -16,6 +17,7 @@ const DEFAULT_COLLECTION: &str =
     "/Users/jschoreels/Library/Application Support/Anki2/Main Profile/collection.anki2";
 const DEFAULT_OUTPUT_DIR: &str = "docs/fsrs7-adr-plots";
 const DEFAULT_SEED: u64 = 42;
+const ASIA_SHANGHAI_4H_DAY_CUTOFF_SECONDS: i64 = 20 * 60 * 60;
 
 fn main() -> fsrs::Result<()> {
     let args = Args::parse()?;
@@ -111,7 +113,7 @@ fn main() -> fsrs::Result<()> {
         );
         let fsrs_started = Instant::now();
         let parameters = compute_parameters(ComputeParametersInput {
-            train_set: fsrs_items,
+            train_set: fsrs_items.clone(),
             card_ids: use_card_ids.then_some(fsrs_card_ids),
             progress: Some(CombinedProgressState::new_shared()),
             enable_short_term: true,
@@ -127,6 +129,17 @@ fn main() -> fsrs::Result<()> {
         parameters
     };
     println!("{}_parameters={parameters:?}", args.model_version.label());
+    let evaluation_started = Instant::now();
+    let evaluation = FSRS::new(&parameters)?.evaluate(fsrs_items, |_| true)?;
+    println!(
+        "{}_evaluation_log_loss={:.8} {}_evaluation_rmse_bins={:.8} {}_evaluation_seconds={:.3}",
+        args.model_version.label(),
+        evaluation.log_loss,
+        args.model_version.label(),
+        evaluation.rmse_bins,
+        args.model_version.label(),
+        evaluation_started.elapsed().as_secs_f32()
+    );
 
     let adr_training_config = CostAdrTrainingConfig {
         population_size: args.population_size,
@@ -168,6 +181,7 @@ fn main() -> fsrs::Result<()> {
         "baseline_hypervolume={:.6} best_hypervolume={:.6} best_hypervolume_delta={:.6}",
         result.baseline_hypervolume, result.best_hypervolume, result.best_hypervolume_delta
     );
+    print_generation_hypervolume_curve(&result);
     println!(
         "best_auc_relative_time_saved_percent={:?}",
         result
@@ -196,10 +210,95 @@ fn main() -> fsrs::Result<()> {
             result.cost_weight_for_average_desired_retention(target_average_desired_retention)
         );
     }
+    if args.interval_bucket_stats {
+        print_interval_bucket_stats(&config, &parameters, &result.policy, args.seed, &result)?;
+    }
 
     write_policy(&args.output_dir, &result.policy)?;
     write_retention_grid(&args.output_dir, &result.policy)?;
     println!("output_dir={}", args.output_dir.display());
+    Ok(())
+}
+
+fn print_generation_hypervolume_curve(result: &fsrs::CostAdrTrainingResult) {
+    for metrics in &result.history {
+        let best_hypervolume = result.baseline_hypervolume + metrics.best_hypervolume_delta;
+        let best_hypervolume_change_percent = if result.baseline_hypervolume == 0.0 {
+            0.0
+        } else {
+            metrics.best_hypervolume_delta / result.baseline_hypervolume * 100.0
+        };
+        println!(
+            "cost_adr_generation_hypervolume generation={} best_hypervolume={:.6} best_hypervolume_delta={:.6} best_hypervolume_change_percent={:.6} generation_best_hypervolume_delta={:.6} mean_hypervolume_delta={:.6} sigma={:.6}",
+            metrics.generation + 1,
+            best_hypervolume,
+            metrics.best_hypervolume_delta,
+            best_hypervolume_change_percent,
+            metrics.generation_best_hypervolume_delta,
+            metrics.mean_hypervolume_delta,
+            metrics.sigma
+        );
+    }
+}
+
+fn print_interval_bucket_stats(
+    config: &fsrs::SimulatorConfig,
+    parameters: &[f32],
+    policy: &CostAdrPolicy,
+    seed: u64,
+    result: &fsrs::CostAdrTrainingResult,
+) -> fsrs::Result<()> {
+    let bucket_configs = [
+        IntervalBucketConfig {
+            log_stability_step: 0.001,
+            desired_retention_step: 0.0005,
+        },
+        IntervalBucketConfig {
+            log_stability_step: 0.002,
+            desired_retention_step: 0.001,
+        },
+        IntervalBucketConfig {
+            log_stability_step: 0.005,
+            desired_retention_step: 0.002,
+        },
+        IntervalBucketConfig {
+            log_stability_step: 0.010,
+            desired_retention_step: 0.005,
+        },
+    ];
+    for (index, point) in result.best_cost_weight_metrics.iter().enumerate() {
+        let stats = simulate_cost_adr_interval_bucket_stats(
+            config,
+            parameters,
+            policy,
+            point.goal_cost_weight,
+            Some(seed + index as u64),
+            None,
+            &bucket_configs,
+        )?;
+        println!(
+            "interval_bucket_stats cost_weight={:.1} total={} exact_unique={} exact_estimated_hits={} exact_estimated_hit_rate={:.6}",
+            point.goal_cost_weight,
+            stats.total_scheduled_intervals,
+            stats.exact_unique_keys,
+            stats.exact_estimated_hits,
+            stats.exact_estimated_hit_rate
+        );
+        for summary in stats.bucket_summaries {
+            println!(
+                "interval_bucket_candidate cost_weight={:.1} log_s_step={:.6} dr_step={:.6} unique={} estimated_hits={} estimated_hit_rate={:.6} conflicting_keys={} estimated_interval_misses={} estimated_interval_miss_rate={:.6}",
+                point.goal_cost_weight,
+                summary.config.log_stability_step,
+                summary.config.desired_retention_step,
+                summary.unique_keys,
+                summary.estimated_hits,
+                summary.estimated_hit_rate,
+                summary.conflicting_keys,
+                summary.estimated_interval_misses,
+                summary.estimated_interval_miss_rate
+            );
+        }
+    }
     Ok(())
 }
 
@@ -222,6 +321,7 @@ struct Args {
     early_stop_min_generations: usize,
     early_stop_min_relative_gain: f32,
     use_extracted_simulator_config: bool,
+    interval_bucket_stats: bool,
 }
 
 impl Args {
@@ -236,7 +336,7 @@ impl Args {
         let mut model_version = ModelChoice::Fsrs7;
         let mut first_grade = None;
         let mut population_size = 8;
-        let mut generations = 5;
+        let mut generations = CostAdrTrainingConfig::default().generations;
         let mut seed = DEFAULT_SEED;
         let mut endpoint_avg_dr_min_weight = None;
         let mut endpoint_avg_dr_max_weight = None;
@@ -246,6 +346,7 @@ impl Args {
         let mut early_stop_min_generations = default_cost_adr_early_stop_min_generations();
         let mut early_stop_min_relative_gain = default_cost_adr_early_stop_min_relative_gain();
         let mut use_extracted_simulator_config = false;
+        let mut interval_bucket_stats = false;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -314,6 +415,9 @@ impl Args {
                 "--use-extracted-simulator-config" => {
                     use_extracted_simulator_config = true;
                 }
+                "--interval-bucket-stats" => {
+                    interval_bucket_stats = true;
+                }
                 _ => return Err(fsrs::FSRSError::InvalidInput),
             }
         }
@@ -337,6 +441,7 @@ impl Args {
             early_stop_min_generations,
             early_stop_min_relative_gain,
             use_extracted_simulator_config,
+            interval_bucket_stats,
         })
     }
 }
@@ -417,11 +522,7 @@ fn read_collection(
     deck_name_contains: Option<&str>,
 ) -> fsrs::Result<(Vec<RevlogEntry>, i64, Vec<SelectedDeck>)> {
     let db = Connection::open(path).map_err(|_| fsrs::FSRSError::InvalidInput)?;
-    let day_cutoff = db
-        .query_row("SELECT crt FROM col LIMIT 1", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map_err(|_| fsrs::FSRSError::InvalidInput)?;
+    let day_cutoff = collection_day_cutoff(&db)?;
     let selected_decks = selected_decks(&db, deck_name_contains)?;
     let selected_deck_ids = selected_decks
         .iter()
@@ -459,6 +560,28 @@ fn read_collection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| fsrs::FSRSError::InvalidInput)?;
     Ok((revlogs, day_cutoff, selected_decks))
+}
+
+fn collection_day_cutoff(db: &Connection) -> fsrs::Result<i64> {
+    let has_col_table = db
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'col'
+            )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| fsrs::FSRSError::InvalidInput)?
+        != 0;
+    if has_col_table {
+        db.query_row("SELECT crt FROM col LIMIT 1", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|_| fsrs::FSRSError::InvalidInput)
+    } else {
+        Ok(ASIA_SHANGHAI_4H_DAY_CUTOFF_SECONDS)
+    }
 }
 
 fn selected_decks(

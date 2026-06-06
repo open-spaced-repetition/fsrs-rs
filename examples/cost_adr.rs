@@ -23,7 +23,7 @@ Options:
   --cost-limit-minutes <f32>
                             Study time limit per day in minutes (default: 720.0)
   --pop <usize>             CMA-ES population size (default: 16)
-  --gen <usize>             CMA-ES generation count (default: 20)
+  --gen <usize>             CMA-ES generation count (default: 10)
   --seed <u64>              Optimizer and simulation seed (default: 42)
   --sigma0 <f32>            CMA-ES initial sigma (default: 1.0)
   --goal-weight <f32>       Runtime scheduling cost weight (default: 64.0)

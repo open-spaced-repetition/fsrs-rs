@@ -35,9 +35,10 @@ pub use inference::{
 pub use model::FSRS;
 pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
-    CMRRTargetFn, Card, PostSchedulingFn, ReviewPriorityFn, ReviewRatingCostFn, RevlogEntry,
-    RevlogReviewKind, SimulationResult, SimulatorConfig, expected_workload,
-    expected_workload_with_existing_cards, extract_simulator_config, optimal_retention, simulate,
+    CMRRTargetFn, Card, IntervalBucketConfig, IntervalBucketStats, IntervalBucketSummary,
+    PostSchedulingFn, ReviewPriorityFn, ReviewRatingCostFn, RevlogEntry, RevlogReviewKind,
+    SimulationResult, SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
+    extract_simulator_config, optimal_retention, simulate, simulate_cost_adr_interval_bucket_stats,
 };
 pub use training::{
     CombinedProgressState, ComputeParametersInput, ComputeParametersVersion, benchmark,

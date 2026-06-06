@@ -24,7 +24,7 @@ const COST_ADR_DEFAULT_COST_WEIGHTS: [f32; 16] = [
     1024.0,
 ];
 const COST_ADR_DEFAULT_BASELINE_RETENTIONS: [f32; 16] = [
-    0.50, 0.53, 0.56, 0.59, 0.62, 0.65, 0.68, 0.71, 0.74, 0.77, 0.80, 0.83, 0.86, 0.89, 0.92, 0.95,
+    0.30, 0.34, 0.38, 0.42, 0.46, 0.50, 0.54, 0.58, 0.62, 0.66, 0.70, 0.74, 0.78, 0.82, 0.86, 0.90,
 ];
 const COST_ADR_DEFAULT_SEED: u64 = 42;
 const COST_ADR_DEFAULT_RETENTION_MIN: f32 = 0.30;
@@ -644,7 +644,7 @@ impl Default for CostAdrTrainingConfig {
     fn default() -> Self {
         Self {
             population_size: 8,
-            generations: 5,
+            generations: 10,
             early_stop_patience_generations: default_cost_adr_early_stop_patience_generations(),
             early_stop_min_generations: default_cost_adr_early_stop_min_generations(),
             early_stop_min_relative_gain: default_cost_adr_early_stop_min_relative_gain(),
@@ -2324,6 +2324,22 @@ mod tests {
         assert_eq!(result.policy.coefficients.len(), COST_ADR_PARAMETER_COUNT);
         assert_eq!(result.best_cost_weight_metrics.len(), 2);
         assert_eq!(result.history.len(), 2);
+        for (index, metrics) in result.history.iter().enumerate() {
+            assert_eq!(metrics.generation, index);
+            assert!(metrics.best_hypervolume_delta.is_finite());
+            assert!(metrics.generation_best_hypervolume_delta.is_finite());
+            assert!(metrics.mean_hypervolume_delta.is_finite());
+            assert!(metrics.sigma.is_finite());
+        }
+        assert_eq!(
+            result.history.last().unwrap().best_hypervolume_delta,
+            result.best_hypervolume_delta
+        );
+        assert!(
+            (result.baseline_hypervolume + result.best_hypervolume_delta - result.best_hypervolume)
+                .abs()
+                <= result.best_hypervolume.abs() * f32::EPSILON
+        );
         assert!(result.training_seconds >= 0.0);
         Ok(())
     }
@@ -2512,9 +2528,10 @@ mod tests {
 
     #[test]
     fn test_default_baseline_retention_grid_has_sixteen_fixed_points() {
+        assert_eq!(CostAdrTrainingConfig::default().generations, 10);
         assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS.len(), 16);
-        assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS[0], 0.50);
-        assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS[15], 0.95);
+        assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS[0], 0.30);
+        assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS[15], 0.90);
     }
 
     #[test]
