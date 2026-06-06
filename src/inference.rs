@@ -130,7 +130,7 @@ fn evaluate_time_series_split(
 
     let input = ComputeParametersInput {
         train_set: split.train_items,
-        card_ids: None,
+        card_ids: split.train_card_ids,
         enable_short_term,
         num_relearning_steps,
         training_config,
@@ -473,6 +473,7 @@ pub struct ItemProgress {
 #[derive(Debug, Clone)]
 pub struct TimeSeriesSplit {
     pub train_items: Vec<FSRSItem>,
+    pub train_card_ids: Option<Vec<i64>>,
     pub test_items: Vec<FSRSItem>,
 }
 
@@ -495,6 +496,14 @@ impl TimeSeriesSplit {
     /// # Returns
     /// A vector of TimeSeriesSplit, each containing train and validation items
     pub fn split(sorted_items: Vec<FSRSItem>, n_splits: usize) -> Vec<TimeSeriesSplit> {
+        Self::split_with_card_ids(sorted_items, None, n_splits)
+    }
+
+    fn split_with_card_ids(
+        sorted_items: Vec<FSRSItem>,
+        card_ids: Option<Vec<i64>>,
+        n_splits: usize,
+    ) -> Vec<TimeSeriesSplit> {
         if sorted_items.is_empty() || n_splits == 0 {
             return vec![];
         }
@@ -518,6 +527,9 @@ impl TimeSeriesSplit {
                 // Create the split
                 TimeSeriesSplit {
                     train_items: sorted_items[..test_start].to_vec(),
+                    train_card_ids: card_ids
+                        .as_ref()
+                        .map(|card_ids| card_ids[..test_start].to_vec()),
                     test_items: sorted_items[test_start..test_end].to_vec(),
                 }
             })
@@ -546,6 +558,7 @@ fn get_bin(x: f32, bins: i32) -> i32 {
 pub fn evaluate_with_time_series_splits<F>(
     ComputeParametersInput {
         train_set,
+        card_ids,
         enable_short_term,
         num_relearning_steps,
         training_config,
@@ -559,8 +572,16 @@ where
     if train_set.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
+    if let Some(card_ids) = &card_ids
+        && card_ids.len() != train_set.len()
+    {
+        return Err(FSRSError::InvalidInput);
+    }
 
-    let splits = TimeSeriesSplit::split(train_set, 5);
+    let splits = match card_ids {
+        Some(card_ids) => TimeSeriesSplit::split_with_card_ids(train_set, Some(card_ids), 5),
+        None => TimeSeriesSplit::split(train_set, 5),
+    };
     if splits.is_empty() {
         return Err(FSRSError::NotEnoughData);
     }
@@ -909,6 +930,22 @@ mod tests {
         assert_eq!(splits[3].test_items.len(), 1);
         assert_eq!(splits[4].train_items.len(), 5);
         assert_eq!(splits[4].test_items.len(), 1);
+        assert!(splits[4].train_card_ids.is_none());
+
+        let card_ids = vec![10, 11, 12, 13, 14, 15];
+        let splits = TimeSeriesSplit::split_with_card_ids(items[..6].to_vec(), Some(card_ids), 5);
+        assert_eq!(splits.len(), 5);
+        assert_eq!(splits[0].train_card_ids.as_deref(), Some(&[10][..]));
+        assert_eq!(splits[1].train_card_ids.as_deref(), Some(&[10, 11][..]));
+        assert_eq!(splits[2].train_card_ids.as_deref(), Some(&[10, 11, 12][..]));
+        assert_eq!(
+            splits[3].train_card_ids.as_deref(),
+            Some(&[10, 11, 12, 13][..])
+        );
+        assert_eq!(
+            splits[4].train_card_ids.as_deref(),
+            Some(&[10, 11, 12, 13, 14][..])
+        );
 
         let splits = TimeSeriesSplit::split(items[..5].to_vec(), 5);
         assert!(splits.is_empty());
@@ -1113,6 +1150,34 @@ mod tests {
 
         [metrics.log_loss, metrics.rmse_bins].assert_approx_eq([0.19692886, 0.025453836]);
 
+        let metrics_with_card_ids = evaluate_with_time_series_splits(
+            ComputeParametersInput {
+                train_set: items.clone(),
+                card_ids: Some((0..items.len() as i64).collect()),
+                progress: None,
+                enable_short_term: true,
+                num_relearning_steps: None,
+                training_config: None,
+            },
+            |_| true,
+        )
+        .unwrap();
+        assert!(metrics_with_card_ids.log_loss.is_finite());
+        assert!(metrics_with_card_ids.rmse_bins.is_finite());
+
+        let result = evaluate_with_time_series_splits(
+            ComputeParametersInput {
+                train_set: items.clone(),
+                card_ids: Some(vec![]),
+                progress: None,
+                enable_short_term: true,
+                num_relearning_steps: None,
+                training_config: None,
+            },
+            |_| true,
+        );
+        assert!(matches!(result, Err(FSRSError::InvalidInput)));
+
         let result = evaluate_with_time_series_splits(
             ComputeParametersInput {
                 train_set: items[..5].to_vec(),
@@ -1126,6 +1191,35 @@ mod tests {
         );
         assert!(result.is_err());
         Ok(())
+    }
+
+    #[test]
+    fn test_time_series_split_evaluation_forwards_card_ids() {
+        let valid_item = || FSRSItem {
+            reviews: vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0,
+                },
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 1,
+                },
+            ],
+        };
+        let result = evaluate_time_series_split(
+            TimeSeriesSplit {
+                train_items: vec![valid_item()],
+                train_card_ids: Some(vec![]),
+                test_items: vec![valid_item()],
+            },
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert!(matches!(result, Err(FSRSError::InvalidInput)));
     }
 
     #[test]
