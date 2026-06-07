@@ -11,7 +11,9 @@ use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
+#[cfg(feature = "parallel")]
 use rayon::iter::IntoParallelIterator;
+#[cfg(feature = "parallel")]
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -1359,8 +1361,12 @@ where
     if !progress() {
         return Err(FSRSError::Interrupted);
     }
-    let results: Result<Vec<f32>, FSRSError> = (0..n)
-        .into_par_iter()
+    #[cfg(feature = "parallel")]
+    let iter = (0..n).into_par_iter();
+    #[cfg(not(feature = "parallel"))]
+    let iter = (0..n).into_iter();
+
+    let results: Result<Vec<f32>, FSRSError> = iter
         .map(|i| {
             let result = simulate(
                 config,

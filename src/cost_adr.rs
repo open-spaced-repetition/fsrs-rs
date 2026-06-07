@@ -7,6 +7,7 @@ use crate::{SimulationResult, SimulatorConfig, simulate, simulate_with_cost_adr_
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rand_distr::StandardNormal;
+#[cfg(feature = "parallel")]
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
@@ -431,9 +432,12 @@ fn evaluate_cost_adr_rollouts(
     seed: u64,
 ) -> Result<Vec<CostAdrEvaluationPoint>> {
     policy.validate()?;
-    cost_weights
-        .par_iter()
-        .enumerate()
+    #[cfg(feature = "parallel")]
+    let iter = cost_weights.par_iter();
+    #[cfg(not(feature = "parallel"))]
+    let iter = cost_weights.iter();
+
+    iter.enumerate()
         .map(|(index, &goal_cost_weight)| {
             let result = simulate_with_cost_adr_policy(
                 config,
@@ -459,9 +463,12 @@ fn evaluate_baseline_desired_retentions(
     desired_retentions: &[f32],
     seed: u64,
 ) -> Result<Vec<CostAdrMetrics>> {
-    desired_retentions
-        .par_iter()
-        .enumerate()
+    #[cfg(feature = "parallel")]
+    let iter = desired_retentions.par_iter();
+    #[cfg(not(feature = "parallel"))]
+    let iter = desired_retentions.iter();
+
+    iter.enumerate()
         .map(|(index, &desired_retention)| {
             let result = simulate(
                 config,
@@ -653,8 +660,12 @@ fn train_cost_adr_single_user_inner(
 
         let completed_candidates = AtomicUsize::new(generation * training_config.population_size);
         let progress = training_config.progress.clone();
-        let candidate_results: Result<Vec<CandidateEvaluation>> = solutions
-            .into_par_iter()
+        #[cfg(feature = "parallel")]
+        let iter = solutions.into_par_iter();
+        #[cfg(not(feature = "parallel"))]
+        let iter = solutions.into_iter();
+
+        let candidate_results: Result<Vec<CandidateEvaluation>> = iter
             .map(|coefficients| {
                 if cost_adr_training_should_abort(&progress) {
                     return Err(FSRSError::Interrupted);

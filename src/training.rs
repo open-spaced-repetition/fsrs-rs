@@ -18,6 +18,7 @@ use log::info;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use std::sync::{Arc, Mutex};
@@ -532,6 +533,7 @@ fn train(
             let end_idx = std::cmp::min(start_idx + batch_size, total_size);
             let real_batch_size = end_idx - start_idx;
 
+            #[cfg(feature = "parallel")]
             // Parallel accumulation over the batch using analytical_gradients
             let batch_grads = train_set[start_idx..end_idx]
                 .par_iter()
@@ -567,6 +569,39 @@ fn train(
                         acc
                     },
                 );
+
+            #[cfg(not(feature = "parallel"))]
+            let batch_grads = train_set[start_idx..end_idx]
+                .iter()
+                .map(|weighted_item| {
+                    let item = &weighted_item.item;
+
+                    let (delta_ts, ratings): (Vec<f32>, Vec<u32>) = item.reviews
+                        [..item.reviews.len() - 1]
+                        .iter()
+                        .map(|r| (r.delta_t as f32, r.rating))
+                        .unzip();
+
+                    let final_review = item.reviews.last().unwrap();
+                    let final_delta_t = final_review.delta_t as f32;
+                    let label = if final_review.rating == 1 { 0.0 } else { 1.0 };
+
+                    let (_, item_grads) = forward_backward(
+                        &parameters,
+                        &delta_ts,
+                        &ratings,
+                        final_delta_t,
+                        label,
+                        weighted_item.weight,
+                    );
+                    item_grads
+                })
+                .fold([0.0f32; 21], |mut acc, item_grads| {
+                    for i in 0..21 {
+                        acc[i] += item_grads[i];
+                    }
+                    acc
+                });
 
             for i in 0..21 {
                 grad[i] += batch_grads[i];
@@ -613,8 +648,34 @@ fn train(
         let mut loss_valid = 0.0;
         // Validation loop calculation over batches
         for chunk in train_set.chunks(batch_size) {
+            #[cfg(feature = "parallel")]
             let chunk_loss: f64 = chunk
                 .par_iter()
+                .map(|weighted_item| {
+                    let item = &weighted_item.item;
+                    let (delta_ts, ratings): (Vec<f32>, Vec<u32>) = item.reviews
+                        [..item.reviews.len() - 1]
+                        .iter()
+                        .map(|r| (r.delta_t as f32, r.rating))
+                        .unzip();
+                    let final_review = item.reviews.last().unwrap();
+                    let label = if final_review.rating == 1 { 0.0 } else { 1.0 };
+
+                    let (loss, _) = forward_backward(
+                        &parameters,
+                        &delta_ts,
+                        &ratings,
+                        final_review.delta_t as f32,
+                        label,
+                        weighted_item.weight,
+                    );
+                    loss as f64
+                })
+                .sum();
+
+            #[cfg(not(feature = "parallel"))]
+            let chunk_loss: f64 = chunk
+                .iter()
                 .map(|weighted_item| {
                     let item = &weighted_item.item;
                     let (delta_ts, ratings): (Vec<f32>, Vec<u32>) = item.reviews

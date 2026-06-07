@@ -606,7 +606,8 @@ where
         let mut next_index = 0;
         let mut outcome: Result<()> = Ok(());
 
-        for (index, split) in splits.into_iter().enumerate() {
+        #[cfg(feature = "parallel")]
+        for (index, split) in splits.clone().into_iter().enumerate() {
             let tx = tx.clone();
             let progress = split_progresses[index].clone();
             rayon::spawn(move || {
@@ -619,6 +620,20 @@ where
                 );
                 let _ = tx.send((index, result));
             });
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        for (index, split) in splits.into_iter().enumerate() {
+            let tx = tx.clone();
+            let progress = split_progresses[index].clone();
+            let result = evaluate_time_series_split(
+                split,
+                enable_short_term,
+                num_relearning_steps,
+                training_config,
+                Some(progress),
+            );
+            let _ = tx.send((index, result));
         }
         drop(tx);
 
