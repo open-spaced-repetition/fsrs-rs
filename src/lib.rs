@@ -1,6 +1,6 @@
 #![allow(clippy::single_range_in_vec_init)]
 #![allow(clippy::needless_range_loop)]
-mod analytic;
+mod analytical_gradients;
 #[cfg(test)]
 mod batch_shuffle;
 #[cfg(test)]
@@ -12,6 +12,7 @@ mod dataset;
 mod error;
 mod inference;
 mod model;
+mod optimizer;
 mod parameter_clipper;
 mod parameter_initialization;
 mod simulation;

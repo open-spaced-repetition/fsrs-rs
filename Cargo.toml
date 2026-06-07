@@ -17,6 +17,13 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 default = []
 # Experimental: Cost ADR APIs may change without semver compatibility guarantees.
 experimental_cost_adr = ["dep:rand_distr"]
+burn-backend = ["dep:burn"]
+
+[dependencies.burn]
+version = "0.17.1"
+default-features = false
+features = ["std", "train", "ndarray", "metrics"]
+optional = true
 
 [dev-dependencies.burn]
 version = "0.17.1"

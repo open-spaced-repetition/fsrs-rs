@@ -23,6 +23,7 @@ pub struct FSRSItem {
 #[derive(Debug, Clone)]
 pub(crate) struct WeightedFSRSItem {
     pub weight: f32,
+    #[allow(dead_code)]
     pub card_id: i64,
     pub item: FSRSItem,
 }
