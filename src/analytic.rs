@@ -707,12 +707,13 @@ pub(crate) fn batch_loss_and_grad(
     loss
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Computes summed next-review loss for a prefix batch without gradients.
 ///
 /// This is the forward-only counterpart of [`batch_loss_and_grad`]. It uses the
 /// same time-major history layout and target arrays, but skips all cache
 /// backpropagation work.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn batch_loss(
     w: &[f32],
     t_hist: &[f32],
@@ -853,45 +854,6 @@ pub(crate) fn card_loss_and_grad(
             labels,
             weights,
             Some(gw),
-            &mut caches,
-            &mut g_r_losses,
-        );
-    }
-    loss
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Computes summed in-card review loss for a batch without gradients.
-///
-/// This is the forward-only counterpart of [`card_loss_and_grad`], used when the
-/// training loop or evaluation path needs only the scalar objective value for
-/// full card trajectories.
-pub(crate) fn card_loss(
-    w: &[f32],
-    t_hist: &[f32],
-    r_hist: &[f32],
-    seq_len: usize,
-    batch: usize,
-    seq_lens: &[usize],
-    labels: &[f32],
-    weights: &[f32],
-) -> f64 {
-    let mut loss = 0.0;
-    let params = RuntimeParams::new(w);
-    let mut caches = Vec::new();
-    let mut g_r_losses = Vec::new();
-    for column in 0..batch {
-        let column_seq_len = seq_lens[column].min(seq_len);
-        loss += card_column_loss_and_grad(
-            &params,
-            t_hist,
-            r_hist,
-            column_seq_len,
-            batch,
-            column,
-            labels,
-            weights,
-            None,
             &mut caches,
             &mut g_r_losses,
         );
