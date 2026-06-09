@@ -15,7 +15,6 @@ use crate::parameter_initialization::{initialize_stability_parameters, smooth_an
 use crate::{DEFAULT_PARAMETERS, FSRSError};
 #[cfg(test)]
 use burn::{nn::loss::Reduction, tensor::Int, tensor::Tensor, tensor::backend::Backend};
-use log::info;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -274,7 +273,6 @@ pub fn compute_parameters(
         if let Some(progress) = &progress {
             // The progress state at completion time may not indicate completion, because:
             // - If there were fewer than 512 entries, render_train() will have never been called
-            // - One or more of the splits may have ignored later epochs, if accuracy went backwards
             // Because of this, we need a separate finished flag.
             progress.lock().unwrap().mark_finished();
         }
@@ -590,33 +588,6 @@ fn build_host_batches(items: Vec<WeightedFSRSItem>, batch_size: usize) -> Vec<Ba
     }
 }
 
-fn batch_loss(batch: &BatchHost, parameters: &[f32]) -> f64 {
-    if batch.windowed {
-        analytic::card_loss(
-            parameters,
-            &batch.t_historys,
-            &batch.r_historys,
-            batch.seq_len,
-            batch.batch_size,
-            &batch.column_lengths,
-            &batch.labels,
-            &batch.weights,
-        )
-    } else {
-        analytic::batch_loss(
-            parameters,
-            &batch.t_historys,
-            &batch.r_historys,
-            batch.seq_len,
-            batch.batch_size,
-            &batch.column_lengths,
-            &batch.delta_ts,
-            &batch.labels,
-            &batch.weights,
-        )
-    }
-}
-
 fn batch_loss_and_grad(batch: &BatchHost, parameters: &[f32], grad: &mut [f64]) -> f64 {
     if batch.windowed {
         analytic::card_loss_and_grad(
@@ -644,27 +615,6 @@ fn batch_loss_and_grad(batch: &BatchHost, parameters: &[f32], grad: &mut [f64]) 
             grad,
         )
     }
-}
-
-fn l2_penalty(
-    parameters: &[f32],
-    init_parameters: &[f32],
-    batch_size: usize,
-    total_size: usize,
-    gamma: f64,
-) -> f64 {
-    parameters
-        .iter()
-        .zip(init_parameters)
-        .zip(PARAMS_STDDEV)
-        .map(|((&parameter, &init_parameter), stddev)| {
-            let delta = (parameter - init_parameter) as f64;
-            delta * delta / f64::from(stddev * stddev)
-        })
-        .sum::<f64>()
-        * gamma
-        * batch_size as f64
-        / total_size as f64
 }
 
 fn add_l2_gradient(
@@ -748,8 +698,6 @@ fn train(
 
     let mut parameters = initial_parameters.to_vec();
     let mut adam = HostAdam::new();
-    let mut best_loss = f64::INFINITY;
-    let mut best_parameters = parameters.clone();
     let mut rng = StdRng::seed_from_u64(training_config.seed);
     let mut batch_order = (0..train_batches.len()).collect::<Vec<_>>();
     for epoch in 1..=training_config.num_epochs {
@@ -795,36 +743,9 @@ fn train(
                 return Err(FSRSError::Interrupted);
             }
         }
-
-        let mut loss_valid = 0.0;
-        for batch in &train_batches {
-            loss_valid += batch_loss(batch, &parameters)
-                + l2_penalty(
-                    &parameters,
-                    initial_parameters,
-                    batch.real_batch_size,
-                    total_size,
-                    training_config.gamma,
-                );
-
-            if progress
-                .as_ref()
-                .is_some_and(|progress| progress.state.lock().unwrap().want_abort)
-            {
-                return Err(FSRSError::Interrupted);
-            }
-        }
-        loss_valid /= total_size as f64;
-        info!("epoch: {:?} loss: {:?}", epoch, loss_valid);
-        if loss_valid < best_loss {
-            best_loss = loss_valid;
-            best_parameters = parameters.clone();
-        }
     }
 
-    info!("best_loss: {:?}", best_loss);
-
-    Ok(best_parameters)
+    Ok(parameters)
 }
 
 #[cfg(test)]
