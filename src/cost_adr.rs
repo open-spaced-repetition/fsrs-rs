@@ -24,7 +24,7 @@ const COST_ADR_DEFAULT_COST_WEIGHTS: [f32; 16] = [
     1024.0,
 ];
 const COST_ADR_DEFAULT_BASELINE_RETENTIONS: [f32; 16] = [
-    0.30, 0.34, 0.38, 0.42, 0.46, 0.50, 0.54, 0.58, 0.62, 0.66, 0.70, 0.74, 0.78, 0.82, 0.86, 0.90,
+    0.30, 0.34, 0.38, 0.42, 0.46, 0.50, 0.54, 0.58, 0.62, 0.66, 0.70, 0.74, 0.78, 0.84, 0.89, 0.95,
 ];
 const COST_ADR_DEFAULT_SEED: u64 = 42;
 const COST_ADR_DEFAULT_RETENTION_MIN: f32 = 0.30;
@@ -2531,7 +2531,7 @@ mod tests {
         assert_eq!(CostAdrTrainingConfig::default().generations, 10);
         assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS.len(), 16);
         assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS[0], 0.30);
-        assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS[15], 0.90);
+        assert_eq!(COST_ADR_DEFAULT_BASELINE_RETENTIONS[15], 0.95);
     }
 
     #[test]

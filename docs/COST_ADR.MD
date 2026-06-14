@@ -96,7 +96,7 @@
 - `average_desired_retention`: arithmetic average of the ADR desired retention selected across simulated reviews.
 - `fixed_fsrs_equivalent_desired_retention` (`FSRS Eq. DR`, displayed as `FSRS6 Eq. DR` or `FSRS7 Eq. DR`): fixed-FSRS desired retention that reaches the same simulated Memorized target for the selected model, interpolated from the fixed-DR baseline frontier.
 - `same_target_time_saved_percent`: time saved by ADR compared with that fixed-FSRS equivalent desired retention at the same Memorized target.
-- Default fixed-FSRS baseline retention rollouts span `0.30` to `0.90` across 16 points. This keeps Cost ADR training cost unchanged while giving `fixed_fsrs_equivalent_desired_retention` coverage for lower-retention ADR policies.
+- Default fixed-FSRS baseline retention rollouts span `0.30` to `0.95` across 16 points. This keeps Cost ADR training cost unchanged while giving `fixed_fsrs_equivalent_desired_retention` coverage for lower-retention ADR policies.
 - `cost_weight_for_average_desired_retention(target)`: inferred ADR cost weight for a target average ADR desired retention. It interpolates in `ln(1 + weight)` space when only persisted calibration points are available.
 - `calibrate_cost_weight_for_average_desired_retention(target)`: computes a simulation-backed closest ADR cost weight by bisection in `ln(1 + weight)` space. This is used after policy training to persist a denser, target-oriented calibration table instead of relying on coarse fixed weights like `0, 64, 128`.
 - Calibration first evaluates endpoint weights `0` and `1024`. If their average ADR DR span is below `0.005` retention, it persists only those endpoints because extra bisection points do not give users a meaningful target range.
