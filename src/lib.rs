@@ -38,10 +38,12 @@ pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
     CMRRTargetFn, Card, IntervalBucketConfig, IntervalBucketStats, IntervalBucketSummary,
     PostSchedulingFn, ReviewPriorityFn, ReviewRatingCostFn, RevlogEntry, RevlogReviewKind,
-    SimulationResult, SimulationSummaryResult, SimulatorCardUpdateFn, SimulatorCardUpdatePhase,
-    SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
-    extract_simulator_config, optimal_retention, simulate, simulate_cost_adr_interval_bucket_stats,
-    simulate_summary, simulate_summary_with_card_update_fn, simulate_with_card_update_fn,
+    SimulationEvent, SimulationResult, SimulationSummaryResult, SimulatorCardUpdateFn,
+    SimulatorCardUpdatePhase, SimulatorConfig, SimulatorEventFn, expected_workload,
+    expected_workload_with_existing_cards, extract_simulator_config, optimal_retention, simulate,
+    simulate_cost_adr_interval_bucket_stats, simulate_summary,
+    simulate_summary_with_card_update_and_event_fn, simulate_summary_with_card_update_fn,
+    simulate_with_card_update_fn,
 };
 pub use training::{
     CombinedProgressState, ComputeParametersInput, ComputeParametersVersion, benchmark,

@@ -283,6 +283,13 @@ pub enum SimulatorCardUpdatePhase {
     AfterMemoryUpdate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SimulationEvent {
+    pub day_index: usize,
+    pub is_learn: bool,
+    pub cost: f32,
+}
+
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct SimulatorCardUpdateFn(Arc<dyn Fn(&mut Card, SimulatorCardUpdatePhase) + Sync + Send>);
@@ -308,6 +315,36 @@ impl PartialEq for SimulatorCardUpdateFn {
 }
 
 impl std::fmt::Debug for SimulatorCardUpdateFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
+    }
+}
+
+#[derive(Clone)]
+#[allow(clippy::type_complexity)]
+pub struct SimulatorEventFn(Arc<dyn Fn(&Card, SimulationEvent) + Sync + Send>);
+
+impl SimulatorEventFn {
+    pub fn new(f: impl Fn(&Card, SimulationEvent) + Sync + Send + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+}
+
+impl Deref for SimulatorEventFn {
+    type Target = dyn Fn(&Card, SimulationEvent) + Sync + Send;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl PartialEq for SimulatorEventFn {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for SimulatorEventFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Wrap(<function>)")
     }
@@ -1466,6 +1503,7 @@ pub fn simulate(
         0.0,
         None,
         None,
+        None,
         true,
     )?
     .result)
@@ -1487,6 +1525,7 @@ pub fn simulate_summary(
             existing_cards,
             None,
             0.0,
+            None,
             None,
             None,
             false,
@@ -1514,6 +1553,7 @@ pub fn simulate_with_card_update_fn(
         0.0,
         Some(card_update_fn),
         None,
+        None,
         true,
     )?
     .result)
@@ -1537,6 +1577,35 @@ pub fn simulate_summary_with_card_update_fn(
             None,
             0.0,
             Some(card_update_fn),
+            None,
+            None,
+            false,
+        )?
+        .result,
+        config.learn_span,
+    )
+}
+
+pub fn simulate_summary_with_card_update_and_event_fn(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    desired_retention: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+    card_update_fn: Option<&SimulatorCardUpdateFn>,
+    event_fn: &SimulatorEventFn,
+) -> Result<SimulationSummaryResult, FSRSError> {
+    simulation_result_to_summary(
+        simulate_inner(
+            config,
+            w,
+            desired_retention,
+            seed,
+            existing_cards,
+            None,
+            0.0,
+            card_update_fn,
+            Some(event_fn),
             None,
             false,
         )?
@@ -1612,6 +1681,7 @@ pub(crate) fn simulate_with_cost_adr_policy_for_evaluation(
         goal_cost_weight,
         None,
         None,
+        None,
         true,
     )
 }
@@ -1636,6 +1706,7 @@ pub fn simulate_cost_adr_interval_bucket_stats(
         Some(policy),
         goal_cost_weight,
         None,
+        None,
         Some(&mut recorder),
         true,
     )?;
@@ -1651,6 +1722,7 @@ fn simulate_inner(
     cost_adr_policy: Option<&CostAdrPolicy>,
     goal_cost_weight: f32,
     card_update_fn: Option<&SimulatorCardUpdateFn>,
+    event_fn: Option<&SimulatorEventFn>,
     mut interval_bucket_recorder: Option<&mut IntervalBucketRecorder>,
     record_daily_memorized: bool,
 ) -> Result<CostAdrSimulationResult, FSRSError> {
@@ -1852,6 +1924,16 @@ fn simulate_inner(
             // Update days statistics
             learn_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
+            if let Some(event_fn) = event_fn {
+                event_fn(
+                    card,
+                    SimulationEvent {
+                        day_index,
+                        is_learn: true,
+                        cost,
+                    },
+                );
+            }
 
             for day in introduced_cnt_per_day.iter_mut().skip(day_index) {
                 *day += 1;
@@ -1937,6 +2019,16 @@ fn simulate_inner(
             // Update days statistics
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
+            if let Some(event_fn) = event_fn {
+                event_fn(
+                    card,
+                    SimulationEvent {
+                        day_index,
+                        is_learn: false,
+                        cost,
+                    },
+                );
+            }
 
             if record_daily_memorized {
                 add_forgetting_curve_range(
