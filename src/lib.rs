@@ -22,8 +22,9 @@ mod training;
 
 pub use cost_adr::{
     COST_ADR_POLICY_VERSION, CostAdrBounds, CostAdrEvaluationConfig, CostAdrEvaluationPoint,
-    CostAdrEvaluationResult, CostAdrItemState, CostAdrMetrics, CostAdrNextStates, CostAdrPlotPoint,
-    CostAdrPolicy, CostAdrTrainingConfig, CostAdrTrainingResult,
+    CostAdrEvaluationResult, CostAdrFixedTargetCalibrationPoint, CostAdrItemState, CostAdrMetrics,
+    CostAdrNextStates, CostAdrPlotPoint, CostAdrPolicy, CostAdrTrainingConfig,
+    CostAdrTrainingResult,
 };
 pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
 pub use error::{FSRSError, Result};
@@ -37,8 +38,10 @@ pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
     CMRRTargetFn, Card, IntervalBucketConfig, IntervalBucketStats, IntervalBucketSummary,
     PostSchedulingFn, ReviewPriorityFn, ReviewRatingCostFn, RevlogEntry, RevlogReviewKind,
-    SimulationResult, SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
+    SimulationResult, SimulationSummaryResult, SimulatorCardUpdateFn, SimulatorCardUpdatePhase,
+    SimulatorConfig, expected_workload, expected_workload_with_existing_cards,
     extract_simulator_config, optimal_retention, simulate, simulate_cost_adr_interval_bucket_stats,
+    simulate_summary, simulate_summary_with_card_update_fn, simulate_with_card_update_fn,
 };
 pub use training::{
     CombinedProgressState, ComputeParametersInput, ComputeParametersVersion, benchmark,

@@ -528,6 +528,14 @@ pub struct CostAdrEvaluationPoint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CostAdrFixedTargetCalibrationPoint {
+    pub desired_retention: f32,
+    pub goal_cost_weight: f32,
+    pub memorized_average: f32,
+    pub time_average: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CostAdrAucMetrics {
     pub baseline_point_count: usize,
     pub scheduler_point_count: usize,
@@ -578,6 +586,17 @@ impl CostAdrEvaluationResult {
         cost_weight_for_average_desired_retention(
             &self.scheduler_metrics,
             target_average_desired_retention,
+        )
+    }
+
+    pub fn efficient_fixed_desired_retention_points(
+        &self,
+        baseline_desired_retentions: &[f32],
+    ) -> Vec<CostAdrFixedTargetCalibrationPoint> {
+        efficient_fixed_desired_retention_points(
+            baseline_desired_retentions,
+            &self.baseline_metrics,
+            &self.scheduler_metrics,
         )
     }
 }
@@ -696,6 +715,17 @@ impl CostAdrTrainingResult {
         cost_weight_for_average_desired_retention(
             &self.best_cost_weight_metrics,
             target_average_desired_retention,
+        )
+    }
+
+    pub fn efficient_fixed_desired_retention_points(
+        &self,
+        baseline_desired_retentions: &[f32],
+    ) -> Vec<CostAdrFixedTargetCalibrationPoint> {
+        efficient_fixed_desired_retention_points(
+            baseline_desired_retentions,
+            &self.baseline_metrics,
+            &self.best_cost_weight_metrics,
         )
     }
 }
@@ -1159,6 +1189,106 @@ fn endpoint_average_desired_retention(
         })
         .min_by(|left, right| compare(&left.0, &right.0))
         .map(|(_, average_desired_retention)| average_desired_retention)
+}
+
+fn efficient_fixed_desired_retention_points(
+    baseline_desired_retentions: &[f32],
+    baseline_metrics: &[CostAdrMetrics],
+    scheduler_points: &[CostAdrEvaluationPoint],
+) -> Vec<CostAdrFixedTargetCalibrationPoint> {
+    let mut baseline_points = baseline_desired_retentions
+        .iter()
+        .copied()
+        .zip(baseline_metrics.iter().copied())
+        .filter(|(desired_retention, metrics)| {
+            desired_retention.is_finite()
+                && (0.0..=1.0).contains(desired_retention)
+                && metrics.memorized_average.is_finite()
+        })
+        .map(
+            |(desired_retention, metrics)| DesiredRetentionMemoryTimePoint {
+                desired_retention,
+                memorized_average: metrics.memorized_average,
+                time_average: metrics.time_average,
+            },
+        )
+        .collect::<Vec<_>>();
+    baseline_points.sort_by(|left, right| {
+        left.memorized_average
+            .partial_cmp(&right.memorized_average)
+            .unwrap_or(Ordering::Equal)
+    });
+
+    let candidates = scheduler_points
+        .iter()
+        .filter_map(|point| {
+            if !(point.goal_cost_weight.is_finite()
+                && point.goal_cost_weight >= 0.0
+                && point.metrics.memorized_average.is_finite()
+                && point.metrics.time_average.is_finite())
+            {
+                return None;
+            }
+            let desired_retention =
+                point.fixed_fsrs_equivalent_desired_retention.or_else(|| {
+                    interpolated_desired_retention_for_memory_target(
+                        &baseline_points,
+                        point.metrics.memorized_average,
+                    )
+                })?;
+            if desired_retention.is_finite() && (0.0..=1.0).contains(&desired_retention) {
+                Some(CostAdrFixedTargetCalibrationPoint {
+                    desired_retention,
+                    goal_cost_weight: point.goal_cost_weight,
+                    memorized_average: point.metrics.memorized_average,
+                    time_average: point.metrics.time_average,
+                })
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut points = candidates
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            !candidates.iter().any(|other| {
+                let no_worse = other.desired_retention >= candidate.desired_retention
+                    && other.time_average <= candidate.time_average;
+                let strictly_better = other.desired_retention > candidate.desired_retention
+                    || other.time_average < candidate.time_average;
+                no_worse && strictly_better
+            })
+        })
+        .collect::<Vec<_>>();
+
+    points.sort_by(|left, right| {
+        left.desired_retention
+            .total_cmp(&right.desired_retention)
+            .then_with(|| left.time_average.total_cmp(&right.time_average))
+    });
+    collapse_fixed_target_calibration_points(&mut points);
+    points
+}
+
+fn collapse_fixed_target_calibration_points(points: &mut Vec<CostAdrFixedTargetCalibrationPoint>) {
+    let mut collapsed: Vec<CostAdrFixedTargetCalibrationPoint> = Vec::new();
+    for point in points.iter().copied() {
+        if let Some(last) = collapsed.last_mut() {
+            if is_close(last.desired_retention, point.desired_retention) {
+                if point.time_average < last.time_average
+                    || (is_close(point.time_average, last.time_average)
+                        && point.goal_cost_weight > last.goal_cost_weight)
+                {
+                    *last = point;
+                }
+                continue;
+            }
+        }
+        collapsed.push(point);
+    }
+    *points = collapsed;
 }
 
 fn train_cost_adr_single_user(
@@ -1951,6 +2081,20 @@ mod tests {
         }
     }
 
+    fn test_evaluation_point_with_metrics(
+        cost_weight: f32,
+        memorized_average: f32,
+        time_average: f32,
+    ) -> CostAdrEvaluationPoint {
+        CostAdrEvaluationPoint {
+            goal_cost_weight: cost_weight,
+            metrics: test_metrics(memorized_average, time_average),
+            average_desired_retention: Some(0.8),
+            fixed_fsrs_equivalent_desired_retention: None,
+            same_target_time_saved_percent: None,
+        }
+    }
+
     #[test]
     fn test_default_policy_retention_decreases_with_cost() {
         let policy = CostAdrPolicy::default_initial();
@@ -2155,6 +2299,30 @@ mod tests {
             result.cost_weight_for_average_desired_retention(f32::NAN),
             None
         );
+    }
+
+    #[test]
+    fn test_efficient_fixed_desired_retention_points_choose_cheapest_eligible_point() {
+        let baseline_desired_retentions = vec![0.8, 0.9];
+        let baseline_metrics = vec![test_metrics(100.0, 10.0), test_metrics(120.0, 20.0)];
+        let scheduler_points = vec![
+            test_evaluation_point_with_metrics(0.0, 120.0, 25.0),
+            test_evaluation_point_with_metrics(16.0, 120.0, 12.0),
+            test_evaluation_point_with_metrics(64.0, 100.0, 6.0),
+            test_evaluation_point_with_metrics(128.0, 90.0, 2.0),
+        ];
+
+        let points = efficient_fixed_desired_retention_points(
+            &baseline_desired_retentions,
+            &baseline_metrics,
+            &scheduler_points,
+        );
+
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].desired_retention, 0.8);
+        assert_eq!(points[0].goal_cost_weight, 64.0);
+        assert_eq!(points[1].desired_retention, 0.9);
+        assert_eq!(points[1].goal_cost_weight, 16.0);
     }
 
     #[test]

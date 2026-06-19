@@ -31,6 +31,15 @@ pub struct SimulationResult {
     pub cards: Vec<Card>,
 }
 
+#[derive(Debug)]
+pub struct SimulationSummaryResult {
+    pub memorized: f32,
+    pub review_count: usize,
+    pub learn_count: usize,
+    pub cost: f32,
+    pub cards: Vec<Card>,
+}
+
 pub(crate) struct CostAdrSimulationResult {
     pub result: SimulationResult,
     pub average_desired_retention: Option<f32>,
@@ -265,6 +274,42 @@ impl std::fmt::Debug for ReviewPriorityFn {
 impl Default for ReviewPriorityFn {
     fn default() -> Self {
         Self(Arc::new(|card| (card.difficulty * 100.0) as i32))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulatorCardUpdatePhase {
+    BeforeMemoryUpdate,
+    AfterMemoryUpdate,
+}
+
+#[derive(Clone)]
+#[allow(clippy::type_complexity)]
+pub struct SimulatorCardUpdateFn(Arc<dyn Fn(&mut Card, SimulatorCardUpdatePhase) + Sync + Send>);
+
+impl SimulatorCardUpdateFn {
+    pub fn new(f: impl Fn(&mut Card, SimulatorCardUpdatePhase) + Sync + Send + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+}
+
+impl Deref for SimulatorCardUpdateFn {
+    type Target = dyn Fn(&mut Card, SimulatorCardUpdatePhase) + Sync + Send;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl PartialEq for SimulatorCardUpdateFn {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for SimulatorCardUpdateFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wrap(<function>)")
     }
 }
 
@@ -1328,6 +1373,7 @@ pub fn expected_workload_with_existing_cards(
             last_date: f32::NEG_INFINITY,
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
+            reps: 0,
             lapses: 0,
             desired_retention,
             parameters: w.clone(),
@@ -1358,6 +1404,7 @@ pub struct Card {
     pub last_date: f32,
     pub due: f32,
     pub interval: f32,
+    pub reps: u32,
     pub lapses: u32,
     pub desired_retention: f32,
     // check_and_fill_parameters needs to be called manually on the parameters provided to the card.
@@ -1394,6 +1441,7 @@ impl Default for Card {
             last_date: f32::NEG_INFINITY,
             due: f32::NEG_INFINITY,
             interval: f32::NEG_INFINITY,
+            reps: 0,
             lapses: 0,
             desired_retention: 0.9,
             parameters: DEFAULT_PARAMETERS_ARC.clone(),
@@ -1417,8 +1465,113 @@ pub fn simulate(
         None,
         0.0,
         None,
+        None,
+        true,
     )?
     .result)
+}
+
+pub fn simulate_summary(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    desired_retention: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+) -> Result<SimulationSummaryResult, FSRSError> {
+    simulation_result_to_summary(
+        simulate_inner(
+            config,
+            w,
+            desired_retention,
+            seed,
+            existing_cards,
+            None,
+            0.0,
+            None,
+            None,
+            false,
+        )?
+        .result,
+        config.learn_span,
+    )
+}
+
+pub fn simulate_with_card_update_fn(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    desired_retention: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+    card_update_fn: &SimulatorCardUpdateFn,
+) -> Result<SimulationResult, FSRSError> {
+    Ok(simulate_inner(
+        config,
+        w,
+        desired_retention,
+        seed,
+        existing_cards,
+        None,
+        0.0,
+        Some(card_update_fn),
+        None,
+        true,
+    )?
+    .result)
+}
+
+pub fn simulate_summary_with_card_update_fn(
+    config: &SimulatorConfig,
+    w: &Parameters,
+    desired_retention: f32,
+    seed: Option<u64>,
+    existing_cards: Option<Vec<Card>>,
+    card_update_fn: &SimulatorCardUpdateFn,
+) -> Result<SimulationSummaryResult, FSRSError> {
+    simulation_result_to_summary(
+        simulate_inner(
+            config,
+            w,
+            desired_retention,
+            seed,
+            existing_cards,
+            None,
+            0.0,
+            Some(card_update_fn),
+            None,
+            false,
+        )?
+        .result,
+        config.learn_span,
+    )
+}
+
+fn simulation_result_to_summary(
+    result: SimulationResult,
+    learn_span: usize,
+) -> Result<SimulationSummaryResult, FSRSError> {
+    let memorized = final_memorized(&result.cards, learn_span);
+    let review_count = result.review_cnt_per_day.iter().sum();
+    let learn_count = result.learn_cnt_per_day.iter().sum();
+    let cost = result.cost_per_day.iter().sum();
+    Ok(SimulationSummaryResult {
+        memorized,
+        review_count,
+        learn_count,
+        cost,
+        cards: result.cards,
+    })
+}
+
+fn final_memorized(cards: &[Card], learn_span: usize) -> f32 {
+    if learn_span == 0 {
+        return 0.0;
+    }
+    let end_date = (learn_span - 1) as f32;
+    cards
+        .iter()
+        .filter(|card| card.stability.is_finite() && card.stability > 0.0)
+        .map(|card| card.retention_on(end_date))
+        .sum()
 }
 
 pub fn simulate_with_cost_adr_policy(
@@ -1458,6 +1611,8 @@ pub(crate) fn simulate_with_cost_adr_policy_for_evaluation(
         Some(policy),
         goal_cost_weight,
         None,
+        None,
+        true,
     )
 }
 
@@ -1480,7 +1635,9 @@ pub fn simulate_cost_adr_interval_bucket_stats(
         existing_cards,
         Some(policy),
         goal_cost_weight,
+        None,
         Some(&mut recorder),
+        true,
     )?;
     Ok(recorder.finish())
 }
@@ -1493,7 +1650,9 @@ fn simulate_inner(
     existing_cards: Option<Vec<Card>>,
     cost_adr_policy: Option<&CostAdrPolicy>,
     goal_cost_weight: f32,
+    card_update_fn: Option<&SimulatorCardUpdateFn>,
     mut interval_bucket_recorder: Option<&mut IntervalBucketRecorder>,
+    record_daily_memorized: bool,
 ) -> Result<CostAdrSimulationResult, FSRSError> {
     let w = Arc::new(check_and_fill_parameters(w)?);
     let fsrs7_runtime = fsrs7_runtime(&w);
@@ -1508,7 +1667,11 @@ fn simulate_inner(
 
     let mut review_cnt_per_day = vec![0; config.learn_span];
     let mut learn_cnt_per_day = vec![0; config.learn_span];
-    let mut memorized_cnt_per_day = vec![0.0; config.learn_span];
+    let mut memorized_cnt_per_day = if record_daily_memorized {
+        vec![0.0; config.learn_span]
+    } else {
+        Vec::new()
+    };
     let mut cost_per_day = vec![0.0; config.learn_span];
     let mut due_cnt_per_day = vec![0; config.learn_span + config.learn_span / 2];
     let mut correct_cnt_per_day = vec![0; config.learn_span];
@@ -1566,6 +1729,7 @@ fn simulate_inner(
             last_date: f32::NEG_INFINITY,
             due: (i / config.learn_limit) as f32,
             interval: f32::NEG_INFINITY,
+            reps: 0,
             lapses: 0,
             desired_retention,
             parameters: w.clone(),
@@ -1603,6 +1767,9 @@ fn simulate_inner(
     // Main simulation loop
     while let Some(card_index) = card_priorities.peek_index() {
         let card = &mut cards[card_index];
+        if let Some(card_update_fn) = card_update_fn {
+            card_update_fn(card, SimulatorCardUpdatePhase::BeforeMemoryUpdate);
+        }
         let fsrs = simulated_fsrs(&card.parameters);
         let card_fsrs7_runtime = if Arc::ptr_eq(&card.parameters, &w) {
             fsrs7_runtime.as_ref()
@@ -1618,7 +1785,7 @@ fn simulate_inner(
 
         // Guards
         if card.due >= config.learn_span as f32 || card.lapses >= max_lapses {
-            if !is_learn {
+            if record_daily_memorized && !is_learn {
                 add_forgetting_curve_range(
                     fsrs,
                     &card.parameters,
@@ -1771,22 +1938,27 @@ fn simulate_inner(
             review_cnt_per_day[day_index] += 1;
             cost_per_day[day_index] += cost;
 
-            add_forgetting_curve_range(
-                fsrs,
-                &card.parameters,
-                card_fsrs7_runtime,
-                &mut memorized_cnt_per_day,
-                last_date_index,
-                day_index,
-                card.last_date,
-                card.stability,
-            );
+            if record_daily_memorized {
+                add_forgetting_curve_range(
+                    fsrs,
+                    &card.parameters,
+                    card_fsrs7_runtime,
+                    &mut memorized_cnt_per_day,
+                    last_date_index,
+                    day_index,
+                    card.last_date,
+                    card.stability,
+                );
+            }
 
             card.stability = new_s;
             card.difficulty = new_d;
         }
 
-        if let Some(evaluator) = &cost_adr_evaluator {
+        card.reps = card.reps.saturating_add(1);
+        if let Some(card_update_fn) = card_update_fn {
+            card_update_fn(card, SimulatorCardUpdatePhase::AfterMemoryUpdate);
+        } else if let Some(evaluator) = &cost_adr_evaluator {
             card.desired_retention = evaluator.evaluate_retention(card.stability, card.difficulty);
         }
         desired_retention_sum += card.desired_retention;
@@ -2380,6 +2552,7 @@ pub fn extract_simulator_config(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::time::Instant;
 
     use super::*;
@@ -2639,6 +2812,31 @@ mod tests {
     }
 
     #[test]
+    fn test_simulate_summary_matches_full_simulation_totals() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 100,
+            learn_span: 30,
+            review_limit: 9999,
+            ..Default::default()
+        };
+        let full = simulate(&config, &DEFAULT_PARAMETERS, 0.9, Some(42), None)?;
+        let summary = simulate_summary(&config, &DEFAULT_PARAMETERS, 0.9, Some(42), None)?;
+
+        assert!((summary.memorized - full.memorized_cnt_per_day.last().unwrap()).abs() < 0.01);
+        assert_eq!(
+            summary.review_count,
+            full.review_cnt_per_day.iter().copied().sum::<usize>()
+        );
+        assert_eq!(
+            summary.learn_count,
+            full.learn_cnt_per_day.iter().copied().sum::<usize>()
+        );
+        assert!((summary.cost - full.cost_per_day.iter().sum::<f32>()).abs() < 0.01);
+        assert_eq!(summary.cards.len(), full.cards.len());
+        Ok(())
+    }
+
+    #[test]
     fn test_simulator_learn_review_costs() -> Result<()> {
         let config = SimulatorConfig {
             deck_size: 1,
@@ -2669,6 +2867,45 @@ mod tests {
             ..
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, Some(cards))?;
         assert_eq!(cost_per_day_review[0], REVIEW_COST);
+        Ok(())
+    }
+
+    #[test]
+    fn test_simulator_card_update_fn_sees_incremented_reps_after_memory_update() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 1,
+            learn_span: 1,
+            learn_limit: 0,
+            review_limit: 1,
+            review_rating_prob: [0.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        let card = Card {
+            difficulty: 5.0,
+            stability: 5.0,
+            last_date: -5.0,
+            due: 0.0,
+            interval: 5.0,
+            ..Default::default()
+        };
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let phases_for_fn = phases.clone();
+        let card_update_fn = SimulatorCardUpdateFn::new(move |card, phase| {
+            phases_for_fn.lock().unwrap().push((phase, card.reps));
+        });
+
+        simulate_with_card_update_fn(
+            &config,
+            &DEFAULT_PARAMETERS,
+            0.9,
+            None,
+            Some(vec![card]),
+            &card_update_fn,
+        )?;
+
+        let phases = phases.lock().unwrap();
+        assert!(phases.contains(&(SimulatorCardUpdatePhase::BeforeMemoryUpdate, 0)));
+        assert!(phases.contains(&(SimulatorCardUpdatePhase::AfterMemoryUpdate, 1)));
         Ok(())
     }
 
@@ -3105,6 +3342,7 @@ mod tests {
             last_date: -20.0,
             due: -10.0,
             interval: 10.0,
+            reps: 0,
             lapses: 0,
             desired_retention: 0.9,
             parameters: Arc::new(DEFAULT_PARAMETERS.to_vec()),
