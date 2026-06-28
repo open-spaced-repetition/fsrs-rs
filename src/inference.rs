@@ -15,9 +15,12 @@ use crate::{FSRSError, FSRSItem};
 pub type Parameters = [f32];
 type SharedTrainingProgress = Arc<Mutex<training::CombinedProgressState>>;
 
+/// The default decay for FSRS 5.
 pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
+/// The default decay for FSRS 6.
 pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
 
+/// The default parameters for most of peoples' learning habits.
 pub static DEFAULT_PARAMETERS: [f32; 21] = [
     0.212,
     1.2931,
@@ -56,9 +59,12 @@ pub fn current_retrievability(state: MemoryState, days_elapsed: f32, decay: f32)
     (days_elapsed / state.stability * factor + 1.0).powf(-decay)
 }
 
+/// Represents the memory state of an item in the FSRS system.
 #[derive(Debug, PartialEq, Clone, Copy, Serialize)]
 pub struct MemoryState {
+    /// The stability of the memory state
     pub stability: f32,
+    /// The difficulty of the memory state
     pub difficulty: f32,
 }
 
@@ -318,6 +324,21 @@ impl FSRS {
     }
 
     /// The intervals and memory states for each answer button.
+    ///
+    /// Returns a [`NextStates`] struct containing the intervals and memory states for each answer button.
+    ///
+    /// # Examples
+    /// ```
+    /// use fsrs::{FSRS, MemoryState};
+    ///
+    /// let fsrs = FSRS::default();
+    /// let desired_retention = 0.9;
+    /// let previous_state: Option<MemoryState> = None;
+    /// let elapsed_days = 0;
+    ///
+    /// let next_states = fsrs.next_states(previous_state, desired_retention, elapsed_days).unwrap();
+    /// let review = next_states.good;
+    /// ```
     pub fn next_states(
         &self,
         current_memory_state: Option<MemoryState>,
@@ -444,29 +465,49 @@ impl FSRS {
     }
 }
 
+/// The evaluation metrics of a model.
 #[derive(Debug, Copy, Clone)]
 pub struct ModelEvaluation {
+    /// The accuracy of the model's predicted probabilities
     pub log_loss: f32,
+    /// Whether the model's predicted probability matches the actual recall rate.
     pub rmse_bins: f32,
 }
 
+/// The next states of an item after a review.
+///
+/// It contains the states for each user choice after a review.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NextStates {
+    /// The state of the item after a "again" review.
     pub again: ItemState,
+    /// The state of the item after a "hard" review.
     pub hard: ItemState,
+    /// The state of the item after a "good" review.
     pub good: ItemState,
+    /// The state of the item after an "easy" review.
     pub easy: ItemState,
 }
 
+/// The state of an item after a review.
+///
+/// It contains the memory state and the interval after a review.
 #[derive(Debug, PartialEq, Clone, Serialize)]
 pub struct ItemState {
+    /// The memory state of the item after a review.
     pub memory: MemoryState,
+    /// The interval after a review.
     pub interval: f32,
 }
 
+/// The learning progress of an item.
+///
+/// It contains the current and total number of reviews for an item.
 #[derive(Debug, Clone, Copy)]
 pub struct ItemProgress {
+    /// The current number of reviews for the item.
     pub current: usize,
+    /// The total number of reviews for the item.
     pub total: usize,
 }
 
