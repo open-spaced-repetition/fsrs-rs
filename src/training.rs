@@ -93,9 +93,14 @@ pub struct ProgressState {
     pub items_total: usize,
 }
 
+/// A whole training progress state.
+/// 
+/// This struct is a part of [`ComputeParametersInput`].
 #[derive(Debug, Default)]
 pub struct CombinedProgressState {
+    /// Whether the training should be aborted.
     pub want_abort: bool,
+    /// The progress states for each training split.
     pub splits: Vec<ProgressState>,
     finished: bool,
 }
@@ -217,23 +222,23 @@ pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     total_recall as f32 / total_reviews as f32
 }
 
-/// Input parameters for computing FSRS parameters
+/// Input parameters for computing FSRS parameters.
 #[derive(Clone, Debug)]
 pub struct ComputeParametersInput {
-    /// The training set containing review history
+    /// The training set containing review history。
     pub train_set: Vec<FSRSItem>,
     /// Optional card ids aligned with `train_set`.
     ///
     /// When supplied, training groups the prefix items from the same card and
     /// computes the card recurrence once per batch column.
     pub card_ids: Option<Vec<i64>>,
-    /// Optional progress tracking
+    /// Optional progress tracking.
     pub progress: Option<Arc<Mutex<CombinedProgressState>>>,
-    /// Whether to enable short-term memory parameters
+    /// Whether to enable short-term memory parameters.
     pub enable_short_term: bool,
-    /// Number of relearning steps
+    /// Number of relearning steps.
     pub num_relearning_steps: Option<usize>,
-    /// Optional training hyperparameters
+    /// Optional training hyperparameters.
     pub training_config: Option<TrainingConfig>,
 }
 
@@ -249,7 +254,7 @@ impl Default for ComputeParametersInput {
         }
     }
 }
-/// Computes optimized parameters for the FSRS model based on training data.
+/// Find the better parameters.
 ///
 /// This function trains the model on the provided dataset and returns optimized parameters.
 ///
@@ -258,6 +263,14 @@ impl Default for ComputeParametersInput {
 ///
 /// # Returns
 /// A `Result<Vec<f32>>` containing the optimized parameters
+///
+/// # Examples
+/// ```
+/// use fsrs::{ComputeParametersInput, compute_parameters};
+///
+/// let input = ComputeParametersInput::default();
+/// let params = compute_parameters(input).unwrap();
+/// ```
 pub fn compute_parameters(
     ComputeParametersInput {
         train_set,
@@ -389,6 +402,7 @@ pub fn compute_parameters(
     Ok(optimized_parameters)
 }
 
+/// Assess how good or bad the current settings are。
 pub fn benchmark(
     ComputeParametersInput {
         train_set,
