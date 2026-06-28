@@ -41,21 +41,26 @@ pub use cost_adr::{
     CostAdrEvaluationConfig, CostAdrEvaluationResult, CostAdrItemState, CostAdrNextStates,
     CostAdrPolicy, CostAdrTrainingConfig, CostAdrTrainingResult,
 };
+// Provide the basic data structures.
 pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
+/// Error types and Result alias for the crate.
 pub use error::{FSRSError, Result};
 pub use inference::{
     DEFAULT_PARAMETERS, FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, ItemProgress, ItemState,
     MemoryState, ModelEvaluation, NextStates, current_retrievability,
     evaluate_with_time_series_splits,
 };
+// Provide the main model. It's the most commanly used part.
 pub use model::{FSRS, check_and_fill_parameters};
 #[cfg(feature = "experimental_cost_adr")]
 pub use simulation::simulate_with_cost_adr_policy;
+// Simulate long-term scheduling outcomes without real users.
 pub use simulation::{
     CMRRTargetFn, Card, PostSchedulingContext, PostSchedulingFn, ReviewPriorityFn, RevlogEntry,
     RevlogReviewKind, SimulationResult, SimulatorConfig, expected_workload,
     expected_workload_with_existing_cards, extract_simulator_config, optimal_retention, simulate,
 };
+// Compute optimal model parameters from review history.
 pub use training::{
     CombinedProgressState, ComputeParametersInput, TrainingConfig, benchmark, compute_parameters,
 };
