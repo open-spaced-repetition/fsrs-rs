@@ -402,7 +402,7 @@ pub fn compute_parameters(
     Ok(optimized_parameters)
 }
 
-/// Assess how good or bad the current settings are。
+/// Assess how good or bad the current settings are.
 pub fn benchmark(
     ComputeParametersInput {
         train_set,
