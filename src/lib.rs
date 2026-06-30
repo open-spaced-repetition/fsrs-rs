@@ -28,7 +28,7 @@
 //! let previous_state: Option<MemoryState> = None;
 //! let elapsed_days = 0;
 //!
-//! let next_states = fsrs.next_states(previous_state, desired_retention, elapsed_days)?;
+//! let next_states = fsrs.next_states(previous_state, desired_retention, elapsed_days).unwrap();
 //! let review = next_states.good;
 //!
 //! let interval_days = review.interval.round().max(1.0) as u32;
