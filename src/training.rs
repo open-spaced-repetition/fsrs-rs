@@ -268,7 +268,11 @@ impl Default for ComputeParametersInput {
 /// ```
 /// use fsrs::{ComputeParametersInput, compute_parameters};
 ///
-/// let input = ComputeParametersInput::default();
+/// let train_set = vec![/*Your train set*/];
+/// let input = ComputeParametersInput {
+///    train_set,
+///    ..ComputeParametersInput::default()
+/// };
 /// let params = compute_parameters(input).unwrap();
 /// ```
 pub fn compute_parameters(
