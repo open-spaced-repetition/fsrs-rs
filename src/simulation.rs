@@ -941,7 +941,7 @@ pub fn expected_workload_with_existing_cards(
 #[derive(Debug, Clone)]
 pub struct Card {
     /// The unique identifier of the card.
-    /// 
+    ///
     /// # Note
     /// "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
     /// new cards created by the simulation have negative id's so use positive ones.
@@ -961,7 +961,7 @@ pub struct Card {
     /// The desired retention configure for the card.
     pub desired_retention: f32,
     /// Shared references of [`crate::FSRS`] parameters.
-    /// 
+    ///
     /// # Note
     /// check_and_fill_parameters needs to be called manually on the parameters provided to the card.
     pub parameters: Arc<Vec<f32>>,

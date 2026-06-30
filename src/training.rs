@@ -94,7 +94,7 @@ pub struct ProgressState {
 }
 
 /// A whole training progress state.
-/// 
+///
 /// This struct is a part of [`ComputeParametersInput`].
 #[derive(Debug, Default)]
 pub struct CombinedProgressState {
