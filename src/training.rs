@@ -225,7 +225,7 @@ pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
 /// Input parameters for computing FSRS parameters.
 #[derive(Clone, Debug)]
 pub struct ComputeParametersInput {
-    /// The training set containing review history。
+    /// The training set containing review history.
     pub train_set: Vec<FSRSItem>,
     /// Optional card ids aligned with `train_set`.
     ///
