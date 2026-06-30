@@ -13,7 +13,30 @@
 //!
 //! ---
 //!
-//! The crate provides both high-level and low-level structs and functions for working with FSRS.
+//! The most of functions in this crate require a struct input.
+//! e.g. [`ComputeParametersInput`] and [`FSRSItem`].
+//!
+//! The most common struct is [`FSRS`] which holds the user's parameters.
+//!
+//! # Examples
+//! ```
+//! use chrono::{Duration, Utc};
+//! use fsrs::{FSRS, MemoryState};
+//!
+//! let fsrs = FSRS::default();
+//! let desired_retention = 0.9;
+//! let previous_state: Option<MemoryState> = None;
+//! let elapsed_days = 0;
+//!
+//! let next_states = fsrs.next_states(previous_state, desired_retention, elapsed_days)?;
+//! let review = next_states.good;
+//!
+//! let interval_days = review.interval.round().max(1.0) as u32;
+//! let due = Utc::now() + Duration::days(interval_days as i64);
+//! ```
+//!
+//! There are more functions and structures.
+//! You can find them [here](https://github.com/open-spaced-repetition/fsrs-rs/blob/main/src/lib.rs).
 
 #![allow(clippy::single_range_in_vec_init)]
 #![allow(clippy::needless_range_loop)]
