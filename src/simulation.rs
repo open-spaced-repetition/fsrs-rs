@@ -965,7 +965,7 @@ pub struct Card {
     pub interval: f32,
     /// The number of lapses (forgetting events) for the card.
     pub lapses: u32,
-    /// The desired retention configure for the card.
+    /// The desired retention configured for the card.
     pub desired_retention: f32,
     /// Shared references of [`crate::FSRS`] parameters.
     ///
