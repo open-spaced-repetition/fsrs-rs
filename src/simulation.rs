@@ -28,9 +28,9 @@ pub struct SimulationResult {
     pub memorized_cnt_per_day: Vec<f32>,
     /// Number of cards to review each day.
     pub review_cnt_per_day: Vec<usize>,
-    /// Number of new cards studied for the first time each day.
+    /// Number of new cards studied for the first time each day in seconds.
     pub learn_cnt_per_day: Vec<usize>,
-    /// Daily cost.
+    /// Daily cost in seconds.
     pub cost_per_day: Vec<f32>,
     /// Average desired retention.
     pub average_desired_retention: Option<f32>,
