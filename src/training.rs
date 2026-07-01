@@ -254,15 +254,18 @@ impl Default for ComputeParametersInput {
         }
     }
 }
-/// Computes optimized parameters for the FSRS model based on provided training data.
+/// Computes parameters for the FSRS model based on provided training data.
 ///
-/// This function trains the model on the provided dataset and returns optimized parameters.
+/// This function trains the model on the provided dataset and returns trained parameters.
+///
+/// # Notes
+/// This function is used in production environment, which is different from [`benchmark`] used for testing/quick validation.
 ///
 /// # Arguments
-/// * `input` - Input parameters including the training dataset and configuration
+/// * `input` - A [`ComputeParametersInput`] parameters including the training dataset and configuration.
 ///
 /// # Returns
-/// A `Result<Vec<f32>>` containing the optimized parameters
+/// A [`Result<Vec<f32>>`] containing the result and trained parameters.
 ///
 /// # Examples
 /// ```
@@ -273,7 +276,7 @@ impl Default for ComputeParametersInput {
 ///    train_set,
 ///    ..ComputeParametersInput::default()
 /// };
-/// let params = compute_parameters(input).unwrap();
+/// let params = compute_parameters(input).unwrap(); // You can find unwrap here, unlike [`benchmark`].
 /// ```
 pub fn compute_parameters(
     ComputeParametersInput {
@@ -407,6 +410,25 @@ pub fn compute_parameters(
 }
 
 /// Assess how good or bad the current parameters are.
+///
+/// # Notes
+/// This function is used in testing/quick validation environment, which is different from [`compute_parameters`] used for production.
+///
+/// # Panics
+/// This function will panic if the training process fails.
+/// For a version that returns a [`Result`] instead, see [`compute_parameters`].
+///
+/// # Examples
+/// ```
+/// use fsrs::{ComputeParametersInput, benchmark};
+///
+/// let train_set = vec![/*Your train set*/];
+/// let input = ComputeParametersInput {
+///    train_set,
+///    ..ComputeParametersInput::default()
+/// };
+/// let params = benchmark(input); // You can find no unwrap here, unlike [`compute_parameters`].
+/// ```
 pub fn benchmark(
     ComputeParametersInput {
         train_set,
