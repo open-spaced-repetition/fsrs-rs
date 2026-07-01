@@ -955,10 +955,10 @@ pub struct Card {
     /// The due date for the card.
     pub due: f32,
     /// The scheduled interval.
-    /// 
+    ///
     /// # Notes
     /// It's in an ideal world where there are no other interfering reviews.
-    /// 
+    ///
     /// # See Also
     /// You can use interval to get next review due time.
     /// You can see [`Card::scheduled_due`] as an example of how to use interval to get next review due time.

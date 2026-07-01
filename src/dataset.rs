@@ -262,20 +262,24 @@ fn train_item_survives_outlier(item: &FSRSItem, removed_pairs: &[HashSet<u32>; 5
     !removed_pairs[item.reviews[0].rating as usize].contains(&item.first_long_term_review().delta_t)
 }
 
-/// Filters out outlier reviews from a list of FSRS items.
+/// Filters out outlier reviews from two [`Vec<FSRSItem>`].
 ///
 /// This function removes anomalous review records that could negatively impact model training.
-/// Outliers are detected based on review intervals that fall outside a reasonable range.
-/// (e.g., intervals > 3 standard deviations from the mean, or intervals exceeding 1000 days).
+/// It uses `dataset_for_initialization` as a reference to choose normal review patterns.
 ///
 /// # Arguments
-/// * `dataset_for_initialization` - A `Vec<FSRSItem>` containing cards with only one review.
-/// * `trainset` - A `Vec<FSRSItem>` containing cards with multiple reviews.
+/// * `dataset_for_initialization` - A [`Vec<FSRSItem>`] used as the reference standard.
+///   Each item **must** contain at least 2 reviews.
+///   The data should be high-quality and free from obvious anomalies.
+/// * `trainset` - A [`Vec<FSRSItem>`] which contains the training data to be filtered.
 ///
 /// # Returns
-/// * `filtered_items` - A `Vec<FSRSItem>` containing the outlier reviews that were removed from `trainset`.
-///   These can be used for logging or manual inspection.
-/// * `trainset` - A `Vec<FSRSItem>` without outlier reviews.
+/// * `filtered_init` - A `Vec<FSRSItem>` filtered from `dataset_for_initialization`.
+/// * `filtered_trainset` - A `Vec<FSRSItem>` filtered from input `trainset`.
+///   You can use it for model training.
+///
+/// # Panics
+/// This function will panic if any item in `dataset_for_initialization` contains fewer than 2 reviews.
 ///
 /// # Example
 /// ```
@@ -285,6 +289,11 @@ fn train_item_survives_outlier(item: &FSRSItem, removed_pairs: &[HashSet<u32>; 5
 /// let trainset = vec![/* ... */];
 /// let (filtered_init, filtered_trainset) = filter_outlier(dataset_for_initialization, trainset);
 /// ```
+///
+/// # Notes
+/// Both input `Vec`s will move to this function.
+/// The filtered versions are returned as outputs.
+/// If you need to keep the data, use `.clone()`.
 pub fn filter_outlier(
     dataset_for_initialization: Vec<FSRSItem>,
     mut trainset: Vec<FSRSItem>,
