@@ -491,7 +491,7 @@ pub struct NextStates {
 
 /// The state of an item after a review.
 ///
-/// It contains the memory state and the interval after a review.
+/// It contains the memory state and the interval from after a review.
 #[derive(Debug, PartialEq, Clone, Serialize)]
 pub struct ItemState {
     /// The memory state of the item after a review.
