@@ -85,7 +85,7 @@ pub struct FSRS {
 }
 
 impl Default for FSRS {
-    /// Creates a new `FSRS` instance with default parameters for most of peoples' learning habits.
+    /// Creates a new `FSRS` instance with parameters that fit the average person's learning habits.
     fn default() -> Self {
         Self::new(&[]).expect("Default parameters should be valid")
     }
