@@ -93,7 +93,7 @@ pub struct ProgressState {
     pub items_total: usize,
 }
 
-/// A whole training progress state.
+/// Progress for the compute_parameters function.
 ///
 /// This struct is a part of [`ComputeParametersInput`].
 #[derive(Debug, Default)]
