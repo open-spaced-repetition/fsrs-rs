@@ -20,7 +20,7 @@ pub const FSRS5_DEFAULT_DECAY: f32 = 0.5;
 /// The default decay for FSRS 6.
 pub const FSRS6_DEFAULT_DECAY: f32 = 0.1542;
 
-/// The default parameters for most of peoples' learning habits.
+/// The default parameters. Fits the average person's learning habits.
 pub static DEFAULT_PARAMETERS: [f32; 21] = [
     0.212,
     1.2931,
