@@ -419,7 +419,8 @@ pub fn compute_parameters(
 /// For a version that returns a [`Result`] instead, see [`compute_parameters`].
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// // This example doesn't have enough data to run without panicking.
 /// use fsrs::{ComputeParametersInput, benchmark};
 ///
 /// let train_set = vec![/*Your train set*/];
