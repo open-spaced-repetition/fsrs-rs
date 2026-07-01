@@ -37,7 +37,7 @@ pub struct SimulationResult {
     /// The number of cards reviewed correctly every day.
     ///
     /// # Note
-    /// The amount of review cards you got correct on a given day (not including learn cards).
+    /// The amount of review cards rated correct on a given day (not including learn cards).
     pub correct_cnt_per_day: Vec<usize>,
     /// Number of new cards introduced each day
     pub introduced_cnt_per_day: Vec<usize>,
