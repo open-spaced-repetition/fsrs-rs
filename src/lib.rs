@@ -13,7 +13,7 @@
 //!
 //! ---
 //!
-//! The most of functions in this crate require a struct input.
+//! Most of the functions in this crate require a struct input.
 //! e.g. [`ComputeParametersInput`] and [`FSRSItem`].
 //!
 //! The most common struct is [`FSRS`] which holds the user's parameters.
