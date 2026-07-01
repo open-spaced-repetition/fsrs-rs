@@ -500,14 +500,12 @@ pub struct ItemState {
     pub interval: f32,
 }
 
-/// The learning progress of an item.
-///
-/// It contains the current and total number of reviews for an item.
+/// The learning progress.
 #[derive(Debug, Clone, Copy)]
 pub struct ItemProgress {
-    /// The current number of reviews for the item.
+    /// The current number of reviews.
     pub current: usize,
-    /// The total number of reviews for the item.
+    /// The total number of reviews.
     pub total: usize,
 }
 
