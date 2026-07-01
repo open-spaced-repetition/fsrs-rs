@@ -950,7 +950,7 @@ pub struct Card {
     pub difficulty: f32,
     /// The stability level of the card.
     pub stability: f32,
-    /// The last learn date the card was reviewed.
+    /// The last date the card was reviewed.
     pub last_date: f32,
     /// The due date for the card.
     pub due: f32,
