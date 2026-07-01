@@ -24,7 +24,7 @@ struct CostAdrPolicy;
 /// All output data you can get after the simulation ends.
 #[derive(Debug)]
 pub struct SimulationResult {
-    /// Number of cards remembered each day.
+    /// How many cards you would remember if tested on all your cards on a given day.
     pub memorized_cnt_per_day: Vec<f32>,
     /// Number of cards to review each day.
     pub review_cnt_per_day: Vec<usize>,
