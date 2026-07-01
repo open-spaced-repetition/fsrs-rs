@@ -36,7 +36,7 @@ pub struct FSRSReview {
     /// The user's performance rating for this review.
     ///
     /// Rating scale:
-    /// - 1 = Again (forgot completely)
+    /// - 1 = Again (forgot anything you want to remember)
     /// - 2 = Hard (remembered with difficulty)
     /// - 3 = Good (remembered correctly)
     /// - 4 = Easy (remembered effortlessly)
