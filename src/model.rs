@@ -54,14 +54,38 @@ impl ModelConfig {
     }
 }
 
-/// This is the main structure provided by this crate. It can be used
-/// for both parameter training, and for reviews.
+/// This is the main structure provided by this crate.
+///
+/// It can be used for both parameter training, and for reviews.
+/// It contains 21 f32 parameters decided the result of other functions.
+///
+/// # Examples
+///
+/// You can create a new `FSRS` instance with default parameters:
+/// ```
+/// use fsrs::FSRS;
+///
+/// let fsrs = FSRS::default();
+/// ```
+/// You can also create a new `FSRS` instance with custom parameters:
+/// ```
+/// use fsrs::FSRS;
+///
+/// let fsrs = FSRS::new(
+///     &[
+///         0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194,
+///         0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629,
+///         1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542
+///     ]
+/// ).expect("Custom parameters should be valid");
+/// ```
 #[derive(Debug, Clone)]
 pub struct FSRS {
     parameters: [f32; 21],
 }
 
 impl Default for FSRS {
+    /// Creates a new `FSRS` instance with parameters that fit the average person's learning habits.
     fn default() -> Self {
         Self::new(&[]).expect("Default parameters should be valid")
     }
@@ -70,6 +94,24 @@ impl Default for FSRS {
 impl FSRS {
     /// - Parameters must be provided before running commands that need them.
     /// - Parameters may be an empty slice to use the default values instead.
+    ///
+    /// # Examples
+    /// ```
+    /// use fsrs::FSRS;
+    ///
+    /// FSRS::new(
+    ///     &[
+    ///         0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194,
+    ///         0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629,
+    ///         1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542
+    ///     ]
+    /// ).expect("Custom parameters should be valid");
+    /// ```
+    /// ```
+    /// use fsrs::FSRS;
+    ///
+    /// FSRS::new(&[]).expect("Default parameters should be valid");
+    /// ```
     pub fn new(parameters: &Parameters) -> Result<Self> {
         let parameters = check_and_fill_parameters(parameters)?;
         let config = ModelConfig::default();
@@ -80,6 +122,7 @@ impl FSRS {
         })
     }
 
+    /// Returns a reference to the model parameters.
     pub(crate) const fn parameters(&self) -> &[f32; 21] {
         &self.parameters
     }
@@ -279,6 +322,15 @@ fn step(w: &[f32], delta_t: f32, rating: f32, state: MemoryState, nth: usize) ->
     }
 }
 
+/// Checks and fills the parameters with default values if necessary.
+///
+/// # Examples
+///
+/// ```
+/// use fsrs::check_and_fill_parameters;
+///
+/// let fsrs = check_and_fill_parameters(&[]).expect("Empty parameters should be valid");
+/// ```
 pub fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
     let parameters = match parameters.len() {
         0 => DEFAULT_PARAMETERS.to_vec(),

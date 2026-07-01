@@ -1,3 +1,5 @@
+//! The dataset module provides data structures and data processing functions for working with FSRS datasets.
+
 use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
@@ -10,11 +12,10 @@ use burn::tensor::{Float, Int, Tensor, TensorData, backend::Backend};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-/// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
-/// to a single review, but contains the previous reviews of the card as well, after the
-/// first one.
-/// When used during review, the last item should include the correct delta_t, but
-/// the provided rating is ignored as all four ratings are returned by .next_states()
+/// Stores a list of reviews for a card, in chronological order.
+///
+/// Each [`FSRSItem`] corresponds to a single review, but contains the previous reviews of the card as well, after the first one.
+/// When used during review, the last item should include the correct delta_t, but the provided rating is ignored as all four ratings are returned by `.next_states()`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct FSRSItem {
     pub reviews: Vec<FSRSReview>,
@@ -27,11 +28,26 @@ pub(crate) struct WeightedFSRSItem {
     pub item: FSRSItem,
 }
 
+/// A single review for a card, including the user's rating and the number of days that passed.
+///
+/// This struct is a part of [`FSRSItem`].
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FSRSReview {
-    /// 1-4
+    /// The user's performance rating for this review.
+    ///
+    /// Rating scale:
+    /// - 1 = Again (forgot anything you want to remember)
+    /// - 2 = Hard (remembered with difficulty)
+    /// - 3 = Good (remembered correctly)
+    /// - 4 = Easy (remembered effortlessly)
+    ///
+    /// # Note
+    /// This field is **ignored** for the most recent item when calling
+    /// `.next_states()`. The method returns all four possible next states
+    /// regardless of the rating stored here.
     pub rating: u32,
     /// The number of days that passed
+    ///
     /// # Warning
     /// `delta_t` for item first(initial) review must be 0
     pub delta_t: u32,
@@ -246,6 +262,38 @@ fn train_item_survives_outlier(item: &FSRSItem, removed_pairs: &[HashSet<u32>; 5
     !removed_pairs[item.reviews[0].rating as usize].contains(&item.first_long_term_review().delta_t)
 }
 
+/// Filters out outlier reviews from two [`Vec<FSRSItem>`].
+///
+/// This function removes anomalous review records that could negatively impact model training.
+/// It uses `dataset_for_initialization` as a reference to choose normal review patterns.
+///
+/// # Arguments
+/// * `dataset_for_initialization` - A [`Vec<FSRSItem>`] used as the reference standard.
+///   Each item **must** contain at least 2 reviews.
+///   The data should be high-quality and free from obvious anomalies.
+/// * `trainset` - A [`Vec<FSRSItem>`] which contains the training data to be filtered.
+///
+/// # Returns
+/// * `filtered_init` - A `Vec<FSRSItem>` filtered from `dataset_for_initialization`.
+/// * `filtered_trainset` - A `Vec<FSRSItem>` filtered from input `trainset`.
+///   You can use it for model training.
+///
+/// # Panics
+/// This function will panic if any item in `dataset_for_initialization` contains fewer than 2 reviews.
+///
+/// # Example
+/// ```
+/// use fsrs::{FSRSItem, filter_outlier};
+///
+/// let dataset_for_initialization = vec![/* ... */];
+/// let trainset = vec![/* ... */];
+/// let (filtered_init, filtered_trainset) = filter_outlier(dataset_for_initialization, trainset);
+/// ```
+///
+/// # Notes
+/// Both input `Vec`s will move to this function.
+/// The filtered versions are returned as outputs.
+/// If you need to keep the data, use `.clone()`.
 pub fn filter_outlier(
     dataset_for_initialization: Vec<FSRSItem>,
     mut trainset: Vec<FSRSItem>,

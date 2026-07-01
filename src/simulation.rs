@@ -21,16 +21,27 @@ use std::sync::{Arc, LazyLock};
 #[cfg(not(feature = "experimental_cost_adr"))]
 struct CostAdrPolicy;
 
+/// All output data you can get after the simulation ends.
 #[derive(Debug)]
 pub struct SimulationResult {
+    /// How many cards you would remember if tested on all your cards on a given day.
     pub memorized_cnt_per_day: Vec<f32>,
+    /// Number of cards to review each day.
     pub review_cnt_per_day: Vec<usize>,
+    /// Number of new cards studied for the first time each day in seconds.
     pub learn_cnt_per_day: Vec<usize>,
+    /// Daily cost in seconds.
     pub cost_per_day: Vec<f32>,
+    /// Average desired retention.
     pub average_desired_retention: Option<f32>,
-    // The amount of review cards you got correct on a given day (not including learn cards).
+    /// The number of cards reviewed correctly every day.
+    ///
+    /// # Note
+    /// The amount of review cards rated correct on a given day (not including learn cards).
     pub correct_cnt_per_day: Vec<usize>,
+    /// Number of new cards introduced each day
     pub introduced_cnt_per_day: Vec<usize>,
+    /// Final state of all cards after the simulation.
     pub cards: Vec<Card>,
 }
 
@@ -170,6 +181,7 @@ impl Default for ReviewPriorityFn {
     }
 }
 
+/// A struct holding a function which evaluation the quality.
 #[allow(clippy::type_complexity)]
 pub struct CMRRTargetFn(Arc<dyn Fn(&SimulationResult, &[f32]) -> f32 + Sync + Send>);
 
@@ -925,19 +937,40 @@ pub fn expected_workload_with_existing_cards(
     Ok(workload)
 }
 
+/// Holds the full state of a memory card.
 #[derive(Debug, Clone)]
 pub struct Card {
-    // "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
-    // new cards created by the simulation have negative id's so use positive ones.
+    /// The unique identifier of the card.
+    ///
+    /// # Note
+    /// "id" ignored by "simulate", used purely for hook functions (can be all be 0 with no consequence).
+    /// new cards created by the simulation have negative id's so use positive ones.
     pub id: i64,
+    /// The difficulty level of the card.
     pub difficulty: f32,
+    /// The stability level of the card.
     pub stability: f32,
+    /// The last date the card was reviewed.
     pub last_date: f32,
+    /// The due date for the card.
     pub due: f32,
+    /// The scheduled interval.
+    ///
+    /// # Notes
+    /// It's in an ideal world where there are no other interfering reviews.
+    ///
+    /// # See Also
+    /// You can use interval to get next review due time.
+    /// You can see [`Card::scheduled_due`] as an example of how to use interval to get next review due time.
     pub interval: f32,
+    /// The number of lapses (forgetting events) for the card.
     pub lapses: u32,
+    /// The desired retention configured for the card.
     pub desired_retention: f32,
-    // check_and_fill_parameters needs to be called manually on the parameters provided to the card.
+    /// Shared references of [`crate::FSRS`] parameters.
+    ///
+    /// # Note
+    /// check_and_fill_parameters needs to be called manually on the parameters provided to the card.
     pub parameters: Arc<Vec<f32>>,
 }
 
@@ -1553,6 +1586,7 @@ where
     }
 }
 
+/// Represents the review kind of a review log entry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RevlogReviewKind {
     #[default]
@@ -1566,6 +1600,7 @@ pub enum RevlogReviewKind {
     Manual = 4,
 }
 
+/// Represents a single review log entry.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RevlogEntry {
     pub id: i64,
@@ -1640,6 +1675,16 @@ fn calculate_transitions(
     (transition_matrix, transition_counts)
 }
 
+/// Extracts the simulator configuration from the given review log entries.
+///
+/// This function processes a collection of review logs and computes the
+/// necessary statistics to build a `SimulatorConfig`.
+///
+/// # Arguments
+///
+/// * `df` - The dataframe containing the review log entries.
+/// * `day_cutoff` - The day cutoff for the simulation.
+/// * `smooth` - Whether to smooth the transition matrix.
 pub fn extract_simulator_config(
     df: Vec<RevlogEntry>,
     day_cutoff: i64,

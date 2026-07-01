@@ -93,9 +93,14 @@ pub struct ProgressState {
     pub items_total: usize,
 }
 
+/// Progress for the compute_parameters function.
+///
+/// This struct is a part of [`ComputeParametersInput`].
 #[derive(Debug, Default)]
 pub struct CombinedProgressState {
+    /// Whether the training should be aborted.
     pub want_abort: bool,
+    /// The progress states for each training split.
     pub splits: Vec<ProgressState>,
     finished: bool,
 }
@@ -217,23 +222,23 @@ pub(crate) fn calculate_average_recall(items: &[FSRSItem]) -> f32 {
     total_recall as f32 / total_reviews as f32
 }
 
-/// Input parameters for computing FSRS parameters
+/// Input parameters for computing FSRS parameters.
 #[derive(Clone, Debug)]
 pub struct ComputeParametersInput {
-    /// The training set containing review history
+    /// The training set containing review history.
     pub train_set: Vec<FSRSItem>,
     /// Optional card ids aligned with `train_set`.
     ///
     /// When supplied, training groups the prefix items from the same card and
     /// computes the card recurrence once per batch column.
     pub card_ids: Option<Vec<i64>>,
-    /// Optional progress tracking
+    /// Optional progress tracking.
     pub progress: Option<Arc<Mutex<CombinedProgressState>>>,
-    /// Whether to enable short-term memory parameters
+    /// Whether to enable short-term memory parameters.
     pub enable_short_term: bool,
-    /// Number of relearning steps
+    /// Number of relearning steps.
     pub num_relearning_steps: Option<usize>,
-    /// Optional training hyperparameters
+    /// Optional training hyperparameters.
     pub training_config: Option<TrainingConfig>,
 }
 
@@ -249,15 +254,30 @@ impl Default for ComputeParametersInput {
         }
     }
 }
-/// Computes optimized parameters for the FSRS model based on training data.
+/// Computes parameters for the FSRS model based on provided training data.
 ///
-/// This function trains the model on the provided dataset and returns optimized parameters.
+/// This function trains the model on the provided dataset and returns trained parameters.
+///
+/// # Notes
+/// This function is used in production environment, which is different from [`benchmark`] used for testing/quick validation.
 ///
 /// # Arguments
-/// * `input` - Input parameters including the training dataset and configuration
+/// * `input` - A [`ComputeParametersInput`] parameters including the training dataset and configuration.
 ///
 /// # Returns
-/// A `Result<Vec<f32>>` containing the optimized parameters
+/// A [`Result<Vec<f32>>`] containing the result and trained parameters.
+///
+/// # Examples
+/// ```
+/// use fsrs::{ComputeParametersInput, compute_parameters};
+///
+/// let train_set = vec![/*Your train set*/];
+/// let input = ComputeParametersInput {
+///    train_set,
+///    ..ComputeParametersInput::default()
+/// };
+/// let params = compute_parameters(input).unwrap(); // You can find unwrap here, unlike [`benchmark`].
+/// ```
 pub fn compute_parameters(
     ComputeParametersInput {
         train_set,
@@ -389,6 +409,27 @@ pub fn compute_parameters(
     Ok(optimized_parameters)
 }
 
+/// Assess how good or bad the current parameters are.
+///
+/// # Notes
+/// This function is used in testing/quick validation environment, which is different from [`compute_parameters`] used for production.
+///
+/// # Panics
+/// This function will panic if the training process fails.
+/// For a version that returns a [`Result`] instead, see [`compute_parameters`].
+///
+/// # Examples
+/// ```no_run
+/// // This example doesn't have enough data to run without panicking.
+/// use fsrs::{ComputeParametersInput, benchmark};
+///
+/// let train_set = vec![/*Your train set*/];
+/// let input = ComputeParametersInput {
+///    train_set,
+///    ..ComputeParametersInput::default()
+/// };
+/// let params = benchmark(input); // You can find no unwrap here, unlike [`compute_parameters`].
+/// ```
 pub fn benchmark(
     ComputeParametersInput {
         train_set,
