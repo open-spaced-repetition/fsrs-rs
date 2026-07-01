@@ -57,7 +57,7 @@ impl ModelConfig {
 /// This is the main structure provided by this crate.
 ///
 /// It can be used for both parameter training, and for reviews.
-/// It cantains 21 f32 parameters decided the result of other functions.
+/// It contains 21 f32 parameters decided the result of other functions.
 ///
 /// # Examples
 ///
