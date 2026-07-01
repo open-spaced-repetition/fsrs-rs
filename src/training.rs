@@ -254,7 +254,7 @@ impl Default for ComputeParametersInput {
         }
     }
 }
-/// Find the better parameters.
+/// Computes optimized parameters for the FSRS model based on provided training data.
 ///
 /// This function trains the model on the provided dataset and returns optimized parameters.
 ///
