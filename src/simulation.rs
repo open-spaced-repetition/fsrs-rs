@@ -954,7 +954,14 @@ pub struct Card {
     pub last_date: f32,
     /// The due date for the card.
     pub due: f32,
-    /// The interval between the latest two reviews for the card.
+    /// The scheduled interval.
+    /// 
+    /// # Notes
+    /// It's in an ideal world where there are no other interfering reviews.
+    /// 
+    /// # See Also
+    /// You can use interval to get next review due time.
+    /// You can see [`Card::scheduled_due`] as an example of how to use interval to get next review due time.
     pub interval: f32,
     /// The number of lapses (forgetting events) for the card.
     pub lapses: u32,
