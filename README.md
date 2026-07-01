@@ -4,7 +4,7 @@
 
 The Free Spaced Repetition Scheduler ([FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm)) is a modern spaced repetition algorithm. It springs from [MaiMemo's DHP model](https://www.maimemo.com/paper/), which is a variant of the [DSR model](https://supermemo.guru/wiki/Three_component_model_of_memory) proposed by [Piotr Wozniak](https://supermemo.guru/wiki/Piotr_Wozniak).
 
-FSRS-rs is a Rust implementation of FSRS with full training support using [Burn](https://github.com/tracel-ai/burn). It also provides simulation capabilities and basic scheduling functionality.
+FSRS-rs is a Rust implementation of FSR. It also provides simulation capabilities and basic scheduling functionality.
 
 For more information about the algorithm, please refer to [the wiki page of FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm).
 
