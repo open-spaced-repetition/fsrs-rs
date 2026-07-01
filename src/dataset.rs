@@ -269,8 +269,8 @@ fn train_item_survives_outlier(item: &FSRSItem, removed_pairs: &[HashSet<u32>; 5
 /// (e.g., intervals > 3 standard deviations from the mean, or intervals exceeding 1000 days).
 ///
 /// # Arguments
-/// * `dataset_for_initialization` - A Vec of `FSRSItem` containing real review histories.
-/// * `trainset` - A Vec of `FSRSItem` containing review histories to be filtered.
+/// * `dataset_for_initialization` - A `Vec<FSRSItem>` containing cards with only one review.
+/// * `trainset` - A `Vec<FSRSItem>` containing cards with multiple reviews.
 ///
 /// # Returns
 /// * `filtered_items` - A `Vec<FSRSItem>` containing the outlier reviews that were removed from `trainset`.
@@ -283,7 +283,7 @@ fn train_item_survives_outlier(item: &FSRSItem, removed_pairs: &[HashSet<u32>; 5
 ///
 /// let dataset_for_initialization = vec![/* ... */];
 /// let trainset = vec![/* ... */];
-/// let (filtered_items, cleaned) = filter_outlier(dataset_for_initialization, trainset);
+/// let (filtered_init, filtered_trainset) = filter_outlier(dataset_for_initialization, trainset);
 /// ```
 pub fn filter_outlier(
     dataset_for_initialization: Vec<FSRSItem>,
