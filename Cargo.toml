@@ -27,7 +27,7 @@ default-features = false
 features = ["std", "train", "ndarray", "sqlite-bundled", "metrics"]
 
 [dependencies]
-itertools = "0.14.0"
+itertools = "0.15.0"
 log = "0.4"
 ndarray = "0.17.2"
 priority-queue = "=2.7.0"
