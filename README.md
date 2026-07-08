@@ -95,7 +95,7 @@ The example accepts command-line overrides for quick experiments:
 cargo run --release --features experimental_cost_adr --example cost_adr -- --days 90 --deck 2000 --pop 8 --gen 5
 ```
 
-By default, the example uses the same simulation scale as `srs-simulator`: 1825 days, a 10000-card deck, 10 new cards per day, a 9999-review limit, and a 720-minute daily cost limit. Its training defaults come from `CostAdrTrainingConfig::default()`.
+By default, the example uses the same simulation scale as `srs-simulator`: 1825 days, a 10000-card deck, 10 new cards per day, a 9999-review limit, and a 720-minute daily cost limit. Its training defaults come from `CostAdrTrainingConfig::default()`. Cost ADR derives separate training-simulation and evaluation seeds from the base seed so the default report does not reuse the same simulator rollout seeds for training and evaluation.
 
 The example trains a per-user `CostAdrPolicy`, shows which fields should be persisted with the user's FSRS parameters, and demonstrates the runtime scheduling loop with `CostAdrPolicy::next_states`, which returns the post-rating `MemoryState`, cost-conditioned desired retention, and next interval for each answer button. Use `simulate_with_cost_adr_policy` when you already have a `CostAdrPolicy` and want the simulator to recompute per-card desired retention after each review in an offline simulation.
 

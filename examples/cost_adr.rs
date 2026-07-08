@@ -12,6 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration as StdDuration, Instant};
 
+const EXAMPLE_DEFAULT_BASE_SEED: u64 = 42;
+const EXAMPLE_EVALUATION_SEED_OFFSET: u64 = 2_000_000;
+const EXAMPLE_FINAL_ROLLOUT_SEED_OFFSET: u64 = 3_000_000;
+
 const USAGE: &str = "\
 Usage: cargo run --release --features experimental_cost_adr --example cost_adr -- [OPTIONS]
 
@@ -24,7 +28,7 @@ Options:
                             Study time limit per day in minutes (default: 720.0)
   --pop <usize>             CMA-ES population size (default: 16)
   --gen <usize>             CMA-ES generation count (default: 20)
-  --seed <u64>              Optimizer and simulation seed (default: 42)
+  --seed <u64>              Base seed for optimizer and derived simulation seeds (default: 42)
   --sigma0 <f32>            CMA-ES initial sigma (default: 1.0)
   -h, --help                Print help
 ";
@@ -92,6 +96,10 @@ where
         Some(value) => Ok(value),
         None => next_arg_value(args, flag),
     }
+}
+
+fn seed_with_offset(seed: Option<u64>, offset: u64) -> Option<u64> {
+    seed.map(|seed| seed.wrapping_add(offset))
 }
 
 fn parse_args() -> Result<Option<ExampleConfig>, Box<dyn Error>> {
@@ -286,14 +294,14 @@ fn main() -> fsrs::Result<()> {
         generations: example_config.generations,
         sigma0: example_config.sigma0,
         seed: example_config.seed,
-        simulation_seed: example_config.seed,
+        simulation_seed: None,
         progress: Some(progress.clone()),
         ..Default::default()
     };
 
     let default_policy = CostAdrPolicy::new(training_config.initial_coefficients.clone())?;
     let evaluation_config = CostAdrEvaluationConfig {
-        seed: example_config.seed,
+        seed: seed_with_offset(example_config.seed, EXAMPLE_EVALUATION_SEED_OFFSET),
         ..Default::default()
     };
     println!("Cost ADR default policy evaluation");
@@ -317,7 +325,7 @@ fn main() -> fsrs::Result<()> {
 
     println!("Cost ADR single-user FSRS training");
     println!(
-        "config days={} deck={} learn_limit={} review_limit={} cost_limit_minutes={} pop={} gen={} sigma0={} seed={}",
+        "config days={} deck={} learn_limit={} review_limit={} cost_limit_minutes={} pop={} gen={} sigma0={} base_seed={}",
         example_config.days,
         example_config.deck_size,
         example_config.learn_limit,
@@ -326,7 +334,7 @@ fn main() -> fsrs::Result<()> {
         example_config.population_size,
         example_config.generations,
         example_config.sigma0,
-        example_config.seed.unwrap_or(42)
+        example_config.seed.unwrap_or(EXAMPLE_DEFAULT_BASE_SEED)
     );
     println!(
         "duration_seconds={:.3} result_training_seconds={:.3}",
@@ -391,12 +399,18 @@ fn main() -> fsrs::Result<()> {
     println!("policy={user_policy:#?}");
 
     let rollout_cost_weight = training_config.cost_weights[0];
+    let rollout_seed = Some(
+        example_config
+            .seed
+            .unwrap_or(EXAMPLE_DEFAULT_BASE_SEED)
+            .wrapping_add(EXAMPLE_FINAL_ROLLOUT_SEED_OFFSET),
+    );
     let rollout = simulate_with_cost_adr_policy(
         &config,
         &DEFAULT_PARAMETERS,
         &user_policy,
         rollout_cost_weight,
-        example_config.seed,
+        rollout_seed,
         None,
     )?;
     print_cost_adr_simulation(
