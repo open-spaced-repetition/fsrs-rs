@@ -42,7 +42,7 @@ roots = "0.0.8"
 serde = { version = "1.0.228", features = ["derive"] }
 snafu = "0.9.1"
 strum = { version = "0.28.0", features = ["derive"] }
-wide = "0.7"
+wide = "1.7"
 
 [dev-dependencies]
 chrono = { version = "0.4.44", default-features = false, features = ["std", "clock"] }
