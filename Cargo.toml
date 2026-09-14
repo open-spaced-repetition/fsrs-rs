@@ -34,7 +34,7 @@ chrono-tz = "0.10.4"
 criterion = { version = "0.8.2" }
 csv = "1.4.0"
 fern = "0.7.1"
-rusqlite = { version = "0.34.0" }
+rusqlite = { version = "0.34.0", features = ["bundled-windows"] }
 
 [[bench]]
 name = "benchmark"

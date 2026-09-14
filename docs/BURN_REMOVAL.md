@@ -20,10 +20,10 @@ Criterion was run before and after the change against an extracted copy of
 benchmark started. The live collection database was not opened. Both runs used
 the same copied collection, release profile, and 10-sample Criterion protocol.
 
-| Training input | Before | After | Change |
-|---|---:|---:|---:|
-| Aligned card IDs | 213.25 ms | 219.04 ms | 2.7% slower |
-| No card IDs | 80.486 s | 1.7183 s | 46.8x faster (97.9% less time) |
+| Training input   |    Before |     After |                         Change |
+| ---------------- | --------: | --------: | -----------------------------: |
+| Aligned card IDs | 213.25 ms | 219.04 ms |                    2.7% slower |
+| No card IDs      |  80.486 s |  1.7183 s | 46.8x faster (97.9% less time) |
 
 The card-ID path was already using the analytic FSRS-7 kernel, so the removal
 does not improve that path and this run measured a small regression. The large
