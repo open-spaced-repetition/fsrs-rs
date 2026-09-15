@@ -1,15 +1,14 @@
-use burn::{LearningRate, lr_scheduler::LrScheduler, tensor::backend::Backend};
 #[derive(Clone, Debug)]
 pub(crate) struct CosineAnnealingLR {
     t_max: f64,
     eta_min: f64,
-    init_lr: LearningRate,
+    init_lr: f64,
     step_count: f64,
-    current_lr: LearningRate,
+    current_lr: f64,
 }
 
 impl CosineAnnealingLR {
-    pub const fn init(t_max: f64, init_lr: LearningRate) -> Self {
+    pub const fn init(t_max: f64, init_lr: f64) -> Self {
         Self {
             t_max,
             eta_min: 0.0,
@@ -18,21 +17,17 @@ impl CosineAnnealingLR {
             current_lr: init_lr,
         }
     }
-}
 
-impl LrScheduler for CosineAnnealingLR {
-    type Record<B: Backend> = usize;
-
-    fn step(&mut self) -> LearningRate {
+    pub fn step(&mut self) -> f64 {
         self.step_count += 1.0;
         use std::f64::consts::PI;
         fn cosine_annealing_lr(
-            init_lr: LearningRate,
-            lr: LearningRate,
+            init_lr: f64,
+            lr: f64,
             step_count: f64,
             t_max: f64,
             eta_min: f64,
-        ) -> LearningRate {
+        ) -> f64 {
             if step_count == 0.0 {
                 init_lr
             } else if (step_count - 1.0 - t_max) % (2.0 * t_max) == 0.0 {
@@ -50,17 +45,7 @@ impl LrScheduler for CosineAnnealingLR {
             self.t_max,
             self.eta_min,
         );
-        // info!("lr: {}", self.current_lr);
         self.current_lr
-    }
-
-    fn to_record<B: Backend>(&self) -> Self::Record<B> {
-        self.step_count as usize
-    }
-
-    fn load_record<B: Backend>(mut self, record: Self::Record<B>) -> Self {
-        self.step_count = record as LearningRate;
-        self
     }
 }
 
@@ -73,10 +58,7 @@ mod tests {
     fn test_lr_scheduler() {
         let mut lr_scheduler = CosineAnnealingLR::init(5.0, 4e-2);
         let lrs = (1..=11)
-            .map(|_| {
-                LrScheduler::step(&mut lr_scheduler);
-                lr_scheduler.current_lr
-            })
+            .map(|_| lr_scheduler.step())
             .step_by(1)
             .collect::<Vec<_>>();
         lrs.assert_approx_eq([

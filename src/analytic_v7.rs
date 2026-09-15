@@ -1,14 +1,13 @@
 // Analytic loss and gradient for the dual-trace FSRS-7 model.
 //
-// This mirrors the Burn forward pass in `model_v7.rs` exactly (state carries a
+// This mirrors the reference forward pass in `model_v7.rs` exactly (state carries a
 // slow stability, a fast stability, and a difficulty), but computes the loss
-// gradient with forward-mode dual numbers instead of Burn autodiff. It is the
+// gradient with forward-mode dual numbers instead of framework autodiff. It is the
 // fast host-side training path used by the windowed FSRS-7 optimizer.
 //
 // The scalar (`f64`) path is used for validation loss; the dual path is used
-// for training gradients. Both are validated against Burn autodiff in
-// `training.rs` (`test_windowed_loss_and_grad_match_prefix_batch_for_single_card`
-// and `test_windowed_validation_loss_matches_burn_with_padding`).
+// for training gradients. Both were validated against the former autodiff path
+// during the migration and retain a single-card prefix-batch regression test.
 
 const PARAM_LEN: usize = 34;
 const S_MIN: f64 = 0.0001;
@@ -128,7 +127,7 @@ impl Dual {
         }
     }
 
-    /// `self ^ rhs` for a positive base, matching Burn's `powf`.
+    /// `self ^ rhs` for a positive base, matching the reference `powf`.
     fn pow(self, rhs: Self) -> Self {
         rhs.mul(self.ln()).exp()
     }
@@ -143,7 +142,7 @@ impl Dual {
         }
     }
 
-    /// Clamp from above, matching Burn's `clamp_max` (zero gradient above `max`).
+    /// Clamp from above, matching the reference `clamp_max` (zero gradient above `max`).
     fn clamp_max(self, max: f64) -> Self {
         if self.value > max {
             Self::constant(max)

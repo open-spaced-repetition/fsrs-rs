@@ -1,101 +1,23 @@
 # Model Split
 
-## Purpose
+## Shared orchestration
 
-Reduce compatibility risk by separating FSRS-6 and FSRS-7 model-specific math
-while keeping shared model state/config logic in `src/model.rs`.
+`src/model.rs` owns parameter validation, clipping, model-version selection,
+review replay, initialization, and the concrete public `FSRS` type.
+`ModelVersion` routes version-specific operations once parameters have been
+validated.
 
-## File Layout
+## Version-specific code
 
-- Shared entrypoints/types:
-  - `src/model.rs`
-- FSRS-6 specific math:
-  - `src/model_v6.rs`
-- FSRS-7 specific math:
-  - `src/model_v7.rs`
-- FSRS-6 parameter compatibility normalization (`0/17/19 -> 21`):
-  - `src/model_v6.rs::check_and_fill_parameters_fsrs6()`
-- Parameter clipping split by version:
-  - `src/parameter_clipper_v6.rs`
-  - `src/parameter_clipper_v7.rs`
-  - shared dispatcher in `src/parameter_clipper.rs`
-- Inference defaults split by version:
-  - `src/inference_v6.rs` (FSRS-6 defaults/constants)
-  - `src/inference_v7.rs` (FSRS-7 defaults)
-  - shared API/orchestration in `src/inference.rs`
-- Training penalty split by version:
-  - `src/training_v6.rs` (FSRS-6 L2 regularization; schedule penalty remains
-    no-op)
-  - `src/training_v7.rs` (FSRS-7 penalty math/gradients)
-  - shared training loop/objective composition in `src/training.rs`
-- FSRS-7 analytic training kernel:
-  - `src/analytic_v7.rs` computes scalar BCE loss and BCE loss gradients for
-    FSRS-7 card-id windowed training batches.
-  - `src/analytic_v7/neon_loss.rs` provides the ARM64 NEON validation-loss and
-    training-gradient paths for the same 35-parameter windowed batch layout. The
-    training-gradient path includes NEON-only recurrent log hoisting, fused
-    stability fail-path exponentials, all-padding group-tail skips, and a fast
-    approximate `exp`/`ln` recurrence. The validation-loss path keeps the more
-    accurate approximation. The exact scalar dual-number gradient remains the
-    oracle and non-NEON fallback.
-  - `src/neon_math.rs` contains the shared ARM64 `float32x4_t` wrapper and
-    approximate `exp`/`ln` helpers used by NEON kernels.
-  - The kernel is parameter-size-specific to the current 35-parameter FSRS-7
-    layout and is not shared with FSRS-6.
-- Training initial-stability normalization is version-specific:
-  - FSRS-6 uses the legacy data-derived initializer and `smooth_and_fill()`.
-  - FSRS-7 uses its FSRS-7 initializer/fill logic for params `0..3`.
+- `src/model_v6.rs` contains FSRS-6 scalar forgetting, stability, difficulty,
+  interval, and SM-2 bridge functions.
+- `src/model_v7.rs` contains dual-trace FSRS-7 scalar transitions, forgetting
+  curves, interval inversion, and the cached runtime helper.
+- `src/analytic_v6.rs` computes FSRS-6 training loss and gradients.
+- `src/analytic_v7.rs` and its architecture-specific submodules compute
+  FSRS-7 training loss and gradients.
+- `src/training_v6.rs` and `src/training_v7.rs` contain version-specific
+  regularization and schedule-penalty calculations.
 
-## Dispatch Strategy
-
-- `src/model.rs` keeps shared orchestration (`Model::step`, `Model::forward`).
-- `src/model.rs::check_and_fill_parameters()` keeps shared validation and delegates
-  FSRS-6 compatibility conversion to `model_v6`.
-- Version-specific computations are routed through `VersionOps` trait impls:
-  - `Fsrs6Ops`
-  - `Fsrs7Ops`
-- Model version is selected from parameter count at creation/update time and
-  then reused via `ModelVersion`, instead of repeated runtime checks on `w.len()`.
-- Training penalty routing now also uses `ModelVersion` dispatch, so FSRS-6 and
-  FSRS-7 penalty behavior are separated without checking parameter length in the
-  training loop.
-- FSRS-7 card-id windowed training can route BCE loss and BCE gradient
-  calculation through `analytic_v7`. The shared training loop composes
-  schedule/L2 penalties and can apply host-side Adam plus version-aware clipping
-  for that windowed FSRS-7 path. Production FSRS-7 windowed batches are
-  host-array-only; Burn tensors are only constructed by test oracles for this
-  path.
-- Version constants are colocated with version logic:
-  - `src/model_v6.rs`: `PARAM_LEN`
-  - `src/model_v7.rs`: FSRS-7 solver/LUT constants and `PARAM_LEN`
-- FSRS-7 repeated runtime math can use `src/model_v7.rs::Fsrs7Runtime` to
-  combine the cached S90 LUT with precomputed forgetting-curve constants. This
-  keeps the public scalar helper behavior unchanged while avoiding repeated
-  parameter-derived constant setup in simulator rollouts.
-
-## Data Flow
-
-- Data read:
-  - model parameter vector `w`
-  - runtime tensors (`delta_t`, `rating`, `stability`, `difficulty`)
-  - FSRS-7 windowed host arrays (`t_historys`, `r_historys`, labels, weights)
-    during analytic training-loss and training-gradient calculation
-  - FSRS-7 windowed padding ratings during NEON group active-length detection
-  - FSRS-7 card-id windowed training tuning constants: learning rate `0.07`
-    and `17` epochs
-  - FSRS-7 runtime contexts read the model parameter vector and cached S90 LUT
-    during repeated simulator retrievability and interval calculations
-- Data updated:
-  - next-step `MemoryStateTensors` during `Model::step()`
-  - optimized initial-stability params `0..3` after training, normalized by the
-    selected model version before return
-  - transient optimizer gradients and host Adam moment state for FSRS-7 windowed
-    BCE training
-  - transient training config values before progress initialization for the
-    FSRS-7 card-id windowed path
-- Data storage:
-  - no new persistence; all values remain in-memory
-  - FSRS-7 S90 LUT cache remains process-local memory only
-  - FSRS-7 runtime contexts are transient and are not persisted
-  - shared windowed host batches, analytic gradient arrays, and host Adam
-    moments live only for the current optimization run
+Runtime inference and production training operate on slices, flat host arrays,
+and `MemoryState`; no backend/device abstraction crosses the public API.

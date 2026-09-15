@@ -29,14 +29,12 @@ Penalty simulation settings:
 
 ## Backpropagation
 
-Training keeps burn autograd for the main BCE objective and computes penalty
-gradients in scalar code:
+Training computes both the main BCE objective and penalty gradients in host-side
+analytic code:
 
-1. Main BCE loss uses `forward_classification(..., Reduction::Sum)` and
-   `backward()`.
+1. Main BCE gradients use the FSRS-7 reverse-mode analytic kernel.
 2. `L2` and FSRS7 schedule penalty are computed in scalar code.
-3. Manual penalty gradients are written into `w` gradients before optimizer
-   step.
+3. BCE and penalty gradients are combined before the host Adam step.
 
 The schedule interval inversion still uses the same two-phase math:
 

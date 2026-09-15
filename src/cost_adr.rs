@@ -4,7 +4,6 @@ use crate::model::FSRS;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN, simulate_with_cost_adr_policy_for_evaluation};
 use crate::training::{CombinedProgressState, ProgressState};
 use crate::{Card, SimulationResult, SimulatorConfig, simulate};
-use burn::tensor::backend::Backend;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rand_distr::StandardNormal;
@@ -267,9 +266,9 @@ impl CostAdrPolicy {
 
     /// Return the memory states, cost-conditioned desired retentions, and intervals for each
     /// answer button.
-    pub fn next_states<B: Backend>(
+    pub fn next_states(
         &self,
-        fsrs: &FSRS<B>,
+        fsrs: &FSRS,
         current_memory_state: Option<MemoryState>,
         goal_cost_weight: f32,
         days_elapsed: f32,
@@ -557,9 +556,9 @@ impl CostAdrPolicy {
         Ok(best)
     }
 
-    fn cost_adr_item_state<B: Backend>(
+    fn cost_adr_item_state(
         &self,
-        fsrs: &FSRS<B>,
+        fsrs: &FSRS,
         item_state: ItemState,
         goal_cost_weight: f32,
     ) -> Result<CostAdrItemState> {

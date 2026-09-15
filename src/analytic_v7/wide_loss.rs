@@ -1,5 +1,5 @@
 //! Hand-written forward + reverse-mode backward for the training BCE loss, with NO
-//! autodiff tape. Profiling showed burn's `Autodiff<NdArray<f32>>` forward+backward is
+//! autodiff tape. Profiling showed the former tensor-autodiff forward+backward path is
 //! ~85% of compute_parameters() time (backward alone 59%); replacing it with a direct
 //! scalar VJP removes the tape-record + tape-replay overhead.
 //!
@@ -2406,6 +2406,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn fd_grad(
         w: &[f32],
         t_hist: &[f32],
@@ -2424,7 +2425,7 @@ mod tests {
             let lp = batch_loss(&wp, t_hist, r_hist, seq_len, batch, dts, lbl, wts);
             wp[i] = w[i] - eps;
             let lm = batch_loss(&wp, t_hist, r_hist, seq_len, batch, dts, lbl, wts);
-            g[i] = (lp as f64 - lm as f64) / (2.0 * eps as f64);
+            g[i] = (lp - lm) / (2.0 * eps as f64);
         }
         g
     }
