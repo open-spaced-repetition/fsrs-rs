@@ -1,16 +1,9 @@
 use crate::DEFAULT_PARAMETERS;
+use crate::dataset::FSRSReview;
 use crate::error::{FSRSError, Result};
 use crate::inference::{MemoryState, Parameters};
 use crate::parameter_clipper::clip_parameters;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
-use burn::backend::NdArray;
-use burn::backend::ndarray::NdArrayDevice;
-use burn::{
-    config::Config,
-    constant,
-    module::{Module, Param},
-    tensor::{Shape, Tensor, TensorData, backend::Backend},
-};
 
 #[path = "model_v6.rs"]
 pub(crate) mod model_v6;
@@ -42,420 +35,245 @@ impl core::fmt::Display for ModelVersion {
     }
 }
 
-constant!(ModelVersion);
-
-#[derive(Module, Debug)]
-pub struct Model<B: Backend> {
-    pub w: Param<Tensor<B, 1>>,
-    version: ModelVersion,
+#[derive(Debug, Clone)]
+pub struct ModelConfig {
+    pub freeze_initial_stability: bool,
+    pub initial_stability: Option<[f32; 4]>,
+    pub initial_forgetting_curve: Option<[f32; 8]>,
+    pub freeze_short_term_stability: bool,
+    pub num_relearning_steps: usize,
 }
 
-pub(crate) trait Get<B: Backend, const N: usize> {
-    fn get(&self, n: usize) -> Tensor<B, N>;
-}
-
-impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
-    fn get(&self, n: usize) -> Self {
-        self.clone().slice([n..(n + 1)])
-    }
-}
-
-fn tensor_min<B: Backend>(a: Tensor<B, 1>, b: Tensor<B, 1>) -> Tensor<B, 1> {
-    a.clone().mask_where(a.clone().greater(b.clone()), b)
-}
-
-fn tensor_max<B: Backend>(a: Tensor<B, 1>, b: Tensor<B, 1>) -> Tensor<B, 1> {
-    a.clone().mask_where(a.clone().lower(b.clone()), b)
-}
-
-pub(super) trait VersionOps<B: Backend> {
-    fn apply_freeze_short_term(initial_params: &mut [f32]);
-    fn power_forgetting_curve(
-        model: &Model<B>,
-        t: Tensor<B, 1>,
-        s: Tensor<B, 1>,
-        s_fast: Tensor<B, 1>,
-        d: Tensor<B, 1>,
-    ) -> Tensor<B, 1>;
-    fn next_interval(
-        model: &Model<B>,
-        stability: Tensor<B, 1>,
-        stability_fast: Tensor<B, 1>,
-        difficulty: Tensor<B, 1>,
-        desired_retention: Tensor<B, 1>,
-    ) -> Tensor<B, 1>;
-    fn update_state(
-        model: &Model<B>,
-        delta_t: Tensor<B, 1>,
-        rating: Tensor<B, 1>,
-        last_s: Tensor<B, 1>,
-        last_d: Tensor<B, 1>,
-        last_s_fast: Tensor<B, 1>,
-    ) -> MemoryStateTensors<B>;
-    fn memory_state_from_sm2_fsrs(
-        model: &Model<B>,
-        ease_factor: f32,
-        interval: f32,
-        sm2_retention: f32,
-    ) -> Result<MemoryState>;
-    fn interval_at_retrievability(
-        model: &Model<B>,
-        state: MemoryState,
-        target_retrievability: f32,
-    ) -> f32;
-}
-
-pub(super) struct Fsrs6Ops;
-pub(super) struct Fsrs7Ops;
-
-type ApplyFreezeShortTermFn = fn(&mut [f32]);
-type PowerForgettingCurveFn<B> =
-    fn(&Model<B>, Tensor<B, 1>, Tensor<B, 1>, Tensor<B, 1>, Tensor<B, 1>) -> Tensor<B, 1>;
-type NextIntervalFn<B> =
-    fn(&Model<B>, Tensor<B, 1>, Tensor<B, 1>, Tensor<B, 1>, Tensor<B, 1>) -> Tensor<B, 1>;
-type UpdateStateFn<B> = fn(
-    &Model<B>,
-    Tensor<B, 1>,
-    Tensor<B, 1>,
-    Tensor<B, 1>,
-    Tensor<B, 1>,
-    Tensor<B, 1>,
-) -> MemoryStateTensors<B>;
-type MemoryStateFromSm2Fn<B> = fn(&Model<B>, f32, f32, f32) -> Result<MemoryState>;
-type IntervalAtRetrievabilityFn<B> = fn(&Model<B>, MemoryState, f32) -> f32;
-
-#[derive(Clone, Copy)]
-struct VersionFns<B: Backend> {
-    apply_freeze_short_term: ApplyFreezeShortTermFn,
-    power_forgetting_curve: PowerForgettingCurveFn<B>,
-    next_interval: NextIntervalFn<B>,
-    update_state: UpdateStateFn<B>,
-    memory_state_from_sm2: MemoryStateFromSm2Fn<B>,
-    interval_at_retrievability: IntervalAtRetrievabilityFn<B>,
-}
-
-impl<B: Backend> VersionFns<B> {
-    fn from_version(version: ModelVersion) -> Self {
-        match version {
-            ModelVersion::Fsrs6 => Self {
-                apply_freeze_short_term: <Fsrs6Ops as VersionOps<B>>::apply_freeze_short_term,
-                power_forgetting_curve: <Fsrs6Ops as VersionOps<B>>::power_forgetting_curve,
-                next_interval: <Fsrs6Ops as VersionOps<B>>::next_interval,
-                update_state: <Fsrs6Ops as VersionOps<B>>::update_state,
-                memory_state_from_sm2: <Fsrs6Ops as VersionOps<B>>::memory_state_from_sm2_fsrs,
-                interval_at_retrievability: <Fsrs6Ops as VersionOps<B>>::interval_at_retrievability,
-            },
-            ModelVersion::Fsrs7 => Self {
-                apply_freeze_short_term: <Fsrs7Ops as VersionOps<B>>::apply_freeze_short_term,
-                power_forgetting_curve: <Fsrs7Ops as VersionOps<B>>::power_forgetting_curve,
-                next_interval: <Fsrs7Ops as VersionOps<B>>::next_interval,
-                update_state: <Fsrs7Ops as VersionOps<B>>::update_state,
-                memory_state_from_sm2: <Fsrs7Ops as VersionOps<B>>::memory_state_from_sm2_fsrs,
-                interval_at_retrievability: <Fsrs7Ops as VersionOps<B>>::interval_at_retrievability,
-            },
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            freeze_initial_stability: false,
+            initial_stability: None,
+            initial_forgetting_curve: None,
+            freeze_short_term_stability: false,
+            num_relearning_steps: 1,
         }
     }
 }
 
-impl<B: Backend> Model<B> {
-    #[cfg(test)]
-    pub fn new(config: ModelConfig) -> Self {
-        Self::new_with_device(config, &B::Device::default())
-    }
-
-    pub fn new_with_device(config: ModelConfig, device: &B::Device) -> Self {
-        let mut initial_params = DEFAULT_PARAMETERS.to_vec();
-        let version = ModelVersion::from_param_count(initial_params.len());
-        if let Some(initial_stability) = config.initial_stability {
-            initial_params[0..4].copy_from_slice(&initial_stability);
+impl ModelConfig {
+    pub(crate) fn initial_parameters(&self) -> Vec<f32> {
+        let mut parameters = DEFAULT_PARAMETERS.to_vec();
+        if let Some(initial_stability) = self.initial_stability {
+            parameters[..4].copy_from_slice(&initial_stability);
         }
-        if let Some(initial_forgetting_curve) = config.initial_forgetting_curve {
-            let start = if initial_params.len() == model_v7::PARAM_LEN {
+        if let Some(initial_forgetting_curve) = self.initial_forgetting_curve {
+            let start = if parameters.len() == model_v7::PARAM_LEN {
                 23
             } else {
                 27
             };
-            initial_params[start..(start + 8)].copy_from_slice(&initial_forgetting_curve);
+            parameters[start..start + 8].copy_from_slice(&initial_forgetting_curve);
         }
-        if config.freeze_short_term_stability {
-            let ops = VersionFns::<B>::from_version(version);
-            (ops.apply_freeze_short_term)(&mut initial_params);
+        if self.freeze_short_term_stability
+            && ModelVersion::from_param_count(parameters.len()) == ModelVersion::Fsrs6
+        {
+            parameters[17..20].fill(0.0);
         }
+        parameters
+    }
+}
 
-        Self {
-            w: Param::from_tensor(Tensor::from_floats(
-                TensorData::new(
-                    initial_params.clone(),
-                    Shape {
-                        dims: vec![initial_params.len()],
-                    },
-                ),
-                device,
-            )),
+/// The main FSRS model. The parameter count selects FSRS-6 (21) or FSRS-7 (34).
+#[derive(Debug, Clone)]
+pub struct FSRS {
+    parameters: Vec<f32>,
+    version: ModelVersion,
+}
+
+impl Default for FSRS {
+    fn default() -> Self {
+        Self::new(&[]).expect("default parameters should be valid")
+    }
+}
+
+impl FSRS {
+    pub fn new(parameters: &Parameters) -> Result<Self> {
+        let parameters = check_and_fill_parameters(parameters)?;
+        let config = ModelConfig::default();
+        let parameters = clip_parameters(&parameters, config.num_relearning_steps, true);
+        let version = ModelVersion::from_param_count(parameters.len());
+        Ok(Self {
+            parameters,
             version,
-        }
+        })
     }
 
-    pub(crate) fn version(&self) -> ModelVersion {
+    pub(crate) fn parameters(&self) -> &[f32] {
+        &self.parameters
+    }
+
+    pub(crate) const fn version(&self) -> ModelVersion {
         self.version
     }
 
-    pub(crate) fn memory_state_from_sm2(
+    #[inline]
+    pub(crate) fn power_forgetting_curve_for_state(&self, t: f32, state: MemoryState) -> f32 {
+        match self.version {
+            ModelVersion::Fsrs6 => {
+                model_v6::power_forgetting_curve_scalar(&self.parameters, t, state.stability)
+            }
+            ModelVersion::Fsrs7 => {
+                model_v7::fsrs7_forgetting_curve_scalar_for_state(&self.parameters, t, state)
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn power_forgetting_curve(&self, t: f32, stability: f32) -> f32 {
+        self.power_forgetting_curve_for_state(
+            t,
+            MemoryState {
+                stability,
+                difficulty: 5.0,
+                stability_fast: stability,
+            },
+        )
+    }
+
+    #[inline]
+    pub fn next_interval_for_state(&self, state: MemoryState, desired_retention: f32) -> f32 {
+        match self.version {
+            ModelVersion::Fsrs6 => {
+                model_v6::next_interval_scalar(&self.parameters, state.stability, desired_retention)
+            }
+            ModelVersion::Fsrs7 => model_v7::fsrs7_next_interval_scalar_for_state(
+                &self.parameters,
+                state,
+                desired_retention,
+            ),
+        }
+    }
+
+    pub fn interval_at_retrievability(&self, state: MemoryState, target: f32) -> f32 {
+        self.next_interval_for_state(state, target.clamp(0.0001, 0.9999))
+    }
+
+    #[inline]
+    pub(crate) fn init_stability(&self, rating: u32) -> f32 {
+        self.parameters[rating.saturating_sub(1).min(3) as usize]
+    }
+
+    #[inline]
+    pub(crate) fn init_difficulty(&self, rating: u32) -> f32 {
+        match self.version {
+            ModelVersion::Fsrs6 => {
+                model_v6::init_difficulty_scalar(&self.parameters, rating as usize)
+            }
+            ModelVersion::Fsrs7 => {
+                model_v7::init_difficulty_scalar(&self.parameters, rating as usize)
+            }
+        }
+    }
+
+    pub(crate) fn step(
+        &self,
+        delta_t: f32,
+        rating: u32,
+        state: MemoryState,
+        nth: usize,
+    ) -> MemoryState {
+        let last = MemoryState {
+            stability: state.stability.clamp(S_MIN, S_MAX),
+            difficulty: state.difficulty.clamp(D_MIN, D_MAX),
+            stability_fast: state.stability_fast.clamp(S_MIN, S_MAX),
+        };
+        let mut next = match self.version {
+            ModelVersion::Fsrs6 => {
+                model_v6::next_state_scalar(&self.parameters, last, delta_t, rating)
+            }
+            ModelVersion::Fsrs7 => {
+                model_v7::fsrs7_next_state_scalar(&self.parameters, last, delta_t, rating as usize)
+            }
+        };
+        if nth == 0 && state.stability == 0.0 {
+            let rating = rating.clamp(1, 4);
+            next.stability = self.init_stability(rating).clamp(S_MIN, S_MAX);
+            next.difficulty = self.init_difficulty(rating).clamp(D_MIN, D_MAX);
+            next.stability_fast = if self.version == ModelVersion::Fsrs7 {
+                (next.stability * 0.8).clamp(S_MIN, S_MAX)
+            } else {
+                next.stability
+            };
+        }
+        if rating == 0 { last } else { next }
+    }
+
+    pub(crate) fn init_state_from_first_review(&self, review: &FSRSReview) -> MemoryState {
+        if review.rating == 0 {
+            MemoryState {
+                stability: S_MIN,
+                difficulty: D_MIN,
+                stability_fast: S_MIN,
+            }
+        } else {
+            let rating = review.rating.clamp(1, 4);
+            let stability = self.init_stability(rating).clamp(S_MIN, S_MAX);
+            MemoryState {
+                stability,
+                difficulty: self.init_difficulty(rating).clamp(D_MIN, D_MAX),
+                stability_fast: if self.version == ModelVersion::Fsrs7 {
+                    (stability * 0.8).clamp(S_MIN, S_MAX)
+                } else {
+                    stability
+                },
+            }
+        }
+    }
+
+    pub(crate) fn forward_reviews(
+        &self,
+        reviews: &[FSRSReview],
+        starting_state: Option<MemoryState>,
+    ) -> MemoryState {
+        let (mut state, start_index) = if let Some(state) = starting_state {
+            (state, 0)
+        } else if reviews.is_empty() {
+            (
+                MemoryState {
+                    stability: 0.0,
+                    difficulty: 0.0,
+                    stability_fast: 0.0,
+                },
+                0,
+            )
+        } else {
+            (self.init_state_from_first_review(&reviews[0]), 1)
+        };
+        for (index, review) in reviews.iter().enumerate().skip(start_index) {
+            state = self.step(review.delta_t, review.rating, state, index);
+        }
+        state
+    }
+
+    pub(crate) fn memory_state_from_sm2_inner(
         &self,
         ease_factor: f32,
         interval: f32,
         sm2_retention: f32,
     ) -> Result<MemoryState> {
-        let ops = VersionFns::<B>::from_version(self.version());
-        (ops.memory_state_from_sm2)(self, ease_factor, interval, sm2_retention)
-    }
-
-    pub fn power_forgetting_curve(
-        &self,
-        t: Tensor<B, 1>,
-        s: Tensor<B, 1>,
-        s_fast: Tensor<B, 1>,
-        d: Tensor<B, 1>,
-    ) -> Tensor<B, 1> {
-        let ops = VersionFns::<B>::from_version(self.version());
-        (ops.power_forgetting_curve)(self, t, s, s_fast, d)
-    }
-
-    pub fn next_interval(
-        &self,
-        stability: Tensor<B, 1>,
-        stability_fast: Tensor<B, 1>,
-        difficulty: Tensor<B, 1>,
-        desired_retention: Tensor<B, 1>,
-    ) -> Tensor<B, 1> {
-        let ops = VersionFns::<B>::from_version(self.version());
-        (ops.next_interval)(
-            self,
-            stability,
-            stability_fast,
-            difficulty,
-            desired_retention,
-        )
-    }
-
-    pub(crate) fn interval_at_retrievability(
-        &self,
-        state: MemoryState,
-        target_retrievability: f32,
-    ) -> f32 {
-        let ops = VersionFns::<B>::from_version(self.version());
-        (ops.interval_at_retrievability)(self, state, target_retrievability)
-    }
-
-    pub(crate) fn init_stability(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w.val().select(0, rating.int() - 1)
-    }
-
-    fn init_difficulty(&self, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        self.w.get(4) - (self.w.get(5) * (rating - 1)).exp() + 1
-    }
-
-    fn linear_damping(&self, delta_d: Tensor<B, 1>, old_d: Tensor<B, 1>) -> Tensor<B, 1> {
-        old_d.neg().add_scalar(10.0) * delta_d.div_scalar(9.0)
-    }
-
-    fn next_difficulty(&self, difficulty: Tensor<B, 1>, rating: Tensor<B, 1>) -> Tensor<B, 1> {
-        let delta_d = -self.w.get(6) * (rating - 3);
-        difficulty.clone() + self.linear_damping(delta_d, difficulty)
-    }
-
-    pub(crate) fn step(
-        &self,
-        delta_t: Tensor<B, 1>,
-        rating: Tensor<B, 1>,
-        state: MemoryStateTensors<B>,
-        nth: usize,
-    ) -> MemoryStateTensors<B> {
-        let ops = VersionFns::<B>::from_version(self.version());
-        self.step_with_ops(&ops, delta_t, rating, state, nth)
-    }
-
-    fn step_with_ops(
-        &self,
-        ops: &VersionFns<B>,
-        delta_t: Tensor<B, 1>,
-        rating: Tensor<B, 1>,
-        state: MemoryStateTensors<B>,
-        nth: usize,
-    ) -> MemoryStateTensors<B> {
-        let last_s = state.stability.clone().clamp(S_MIN, S_MAX);
-        let last_d = state.difficulty.clone().clamp(D_MIN, D_MAX);
-        let last_s_fast = state.stability_fast.clone().clamp(S_MIN, S_MAX);
-        let mut new_state = (ops.update_state)(
-            self,
-            delta_t.clone(),
-            rating.clone(),
-            last_s.clone(),
-            last_d.clone(),
-            last_s_fast.clone(),
-        );
-
-        if nth == 0 {
-            let is_initial = state.stability.clone().equal_elem(0.0);
-            let init_s = self.init_stability(rating.clone().clamp(1, 4));
-            let init_d = self
-                .init_difficulty(rating.clone().clamp(1, 4))
-                .clamp(D_MIN, D_MAX);
-            let init_s_fast = if self.version() == ModelVersion::Fsrs7 {
-                init_s.clone().mul_scalar(0.8)
-            } else {
-                init_s.clone()
-            };
-            new_state.stability = new_state.stability.mask_where(is_initial.clone(), init_s);
-            new_state.difficulty = new_state.difficulty.mask_where(is_initial.clone(), init_d);
-            new_state.stability_fast = new_state.stability_fast.mask_where(is_initial, init_s_fast);
-        }
-
-        // mask padding zeros for rating
-        new_state.stability = new_state
-            .stability
-            .mask_where(rating.clone().equal_elem(0), last_s)
-            .clamp(S_MIN, S_MAX);
-        new_state.difficulty = new_state
-            .difficulty
-            .mask_where(rating.clone().equal_elem(0), last_d);
-        new_state.stability_fast = new_state
-            .stability_fast
-            .mask_where(rating.equal_elem(0), last_s_fast)
-            .clamp(S_MIN, S_MAX);
-
-        new_state
-    }
-
-    /// If [starting_state] is provided, it will be used instead of the default initial stability/
-    /// difficulty.
-    pub(crate) fn forward(
-        &self,
-        delta_ts: Tensor<B, 2>,
-        ratings: Tensor<B, 2>,
-        starting_state: Option<MemoryStateTensors<B>>,
-    ) -> MemoryStateTensors<B> {
-        let [seq_len, batch_size] = delta_ts.dims();
-        let mut state = if let Some(state) = starting_state {
-            state
-        } else {
-            MemoryStateTensors::zeros(batch_size)
-        };
-        let ops = VersionFns::<B>::from_version(self.version());
-        for i in 0..seq_len {
-            let delta_t = delta_ts.get(i).squeeze(0);
-            let rating = ratings.get(i).squeeze(0);
-            state = self.step_with_ops(&ops, delta_t, rating, state, i);
-        }
-        state
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct MemoryStateTensors<B: Backend> {
-    pub stability: Tensor<B, 1>,
-    pub difficulty: Tensor<B, 1>,
-    pub stability_fast: Tensor<B, 1>,
-}
-
-impl<B: Backend> MemoryStateTensors<B> {
-    pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
-        let device = B::Device::default();
-        MemoryStateTensors {
-            stability: Tensor::zeros([batch_size], &device),
-            difficulty: Tensor::zeros([batch_size], &device),
-            stability_fast: Tensor::zeros([batch_size], &device),
+        match self.version {
+            ModelVersion::Fsrs6 => model_v6::memory_state_from_sm2_scalar(
+                &self.parameters,
+                ease_factor,
+                interval,
+                sm2_retention,
+            ),
+            ModelVersion::Fsrs7 => {
+                let stability = interval.max(S_MIN).clamp(S_MIN, S_MAX);
+                Ok(MemoryState {
+                    stability,
+                    difficulty: 5.0,
+                    stability_fast: (stability * 0.8).clamp(S_MIN, S_MAX),
+                })
+            }
         }
     }
-
-    pub(crate) fn from_state(state: MemoryState) -> Self {
-        let device = B::Device::default();
-        Self {
-            stability: Tensor::from_floats([state.stability], &device),
-            difficulty: Tensor::from_floats([state.difficulty], &device),
-            stability_fast: Tensor::from_floats([state.stability_fast], &device),
-        }
-    }
-}
-
-#[derive(Config, Debug, Default)]
-pub struct ModelConfig {
-    #[config(default = false)]
-    pub freeze_initial_stability: bool,
-    pub initial_stability: Option<[f32; 4]>,
-    pub initial_forgetting_curve: Option<[f32; 8]>,
-    #[config(default = false)]
-    pub freeze_short_term_stability: bool,
-    #[config(default = 1)]
-    pub num_relearning_steps: usize,
-}
-
-impl ModelConfig {
-    #[cfg(test)]
-    pub fn init<B: Backend>(&self) -> Model<B> {
-        Model::new(self.clone())
-    }
-}
-
-/// This is the main structure provided by this crate. It can be used
-/// for both parameter training, and for reviews.
-#[derive(Debug, Clone)]
-pub struct FSRS<B: Backend = NdArray> {
-    model: Model<B>,
-}
-
-impl Default for FSRS<NdArray> {
-    fn default() -> Self {
-        Self::new(&[]).expect("Default parameters should be valid")
-    }
-}
-
-impl FSRS<NdArray> {
-    /// - Parameters must be provided before running commands that need them.
-    /// - Parameters may be an empty slice to use the default values instead.
-    pub fn new(parameters: &Parameters) -> Result<Self> {
-        Self::new_with_backend(parameters, &NdArrayDevice::Cpu)
-    }
-}
-
-impl<B: Backend> FSRS<B> {
-    pub fn new_with_backend<B2: Backend>(
-        parameters: &Parameters,
-        device: &B2::Device,
-    ) -> Result<FSRS<B2>> {
-        let parameters = check_and_fill_parameters(parameters)?;
-        let model = parameters_to_model::<B2>(&parameters, device);
-
-        Ok(FSRS { model })
-    }
-
-    pub(crate) fn model(&self) -> &Model<B> {
-        &self.model
-    }
-
-    pub(crate) fn device(&self) -> B::Device {
-        self.model().w.device()
-    }
-}
-
-pub(crate) fn parameters_to_model<B: Backend>(
-    parameters: &Parameters,
-    device: &B::Device,
-) -> Model<B> {
-    let config = ModelConfig::default();
-    let mut model = Model::new_with_device(config.clone(), device);
-    let clipped = clip_parameters(parameters, config.num_relearning_steps, Default::default());
-    model.w = Param::from_tensor(Tensor::from_floats(
-        TensorData::new(
-            clipped.clone(),
-            Shape {
-                dims: vec![clipped.len()],
-            },
-        ),
-        device,
-    ));
-    model.version = ModelVersion::from_param_count(clipped.len());
-    model
 }
 
 pub fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
@@ -466,7 +284,7 @@ pub fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FS
     } else {
         return Err(FSRSError::InvalidParameters);
     };
-    if parameters.iter().any(|&w| !w.is_finite()) {
+    if parameters.iter().any(|value| !value.is_finite()) {
         return Err(FSRSError::InvalidParameters);
     }
     Ok(parameters)
@@ -476,64 +294,19 @@ pub fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FS
 mod tests {
     use super::*;
     use crate::inference::FSRS6_DEFAULT_PARAMETERS;
-    use crate::test_helpers::{Model as TestModel, NdArrayAutodiff, TestHelper};
-    use burn::backend::ndarray::NdArrayDevice;
-    use burn::tensor::TensorData;
-
-    static DEVICE: NdArrayDevice = NdArrayDevice::Cpu;
 
     #[test]
-    fn test_w() {
-        let model: TestModel = Model::new(ModelConfig::default());
+    fn model_version_selection() {
+        assert_eq!(FSRS::default().version(), ModelVersion::Fsrs6);
         assert_eq!(
-            model.w.val().to_data(),
-            TensorData::new(
-                DEFAULT_PARAMETERS.to_vec(),
-                Shape {
-                    dims: vec![model_v7::PARAM_LEN]
-                }
-            )
-        )
+            FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap().version(),
+            ModelVersion::Fsrs6
+        );
     }
 
     #[test]
-    fn test_convert_parameters() {
-        let fsrs4dot5_param = vec![
-            0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26,
-            0.29, 2.61,
-        ];
-        let fsrs5_param = check_and_fill_parameters(&fsrs4dot5_param).unwrap();
-        assert_eq!(
-            fsrs5_param,
-            vec![
-                0.4, 0.6, 2.4, 5.8, 6.81, 0.44675013, 1.36, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05,
-                0.34, 1.26, 0.29, 2.61, 0.0, 0.0, 0.0, 0.5
-            ]
-        )
-    }
-
-    #[test]
-    fn test_fsrs() {
-        FSRS::default()
-            .model()
-            .w
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap()
-            .assert_approx_eq(FSRS6_DEFAULT_PARAMETERS);
-        assert!(FSRS::new(&[]).is_ok());
-        assert!(FSRS::new(&[1.]).is_err());
+    fn rejects_invalid_parameters() {
+        assert!(FSRS::new(&[1.0]).is_err());
         assert!(FSRS::new(DEFAULT_PARAMETERS.as_slice()).is_ok());
-        assert!(FSRS::new(&FSRS6_DEFAULT_PARAMETERS[..17]).is_ok());
-        assert!(FSRS::new(&FSRS6_DEFAULT_PARAMETERS).is_ok());
-    }
-
-    #[test]
-    fn test_model_version_selection() {
-        let model_v7: TestModel = Model::new(ModelConfig::default());
-        assert_eq!(model_v7.version(), ModelVersion::Fsrs7);
-
-        let model_v6 = parameters_to_model::<NdArrayAutodiff>(&FSRS6_DEFAULT_PARAMETERS, &DEVICE);
-        assert_eq!(model_v6.version(), ModelVersion::Fsrs6);
     }
 }

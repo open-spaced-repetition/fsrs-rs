@@ -4,7 +4,7 @@
 //
 // This is a lane-parallel (4 cards at a time) mirror of the scalar reverse-mode
 // in `super::reverse`, which is itself validated to ~1e-9 against the
-// forward-mode dual (and the dual against Burn autodiff). Remainder columns
+// forward-mode dual (and the dual against the former autodiff path). Remainder columns
 // that don't fill a group of 4 fall back to the scalar reverse path.
 
 use super::{D_MAX, D_MIN, PARAM_LEN, S_MAX, S_MIN};

@@ -100,10 +100,11 @@ optimizer/L2 config drift.
 
 ## Upstream merge at 99386f0
 
-The upstream merge preserves this branch's FSRS-6/7 parameter shapes, fractional
-elapsed-time API, generic Burn backend API, default training behavior, and
-always-available Cost ADR exports. The upstream production-Burn removal and
-Cost ADR feature gate are not adopted. Rand remains at 0.9 with rand_distr 0.5
+The upstream merge initially preserved this branch's FSRS-6/7 parameter shapes,
+fractional elapsed-time API, generic backend API, default training behavior, and
+always-available Cost ADR exports. A later dependency-removal pass replaced the
+generic backend surface with concrete scalar/runtime kernels and host-side
+analytic training. Rand remains at 0.9 with rand_distr 0.5
 to preserve this branch's seeded simulation and optimizer streams; upstream's
 0.10/0.6 migration is not adopted. Other dependency updates and the stable
 Rust toolchain are integrated.

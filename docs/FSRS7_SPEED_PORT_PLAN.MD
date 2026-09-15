@@ -1,5 +1,10 @@
 # FSRS7 Speed Port Plan
 
+> Status (2026-09-08): the dependency-removal phase is complete. Runtime
+> inference is scalar/version-dispatched, and both prefix and card-ID training
+> use host-side analytic gradients and Adam. Older benchmark notes below are a
+> chronological record of the migration, not a description of current code.
+
 ## Source Checked
 
 - Source repo: `/Users/jschoreels/workspace/fsrs-rs-speed-autoresearch`

@@ -13,22 +13,6 @@ description = "FSRS for Rust, including Optimizer and Scheduler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies.burn]
-version = "0.17.1"
-# git = "https://github.com/tracel-ai/burn.git"
-# rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
-# path = "../burn/burn"
-default-features = false
-features = ["std", "train", "ndarray", "metrics"]
-
-[dev-dependencies.burn]
-version = "0.17.1"
-# git = "https://github.com/tracel-ai/burn.git"
-# rev = "6ae3926006872a204869e84ffc303417c54b6b7f"
-# path = "../burn/burn"
-default-features = false
-features = ["std", "train", "ndarray", "sqlite-bundled", "metrics"]
-
 [dependencies]
 bytemuck = "1"
 itertools = "0.15.0"
@@ -50,7 +34,7 @@ chrono-tz = "0.10.4"
 criterion = { version = "0.8.2" }
 csv = "1.4.0"
 fern = "0.7.1"
-rusqlite = { version = "0.34.0" }
+rusqlite = { version = "0.34.0", features = ["bundled-windows"] }
 
 [[bench]]
 name = "benchmark"
@@ -87,3 +71,7 @@ path = "examples/optimize.rs"
 [[example]]
 name = "cost_adr"
 path = "examples/cost_adr.rs"
+
+[[example]]
+name = "classifier"
+path = "examples/classifier.rs"

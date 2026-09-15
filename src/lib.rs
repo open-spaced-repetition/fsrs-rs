@@ -41,8 +41,8 @@
 #![allow(clippy::single_range_in_vec_init)]
 #![allow(dead_code, unused_imports)]
 
+mod analytic_v6;
 mod analytic_v7;
-mod batch_shuffle;
 #[cfg(test)]
 mod convertor_tests;
 mod cosine_annealing;
@@ -87,6 +87,7 @@ pub use simulation::{
     simulate_with_card_update_fn,
 };
 pub use training::{
-    CombinedProgressState, ComputeParametersInput, ComputeParametersVersion, TrainingConfig,
-    benchmark, compute_parameters,
+    CombinedProgressState, ComputeParametersInput, ComputeParametersVersion,
+    RecallClassificationCosts, RecallClassifierTrainingConfig, TrainingConfig, benchmark,
+    compute_parameters, compute_parameters_for_recall_classifier,
 };

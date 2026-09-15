@@ -1,57 +1,46 @@
-use burn::{
-    backend::autodiff::Autodiff,
-    tensor::{Element, TensorData, Tolerance},
-};
-pub type NdArrayAutodiff = Autodiff<burn::backend::NdArray>;
-pub type Model = crate::model::Model<NdArrayAutodiff>;
-pub type Tensor<const D: usize, K = burn::tensor::Float> =
-    burn::tensor::Tensor<NdArrayAutodiff, D, K>;
-
-#[track_caller]
-fn assert_approx_eq<const N: usize, T>(a: [T; N], b: [T; N])
-where
-    T: Copy + std::fmt::Debug + PartialEq + Element,
-    f64: From<T>,
-{
-    TensorData::from(a).assert_approx_eq::<f32>(&TensorData::from(b), Tolerance::absolute(1e-4));
-}
-
 pub trait TestHelper<const N: usize, T> {
-    fn assert_approx_eq(&self, b: [T; N])
-    where
-        T: Copy + std::fmt::Debug + PartialEq + Element,
-        f64: From<T>;
+    fn assert_approx_eq(&self, expected: [T; N]);
 }
 
-impl<T, const N: usize> TestHelper<N, T> for [T; N] {
+impl<T, const N: usize> TestHelper<N, T> for [T; N]
+where
+    T: Copy + Into<f64> + core::fmt::Debug,
+{
     #[track_caller]
-    fn assert_approx_eq(&self, b: [T; N])
-    where
-        T: Copy + std::fmt::Debug + PartialEq + Element,
-        f64: From<T>,
-    {
-        assert_approx_eq(*self, b);
+    fn assert_approx_eq(&self, expected: [T; N]) {
+        for (actual, expected) in self.iter().zip(expected) {
+            let difference = (Into::<f64>::into(*actual) - Into::<f64>::into(expected)).abs();
+            assert!(
+                difference <= 1e-4,
+                "actual {actual:?}, expected {expected:?}"
+            );
+        }
     }
 }
 
-impl<T, const N: usize> TestHelper<N, T> for Vec<T> {
+impl<T, const N: usize> TestHelper<N, T> for Vec<T>
+where
+    T: Copy + Into<f64> + core::fmt::Debug,
+{
     #[track_caller]
-    fn assert_approx_eq(&self, b: [T; N])
-    where
-        T: Copy + std::fmt::Debug + PartialEq + Element,
-        f64: From<T>,
-    {
-        let a = self.to_owned().try_into().unwrap();
-        assert_approx_eq(a, b);
+    fn assert_approx_eq(&self, expected: [T; N]) {
+        self.as_slice().assert_approx_eq(expected);
     }
 }
-impl<T, const N: usize> TestHelper<N, T> for [T] {
+
+impl<T, const N: usize> TestHelper<N, T> for [T]
+where
+    T: Copy + Into<f64> + core::fmt::Debug,
+{
     #[track_caller]
-    fn assert_approx_eq(&self, b: [T; N])
-    where
-        T: Copy + std::fmt::Debug + PartialEq + Element,
-        f64: From<T>,
-    {
-        self.to_vec().assert_approx_eq(b);
+    fn assert_approx_eq(&self, expected: [T; N]) {
+        assert_eq!(self.len(), N);
+        for (actual, expected) in self.iter().zip(expected) {
+            let difference = (Into::<f64>::into(*actual) - Into::<f64>::into(expected)).abs();
+            assert!(
+                difference <= 1e-4,
+                "actual {actual:?}, expected {expected:?}"
+            );
+        }
     }
 }

@@ -1,5 +1,9 @@
 # Upstream merge verification
 
+> Historical note: this document records the merge decision at `99386f0`.
+> The later dependency-removal work documented in `BURN_REMOVAL.md` replaces
+> the generic backend with the concrete host-side implementation.
+
 ## Compared revisions
 
 - Branch baseline: `47fb3af` (`feature/fsrs-7-adr-optimization`).

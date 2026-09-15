@@ -163,7 +163,7 @@ to `.git/hooks/pre-commit`, then `chmod +x .git/hooks/pre-commit`
 
   ~~Another reason is, it would be hard to port to other languages while using `Tensor`s.~~
 
-  This branch still uses [Burn](https://github.com/burn-rs/burn) for its public backend API and tensor inference/training paths. FSRS-7 training with card IDs uses the branch’s analytic kernels. Upstream main has removed the production Burn dependency.
+  This crate now uses scalar and SIMD Rust kernels for inference and analytic gradients for training. It has no Burn dependency or generic tensor-backend API; FSRS-6 and FSRS-7 are selected from the parameter count.
 
 - What about the name?
 

@@ -1,13 +1,6 @@
 use crate::convertor_tests::RevlogReviewKind::*;
-use crate::dataset::{FSRSBatcher, constant_weighted_fsrs_items};
 use crate::dataset::{FSRSItem, FSRSReview};
 use crate::simulation::{RevlogEntry, RevlogReviewKind};
-use crate::test_helpers::NdArrayAutodiff;
-use burn::backend::ndarray::NdArrayDevice;
-use burn::data::dataloader::Dataset;
-use burn::data::dataloader::batcher::Batcher;
-use burn::data::dataset::InMemDataset;
-use burn::tensor::cast::ToElement;
 use chrono::prelude::*;
 use chrono_tz::Tz;
 use itertools::Itertools;
@@ -163,8 +156,11 @@ pub struct RevlogCsv {
 
 pub(crate) fn data_from_csv() -> Vec<FSRSItem> {
     const CSV_FILE: &str = "tests/data/revlog.csv";
-    let rdr = csv::ReaderBuilder::new();
-    let dataset = InMemDataset::<RevlogCsv>::from_csv(CSV_FILE, &rdr).unwrap();
+    let mut reader = csv::ReaderBuilder::new().from_path(CSV_FILE).unwrap();
+    let dataset = reader
+        .deserialize::<RevlogCsv>()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
     let mut revlogs: Vec<_> = dataset
         .iter()
         .map(|r| RevlogEntry {
@@ -223,7 +219,7 @@ pub(crate) fn read_collection() -> Result<Vec<RevlogEntry>> {
     };
 
     let current_timestamp = Utc::now().timestamp() * 1000;
-    // This sql query will be remove in the futrue. See https://github.com/open-spaced-repetition/fsrs-optimizer-burn/pull/14#issuecomment-1685895643
+    // This SQL query is retained for compatibility with the legacy optimizer fixture.
     let revlogs = db
         .prepare_cached(&format!(
             "SELECT *
@@ -250,7 +246,7 @@ pub(crate) fn read_collection() -> Result<Vec<RevlogEntry>> {
 }
 
 // This test currently expects the following .anki21 file to be placed in tests/data/:
-// https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip
+// Historical Anki collection fixture used by the optimizer tests.
 #[test]
 fn test_conversion_works() {
     let revlogs = read_collection().unwrap();
@@ -330,29 +326,17 @@ fn test_conversion_works() {
         ]
     );
 
-    let mut weighted_fsrs_items = constant_weighted_fsrs_items(fsrs_items);
-
-    let device = NdArrayDevice::Cpu;
-    let batcher = FSRSBatcher::<NdArrayAutodiff>::new();
-    let res = batcher.batch(vec![weighted_fsrs_items.pop().unwrap()], &device);
-    assert_eq!(res.delta_ts.into_scalar(), 64.0);
+    let item = fsrs_items.last().unwrap();
+    assert_eq!(item.current().delta_t, 64.0);
     assert_eq!(
-        res.r_historys
-            .squeeze::<1>(1)
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap(),
-        [3.0, 4.0, 3.0, 3.0, 3.0, 2.0],
+        item.history().map(|review| review.rating).collect_vec(),
+        [3, 4, 3, 3, 3, 2]
     );
     assert_eq!(
-        res.t_historys
-            .squeeze::<1>(1)
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap(),
-        [0.0, 0.0, 5.0, 10.0, 22.0, 56.0],
+        item.history().map(|review| review.delta_t).collect_vec(),
+        [0.0, 0.0, 5.0, 10.0, 22.0, 56.0]
     );
-    assert_eq!(res.labels.into_scalar().to_i32(), 1);
+    assert!(item.current().rating > 1);
 }
 
 #[test]

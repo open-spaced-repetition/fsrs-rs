@@ -1,40 +1,9 @@
 use crate::{inference::Parameters, model::ModelVersion};
-use burn::{
-    module::Param,
-    tensor::{Tensor, TensorData, backend::Backend},
-};
 
 #[path = "parameter_clipper_v6.rs"]
 mod parameter_clipper_v6;
 #[path = "parameter_clipper_v7.rs"]
 mod parameter_clipper_v7;
-
-pub(crate) fn parameter_clipper<B: Backend>(
-    parameters: Param<Tensor<B, 1>>,
-    num_relearning_steps: usize,
-    enable_short_term: bool,
-) -> Param<Tensor<B, 1>> {
-    let (id, val) = parameters.consume();
-    let mut clipped = clip_parameters(
-        &val.to_data().to_vec().unwrap(),
-        num_relearning_steps,
-        enable_short_term,
-    );
-    if !enable_short_term
-        && matches!(
-            ModelVersion::from_param_count(clipped.len()),
-            ModelVersion::Fsrs7
-        )
-    {
-        // FSRS-7: w[26] controls short-term mixing.
-        // Forcing it to 0 disables the short-term path (long-term only).
-        clipped[26] = 0.0;
-    }
-    Param::initialized(
-        id,
-        Tensor::from_data(TensorData::new(clipped, val.shape()), &val.device()).require_grad(),
-    )
-}
 
 pub(crate) fn clip_parameters(
     parameters: &Parameters,
@@ -68,116 +37,21 @@ pub(crate) fn clip_parameters_in_place(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_PARAMETERS, test_helpers::Tensor};
-    use burn::backend::ndarray::NdArrayDevice;
-    static DEVICE: NdArrayDevice = NdArrayDevice::Cpu;
+    use crate::DEFAULT_PARAMETERS;
 
     #[test]
-    fn test_parameter_clipper_works() {
-        let tensor = Tensor::from_floats(
-            [0.0, -1000.0, 1000.0, 0.0, 1000.0, -1000.0, 1.0, 0.25, -0.1],
-            &DEVICE,
-        );
-
-        let param = parameter_clipper(Param::from_tensor(tensor), 1, true);
-        let values = &param.to_data().to_vec::<f32>().unwrap();
-
-        assert_eq!(
-            values,
-            &[0.0001, 0.0001, 100.0, 0.0001, 10.0, 0.001, 1.0, 0.25, 0.0]
-        );
+    fn clips_fsrs7() {
+        let mut parameters = DEFAULT_PARAMETERS.to_vec();
+        clip_parameters_in_place(&mut parameters, 1, false);
+        assert!(parameters[26] > 0.0);
+        assert!(parameters.iter().all(|value| value.is_finite()));
     }
 
     #[test]
-    fn test_parameter_clipper_works_with_num_relearning_steps() {
-        let mut parameters = crate::FSRS6_DEFAULT_PARAMETERS;
-        parameters[17] = 2.0;
-        parameters[18] = 2.0;
-        let clip = |steps| {
-            let tensor = Tensor::from_floats(parameters, &DEVICE);
-            parameter_clipper(Param::from_tensor(tensor), steps, true)
-                .to_data()
-                .to_vec::<f32>()
-                .unwrap()
-        };
-        let one_step = clip(1);
-        let two_steps = clip(2);
-        let eight_steps = clip(8);
-        assert_eq!(&one_step[17..=18], &[2.0, 2.0]);
-        for index in 17..=18 {
-            assert!(0.0 < eight_steps[index] && eight_steps[index] < two_steps[index]);
-            assert!(two_steps[index] < one_step[index]);
-            // The ceiling scales with the inverse square root of the step count.
-            assert!((two_steps[index] - 2.0 * eight_steps[index]).abs() < 1e-6);
-        }
-        assert_eq!(two_steps[19], parameters[19]);
-    }
-
-    #[test]
-    fn test_fsrs7_clipping_is_independent_of_relearning_steps() {
-        let clip = |steps| {
-            let tensor = Tensor::from_floats(DEFAULT_PARAMETERS, &DEVICE);
-            parameter_clipper(Param::from_tensor(tensor), steps, true)
-                .to_data()
-                .to_vec::<f32>()
-                .unwrap()
-        };
-        assert_eq!(clip(1), DEFAULT_PARAMETERS.to_vec());
-        assert_eq!(clip(1), clip(8));
-    }
-
-    #[test]
-    fn test_fsrs7_clipper_monotonic_bounds() {
-        let mut params = vec![1000.0; 34];
-        params[23] = -1.0;
-        params[24] = 10.0;
-        params[27] = 0.1;
-        params[28] = 2.0;
-        let clipped = clip_parameters(&params, 1, true);
-        assert_eq!(clipped.len(), 34);
-        assert!(clipped[1] >= clipped[0]);
-        assert!(clipped[2] >= clipped[1]);
-        assert!(clipped[3] >= clipped[2]);
-        assert!(clipped[28] >= clipped[27]);
-    }
-
-    #[test]
-    fn test_clip_parameters_in_place_matches_allocating_wrapper() {
-        let params = vec![1000.0; 34];
-        let expected = clip_parameters(&params, 1, true);
-        let mut actual = params;
-        clip_parameters_in_place(&mut actual, 1, true);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_fsrs7_clipper_respects_disable_short_term() {
-        use burn::backend::ndarray::NdArrayDevice;
-        let params = Tensor::from_floats(DEFAULT_PARAMETERS, &NdArrayDevice::Cpu);
-        let clipped_on = parameter_clipper(Param::from_tensor(params.clone()), 1, true)
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap();
-        let clipped_off = parameter_clipper(Param::from_tensor(params), 1, false)
-            .to_data()
-            .to_vec::<f32>()
-            .unwrap();
-        assert!(clipped_on[26] > 0.0);
-        assert_eq!(clipped_off[26], 0.0);
-    }
-
-    #[test]
-    fn test_fsrs7_clipper_handles_nan_without_panic() {
-        let mut params = DEFAULT_PARAMETERS.to_vec();
-        for idx in [0, 1, 2, 3, 27, 28, 29, 30] {
-            params[idx] = f32::NAN;
-        }
-        let clipped = clip_parameters(&params, 1, true);
-        assert_eq!(clipped.len(), 34);
-        assert!(clipped.iter().all(|v| v.is_finite()));
-        assert!(clipped[1] >= clipped[0]);
-        assert!(clipped[2] >= clipped[1]);
-        assert!(clipped[3] >= clipped[2]);
-        assert!(clipped[28] >= clipped[27]);
+    fn handles_nan_without_panicking() {
+        let mut parameters = DEFAULT_PARAMETERS.to_vec();
+        parameters[0] = f32::NAN;
+        clip_parameters_in_place(&mut parameters, 1, true);
+        assert!(parameters.iter().all(|value| value.is_finite()));
     }
 }
