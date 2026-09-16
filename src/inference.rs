@@ -328,10 +328,10 @@ impl FSRS {
     /// assert_eq!(
     ///     next_states,
     ///     NextStates {
-    ///         again: ItemState { memory: MemoryState { stability: 0.212, difficulty: 6.4133, stability_fast: 0.212 }, interval: 0.212 },
-    ///         hard: ItemState { memory: MemoryState { stability: 1.2931, difficulty: 5.1121707, stability_fast: 1.2931 }, interval: 1.2931 },
-    ///         good: ItemState { memory: MemoryState { stability: 2.3065, difficulty: 2.118104, stability_fast: 2.3065 }, interval: 2.3065 },
-    ///         easy: ItemState { memory: MemoryState { stability: 8.2956, difficulty: 1.0, stability_fast: 8.2956 }, interval: 8.2956 }
+    ///         again: ItemState { memory: MemoryState { stability: 0.1104, difficulty: 6.1686, stability_fast: 0.08832 }, interval: 3.8275626e-5 },
+    ///         hard: ItemState { memory: MemoryState { stability: 2.2395, difficulty: 5.261278, stability_fast: 1.7916001 }, interval: 0.5974598 },
+    ///         good: ItemState { memory: MemoryState { stability: 3.9221, difficulty: 3.5307243, stability_fast: 3.13768 }, interval: 4.7777247 },
+    ///         easy: ItemState { memory: MemoryState { stability: 11.7841, difficulty: 1.0, stability_fast: 9.427279 }, interval: 53.869392 }
     ///     }
     /// );
     /// ```

@@ -1,4 +1,4 @@
-use crate::inference::MemoryState;
+use crate::inference::{DEFAULT_PARAMETERS, MemoryState, Parameters};
 
 pub(super) const PARAM_LEN: usize = 34;
 const DR_MIN: f32 = 0.0001;
@@ -6,6 +6,14 @@ const DR_MAX: f32 = 0.9999;
 const INTERVAL_NEWTON_ITERS: usize = 7;
 const BISECTION_ITERS: usize = 50;
 const MIN_T: f32 = 1.0 / 86_400.0;
+
+pub(crate) fn check_and_fill_parameters_fsrs7(parameters: &Parameters) -> Option<Vec<f32>> {
+    match parameters.len() {
+        0 => Some(DEFAULT_PARAMETERS.to_vec()),
+        PARAM_LEN => Some(parameters.to_vec()),
+        _ => None,
+    }
+}
 
 pub(crate) fn fsrs7_forgetting_curve_scalar(w: &[f32], t: f32, s: f32) -> f32 {
     fsrs7_forgetting_curve_scalar_for_state(
