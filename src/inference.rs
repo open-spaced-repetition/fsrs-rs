@@ -109,6 +109,8 @@ fn rmse_bins(r_matrix: &HashMap<(u32, u32, u32), RMatrixValue>) -> f32 {
 fn evaluate_time_series_split(
     split: TimeSeriesSplit,
     enable_short_term: bool,
+    enable_sched_penalties: bool,
+    model_version: training::ComputeParametersVersion,
     num_relearning_steps: Option<usize>,
     training_config: Option<training::TrainingConfig>,
     progress: Option<SharedTrainingProgress>,
@@ -124,10 +126,11 @@ fn evaluate_time_series_split(
         train_set: split.train_items,
         card_ids: split.train_card_ids,
         enable_short_term,
+        enable_sched_penalties,
+        model_version,
         num_relearning_steps,
         training_config,
         progress: progress.clone(),
-        ..Default::default()
     };
     let parameters = training::compute_parameters(input)?;
 
@@ -765,9 +768,11 @@ pub fn evaluate_with_time_series_splits<F>(
         train_set,
         card_ids,
         enable_short_term,
+        enable_sched_penalties,
+        model_version,
         num_relearning_steps,
         training_config,
-        ..
+        progress: _,
     }: ComputeParametersInput,
     mut progress: F,
 ) -> Result<ModelEvaluation>
@@ -818,6 +823,8 @@ where
                 let result = evaluate_time_series_split(
                     split,
                     enable_short_term,
+                    enable_sched_penalties,
+                    model_version,
                     num_relearning_steps,
                     training_config,
                     Some(progress),
@@ -906,6 +913,86 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
+    use crate::{ComputeParametersVersion, TrainingConfig};
+
+    #[test]
+    fn time_series_splits_preserve_training_options() {
+        let train_set = anki21_sample_file_converted_to_fsrs()
+            .into_iter()
+            .take(480)
+            .collect::<Vec<_>>();
+        let mut losses = Vec::new();
+        for model_version in [
+            ComputeParametersVersion::Fsrs6,
+            ComputeParametersVersion::Fsrs7,
+        ] {
+            for enable_sched_penalties in [false, true] {
+                let input = ComputeParametersInput {
+                    train_set: train_set.clone(),
+                    model_version,
+                    enable_sched_penalties,
+                    training_config: Some(TrainingConfig {
+                        num_epochs: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                let mut predictions = Vec::new();
+                let mut labels = Vec::new();
+                for split in TimeSeriesSplit::split(train_set.clone(), 5) {
+                    let parameters = training::compute_parameters(ComputeParametersInput {
+                        train_set: split.train_items,
+                        ..input.clone()
+                    })
+                    .unwrap();
+                    assert_eq!(
+                        parameters.len(),
+                        match model_version {
+                            ComputeParametersVersion::Fsrs6 => 21,
+                            ComputeParametersVersion::Fsrs7 => 34,
+                        }
+                    );
+                    let fsrs = FSRS::new(&parameters).unwrap();
+                    for item in split.test_items {
+                        predictions.push(predict_retrievability(&fsrs, &item).unwrap());
+                        labels.push(if item.current().rating > 1 { 1.0 } else { 0.0 });
+                    }
+                }
+                let expected =
+                    weighted_binary_cross_entropy(&predictions, &labels, &vec![1.0; labels.len()]);
+                let mut updates = Vec::new();
+                let actual = evaluate_with_time_series_splits(input, |progress| {
+                    updates.push((progress.current, progress.total));
+                    true
+                })
+                .unwrap();
+                assert!(
+                    (actual.log_loss - expected).abs() < 1e-6,
+                    "{model_version:?}, penalties={enable_sched_penalties}: {actual:?}, expected {expected}"
+                );
+                assert_eq!(updates, vec![(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]);
+                losses.push(expected);
+            }
+        }
+        // Ensure the fixture detects both a wrong version and disabled penalties.
+        assert!((losses[0] - losses[2]).abs() > 1e-6);
+        assert!((losses[2] - losses[3]).abs() > 1e-6);
+
+        let mut calls = 0;
+        let result = evaluate_with_time_series_splits(
+            ComputeParametersInput {
+                train_set: train_set[..6].to_vec(),
+                ..Default::default()
+            },
+            |_| {
+                calls += 1;
+                false
+            },
+        );
+        assert!(matches!(result, Err(FSRSError::Interrupted)));
+        assert_eq!(calls, 1);
+    }
 
     #[test]
     fn validates_memory_state_for_model_version() -> Result<()> {
