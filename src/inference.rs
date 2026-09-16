@@ -459,7 +459,7 @@ impl FSRS {
         &self,
         items: Vec<FSRSItem>,
         card_ids: Vec<i64>,
-        mut progress: F,
+        progress: F,
     ) -> Result<ModelEvaluation>
     where
         F: FnMut(ItemProgress) -> bool,
@@ -471,32 +471,7 @@ impl FSRS {
             return Err(FSRSError::InvalidInput);
         }
         let weighted_items = recency_weighted_fsrs_items_with_card_ids(items, card_ids);
-
-        // Group item indices by card id, in first-appearance order.
-        let mut group_index: HashMap<i64, usize> = HashMap::new();
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for (idx, weighted_item) in weighted_items.iter().enumerate() {
-            let group = *group_index
-                .entry(weighted_item.card_id.unwrap())
-                .or_insert_with(|| {
-                    groups.push(Vec::new());
-                    groups.len() - 1
-                });
-            groups[group].push(idx);
-        }
-
-        let mut predictions = vec![0.0f32; weighted_items.len()];
-        let mut progress_info = ItemProgress {
-            current: 0,
-            total: weighted_items.len(),
-        };
-        for group in &groups {
-            self.predict_card_group(&weighted_items, group, &mut predictions)?;
-            progress_info.current += group.len();
-            if !progress(progress_info) {
-                return Err(FSRSError::Interrupted);
-            }
-        }
+        let predictions = self.predictions_by_card(&weighted_items, progress)?;
 
         // Aggregate in the original item order — the same arithmetic in the same accumulation
         // order as `evaluate`, so the resulting metrics are bit-for-bit identical.
@@ -526,6 +501,76 @@ impl FSRS {
             log_loss: loss,
             rmse_bins: rmse,
         })
+    }
+
+    /// The predicted probability of recall of every item, in the order of `items`: for each
+    /// item, the retrievability of its last review, from the memory state that the item's
+    /// earlier reviews build.
+    ///
+    /// `card_ids` is aligned with `items`, the same convention as
+    /// [`ComputeParametersInput::card_ids`]: the items of one card that form expanding-window
+    /// prefixes of one history share a single walk of that card's trajectory, so the work is
+    /// O(total reviews) rather than O(sum of prefix lengths). A card whose items are not a
+    /// prefix chain falls back to the per-item path.
+    ///
+    /// These are the values [`Self::evaluate_with_card_ids`] scores - that method calls this
+    /// one and then aggregates - so a caller that wants the numbers themselves, to plot a
+    /// calibration curve or to store a prediction per review, does not have to reimplement the
+    /// walk.
+    pub fn predict_retrievability_with_card_ids<F>(
+        &self,
+        items: Vec<FSRSItem>,
+        card_ids: Vec<i64>,
+        progress: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if items.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
+        if card_ids.len() != items.len() {
+            return Err(FSRSError::InvalidInput);
+        }
+        let weighted_items = recency_weighted_fsrs_items_with_card_ids(items, card_ids);
+        self.predictions_by_card(&weighted_items, progress)
+    }
+
+    /// Per-item predictions for `weighted_items`, one walk per card.
+    fn predictions_by_card<F>(
+        &self,
+        weighted_items: &[WeightedFSRSItem],
+        mut progress: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        // Group item indices by card id, in first-appearance order.
+        let mut group_index: HashMap<i64, usize> = HashMap::new();
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        for (idx, weighted_item) in weighted_items.iter().enumerate() {
+            let group = *group_index
+                .entry(weighted_item.card_id.unwrap())
+                .or_insert_with(|| {
+                    groups.push(Vec::new());
+                    groups.len() - 1
+                });
+            groups[group].push(idx);
+        }
+
+        let mut predictions = vec![0.0f32; weighted_items.len()];
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: weighted_items.len(),
+        };
+        for group in &groups {
+            self.predict_card_group(weighted_items, group, &mut predictions)?;
+            progress_info.current += group.len();
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+        Ok(predictions)
     }
 
     /// Fill `predictions` for one card's items. If the items form an expanding-window prefix
@@ -904,8 +949,112 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FSRSReview;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::{ComputeParametersVersion, TrainingConfig};
+
+    /// One card's expanding-window prefixes, the shape `compute_parameters` and
+    /// `evaluate_with_card_ids` are given.
+    fn prefix_items(ratings: &[(u32, f32)]) -> Vec<FSRSItem> {
+        let reviews: Vec<FSRSReview> = ratings
+            .iter()
+            .map(|&(rating, delta_t)| FSRSReview { rating, delta_t })
+            .collect();
+        (2..=reviews.len())
+            .map(|len| FSRSItem {
+                reviews: reviews[..len].to_vec(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn predict_retrievability_with_card_ids_returns_the_evaluated_predictions() {
+        let mut items = Vec::new();
+        let mut card_ids = Vec::new();
+        // Two cards whose items form a prefix chain, so the trajectory is walked
+        // once, and one card whose items do not, so the per-item path is used.
+        for (card_id, ratings) in [
+            (
+                101_i64,
+                &[(3, 0.0), (3, 1.0), (4, 5.0), (3, 13.0), (1, 30.0)][..],
+            ),
+            (102, &[(1, 0.0), (3, 0.5), (3, 3.0), (2, 9.0)][..]),
+        ] {
+            for item in prefix_items(ratings) {
+                items.push(item);
+                card_ids.push(card_id);
+            }
+        }
+        for ratings in [
+            &[(3, 0.0), (2, 4.0)][..],
+            &[(4, 0.0), (3, 21.0), (3, 60.0)][..],
+        ] {
+            for item in prefix_items(ratings) {
+                items.push(item);
+                card_ids.push(103);
+            }
+        }
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+
+        let mut updates = Vec::new();
+        let predictions = fsrs
+            .predict_retrievability_with_card_ids(items.clone(), card_ids.clone(), |progress| {
+                updates.push(progress.current);
+                true
+            })
+            .unwrap();
+
+        // One value per item, in the order of `items`, each the value the
+        // per-item path gives for that item.
+        assert_eq!(predictions.len(), items.len());
+        for (item, prediction) in items.iter().zip(&predictions) {
+            assert_eq!(*prediction, predict_retrievability(&fsrs, item).unwrap());
+        }
+        assert_eq!(updates.last(), Some(&items.len()));
+        // The values are real probabilities and they are not all alike.
+        assert!(predictions.iter().all(|p| (0.0..=1.0).contains(p)));
+        assert!(
+            predictions
+                .iter()
+                .any(|p| (p - predictions[0]).abs() > 0.01)
+        );
+
+        // The evaluation scores exactly these numbers: its log loss is what they
+        // give, so the wrapper is a projection of the evaluation path.
+        let weighted_items =
+            recency_weighted_fsrs_items_with_card_ids(items.clone(), card_ids.clone());
+        let labels: Vec<f32> = weighted_items
+            .iter()
+            .map(|weighted_item| f32::from(weighted_item.item.current().rating > 1))
+            .collect();
+        let weights: Vec<f32> = weighted_items
+            .iter()
+            .map(|weighted_item| weighted_item.weight)
+            .collect();
+        let expected = weighted_binary_cross_entropy(&predictions, &labels, &weights);
+        let evaluation = fsrs
+            .evaluate_with_card_ids(items.clone(), card_ids.clone(), |_| true)
+            .unwrap();
+        assert_eq!(evaluation.log_loss, expected);
+
+        // The input checks are the evaluation's.
+        assert_eq!(
+            fsrs.predict_retrievability_with_card_ids(vec![], vec![], |_| true)
+                .unwrap_err(),
+            FSRSError::NotEnoughData
+        );
+        assert_eq!(
+            fsrs.predict_retrievability_with_card_ids(items.clone(), vec![1], |_| true)
+                .unwrap_err(),
+            FSRSError::InvalidInput
+        );
+        // A caller can stop it, as it can stop the evaluation.
+        assert_eq!(
+            fsrs.predict_retrievability_with_card_ids(items, card_ids, |_| false)
+                .unwrap_err(),
+            FSRSError::Interrupted
+        );
+    }
 
     #[test]
     fn time_series_splits_preserve_training_options() {
