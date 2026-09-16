@@ -10,8 +10,9 @@ pub(crate) mod model_v6;
 #[path = "model_v7.rs"]
 pub(crate) mod model_v7;
 
+/// The FSRS algorithm version used by a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ModelVersion {
+pub enum ModelVersion {
     Fsrs6,
     Fsrs7,
 }
@@ -108,7 +109,19 @@ impl FSRS {
         &self.parameters
     }
 
-    pub(crate) const fn version(&self) -> ModelVersion {
+    /// Returns the algorithm version used by this model.
+    ///
+    /// ```
+    /// use fsrs::{FSRS, DEFAULT_PARAMETERS, FSRS6_DEFAULT_PARAMETERS, ModelVersion};
+    ///
+    /// assert_eq!(FSRS::new(&DEFAULT_PARAMETERS)?.version(), ModelVersion::Fsrs7);
+    /// assert_eq!(
+    ///     FSRS::new(&FSRS6_DEFAULT_PARAMETERS)?.version(),
+    ///     ModelVersion::Fsrs6,
+    /// );
+    /// # Ok::<(), fsrs::FSRSError>(())
+    /// ```
+    pub const fn version(&self) -> ModelVersion {
         self.version
     }
 
