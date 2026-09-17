@@ -272,7 +272,11 @@ impl FSRS {
     }
 
     /// If a card has incomplete learning history, memory state can be approximated from
-    /// current sm2 values.
+    /// current SM-2 values.
+    ///
+    /// For FSRS-7, when representable within the model's stability bounds, the returned
+    /// state's forgetting curve reaches `sm2_retention` at `interval`; `ease_factor` is
+    /// not used because FSRS-7 has no equivalent scalar difficulty bridge.
     pub fn memory_state_from_sm2(
         &self,
         ease_factor: f32,
