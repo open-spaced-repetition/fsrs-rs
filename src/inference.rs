@@ -9,7 +9,7 @@ use crate::dataset::{
     recency_weighted_fsrs_items_with_card_ids,
 };
 use crate::error::Result;
-use crate::model::FSRS;
+use crate::model::{FSRS, ModelVersion};
 use crate::simulation::S_MIN;
 use crate::training::weighted_binary_cross_entropy;
 use crate::training::{self, ComputeParametersInput};
@@ -67,11 +67,14 @@ struct SplitEvaluation {
     r_matrix: HashMap<(u32, u32, u32), RMatrixValue>,
 }
 
-fn validate_state(state: MemoryState) -> Result<MemoryState> {
-    if !state.stability.is_finite() || !state.difficulty.is_finite() {
-        Err(FSRSError::InvalidInput)
-    } else {
+fn validate_state(state: MemoryState, version: ModelVersion) -> Result<MemoryState> {
+    if state.stability.is_finite()
+        && state.difficulty.is_finite()
+        && (version == ModelVersion::Fsrs6 || state.stability_fast.is_finite())
+    {
         Ok(state)
+    } else {
+        Err(FSRSError::InvalidInput)
     }
 }
 
@@ -198,7 +201,10 @@ impl FSRS {
         item: FSRSItem,
         starting_state: Option<MemoryState>,
     ) -> Result<MemoryState> {
-        validate_state(self.forward_reviews(&item.reviews, starting_state))
+        validate_state(
+            self.forward_reviews(&item.reviews, starting_state),
+            self.version(),
+        )
     }
 
     pub fn memory_state_batch(
@@ -234,7 +240,7 @@ impl FSRS {
     ) -> Result<Vec<MemoryState>> {
         let mut states = vec![];
         if let Some(starting_state) = starting_state {
-            states.push(starting_state);
+            states.push(validate_state(starting_state, self.version())?);
         }
         let mut inner_state = if let Some(state) = starting_state {
             state
@@ -247,7 +253,7 @@ impl FSRS {
         };
         for (index, review) in item.reviews.iter().enumerate() {
             inner_state = self.step(review.delta_t, review.rating, inner_state, index);
-            states.push(validate_state(inner_state)?);
+            states.push(inner_state);
         }
         Ok(states)
     }
@@ -380,7 +386,10 @@ impl FSRS {
             )
         };
         let mut next_memory_states = (1..=4).map(|rating| {
-            validate_state(self.step(days_elapsed, rating, current_memory_state, nth))
+            validate_state(
+                self.step(days_elapsed, rating, current_memory_state, nth),
+                self.version(),
+            )
         });
 
         let mut get_next_state = || {
@@ -987,5 +996,79 @@ mod tests {
         );
         assert!(matches!(result, Err(FSRSError::Interrupted)));
         assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn validates_memory_state_for_model_version() -> Result<()> {
+        let valid = MemoryState {
+            stability: 3.0,
+            difficulty: 5.0,
+            stability_fast: 2.4,
+        };
+        for version in [ModelVersion::Fsrs6, ModelVersion::Fsrs7] {
+            assert_eq!(validate_state(valid, version)?, valid);
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                for state in [
+                    MemoryState {
+                        stability: value,
+                        ..valid
+                    },
+                    MemoryState {
+                        difficulty: value,
+                        ..valid
+                    },
+                ] {
+                    assert!(matches!(
+                        validate_state(state, version),
+                        Err(FSRSError::InvalidInput)
+                    ));
+                }
+            }
+        }
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let state = MemoryState {
+                stability_fast: value,
+                ..valid
+            };
+            assert!(validate_state(state, ModelVersion::Fsrs6).is_ok());
+            assert!(matches!(
+                validate_state(state, ModelVersion::Fsrs7),
+                Err(FSRSError::InvalidInput)
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_nan_fast_stability_in_public_state_results() -> Result<()> {
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS)?;
+        let state = MemoryState {
+            stability: 3.0,
+            difficulty: 5.0,
+            stability_fast: f32::NAN,
+        };
+        assert!(matches!(
+            fsrs.memory_state(FSRSItem::default(), Some(state)),
+            Err(FSRSError::InvalidInput)
+        ));
+        assert!(matches!(
+            fsrs.historical_memory_states(FSRSItem::default(), Some(state)),
+            Err(FSRSError::InvalidInput)
+        ));
+        assert!(matches!(
+            fsrs.next_states(Some(state), 0.9, 1),
+            Err(FSRSError::InvalidInput)
+        ));
+        let valid = MemoryState {
+            stability_fast: 2.4,
+            ..state
+        };
+        assert!(fsrs.next_states(Some(valid), 0.9, 1).is_ok());
+        assert!(
+            FSRS::new(&FSRS6_DEFAULT_PARAMETERS)?
+                .next_states(Some(state), 0.9, 1)
+                .is_ok()
+        );
+        Ok(())
     }
 }
