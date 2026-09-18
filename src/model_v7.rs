@@ -1,4 +1,6 @@
 use crate::inference::{DEFAULT_PARAMETERS, MemoryState, Parameters};
+use crate::error::{FSRSError, Result};
+use crate::inference::MemoryState;
 
 pub(super) const PARAM_LEN: usize = 34;
 const DR_MIN: f32 = 0.0001;
@@ -6,6 +8,62 @@ const DR_MAX: f32 = 0.9999;
 const INTERVAL_NEWTON_ITERS: usize = 7;
 const BISECTION_ITERS: usize = 50;
 const MIN_T: f32 = 1.0 / 86_400.0;
+const RETENTION_TOLERANCE: f32 = 1e-6;
+
+pub(crate) fn memory_state_from_sm2_scalar(
+    w: &[f32],
+    interval: f32,
+    sm2_retention: f32,
+) -> Result<MemoryState> {
+    if !interval.is_finite() || !sm2_retention.is_finite() || !(0.0..1.0).contains(&sm2_retention) {
+        return Err(FSRSError::InvalidInput);
+    }
+
+    let interval = interval.max(super::S_MIN).clamp(super::S_MIN, super::S_MAX);
+    let state_at = |log_stability: f32| {
+        let stability = log_stability.exp().clamp(super::S_MIN, super::S_MAX);
+        MemoryState {
+            stability,
+            difficulty: 5.0,
+            stability_fast: (stability * 0.8).clamp(super::S_MIN, super::S_MAX),
+        }
+    };
+
+    let mut low = super::S_MIN.ln();
+    let mut high = super::S_MAX.ln();
+    let low_state = state_at(low);
+    let high_state = state_at(high);
+    let low_retention = fsrs7_forgetting_curve_scalar_for_state(w, interval, low_state);
+    let high_retention = fsrs7_forgetting_curve_scalar_for_state(w, interval, high_state);
+    if !low_retention.is_finite() || !high_retention.is_finite() {
+        return Err(FSRSError::InvalidInput);
+    }
+    if sm2_retention <= low_retention {
+        return Ok(low_state);
+    }
+    if sm2_retention >= high_retention {
+        return Ok(high_state);
+    }
+
+    for _ in 0..BISECTION_ITERS {
+        let mid = (low + high) * 0.5;
+        let state = state_at(mid);
+        let retention = fsrs7_forgetting_curve_scalar_for_state(w, interval, state);
+        if !retention.is_finite() {
+            return Err(FSRSError::InvalidInput);
+        }
+        if (retention - sm2_retention).abs() <= RETENTION_TOLERANCE {
+            return Ok(state);
+        }
+        if retention < sm2_retention {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+
+    Ok(state_at((low + high) * 0.5))
+}
 
 pub(crate) fn check_and_fill_parameters_fsrs7(parameters: &Parameters) -> Option<Vec<f32>> {
     match parameters.len() {

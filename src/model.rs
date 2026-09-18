@@ -267,12 +267,7 @@ impl FSRS {
                 sm2_retention,
             ),
             ModelVersion::Fsrs7 => {
-                let stability = interval.max(S_MIN).clamp(S_MIN, S_MAX);
-                Ok(MemoryState {
-                    stability,
-                    difficulty: 5.0,
-                    stability_fast: (stability * 0.8).clamp(S_MIN, S_MAX),
-                })
+                model_v7::memory_state_from_sm2_scalar(&self.parameters, interval, sm2_retention)
             }
         }
     }
