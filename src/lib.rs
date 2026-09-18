@@ -74,7 +74,7 @@ pub use inference::{
     ItemProgress, ItemState, MemoryState, ModelEvaluation, NextStates, current_retrievability,
     evaluate_with_time_series_splits,
 };
-pub use model::{FSRS, check_and_fill_parameters};
+pub use model::{FSRS, ModelVersion, check_and_fill_parameters};
 pub use simulation::simulate_with_cost_adr_policy;
 pub use simulation::{
     CMRRTargetFn, Card, IntervalBucketConfig, IntervalBucketStats, IntervalBucketSummary,
