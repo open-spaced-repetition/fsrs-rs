@@ -1,6 +1,6 @@
 use crate::inference::{DEFAULT_PARAMETERS, MemoryState, Parameters};
 use crate::error::{FSRSError, Result};
-use crate::inference::MemoryState;
+
 
 pub(super) const PARAM_LEN: usize = 34;
 const DR_MIN: f32 = 0.0001;
