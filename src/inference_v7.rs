@@ -30,14 +30,32 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_from_sm2_fsrs7_bridge_is_finite() -> Result<()> {
-        let params = DEFAULT_PARAMETERS.to_vec();
-        let fsrs = FSRS::new(&params)?;
-        let state = fsrs.memory_state_from_sm2(2.5, 100.0, 0.9)?;
-        assert!(state.stability.is_finite());
-        assert!(state.stability > 0.0);
-        assert!(state.difficulty.is_finite());
-        assert!((state.difficulty - 5.0).abs() <= f32::EPSILON);
+    fn test_memory_from_sm2_fsrs7_preserves_interval_at_retention() -> Result<()> {
+        let mut alternate_parameters = DEFAULT_PARAMETERS;
+        alternate_parameters[23] = 0.3;
+        alternate_parameters[27] = 0.7;
+        alternate_parameters[29] = 0.2;
+        alternate_parameters[30] = 0.8;
+
+        for parameters in [DEFAULT_PARAMETERS, alternate_parameters] {
+            let fsrs = FSRS::new(&parameters)?;
+            for retention in [0.8, 0.9, 0.95] {
+                for expected_interval in [1.0, 30.0, 100.0] {
+                    let state = fsrs.memory_state_from_sm2(2.5, expected_interval, retention)?;
+                    let interval = fsrs.interval_at_retrievability(state, retention);
+                    assert!(state.stability.is_finite());
+                    assert!(state.stability > 0.0);
+                    assert!(state.stability_fast.is_finite());
+                    assert!(state.stability_fast > 0.0);
+                    assert!((state.stability_fast / state.stability - 0.8).abs() < 1e-6);
+                    assert!((state.difficulty - 5.0).abs() <= f32::EPSILON);
+                    assert!(
+                        (interval - expected_interval).abs() < 0.01,
+                        "retention={retention}, expected={expected_interval}, actual={interval}"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
