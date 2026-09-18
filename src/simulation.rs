@@ -2998,6 +2998,27 @@ mod tests {
     }
 
     #[test]
+    fn empty_parameters_use_fsrs7_defaults() -> Result<()> {
+        let config = SimulatorConfig {
+            deck_size: 20,
+            learn_span: 30,
+            ..Default::default()
+        };
+        let actual = simulate(&config, &[], 0.9, Some(42), None)?;
+        let expected = simulate(&config, &crate::DEFAULT_PARAMETERS, 0.9, Some(42), None)?;
+        assert_eq!(actual.memorized_cnt_per_day, expected.memorized_cnt_per_day);
+        assert_eq!(actual.review_cnt_per_day, expected.review_cnt_per_day);
+        assert_eq!(actual.learn_cnt_per_day, expected.learn_cnt_per_day);
+        assert_eq!(actual.cost_per_day, expected.cost_per_day);
+        assert_eq!(actual.correct_cnt_per_day, expected.correct_cnt_per_day);
+        assert_eq!(
+            actual.introduced_cnt_per_day,
+            expected.introduced_cnt_per_day
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_simulator_memorization() -> Result<()> {
         let config = SimulatorConfig::default();
         let SimulationResult {
@@ -3586,7 +3607,8 @@ mod tests {
             learn_limit,
             ..Default::default()
         };
-        let retention_value = optimal_retention(&config, &[], |_| true, None, None).unwrap();
+        let retention_value =
+            optimal_retention(&config, &DEFAULT_PARAMETERS, |_| true, None, None).unwrap();
         dbg!(retention_value);
         let card = Card {
             difficulty: 5.0,
@@ -3601,7 +3623,7 @@ mod tests {
         // Check that the cards are passed correctly to simulate
         optimal_retention(
             &config,
-            &[],
+            &DEFAULT_PARAMETERS,
             |_| true,
             Some(vec![card.clone(); deck_size]),
             None,
@@ -3609,7 +3631,7 @@ mod tests {
         .unwrap();
         optimal_retention(
             &config,
-            &[],
+            &DEFAULT_PARAMETERS,
             |_| true,
             Some(vec![card; deck_size + 1]),
             None,

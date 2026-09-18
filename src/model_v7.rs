@@ -1,5 +1,5 @@
 use crate::error::{FSRSError, Result};
-use crate::inference::MemoryState;
+use crate::inference::{DEFAULT_PARAMETERS, MemoryState, Parameters};
 
 pub(super) const PARAM_LEN: usize = 34;
 const DR_MIN: f32 = 0.0001;
@@ -62,6 +62,14 @@ pub(crate) fn memory_state_from_sm2_scalar(
     }
 
     Ok(state_at((low + high) * 0.5))
+}
+
+pub(crate) fn check_and_fill_parameters_fsrs7(parameters: &Parameters) -> Option<Vec<f32>> {
+    match parameters.len() {
+        0 => Some(DEFAULT_PARAMETERS.to_vec()),
+        PARAM_LEN => Some(parameters.to_vec()),
+        _ => None,
+    }
 }
 
 pub(crate) fn fsrs7_forgetting_curve_scalar(w: &[f32], t: f32, s: f32) -> f32 {

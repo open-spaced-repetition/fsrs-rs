@@ -19,7 +19,7 @@ pub enum ModelVersion {
 
 impl ModelVersion {
     pub(crate) fn from_param_count(param_count: usize) -> Self {
-        if param_count == model_v7::PARAM_LEN {
+        if param_count == 0 || param_count == model_v7::PARAM_LEN {
             Self::Fsrs7
         } else {
             Self::Fsrs6
@@ -80,7 +80,8 @@ impl ModelConfig {
     }
 }
 
-/// The main FSRS model. The parameter count selects FSRS-6 (21) or FSRS-7 (34).
+/// The main FSRS model. Empty parameters default to FSRS-7.
+/// Parameter counts 17, 19, and 21 select FSRS-6; 34 selects FSRS-7.
 #[derive(Debug, Clone)]
 pub struct FSRS {
     parameters: Vec<f32>,
@@ -94,6 +95,7 @@ impl Default for FSRS {
 }
 
 impl FSRS {
+    /// Creates a model, using FSRS-7 defaults when `parameters` is empty.
     pub fn new(parameters: &Parameters) -> Result<Self> {
         let parameters = check_and_fill_parameters(parameters)?;
         let config = ModelConfig::default();
@@ -284,14 +286,14 @@ impl FSRS {
     }
 }
 
+/// Validates parameters and fills empty input with FSRS-7 defaults.
+/// Legacy 17- and 19-parameter inputs are expanded to 21 FSRS-6 parameters.
 pub fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FSRSError> {
-    let parameters = if parameters.len() == model_v7::PARAM_LEN {
-        parameters.to_vec()
-    } else if let Some(parameters) = model_v6::check_and_fill_parameters_fsrs6(parameters) {
-        parameters
-    } else {
-        return Err(FSRSError::InvalidParameters);
-    };
+    let parameters = match ModelVersion::from_param_count(parameters.len()) {
+        ModelVersion::Fsrs6 => model_v6::check_and_fill_parameters_fsrs6(parameters),
+        ModelVersion::Fsrs7 => model_v7::check_and_fill_parameters_fsrs7(parameters),
+    }
+    .ok_or(FSRSError::InvalidParameters)?;
     if parameters.iter().any(|value| !value.is_finite()) {
         return Err(FSRSError::InvalidParameters);
     }
@@ -305,16 +307,78 @@ mod tests {
 
     #[test]
     fn model_version_selection() {
-        assert_eq!(FSRS::default().version(), ModelVersion::Fsrs6);
+        let expected = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        for model in [FSRS::default(), FSRS::new(&[]).unwrap(), expected.clone()] {
+            assert_eq!(model.version(), ModelVersion::Fsrs7);
+            assert_eq!(model.parameters(), expected.parameters());
+        }
+        for count in [0, 34] {
+            assert_eq!(ModelVersion::from_param_count(count), ModelVersion::Fsrs7);
+        }
+        assert_eq!(check_and_fill_parameters(&[]).unwrap(), DEFAULT_PARAMETERS);
         assert_eq!(
-            FSRS::new(&FSRS6_DEFAULT_PARAMETERS).unwrap().version(),
-            ModelVersion::Fsrs6
+            check_and_fill_parameters(&DEFAULT_PARAMETERS).unwrap(),
+            DEFAULT_PARAMETERS
         );
+        for count in [17, 19, 21] {
+            let input = &FSRS6_DEFAULT_PARAMETERS[..count];
+            let parameters = check_and_fill_parameters(input).unwrap();
+            assert_eq!(parameters.len(), 21);
+            assert_eq!(FSRS::new(input).unwrap().version(), ModelVersion::Fsrs6);
+            match count {
+                17 => {
+                    assert_eq!(parameters[4], input[5].mul_add(2.0, input[4]));
+                    assert_eq!(parameters[5], input[5].mul_add(3.0, 1.0).ln() / 3.0);
+                    assert_eq!(parameters[6], input[6] + 0.5);
+                    assert_eq!(&parameters[17..20], &[0.0; 3]);
+                    assert_eq!(parameters[20], crate::FSRS5_DEFAULT_DECAY);
+                }
+                19 => {
+                    assert_eq!(&parameters[..19], input);
+                    assert_eq!(&parameters[19..], &[0.0, crate::FSRS5_DEFAULT_DECAY]);
+                }
+                21 => assert_eq!(parameters, input),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn version_specific_parameter_defaults() {
+        assert_eq!(
+            model_v6::check_and_fill_parameters_fsrs6(&[]).unwrap(),
+            FSRS6_DEFAULT_PARAMETERS
+        );
+        assert_eq!(
+            model_v7::check_and_fill_parameters_fsrs7(&[]).unwrap(),
+            DEFAULT_PARAMETERS
+        );
+        let mut parameters = DEFAULT_PARAMETERS;
+        parameters[0] = 1.0;
+        assert_eq!(
+            model_v7::check_and_fill_parameters_fsrs7(&parameters).unwrap(),
+            parameters
+        );
+        assert!(model_v7::check_and_fill_parameters_fsrs7(&FSRS6_DEFAULT_PARAMETERS).is_none());
     }
 
     #[test]
     fn rejects_invalid_parameters() {
-        assert!(FSRS::new(&[1.0]).is_err());
-        assert!(FSRS::new(DEFAULT_PARAMETERS.as_slice()).is_ok());
+        for count in (1..=35).filter(|count| ![17, 19, 21, 34].contains(count)) {
+            assert!(matches!(
+                FSRS::new(&vec![1.0; count]),
+                Err(FSRSError::InvalidParameters)
+            ));
+        }
+        for count in [17, 19, 21, 34] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut parameters = vec![1.0; count];
+                parameters[0] = value;
+                assert!(matches!(
+                    FSRS::new(&parameters),
+                    Err(FSRSError::InvalidParameters)
+                ));
+            }
+        }
     }
 }
