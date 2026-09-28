@@ -1,5 +1,7 @@
 use super::training_v7;
 
+pub(crate) const PENALTY_W_L2: f64 = 0.5;
+
 const PARAMS_STDDEV: [f32; 21] = [
     6.43, 9.66, 17.58, 27.85, 0.57, 0.28, 0.6, 0.12, 0.39, 0.18, 0.33, 0.3, 0.09, 0.16, 0.57, 0.25,
     1.03, 0.31, 0.32, 0.14, 0.27,
@@ -68,7 +70,7 @@ mod tests {
             &init_w,
             512,
             1000,
-            training_v7::PENALTY_W_L2,
+            PENALTY_W_L2,
             &training_v7::PARAMS_STDDEV,
         );
         assert_eq!(value, 0.0);
@@ -86,7 +88,7 @@ mod tests {
             &init_w,
             512,
             1000,
-            training_v7::PENALTY_W_L2,
+            PENALTY_W_L2,
             &training_v7::PARAMS_STDDEV,
         );
         assert!((value - 0.256).abs() < 1e-6);

@@ -37,6 +37,20 @@ pub(crate) fn clip_parameters_in_place(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fsrs7_base2_bounds_match_srs_benchmark() {
+        // srs-benchmark: w26 in [0.5, 0.99], then w26 >= w25.
+        let mut w = DEFAULT_PARAMETERS.to_vec();
+        w[25] = 0.25;
+        w[26] = 0.3;
+        clip_parameters_in_place(&mut w, 1, true);
+        assert_eq!(w[26], 0.5);
+        w[25] = 0.7;
+        w[26] = 0.6;
+        clip_parameters_in_place(&mut w, 1, true);
+        assert_eq!(w[26], 0.7);
+    }
     use crate::DEFAULT_PARAMETERS;
 
     #[test]
