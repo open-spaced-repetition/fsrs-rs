@@ -340,7 +340,7 @@ impl GradShared<'_> {
                 g,
                 caches,
             );
-            for (o, x) in self.out[g].iter().zip(gg.chunks_exact(2)) {
+            for (o, x) in self.out[g].iter().zip(gg.as_chunks::<2>().0) {
                 o.store(
                     x[0].to_bits() as u64 | (x[1].to_bits() as u64) << 32,
                     Ordering::Relaxed,
@@ -498,7 +498,7 @@ pub(super) fn train_fsrs7_windowed(
                             backoff(&mut spins);
                         }
                     }
-                    for (t, o) in total.chunks_exact_mut(2).zip(group) {
+                    for (t, o) in total.as_chunks_mut::<2>().0.iter_mut().zip(group) {
                         let v = o.load(Ordering::Relaxed);
                         t[0] += f32::from_bits(v as u32) as f64;
                         t[1] += f32::from_bits((v >> 32) as u32) as f64;
