@@ -5,6 +5,7 @@
 //! work is done:
 //!
 //! - The plan reads only item headers (review count, card id), with an open-addressing card index.
+//!   `compute_parameters` does not clamp FSRS-7's delta_t: the layout clamps the reviews it reads.
 //! - A second thread lays out each batch's arrays (in the order the first epoch uses them), frees
 //!   the prefix items, and then shares every batch's gradient: both threads claim 8-card groups,
 //!   and the main thread adds the per-group gradients in group order, so the result does not depend
@@ -219,7 +220,7 @@ impl Plan {
         for (c, &ci) in batch.iter().enumerate() {
             let reviews = &items[self.cards[ci].longest as usize].item.reviews;
             for (t, r) in reviews.iter().enumerate() {
-                t_hist[t * bsz + c] = r.delta_t;
+                t_hist[t * bsz + c] = r.delta_t.max(0.0);
                 r_hist[t * bsz + c] = r.rating as f32;
             }
             // The card's chain, last item first. Two items of one card with the same length share
