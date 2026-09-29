@@ -926,16 +926,16 @@ mod tests {
     fn fsrs7_small_train_set_returns_default_parameters() {
         // FSRS-7 has no parameter pre-training. Below 64 training items compute_parameters
         // does not optimize, so FSRS-7 must get the default parameters unchanged. (With the
-        // old initial-stability search, this train set got w[0..4] of about 0.135, 2.73,
-        // 4.79 and 14.4 instead of the defaults.)
+        // old initial-stability search, this train set got w[0..4] of about 0.281, 0.603,
+        // 0.765 and 3.43 instead of the defaults.)
         let prefix = anki21_sample_file_converted_to_fsrs()
             .into_iter()
-            .take(100)
+            .take(50)
             .collect::<Vec<_>>();
-        let n_train = crate::dataset::prepare_training_data(prefix.clone())
-            .1
-            .len();
+        // FSRS-7 trains on every item (no outlier filter), and not all are first reviews.
+        let n_train = prefix.len();
         assert!((8..64).contains(&n_train), "{n_train} training items");
+        assert!(prefix.iter().any(|item| item.long_term_review_cnt() != 1));
         let parameters = training::compute_parameters(ComputeParametersInput {
             train_set: prefix,
             model_version: ComputeParametersVersion::Fsrs7,
