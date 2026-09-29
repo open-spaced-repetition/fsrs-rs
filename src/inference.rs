@@ -1,6 +1,6 @@
 use itertools::izip;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, Sub};
 use std::sync::{Arc, Mutex};
 
@@ -64,7 +64,7 @@ struct SplitEvaluation {
     predictions: Vec<f32>,
     labels: Vec<f32>,
     weights: Vec<f32>,
-    r_matrix: HashMap<(u32, u32, u32), RMatrixValue>,
+    r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue>,
 }
 
 fn validate_state(state: MemoryState, version: ModelVersion) -> Result<MemoryState> {
@@ -93,7 +93,9 @@ fn predict_retrievability(fsrs: &FSRS, item: &FSRSItem) -> Result<f32> {
     }
 }
 
-fn rmse_bins(r_matrix: &HashMap<(u32, u32, u32), RMatrixValue>) -> f32 {
+/// RMSE over the bins, summed in bin (key) order so that the result does not depend on
+/// insertion or hash order.
+fn rmse_bins(r_matrix: &BTreeMap<(u32, u32, u32), RMatrixValue>) -> f32 {
     (r_matrix
         .values()
         .map(|v| {
@@ -146,7 +148,7 @@ fn evaluate_time_series_split(
         predictions: Vec::with_capacity(split.test_items.len()),
         labels: Vec::with_capacity(split.test_items.len()),
         weights: Vec::with_capacity(split.test_items.len()),
-        r_matrix: HashMap::new(),
+        r_matrix: BTreeMap::new(),
     };
 
     for item in &split.test_items {
@@ -171,7 +173,7 @@ fn merge_split_evaluation(
     predictions: &mut Vec<f32>,
     labels: &mut Vec<f32>,
     weights: &mut Vec<f32>,
-    r_matrix: &mut HashMap<(u32, u32, u32), RMatrixValue>,
+    r_matrix: &mut BTreeMap<(u32, u32, u32), RMatrixValue>,
 ) {
     predictions.extend(evaluation.predictions);
     labels.extend(evaluation.labels);
@@ -422,7 +424,7 @@ impl FSRS {
             current: 0,
             total: weighted_items.len(),
         };
-        let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+        let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
 
         for chunk in weighted_items.chunks(512) {
             for weighted_item in chunk {
@@ -459,9 +461,8 @@ impl FSRS {
     /// expanding-window prefixes of one review history, so each card's memory-state trajectory
     /// is computed ONCE and every item's retrievability is read off along the way. This turns
     /// the model work from O(sum of prefix lengths) into O(total reviews), while producing the
-    /// exact same per-item predictions and log loss as [`Self::evaluate`] (identical arithmetic
-    /// in identical accumulation order; RMSE matches up to the last float bits, since its bin
-    /// map is summed in `HashMap` iteration order, which differs between any two calls). A card
+    /// exact same per-item predictions, log loss and RMSE as [`Self::evaluate`] (identical
+    /// arithmetic in identical accumulation order, and the RMSE bins are summed in bin order). A card
     /// whose items do not form a prefix chain falls back to the per-item path, so the result is
     /// equivalent for arbitrary inputs.
     ///
@@ -513,7 +514,7 @@ impl FSRS {
 
         // Aggregate in the original item order — the same arithmetic in the same accumulation
         // order as `evaluate`, so the resulting metrics are bit-for-bit identical.
-        let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+        let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
         let mut preds = Vec::with_capacity(weighted_items.len());
         let mut labels = Vec::with_capacity(weighted_items.len());
         let mut weights = Vec::with_capacity(weighted_items.len());
@@ -803,7 +804,7 @@ where
     let mut predictions = Vec::new();
     let mut labels = Vec::new();
     let mut weights = Vec::new();
-    let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+    let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
     let mut progress_info = ItemProgress {
         current: 0,
         total: split_count,
@@ -894,7 +895,8 @@ where
 
 /// Measure model performance in bins
 fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
-    let mut groups = HashMap::new();
+    // Summed in bin order (BTreeMap) so the result is deterministic.
+    let mut groups = BTreeMap::new();
     izip!(pred_a, pred_b, true_val).for_each(|(a, b, t)| {
         let bin = get_bin(*b, 20);
         groups.entry(bin).or_insert_with(Vec::new).push((a, t));
@@ -1070,5 +1072,51 @@ mod tests {
                 .is_ok()
         );
         Ok(())
+    }
+
+    // RMSE(bins) and the universal metrics sum per-bin values. The bins used to live in a
+    // HashMap, whose iteration order differs between any two maps, so repeated evaluations
+    // of the same data could differ in the last float bits. The sums now run in bin order.
+    #[test]
+    fn evaluate_is_deterministic() {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let first = fsrs.evaluate(items.clone(), |_| true).unwrap();
+        for _ in 0..10 {
+            let again = fsrs.evaluate(items.clone(), |_| true).unwrap();
+            assert_eq!(again.log_loss.to_bits(), first.log_loss.to_bits());
+            assert_eq!(again.rmse_bins.to_bits(), first.rmse_bins.to_bits());
+        }
+    }
+
+    #[test]
+    fn universal_metrics_is_deterministic() {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let mut other = DEFAULT_PARAMETERS.to_vec();
+        other[0] *= 2.0;
+        let first = fsrs
+            .universal_metrics(items.clone(), &other, |_| true)
+            .unwrap();
+        for _ in 0..10 {
+            let again = fsrs
+                .universal_metrics(items.clone(), &other, |_| true)
+                .unwrap();
+            assert_eq!(again.0.to_bits(), first.0.to_bits());
+            assert_eq!(again.1.to_bits(), first.1.to_bits());
+        }
+    }
+
+    #[test]
+    fn evaluate_with_card_ids_matches_evaluate_exactly() {
+        let (items, card_ids) =
+            crate::convertor_tests::anki21_sample_file_converted_to_fsrs_with_card_ids();
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let plain = fsrs.evaluate(items.clone(), |_| true).unwrap();
+        let by_card = fsrs
+            .evaluate_with_card_ids(items, card_ids, |_| true)
+            .unwrap();
+        assert_eq!(by_card.log_loss.to_bits(), plain.log_loss.to_bits());
+        assert_eq!(by_card.rmse_bins.to_bits(), plain.rmse_bins.to_bits());
     }
 }
