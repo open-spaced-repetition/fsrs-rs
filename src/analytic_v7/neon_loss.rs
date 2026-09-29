@@ -786,17 +786,17 @@ fn step_bwd(
 fn bce_retrievability_grad(r_raw: F32x4, label: F32x4, weight: F32x4) -> F32x4 {
     let zero = splat(0.0);
     let one = splat(1.0);
-    let r = r_raw.clamp(0.0001, 0.9999);
+    let r = r_raw.clamp(1e-5, 1.0 - 1e-5);
     let label_is_one = label.cmp_gt(splat(0.5));
     let grad = F32x4::blend(label_is_one, zero - weight / r, weight / (one - r));
-    let open = open_mask(r_raw, 0.0001, 0.9999);
+    let open = open_mask(r_raw, 1e-5, 1.0 - 1e-5);
     F32x4::blend(open, grad, zero)
 }
 
 #[inline(always)]
 fn bce_loss_value(r_raw: F32x4, label: F32x4, weight: F32x4) -> F32x4 {
     let one = splat(1.0);
-    let r = r_raw.clamp(0.0001, 0.9999);
+    let r = r_raw.clamp(1e-5, 1.0 - 1e-5);
     let probability = one - (label - r).abs();
     splat(0.0) - weight * probability.ln()
 }

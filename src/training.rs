@@ -20,16 +20,27 @@ mod training_v6;
 #[path = "training_v7.rs"]
 mod training_v7;
 
-const L2_PENALTY_WEIGHT: f64 = training_v7::PENALTY_W_L2;
 const PENALTY_GRAD_LEN: usize = training_v7::GRAD_LEN;
 const ADAM_BETA_1: f32 = 0.70;
 const ADAM_BETA_2: f32 = 0.98;
 const ADAM_EPSILON: f32 = 1e-8;
-const WINDOWED_FSRS7_LEARNING_RATE: f64 = 0.07;
-const WINDOWED_FSRS7_NUM_EPOCHS: usize = 17;
+// Per-version training defaults, used when a TrainingConfig leaves learning_rate or
+// num_epochs at 0. FSRS-7 uses srs-benchmark's values, where its accuracy is measured.
+// FSRS-6 keeps the values TrainingConfig::default() used to hold.
+const FSRS7_LEARNING_RATE: f64 = 0.0118;
+const FSRS7_NUM_EPOCHS: usize = 9;
+const FSRS6_LEARNING_RATE: f64 = 4e-2;
+const FSRS6_NUM_EPOCHS: usize = 5;
 
 type SchedulePenaltyFn = fn(&[f32], usize, bool) -> (f64, [f64; PENALTY_GRAD_LEN]);
 type L2PenaltyFn = fn(&[f32], &[f32], usize, usize, f64, &[f32]) -> (f64, Vec<f32>);
+
+fn l2_penalty_weight(version: ModelVersion) -> f64 {
+    match version {
+        ModelVersion::Fsrs6 => training_v6::PENALTY_W_L2,
+        ModelVersion::Fsrs7 => training_v7::PENALTY_W_L2,
+    }
+}
 
 fn schedule_penalty_fn(version: ModelVersion) -> SchedulePenaltyFn {
     match version {
@@ -160,11 +171,16 @@ impl ProgressState {
 }
 
 /// Hyperparameters used when training FSRS parameters.
+///
+/// `num_epochs` and `learning_rate` set to 0 (the default) mean the model version's own
+/// default: 9 epochs and 0.0118 for FSRS-7, 5 epochs and 0.04 for FSRS-6.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrainingConfig {
+    /// 0 means the model version's default.
     pub num_epochs: usize,
     pub batch_size: usize,
     pub seed: u64,
+    /// 0.0 means the model version's default.
     pub learning_rate: f64,
     pub max_seq_len: usize,
     pub gamma: f64,
@@ -173,10 +189,10 @@ pub struct TrainingConfig {
 impl Default for TrainingConfig {
     fn default() -> Self {
         Self {
-            num_epochs: 5,
+            num_epochs: 0,
             batch_size: 512,
             seed: 2023,
-            learning_rate: 4e-2,
+            learning_rate: 0.0,
             max_seq_len: 256,
             gamma: 1.0,
         }
@@ -190,12 +206,28 @@ fn validate_training_config(config: &TrainingConfig) -> Result<()> {
     Ok(())
 }
 
-fn apply_training_config(config: &mut InternalTrainingConfig, custom: Option<TrainingConfig>) {
+fn apply_training_config(
+    config: &mut InternalTrainingConfig,
+    custom: Option<TrainingConfig>,
+    model_version: ComputeParametersVersion,
+) {
     if let Some(custom) = custom {
-        config.num_epochs = custom.num_epochs;
+        let (default_epochs, default_learning_rate) = match model_version {
+            ComputeParametersVersion::Fsrs6 => (FSRS6_NUM_EPOCHS, FSRS6_LEARNING_RATE),
+            ComputeParametersVersion::Fsrs7 => (FSRS7_NUM_EPOCHS, FSRS7_LEARNING_RATE),
+        };
+        config.num_epochs = if custom.num_epochs == 0 {
+            default_epochs
+        } else {
+            custom.num_epochs
+        };
         config.batch_size = custom.batch_size;
         config.seed = custom.seed;
-        config.learning_rate = custom.learning_rate;
+        config.learning_rate = if custom.learning_rate == 0.0 {
+            default_learning_rate
+        } else {
+            custom.learning_rate
+        };
         config.max_seq_len = custom.max_seq_len;
         config.gamma = custom.gamma;
     }
@@ -385,17 +417,6 @@ impl Default for ComputeParametersInput {
     }
 }
 
-fn apply_windowed_fsrs7_training_tuning(
-    config: &mut InternalTrainingConfig,
-    model_version: ComputeParametersVersion,
-    has_card_ids: bool,
-) {
-    if model_version == ComputeParametersVersion::Fsrs7 && has_card_ids {
-        config.learning_rate = WINDOWED_FSRS7_LEARNING_RATE;
-        config.num_epochs = WINDOWED_FSRS7_NUM_EPOCHS;
-    }
-}
-
 fn should_validate_epoch(_epoch: usize, _total_epochs: usize, use_windowed: bool) -> bool {
     !use_windowed
 }
@@ -497,13 +518,29 @@ fn prepare_training_data_with_card_ids(
     (filtered_initialization, trainset)
 }
 
-fn recency_weighted_training_items(items: Vec<TrainingFSRSItem>) -> Vec<WeightedFSRSItem> {
-    let length = (items.len() as f32 - 1.0).max(1.0);
+/// Recency weights for training, in item (review-time) order. FSRS-7 uses srs-benchmark's
+/// formula, `0.0667 + 0.9333 * (i / n)^11.25` (0-based `i`, denominator `n`), computed in f64
+/// like srs-benchmark does. FSRS-6 keeps `0.25 + 0.75 * (i / (n - 1))^3`, which is srs-benchmark's
+/// FSRS-6 formula.
+fn recency_weighted_training_items(
+    items: Vec<TrainingFSRSItem>,
+    model_version: ComputeParametersVersion,
+) -> Vec<WeightedFSRSItem> {
+    let n = items.len();
+    let fsrs6_length = (n as f32 - 1.0).max(1.0);
     items
         .into_iter()
         .enumerate()
         .map(|(idx, item)| WeightedFSRSItem {
-            weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
+            weight: match model_version {
+                ComputeParametersVersion::Fsrs7 => {
+                    let x = idx as f64 / n.max(1) as f64;
+                    (0.0667 + 0.9333 * x.powf(11.25)) as f32
+                }
+                ComputeParametersVersion::Fsrs6 => {
+                    0.25 + 0.75 * (idx as f32 / fsrs6_length).powi(3)
+                }
+            },
             item: item.item,
             card_id: item.card_id,
         })
@@ -585,7 +622,6 @@ fn compute_parameters_inner(
             }
         })
         .transpose()?;
-    let has_card_ids = card_ids.is_some();
     let finish_progress = || {
         if let Some(progress) = &progress {
             // The progress state at completion time may not indicate completion, because:
@@ -600,21 +636,31 @@ fn compute_parameters_inner(
         validate_training_config(config).inspect_err(|_| finish_progress())?;
     }
     let train_set = normalize_for_model_version(train_set, model_version);
-    let (dataset_for_initialization, train_set) = if card_ids.is_some() {
-        prepare_training_data_with_card_ids(attach_card_ids(train_set, card_ids)?)
-    } else {
-        let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
-        (
-            dataset_for_initialization,
-            train_set
-                .into_iter()
-                .map(|item| TrainingFSRSItem {
-                    item,
-                    card_id: None,
-                })
-                .collect(),
-        )
-    };
+    let (dataset_for_initialization, train_set) =
+        if model_version == ComputeParametersVersion::Fsrs7 {
+            // FSRS-7 trains on every item, as in srs-benchmark: no outlier filter.
+            let train_set = attach_card_ids(train_set, card_ids)?;
+            let dataset_for_initialization = train_set
+                .iter()
+                .filter(|item| item.item.long_term_review_cnt() == 1)
+                .map(|item| item.item.clone())
+                .collect();
+            (dataset_for_initialization, train_set)
+        } else if card_ids.is_some() {
+            prepare_training_data_with_card_ids(attach_card_ids(train_set, card_ids)?)
+        } else {
+            let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
+            (
+                dataset_for_initialization,
+                train_set
+                    .into_iter()
+                    .map(|item| TrainingFSRSItem {
+                        item,
+                        card_id: None,
+                    })
+                    .collect(),
+            )
+        };
     let average_recall =
         calculate_average_recall_from_items(train_set.iter().map(|item| &item.item));
     if train_set.len() < 8 {
@@ -664,11 +710,8 @@ fn compute_parameters_inner(
             decision_sharpness: classifier_config.decision_sharpness,
         },
     );
-    if model_version == ComputeParametersVersion::Fsrs7 {
-        apply_windowed_fsrs7_training_tuning(&mut config, model_version, has_card_ids);
-    }
-    apply_training_config(&mut config, training_config);
-    let mut weighted_train_set = recency_weighted_training_items(train_set);
+    apply_training_config(&mut config, training_config, model_version);
+    let mut weighted_train_set = recency_weighted_training_items(train_set, model_version);
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
 
     if let Some(progress) = &progress {
@@ -736,7 +779,6 @@ pub fn benchmark(
         validate_training_config(config).expect("invalid training configuration");
     }
     let train_set = normalize_for_model_version(train_set, model_version);
-    let has_card_ids = card_ids.is_some();
     if card_ids
         .as_ref()
         .is_some_and(|ids| ids.len() != train_set.len())
@@ -769,12 +811,13 @@ pub fn benchmark(
         num_relearning_steps: num_relearning_steps.unwrap_or(1),
     })
     .with_enable_sched_penalties(enable_sched_penalties);
-    apply_windowed_fsrs7_training_tuning(&mut config, model_version, has_card_ids);
     // save RAM and speed up training
     config.max_seq_len = 64;
-    apply_training_config(&mut config, training_config);
-    let mut weighted_train_set =
-        recency_weighted_training_items(attach_card_ids(train_set, card_ids).unwrap());
+    apply_training_config(&mut config, training_config, model_version);
+    let mut weighted_train_set = recency_weighted_training_items(
+        attach_card_ids(train_set, card_ids).unwrap(),
+        model_version,
+    );
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
     train(
         weighted_train_set,
@@ -1246,7 +1289,6 @@ fn train(
         }
     }
     let total_size = train_set.len();
-    let iterations = (total_size / config.batch_size + 1) * config.num_epochs;
     let fsrs7_batches = (version == ModelVersion::Fsrs7)
         .then(|| build_windowed_batches(&train_set, config.batch_size));
     let fsrs6_batches =
@@ -1257,6 +1299,12 @@ fn train(
     let mut parameters = initial_parameters.to_vec();
     let initial = parameters.clone();
     let mut adam = HostAdam::new(parameters.len());
+    // FSRS-7 anneals over the batches it actually runs, like srs-benchmark's
+    // CosineAnnealingLR(T_max = batches * epochs). FSRS-6 keeps its estimate.
+    let iterations = match version {
+        ModelVersion::Fsrs7 => batch_count * config.num_epochs,
+        ModelVersion::Fsrs6 => (total_size / config.batch_size + 1) * config.num_epochs,
+    };
     let mut scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let mut rng = StdRng::seed_from_u64(config.seed);
     let mut order = (0..batch_count).collect::<Vec<_>>();
@@ -1296,7 +1344,7 @@ fn train(
                     objective,
                 )
             };
-            let l2_weight = L2_PENALTY_WEIGHT * config.gamma;
+            let l2_weight = l2_penalty_weight(version) * config.gamma;
             let (_, l2_grad) = l2_penalty_fn(version)(
                 &parameters,
                 &initial,
@@ -1334,4 +1382,77 @@ fn train(
         }
     }
     Ok(parameters)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fsrs7_schedule_penalty_matches_srs_benchmark_at_default_parameters() {
+        // srs-benchmark's fsrs7_interval_growth_penalty (models/fsrs_v7_interval_penalty.py:
+        // n_reviews=10, target_dr=0.90, n_newton=7, target_drs=[0.99]) at the default
+        // parameters, in float64 on the float32 defaults: 0.5 * p1 + 0.0015 * p2 and its gradient.
+        let (value, grad) = training_v7::schedule_penalty_value_and_grad(&DEFAULT_PARAMETERS, 1);
+        let rel = |a: f64, b: f64| (a - b).abs() / b.abs();
+        assert!(rel(value, 14.998_915_973_553_904) < 1e-5, "value {value}");
+        for (i, expected) in [
+            (8, -32.576_350_763_017_714),
+            (24, -81.173_724_214_615_59),
+            (27, 178.330_310_865_621_58),
+            (28, -35.765_895_909_966_43),
+            (29, 31.495_477_583_159_32),
+            (31, 37.048_638_305_938_38),
+        ] {
+            assert!(rel(grad[i], expected) < 1e-4, "grad[{i}] = {}", grad[i]);
+        }
+    }
+
+    #[test]
+    fn fsrs7_recency_weights_match_srs_benchmark() {
+        // srs-benchmark FSRS-7: 0.0667 + 0.9333 * (i / n)^11.25, 0-based i, denominator n.
+        let items = (0..4)
+            .map(|_| TrainingFSRSItem {
+                item: FSRSItem { reviews: vec![] },
+                card_id: None,
+            })
+            .collect::<Vec<_>>();
+        let weights = recency_weighted_training_items(items, ComputeParametersVersion::Fsrs7)
+            .iter()
+            .map(|item| item.weight)
+            .collect::<Vec<_>>();
+        let expected = [0.0f64, 0.25, 0.5, 0.75].map(|x| (0.0667 + 0.9333 * x.powf(11.25)) as f32);
+        assert_eq!(weights, expected);
+    }
+
+    #[test]
+    fn default_training_config_uses_the_model_version_defaults() {
+        for (version, epochs, learning_rate) in [
+            (ComputeParametersVersion::Fsrs7, 9, 0.0118),
+            (ComputeParametersVersion::Fsrs6, 5, 4e-2),
+        ] {
+            let mut config = InternalTrainingConfig::new(ModelConfig::default());
+            apply_training_config(&mut config, Some(TrainingConfig::default()), version);
+            assert_eq!(config.num_epochs, epochs);
+            assert_eq!(config.learning_rate, learning_rate);
+        }
+    }
+
+    #[test]
+    fn explicit_training_config_values_are_kept() {
+        let mut config = InternalTrainingConfig::new(ModelConfig::default());
+        let custom = TrainingConfig {
+            num_epochs: 8,
+            learning_rate: 0.02,
+            ..Default::default()
+        };
+        apply_training_config(&mut config, Some(custom), ComputeParametersVersion::Fsrs7);
+        assert_eq!((config.num_epochs, config.learning_rate), (8, 0.02));
+    }
+
+    #[test]
+    fn l2_penalty_weight_depends_on_model_version() {
+        assert_eq!(l2_penalty_weight(ModelVersion::Fsrs7), 0.3333);
+        assert_eq!(l2_penalty_weight(ModelVersion::Fsrs6), 0.5);
+    }
 }
