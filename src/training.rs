@@ -21,6 +21,9 @@ use std::sync::{Arc, Mutex};
 mod training_v6;
 #[path = "training_v7.rs"]
 mod training_v7;
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+#[path = "training_windowed.rs"]
+mod windowed;
 
 const PENALTY_GRAD_LEN: usize = training_v7::GRAD_LEN;
 const ADAM_BETA_1: f32 = 0.70;
@@ -1304,6 +1307,12 @@ fn train(
                 item.card_id = Some(i64::MIN + index as i64);
             }
         }
+    }
+    // The log-loss objective trains FSRS-7 on two threads (the classifier objective reweights each
+    // batch with its predictions first, and ARM has its own NEON kernel).
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    if version == ModelVersion::Fsrs7 && objective == TrainingObjective::ProbabilityLogLoss {
+        return windowed::train_fsrs7_windowed(train_set, initial_parameters, config, progress);
     }
     let total_size = train_set.len();
     let fsrs7_batches = (version == ModelVersion::Fsrs7)
