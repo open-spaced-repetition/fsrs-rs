@@ -7,9 +7,7 @@ use crate::error::Result;
 use crate::model::{FSRS, ModelConfig, ModelVersion};
 use crate::parameter_clipper::clip_parameters_in_place;
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
-use crate::parameter_initialization_fsrs7::{
-    initialize_parameters_fsrs7, smooth_initial_stabilities_fsrs7,
-};
+use crate::parameter_initialization_fsrs7::smooth_initial_stabilities_fsrs7;
 use crate::{DEFAULT_PARAMETERS, FSRS6_DEFAULT_PARAMETERS, FSRSError};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -661,16 +659,8 @@ fn compute_parameters_inner(
     let (dataset_for_initialization, train_set) =
         if model_version == ComputeParametersVersion::Fsrs7 {
             // FSRS-7 trains on every item, as in srs-benchmark: no outlier filter.
-            let train_set = attach_card_ids(train_set, card_ids)?;
-            let dataset_for_initialization = normalize_for_model_version(
-                train_set
-                    .iter()
-                    .filter(|item| item.item.long_term_review_cnt() == 1)
-                    .map(|item| item.item.clone())
-                    .collect(),
-                model_version,
-            );
-            (dataset_for_initialization, train_set)
+            // No pre-training, so no initialization set (see only_first_reviews below).
+            (Vec::new(), attach_card_ids(train_set, card_ids)?)
         } else if card_ids.is_some() {
             prepare_training_data_with_card_ids(attach_card_ids(train_set, card_ids)?)
         } else {
@@ -686,8 +676,6 @@ fn compute_parameters_inner(
                     .collect(),
             )
         };
-    let average_recall =
-        calculate_average_recall_from_items(train_set.iter().map(|item| &item.item));
     if train_set.len() < 8 {
         finish_progress();
         return Ok(initial_parameters.unwrap_or_else(|| match model_version {
@@ -698,6 +686,8 @@ fn compute_parameters_inner(
 
     let (mut initialized_parameters, fsrs6_initial_rating_count) = match model_version {
         ComputeParametersVersion::Fsrs6 => {
+            let average_recall =
+                calculate_average_recall_from_items(train_set.iter().map(|item| &item.item));
             let (initial_stability, initial_rating_count) =
                 initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)
                     .inspect_err(|_e| {
@@ -709,22 +699,20 @@ fn compute_parameters_inner(
                 .collect();
             (initialized_parameters, Some(initial_rating_count))
         }
-        ComputeParametersVersion::Fsrs7 => {
-            let (initial_stability, initial_forgetting_curve, _initial_rating_count) =
-                initialize_parameters_fsrs7(dataset_for_initialization.clone(), average_recall)
-                    .inspect_err(|_e| {
-                        finish_progress();
-                    })?;
-            let mut initialized_parameters = DEFAULT_PARAMETERS.to_vec();
-            initialized_parameters[0..4].copy_from_slice(&initial_stability);
-            initialized_parameters[23..31].copy_from_slice(&initial_forgetting_curve);
-            (initialized_parameters, None)
-        }
+        // FSRS-7 has no parameter pre-training: it trains from the default parameters.
+        ComputeParametersVersion::Fsrs7 => (DEFAULT_PARAMETERS.to_vec(), None),
     };
     if let Some(initial_parameters) = initial_parameters {
         initialized_parameters = initial_parameters;
     }
-    if train_set.len() == dataset_for_initialization.len() || train_set.len() < 64 {
+    // Every item is a first long-term review: nothing to train on.
+    let only_first_reviews = match model_version {
+        ComputeParametersVersion::Fsrs6 => train_set.len() == dataset_for_initialization.len(),
+        ComputeParametersVersion::Fsrs7 => train_set
+            .iter()
+            .all(|item| item.item.long_term_review_cnt() == 1),
+    };
+    if only_first_reviews || train_set.len() < 64 {
         finish_progress();
         return Ok(initialized_parameters);
     }
@@ -834,14 +822,8 @@ pub fn benchmark(
                 .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
                 .collect()
         }
-        ComputeParametersVersion::Fsrs7 => {
-            let (initial_stability, initial_forgetting_curve, _rating_count) =
-                initialize_parameters_fsrs7(dataset_for_initialization, average_recall).unwrap();
-            let mut initialized_parameters = DEFAULT_PARAMETERS.to_vec();
-            initialized_parameters[0..4].copy_from_slice(&initial_stability);
-            initialized_parameters[23..31].copy_from_slice(&initial_forgetting_curve);
-            initialized_parameters
-        }
+        // FSRS-7 has no parameter pre-training: it trains from the default parameters.
+        ComputeParametersVersion::Fsrs7 => DEFAULT_PARAMETERS.to_vec(),
     };
     let mut config = InternalTrainingConfig::new(ModelConfig {
         freeze_initial_stability: !enable_short_term,
