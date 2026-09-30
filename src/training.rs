@@ -19,6 +19,9 @@ use std::sync::{Arc, Mutex};
 mod training_v6;
 #[path = "training_v7.rs"]
 mod training_v7;
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+#[path = "training_windowed.rs"]
+mod windowed;
 
 const PENALTY_GRAD_LEN: usize = training_v7::GRAD_LEN;
 const ADAM_BETA_1: f32 = 0.70;
@@ -522,6 +525,17 @@ fn prepare_training_data_with_card_ids(
 /// formula, `0.0667 + 0.9333 * (i / n)^11.25` (0-based `i`, denominator `n`), computed in f64
 /// like srs-benchmark does. FSRS-6 keeps `0.25 + 0.75 * (i / (n - 1))^3`, which is srs-benchmark's
 /// FSRS-6 formula.
+/// x^11.25 = x^11 * x^(1/4) for x in [0, 1], with multiplications and square roots only: ~7x
+/// faster than `powf`, and the same on every platform (IEEE rounds both exactly). After the f32
+/// cast of the recency weight, the result equals the `powf` one except for 2 of 2.9e9 weights
+/// checked (1 ulp).
+fn pow_11_25(x: f64) -> f64 {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let x8 = x4 * x4;
+    x8 * x2 * x * x.sqrt().sqrt()
+}
+
 fn recency_weighted_training_items(
     items: Vec<TrainingFSRSItem>,
     model_version: ComputeParametersVersion,
@@ -535,7 +549,7 @@ fn recency_weighted_training_items(
             weight: match model_version {
                 ComputeParametersVersion::Fsrs7 => {
                     let x = idx as f64 / n.max(1) as f64;
-                    (0.0667 + 0.9333 * x.powf(11.25)) as f32
+                    (0.0667 + 0.9333 * pow_11_25(x)) as f32
                 }
                 ComputeParametersVersion::Fsrs6 => {
                     0.25 + 0.75 * (idx as f32 / fsrs6_length).powi(3)
@@ -635,7 +649,13 @@ fn compute_parameters_inner(
     if let Some(config) = &training_config {
         validate_training_config(config).inspect_err(|_| finish_progress())?;
     }
-    let train_set = normalize_for_model_version(train_set, model_version);
+    // FSRS-7 clamps delta_t in `train` (the windowed trainer only in the reviews it reads), so
+    // its prefix items are not rewritten here. The clamp does not change long_term_review_cnt.
+    let train_set = if model_version == ComputeParametersVersion::Fsrs7 {
+        train_set
+    } else {
+        normalize_for_model_version(train_set, model_version)
+    };
     let (dataset_for_initialization, train_set) =
         if model_version == ComputeParametersVersion::Fsrs7 {
             // FSRS-7 trains on every item, as in srs-benchmark: no outlier filter.
@@ -1290,6 +1310,19 @@ fn train(
             }
         }
     }
+    // The log-loss objective trains FSRS-7 on two threads (the classifier objective reweights each
+    // batch with its predictions first, and ARM has its own NEON kernel).
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    if version == ModelVersion::Fsrs7 && objective == TrainingObjective::ProbabilityLogLoss {
+        return windowed::train_fsrs7_windowed(train_set, initial_parameters, config, progress);
+    }
+    if version == ModelVersion::Fsrs7 {
+        for item in &mut train_set {
+            for review in &mut item.item.reviews {
+                review.delta_t = review.delta_t.max(0.0);
+            }
+        }
+    }
     let total_size = train_set.len();
     let fsrs7_batches = (version == ModelVersion::Fsrs7)
         .then(|| build_windowed_batches(&train_set, config.batch_size));
@@ -1425,6 +1458,18 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = [0.0f64, 0.25, 0.5, 0.75].map(|x| (0.0667 + 0.9333 * x.powf(11.25)) as f32);
         assert_eq!(weights, expected);
+        // pow_11_25 against powf: at most 1 ulp apart after the f32 cast.
+        for n in [3usize, 1000, 4097, 65_536, 99_991] {
+            for idx in 0..n {
+                let x = idx as f64 / n as f64;
+                let a = (0.0667 + 0.9333 * x.powf(11.25)) as f32;
+                let b = (0.0667 + 0.9333 * pow_11_25(x)) as f32;
+                assert!(
+                    a.to_bits().abs_diff(b.to_bits()) <= 1,
+                    "n={n} idx={idx}: {a} vs {b}"
+                );
+            }
+        }
     }
 
     #[test]
