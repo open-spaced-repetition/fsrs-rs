@@ -5,6 +5,7 @@ use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN, simulate_with_cost_adr_polic
 use crate::training::{CombinedProgressState, ProgressState};
 use crate::{Card, SimulationResult, SimulatorConfig, simulate};
 use rand::rngs::StdRng;
+use rand::RngExt;
 use rand::{Rng, SeedableRng};
 use rand_distr::StandardNormal;
 use rayon::iter::{
