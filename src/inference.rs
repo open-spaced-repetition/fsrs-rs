@@ -1,6 +1,6 @@
 use itertools::izip;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, Sub};
 use std::sync::{Arc, Mutex};
 
@@ -64,7 +64,7 @@ struct SplitEvaluation {
     predictions: Vec<f32>,
     labels: Vec<f32>,
     weights: Vec<f32>,
-    r_matrix: HashMap<(u32, u32, u32), RMatrixValue>,
+    r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue>,
 }
 
 fn validate_state(state: MemoryState, version: ModelVersion) -> Result<MemoryState> {
@@ -93,7 +93,9 @@ fn predict_retrievability(fsrs: &FSRS, item: &FSRSItem) -> Result<f32> {
     }
 }
 
-fn rmse_bins(r_matrix: &HashMap<(u32, u32, u32), RMatrixValue>) -> f32 {
+/// RMSE over the bins, summed in bin (key) order so that the result does not depend on
+/// insertion or hash order.
+fn rmse_bins(r_matrix: &BTreeMap<(u32, u32, u32), RMatrixValue>) -> f32 {
     (r_matrix
         .values()
         .map(|v| {
@@ -146,7 +148,7 @@ fn evaluate_time_series_split(
         predictions: Vec::with_capacity(split.test_items.len()),
         labels: Vec::with_capacity(split.test_items.len()),
         weights: Vec::with_capacity(split.test_items.len()),
-        r_matrix: HashMap::new(),
+        r_matrix: BTreeMap::new(),
     };
 
     for item in &split.test_items {
@@ -171,7 +173,7 @@ fn merge_split_evaluation(
     predictions: &mut Vec<f32>,
     labels: &mut Vec<f32>,
     weights: &mut Vec<f32>,
-    r_matrix: &mut HashMap<(u32, u32, u32), RMatrixValue>,
+    r_matrix: &mut BTreeMap<(u32, u32, u32), RMatrixValue>,
 ) {
     predictions.extend(evaluation.predictions);
     labels.extend(evaluation.labels);
@@ -422,7 +424,7 @@ impl FSRS {
             current: 0,
             total: weighted_items.len(),
         };
-        let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+        let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
 
         for chunk in weighted_items.chunks(512) {
             for weighted_item in chunk {
@@ -459,9 +461,8 @@ impl FSRS {
     /// expanding-window prefixes of one review history, so each card's memory-state trajectory
     /// is computed ONCE and every item's retrievability is read off along the way. This turns
     /// the model work from O(sum of prefix lengths) into O(total reviews), while producing the
-    /// exact same per-item predictions and log loss as [`Self::evaluate`] (identical arithmetic
-    /// in identical accumulation order; RMSE matches up to the last float bits, since its bin
-    /// map is summed in `HashMap` iteration order, which differs between any two calls). A card
+    /// exact same per-item predictions, log loss and RMSE as [`Self::evaluate`] (identical
+    /// arithmetic in identical accumulation order, and the RMSE bins are summed in bin order). A card
     /// whose items do not form a prefix chain falls back to the per-item path, so the result is
     /// equivalent for arbitrary inputs.
     ///
@@ -472,7 +473,7 @@ impl FSRS {
         &self,
         items: Vec<FSRSItem>,
         card_ids: Vec<i64>,
-        mut progress: F,
+        progress: F,
     ) -> Result<ModelEvaluation>
     where
         F: FnMut(ItemProgress) -> bool,
@@ -484,36 +485,11 @@ impl FSRS {
             return Err(FSRSError::InvalidInput);
         }
         let weighted_items = recency_weighted_fsrs_items_with_card_ids(items, card_ids);
-
-        // Group item indices by card id, in first-appearance order.
-        let mut group_index: HashMap<i64, usize> = HashMap::new();
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for (idx, weighted_item) in weighted_items.iter().enumerate() {
-            let group = *group_index
-                .entry(weighted_item.card_id.unwrap())
-                .or_insert_with(|| {
-                    groups.push(Vec::new());
-                    groups.len() - 1
-                });
-            groups[group].push(idx);
-        }
-
-        let mut predictions = vec![0.0f32; weighted_items.len()];
-        let mut progress_info = ItemProgress {
-            current: 0,
-            total: weighted_items.len(),
-        };
-        for group in &groups {
-            self.predict_card_group(&weighted_items, group, &mut predictions)?;
-            progress_info.current += group.len();
-            if !progress(progress_info) {
-                return Err(FSRSError::Interrupted);
-            }
-        }
+        let predictions = self.predictions_by_card(&weighted_items, progress)?;
 
         // Aggregate in the original item order — the same arithmetic in the same accumulation
         // order as `evaluate`, so the resulting metrics are bit-for-bit identical.
-        let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+        let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
         let mut preds = Vec::with_capacity(weighted_items.len());
         let mut labels = Vec::with_capacity(weighted_items.len());
         let mut weights = Vec::with_capacity(weighted_items.len());
@@ -539,6 +515,76 @@ impl FSRS {
             log_loss: loss,
             rmse_bins: rmse,
         })
+    }
+
+    /// The predicted probability of recall of every item, in the order of `items`: for each
+    /// item, the retrievability of its last review, from the memory state that the item's
+    /// earlier reviews build.
+    ///
+    /// `card_ids` is aligned with `items`, the same convention as
+    /// [`ComputeParametersInput::card_ids`]: the items of one card that form expanding-window
+    /// prefixes of one history share a single walk of that card's trajectory, so the work is
+    /// O(total reviews) rather than O(sum of prefix lengths). A card whose items are not a
+    /// prefix chain falls back to the per-item path.
+    ///
+    /// These are the values [`Self::evaluate_with_card_ids`] scores - that method calls this
+    /// one and then aggregates - so a caller that wants the numbers themselves, to plot a
+    /// calibration curve or to store a prediction per review, does not have to reimplement the
+    /// walk.
+    pub fn predict_retrievability_with_card_ids<F>(
+        &self,
+        items: Vec<FSRSItem>,
+        card_ids: Vec<i64>,
+        progress: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if items.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
+        if card_ids.len() != items.len() {
+            return Err(FSRSError::InvalidInput);
+        }
+        let weighted_items = recency_weighted_fsrs_items_with_card_ids(items, card_ids);
+        self.predictions_by_card(&weighted_items, progress)
+    }
+
+    /// Per-item predictions for `weighted_items`, one walk per card.
+    fn predictions_by_card<F>(
+        &self,
+        weighted_items: &[WeightedFSRSItem],
+        mut progress: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        // Group item indices by card id, in first-appearance order.
+        let mut group_index: HashMap<i64, usize> = HashMap::new();
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        for (idx, weighted_item) in weighted_items.iter().enumerate() {
+            let group = *group_index
+                .entry(weighted_item.card_id.unwrap())
+                .or_insert_with(|| {
+                    groups.push(Vec::new());
+                    groups.len() - 1
+                });
+            groups[group].push(idx);
+        }
+
+        let mut predictions = vec![0.0f32; weighted_items.len()];
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: weighted_items.len(),
+        };
+        for group in &groups {
+            self.predict_card_group(weighted_items, group, &mut predictions)?;
+            progress_info.current += group.len();
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+        Ok(predictions)
     }
 
     /// Fill `predictions` for one card's items. If the items form an expanding-window prefix
@@ -803,7 +849,7 @@ where
     let mut predictions = Vec::new();
     let mut labels = Vec::new();
     let mut weights = Vec::new();
-    let mut r_matrix: HashMap<(u32, u32, u32), RMatrixValue> = HashMap::new();
+    let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
     let mut progress_info = ItemProgress {
         current: 0,
         total: split_count,
@@ -894,7 +940,8 @@ where
 
 /// Measure model performance in bins
 fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
-    let mut groups = HashMap::new();
+    // Summed in bin order (BTreeMap) so the result is deterministic.
+    let mut groups = BTreeMap::new();
     izip!(pred_a, pred_b, true_val).for_each(|(a, b, t)| {
         let bin = get_bin(*b, 20);
         groups.entry(bin).or_insert_with(Vec::new).push((a, t));
@@ -917,8 +964,135 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FSRSReview;
     use crate::convertor_tests::anki21_sample_file_converted_to_fsrs;
     use crate::{ComputeParametersVersion, TrainingConfig};
+
+    /// One card's expanding-window prefixes, the shape `compute_parameters` and
+    /// `evaluate_with_card_ids` are given.
+    fn prefix_items(ratings: &[(u32, f32)]) -> Vec<FSRSItem> {
+        let reviews: Vec<FSRSReview> = ratings
+            .iter()
+            .map(|&(rating, delta_t)| FSRSReview { rating, delta_t })
+            .collect();
+        (2..=reviews.len())
+            .map(|len| FSRSItem {
+                reviews: reviews[..len].to_vec(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn predict_retrievability_with_card_ids_returns_the_evaluated_predictions() {
+        let mut items = Vec::new();
+        let mut card_ids = Vec::new();
+        // Two cards whose items form a prefix chain, so the trajectory is walked
+        // once, and one card whose items do not, so the per-item path is used.
+        for (card_id, ratings) in [
+            (
+                101_i64,
+                &[(3, 0.0), (3, 1.0), (4, 5.0), (3, 13.0), (1, 30.0)][..],
+            ),
+            (102, &[(1, 0.0), (3, 0.5), (3, 3.0), (2, 9.0)][..]),
+        ] {
+            for item in prefix_items(ratings) {
+                items.push(item);
+                card_ids.push(card_id);
+            }
+        }
+        for ratings in [
+            &[(3, 0.0), (2, 4.0)][..],
+            &[(4, 0.0), (3, 21.0), (3, 60.0)][..],
+        ] {
+            for item in prefix_items(ratings) {
+                items.push(item);
+                card_ids.push(103);
+            }
+        }
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+
+        let mut updates = Vec::new();
+        let predictions = fsrs
+            .predict_retrievability_with_card_ids(items.clone(), card_ids.clone(), |progress| {
+                updates.push(progress.current);
+                true
+            })
+            .unwrap();
+
+        // One value per item, in the order of `items`, each the value the
+        // per-item path gives for that item.
+        assert_eq!(predictions.len(), items.len());
+        for (item, prediction) in items.iter().zip(&predictions) {
+            assert_eq!(*prediction, predict_retrievability(&fsrs, item).unwrap());
+        }
+        assert_eq!(updates.last(), Some(&items.len()));
+        // The values are real probabilities and they are not all alike.
+        assert!(predictions.iter().all(|p| (0.0..=1.0).contains(p)));
+        assert!(
+            predictions
+                .iter()
+                .any(|p| (p - predictions[0]).abs() > 0.01)
+        );
+
+        // The evaluation scores exactly these numbers: its log loss is what they
+        // give, so the wrapper is a projection of the evaluation path.
+        let weighted_items =
+            recency_weighted_fsrs_items_with_card_ids(items.clone(), card_ids.clone());
+        let labels: Vec<f32> = weighted_items
+            .iter()
+            .map(|weighted_item| f32::from(weighted_item.item.current().rating > 1))
+            .collect();
+        let weights: Vec<f32> = weighted_items
+            .iter()
+            .map(|weighted_item| weighted_item.weight)
+            .collect();
+        let expected = weighted_binary_cross_entropy(&predictions, &labels, &weights);
+        let evaluation = fsrs
+            .evaluate_with_card_ids(items.clone(), card_ids.clone(), |_| true)
+            .unwrap();
+        assert_eq!(evaluation.log_loss, expected);
+
+        // The input checks are the evaluation's.
+        assert_eq!(
+            fsrs.predict_retrievability_with_card_ids(vec![], vec![], |_| true)
+                .unwrap_err(),
+            FSRSError::NotEnoughData
+        );
+        assert_eq!(
+            fsrs.predict_retrievability_with_card_ids(items.clone(), vec![1], |_| true)
+                .unwrap_err(),
+            FSRSError::InvalidInput
+        );
+        // A caller can stop it, as it can stop the evaluation.
+        assert_eq!(
+            fsrs.predict_retrievability_with_card_ids(items, card_ids, |_| false)
+                .unwrap_err(),
+            FSRSError::Interrupted
+        );
+    }
+
+    #[test]
+    fn fsrs7_small_train_set_returns_default_parameters() {
+        // FSRS-7 has no parameter pre-training. Below 64 training items compute_parameters
+        // does not optimize, so FSRS-7 must get the default parameters unchanged. (With the
+        // old initial-stability search, this train set got w[0..4] of about 0.281, 0.603,
+        // 0.765 and 3.43 instead of the defaults.)
+        let prefix = anki21_sample_file_converted_to_fsrs()
+            .into_iter()
+            .take(50)
+            .collect::<Vec<_>>();
+        // FSRS-7 trains on every item (no outlier filter), and not all are first reviews.
+        let n_train = prefix.len();
+        assert!((8..64).contains(&n_train), "{n_train} training items");
+        assert!(prefix.iter().any(|item| item.long_term_review_cnt() != 1));
+        let parameters = training::compute_parameters(ComputeParametersInput {
+            train_set: prefix,
+            model_version: ComputeParametersVersion::Fsrs7,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(parameters, DEFAULT_PARAMETERS.to_vec());
+    }
 
     #[test]
     fn time_series_splits_preserve_training_options() {
@@ -1070,5 +1244,51 @@ mod tests {
                 .is_ok()
         );
         Ok(())
+    }
+
+    // RMSE(bins) and the universal metrics sum per-bin values. The bins used to live in a
+    // HashMap, whose iteration order differs between any two maps, so repeated evaluations
+    // of the same data could differ in the last float bits. The sums now run in bin order.
+    #[test]
+    fn evaluate_is_deterministic() {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let first = fsrs.evaluate(items.clone(), |_| true).unwrap();
+        for _ in 0..10 {
+            let again = fsrs.evaluate(items.clone(), |_| true).unwrap();
+            assert_eq!(again.log_loss.to_bits(), first.log_loss.to_bits());
+            assert_eq!(again.rmse_bins.to_bits(), first.rmse_bins.to_bits());
+        }
+    }
+
+    #[test]
+    fn universal_metrics_is_deterministic() {
+        let items = anki21_sample_file_converted_to_fsrs();
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let mut other = DEFAULT_PARAMETERS.to_vec();
+        other[0] *= 2.0;
+        let first = fsrs
+            .universal_metrics(items.clone(), &other, |_| true)
+            .unwrap();
+        for _ in 0..10 {
+            let again = fsrs
+                .universal_metrics(items.clone(), &other, |_| true)
+                .unwrap();
+            assert_eq!(again.0.to_bits(), first.0.to_bits());
+            assert_eq!(again.1.to_bits(), first.1.to_bits());
+        }
+    }
+
+    #[test]
+    fn evaluate_with_card_ids_matches_evaluate_exactly() {
+        let (items, card_ids) =
+            crate::convertor_tests::anki21_sample_file_converted_to_fsrs_with_card_ids();
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let plain = fsrs.evaluate(items.clone(), |_| true).unwrap();
+        let by_card = fsrs
+            .evaluate_with_card_ids(items, card_ids, |_| true)
+            .unwrap();
+        assert_eq!(by_card.log_loss.to_bits(), plain.log_loss.to_bits());
+        assert_eq!(by_card.rmse_bins.to_bits(), plain.rmse_bins.to_bits());
     }
 }

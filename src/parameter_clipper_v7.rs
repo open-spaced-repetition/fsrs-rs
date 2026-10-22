@@ -49,7 +49,8 @@ pub(crate) fn clip_fsrs7_parameters(parameters: &mut [f32]) {
     parameters[23] = clamp_safe(parameters[23], 0.01, 0.25);
     parameters[24] = clamp_safe(parameters[24], 0.01, 0.95);
     parameters[25] = clamp_safe(parameters[25], 0.2, 0.85);
-    parameters[26] = clamp_safe(parameters[26], parameters[25], 0.99);
+    // srs-benchmark: w26 in [0.5, 0.99], then w26 >= w25.
+    parameters[26] = clamp_safe(parameters[26], parameters[25].max(0.5), 0.99);
     parameters[27] = clamp_safe(parameters[27], 0.01, 1.0);
     parameters[28] = clamp_safe(parameters[28], 0.1, 1.0);
     parameters[29] = clamp_safe(parameters[29], 0.0, 0.9);
