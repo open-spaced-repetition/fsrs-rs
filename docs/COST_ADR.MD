@@ -283,6 +283,12 @@ After shaping Anki's ADR simulator from the effective preset slice, the same Yom
 
 ## FSRS-7 Interval Solver
 
+The current solver in `src/model_v7.rs` uses Newton iterations in log time with
+a bisection fallback. The comparisons and profiles in this document record earlier
+implementations: `roots::find_root_brent` and `PriorityQueue` are historical
+symbols, and neither crate is a current dependency. Simulator scheduling uses
+the local `CardPriorityQueue`.
+
 Yomitan comparison from 2026-05-29, using `examples/fsrs7_adr_collection.rs` with `--deck-name-contains Yomitan`, target average ADR DR `0.8`, FSRS-7, and the same trained parameter vector. The run covered 169,942 revlogs, 10,013 reviewed cards, and 129,085 FSRS items.
 
 These results use `1e-4` as an absolute interval tolerance for the Newton-based variants. The earlier relative tolerance (`high * 1e-4`) was not the intended precision target and produced a different output family.
@@ -297,7 +303,7 @@ These results use `1e-4` as an absolute interval tolerance for the Newton-based 
 
 Interpretation:
 
-- The implemented FSRS-7 interval solver is now `Newton/Brent`: safe Newton first, strict Brent fallback.
+- At the time of this comparison, the implemented FSRS-7 interval solver was `Newton/Brent`: safe Newton first, strict Brent fallback.
 - Pure Newton is fast but can miss enough roots to materially change ADR evaluation.
 - Brent and bisection agree closely, which makes them useful references, but both are too slow as primary solvers.
 - Newton/Brent was selected because it matches the reliable output family while avoiding the full bisection fallback cost.
