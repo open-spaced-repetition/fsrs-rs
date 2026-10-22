@@ -357,8 +357,11 @@ fn step(
     }
 }
 
+// BCE bounds: the model's output is already in [1e-5, 1 - 1e-5] (the final rescale), so they only
+// guard against rounding. Same bounds in every kernel (wide_loss MIN_R/MAX_R), and in effect
+// srs-benchmark's nn.BCELoss, which has no clamp of its own.
 fn bce_loss(r: Dual, label: f64, weight: f64) -> Dual {
-    let r = r.clamp(0.0001, 0.9999);
+    let r = r.clamp(1e-5, 1.0 - 1e-5);
     debug_assert!(label == 0.0 || label == 1.0);
     let probability = if label == 0.0 { r.const_sub(1.0) } else { r };
     probability.ln().mul_const(-weight)
@@ -494,7 +497,7 @@ fn step_scalar(
 }
 
 fn bce_loss_scalar(r: f64, label: f64, weight: f64) -> f64 {
-    let r = r.clamp(0.0001, 0.9999);
+    let r = r.clamp(1e-5, 1.0 - 1e-5);
     debug_assert!(label == 0.0 || label == 1.0);
     let probability = 1.0 - (label - r).abs();
     -weight * probability.ln()
@@ -547,6 +550,8 @@ fn windowed_loss_scalar(
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 mod neon_loss;
 mod wide_loss;
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+pub(crate) mod wide_window;
 
 pub(crate) fn windowed_loss(
     w: &[f32],
@@ -644,7 +649,7 @@ pub(crate) fn windowed_grad(
 
     #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
     {
-        wide_loss::windowed_grad(
+        wide_window::windowed_grad(
             w, t_historys, r_historys, labels, weights, seq_len, batch_size,
         )
     }
@@ -1353,7 +1358,7 @@ mod reverse {
     }
 
     fn bce_retrievability_grad(r_raw: f64, label: f64, weight: f64) -> f64 {
-        if !(r_raw > 0.0001 && r_raw < 0.9999) {
+        if !(r_raw > 1e-5 && r_raw < 1.0 - 1e-5) {
             return 0.0;
         }
         if label == 1.0 {
@@ -1559,6 +1564,93 @@ mod tests {
             max_abs < 1e-4,
             "reverse-mode gradient diverges: max abs diff {max_abs}\nforward={forward:?}\nreverse={rev:?}"
         );
+    }
+
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    #[test]
+    fn test_wide_window_grad_matches_forward_dual() {
+        // 12 cards in 16 columns: an 8-lane group and a 4-lane last group (4 padding columns).
+        let empty = [(0, 0.0); 6];
+        let histories = [
+            [(3, 0.0), (4, 1.0), (3, 5.0), (1, 10.0), (3, 2.0), (0, 0.0)],
+            [(1, 0.0), (3, 0.5), (2, 1.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(4, 0.0), (4, 2.0), (3, 4.0), (2, 7.0), (1, 1.0), (3, 3.0)],
+            [(2, 0.0), (3, 1.5), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(3, 0.0), (2, 3.0), (4, 6.0), (1, 2.0), (3, 0.0), (0, 0.0)],
+            [(3, 0.0), (3, 1.0), (4, 2.0), (2, 3.0), (3, 5.0), (1, 1.0)],
+            [(1, 0.0), (2, 0.5), (3, 2.0), (4, 4.0), (0, 0.0), (0, 0.0)],
+            [(4, 0.0), (1, 1.0), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(3, 0.0), (1, 0.01), (3, 0.5), (3, 3.0), (3, 9.0), (2, 20.0)],
+            [(2, 0.0), (2, 1.0), (1, 3.0), (1, 0.1), (3, 1.0), (0, 0.0)],
+            [(4, 0.0), (3, 7.0), (0, 0.0), (0, 0.0), (0, 0.0), (0, 0.0)],
+            [(1, 0.0), (1, 0.2), (1, 0.4), (3, 1.0), (0, 0.0), (0, 0.0)],
+            empty,
+            empty,
+            empty,
+            empty,
+        ];
+        let (seq_len, batch_size, cards) = (6, histories.len(), 12);
+        let (t, r, labels, weights) = synthetic_windowed(&histories);
+        let (_loss, forward) = windowed_loss_and_grad(
+            &crate::DEFAULT_PARAMETERS,
+            &t,
+            &r,
+            &labels,
+            &weights,
+            seq_len,
+            batch_size,
+        );
+        let w = &crate::DEFAULT_PARAMETERS;
+        let signed: Vec<f32> = weights
+            .iter()
+            .zip(&labels)
+            .map(|(&weight, &label)| wide_window::signed_weight(weight, label))
+            .collect();
+        let wc = wide_window::wconsts(w);
+        let mut caches = wide_window::Caches::default();
+        let mut simd = [0.0f64; PARAM_LEN];
+        for g in 0..batch_size / 8 {
+            let gg = wide_window::group_grad(
+                w,
+                &wc,
+                &t,
+                &r,
+                &signed,
+                seq_len,
+                batch_size,
+                cards,
+                g,
+                &mut caches,
+            );
+            simd.iter_mut().zip(gg).for_each(|(s, v)| *s += v as f64);
+        }
+        let numerator = forward
+            .iter()
+            .zip(simd)
+            .map(|(&a, b)| (a as f64 - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let denominator = forward
+            .iter()
+            .map(|&a| (a as f64).powi(2))
+            .sum::<f64>()
+            .sqrt()
+            .max(1.0);
+        // The residual is the f32 polynomial exp/log accuracy, not an adjoint error (the previous
+        // f32x8 kernel sat at the same 4.9e-3 on this batch; the NEON test accepts 1e-2 too).
+        assert!(
+            numerator / denominator < 1e-2,
+            "wide gradient diverges: relative L2 {:e}\nforward={forward:?}\nsimd={simd:?}",
+            numerator / denominator
+        );
+        // The one-thread batch entry point gives the same sums.
+        let batch = wide_window::windowed_grad(w, &t, &r, &labels, &weights, seq_len, batch_size);
+        for (a, b) in batch.iter().zip(simd) {
+            assert!(
+                (*a as f64 - b).abs() <= 1e-6 * b.abs().max(1.0),
+                "{a} vs {b}"
+            );
+        }
     }
 
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]

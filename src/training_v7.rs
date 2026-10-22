@@ -1,14 +1,9 @@
-use crate::inference::MemoryState;
-use crate::model::model_v7::{
-    fsrs7_forgetting_curve_and_derivative_scalar, fsrs7_next_interval_scalar_for_state,
-    fsrs7_next_state_scalar, init_difficulty_scalar,
-};
 use crate::simulation::{S_MAX, S_MIN};
 
 pub(crate) const PARAM_LEN: usize = 34;
 pub(crate) const PENALTY_W_1: f64 = 0.5;
 pub(crate) const PENALTY_W_2: f64 = 0.0015;
-pub(crate) const PENALTY_W_L2: f64 = 0.5;
+pub(crate) const PENALTY_W_L2: f64 = 0.3333;
 pub(crate) const PENALTY_N_REVIEWS: usize = 10;
 pub(crate) const PENALTY_TARGET_DR: f32 = 0.90;
 pub(crate) const PENALTY_TARGET_DRS: [f32; 1] = [0.99];
@@ -502,16 +497,6 @@ struct DualState {
     difficulty: Dual35,
 }
 
-impl DualState {
-    fn scalar(self) -> MemoryState {
-        MemoryState {
-            stability: self.stability.value as f32,
-            stability_fast: self.stability_fast.value as f32,
-            difficulty: self.difficulty.value as f32,
-        }
-    }
-}
-
 fn init_difficulty_dual(w: &[Dual35; GRAD_LEN], rating: f64) -> Dual35 {
     w[4].sub(w[5].mul_const(rating - 1.0).exp())
         .add_const(1.0)
@@ -637,7 +622,10 @@ fn next_difficulty_dual(
         delta_d
     };
     let new_d = difficulty.add(difficulty.const_sub(10.0).mul(delta_d).div_const(9.0));
-    init_difficulty_dual(w, 4.0)
+    // Mean-reversion target init_d(4) is NOT clamped (srs-benchmark and model_v7 both use it
+    // unclamped); only the initial difficulty is clamped.
+    w[4].sub(w[5].mul_const(3.0).exp())
+        .add_const(1.0)
         .mul_const(0.01)
         .add(new_d.mul_const(0.99))
         .clamp(1.0, 10.0)
@@ -680,26 +668,99 @@ fn next_state_dual(
     }
 }
 
+// srs-benchmark's `_interval_differentiable` (models/fsrs_v7_interval_penalty.py), mirrored
+// step for step. Phase 1: PENALTY_N_NEWTON plain-float Newton steps in u = log(t), starting at
+// u = log(s), on the raw two-component mixture R (no 1e-5 rescale). Phase 2: one
+// implicit-function lift at the detached t*, whose value is kept and whose gradient is
+// -(dR/dw) / (dR/du).
+const PENALTY_MIN_T: f64 = 1.0 / 86_400.0;
+const PENALTY_MAX_T: f64 = 36_500.0;
+
+fn penalty_newton_interval(w: &[f32], s: f64, s_short: f64, d: f64, target: f64) -> f64 {
+    let wf = |i: usize| f64::from(w[i]);
+    let (min_u, max_u) = (PENALTY_MIN_T.ln(), PENALTY_MAX_T.ln());
+    let decay1 = -(wf(23) * s_short.powf(wf(33) - 0.3)).clamp(0.01, 0.95);
+    let factor1 = (wf(25).max(1e-9).ln() / decay1).min(60.0).exp() - 1.0;
+    let a1 = factor1 / s_short;
+    let decay2 = -wf(24).clamp(0.01, 0.95);
+    let factor2 = wf(26).max(1e-9).powf(1.0 / decay2) - 1.0;
+    let d_timescale = ((d - 5.0) * (wf(32) - 0.3)).exp();
+    let a2 = factor2 * d_timescale / s;
+    let weight1 = wf(27) * s_short.powf(-wf(29));
+    let weight2 = wf(28) * s.powf(wf(30)) * ((d - 5.0) * (wf(31) - 0.5)).exp();
+    let weight_sum = weight1 + weight2;
+    let mut u = s.max(1e-10).ln();
+    for _ in 0..PENALTY_N_NEWTON {
+        u = u.clamp(min_u, max_u);
+        let t = u.exp().clamp(PENALTY_MIN_T, PENALTY_MAX_T);
+        let i1 = (a1 * t + 1.0).max(1e-9);
+        let i2 = (a2 * t + 1.0).max(1e-9);
+        let r = (weight1 * i1.powf(decay1) + weight2 * i2.powf(decay2)) / weight_sum;
+        let dr1 = decay1 * i1.powf(decay1 - 1.0) * a1;
+        let dr2 = decay2 * i2.powf(decay2 - 1.0) * a2;
+        let drdt = (weight1 * dr1 + weight2 * dr2) / weight_sum;
+        let dfdu = (drdt * t).min(-1e-12);
+        u -= (r - target) / dfdu;
+    }
+    u.clamp(min_u, max_u)
+        .exp()
+        .clamp(PENALTY_MIN_T, PENALTY_MAX_T)
+}
+
+/// Raw two-component mixture R(t) (no 1e-5 rescale) as a dual number, plus the value of dR/dt,
+/// with srs-benchmark's `_fc_R_and_dRdt` clamps.
+fn penalty_raw_mixture(w: &[Dual35; GRAD_LEN], t: f64, state: DualState) -> (Dual35, f64) {
+    let (s, s_short, d) = (state.stability, state.stability_fast, state.difficulty);
+    let decay1 = w[23]
+        .mul(s_short.pow(w[33].sub_const(0.3)))
+        .clamp(0.01, 0.95)
+        .neg();
+    let factor1 = w[25].log().div(decay1).clamp_max(60.0).exp().sub_const(1.0);
+    let a1 = factor1.div(s_short);
+    let inner1 = a1.mul_const(t).add_const(1.0).clamp_min(1e-9);
+    let r1 = inner1.pow(decay1);
+    let decay2 = w[24].clamp(0.01, 0.95).neg();
+    let factor2 = w[26].pow(Dual35::constant(1.0).div(decay2)).sub_const(1.0);
+    let d_timescale = d.sub_const(5.0).mul(w[32].sub_const(0.3)).exp();
+    let a2 = factor2.mul(d_timescale).div(s);
+    let inner2 = a2.mul_const(t).add_const(1.0).clamp_min(1e-9);
+    let r2 = inner2.pow(decay2);
+    let weight1 = w[27].mul(s_short.pow(w[29].neg()));
+    let weight2 = w[28]
+        .mul(s.pow(w[30]))
+        .mul(d.sub_const(5.0).mul(w[31].sub_const(0.5)).exp());
+    let weight_sum = weight1.add(weight2).clamp_min(1e-9);
+    let r = weight1
+        .mul(r1)
+        .add(weight2.mul(r2))
+        .div(weight_sum)
+        .clamp(0.0, 1.0);
+    let dr1 = decay1.value * inner1.value.powf(decay1.value - 1.0) * a1.value;
+    let dr2 = decay2.value * inner2.value.powf(decay2.value - 1.0) * a2.value;
+    let drdt = ((weight1.value * dr1 + weight2.value * dr2) / weight_sum.value).min(0.0);
+    (r, drdt)
+}
+
 fn next_interval_dual(
     w: &[f32],
     w_dual: &[Dual35; GRAD_LEN],
     state: DualState,
     desired_retention: f32,
 ) -> Dual35 {
-    let scalar_state = state.scalar();
-    let interval = fsrs7_next_interval_scalar_for_state(w, scalar_state, desired_retention)
-        .clamp(MIN_T, S_MAX);
-    let interval_dual = Dual35::constant(interval as f64);
-    let residual =
-        forgetting_curve_dual(w_dual, interval_dual, state).sub_const(desired_retention as f64);
-    let (_, drdt) = fsrs7_forgetting_curve_and_derivative_scalar(w, interval, scalar_state);
-    let dfdu = ((drdt * interval) as f64).clamp(-1e9, -1e-9);
-    let mut lifted = Dual35::constant((interval as f64).ln())
-        .sub(residual.div_const(dfdu))
-        .clamp((MIN_T as f64).ln(), (S_MAX as f64).ln())
-        .exp();
-    lifted.value = interval as f64;
-    lifted
+    let target = f64::from(desired_retention);
+    let t_star = penalty_newton_interval(
+        w,
+        state.stability.value,
+        state.stability_fast.value,
+        state.difficulty.value,
+        target,
+    );
+    let (r, drdt) = penalty_raw_mixture(w_dual, t_star, state);
+    let dfdu = (drdt * t_star).min(-1e-9);
+    Dual35::constant(t_star.ln())
+        .sub(r.sub_const(target).div_const(dfdu))
+        .clamp(PENALTY_MIN_T.ln(), PENALTY_MAX_T.ln())
+        .exp()
 }
 
 fn interval_growth_penalty_dual(
@@ -793,10 +854,7 @@ pub(crate) fn schedule_penalty_value_and_grad(
     if w.len() < PARAM_LEN || batch_size == 0 {
         return (0.0, [0.0; GRAD_LEN]);
     }
-    let value = schedule_penalty_value(w);
-    if !value.is_finite() {
-        return (0.0, [0.0; GRAD_LEN]);
-    }
+    // Value and gradient both come from the dual computation, which mirrors srs-benchmark.
     let penalty = schedule_penalty_dual(w);
     if !penalty.value.is_finite() {
         return (0.0, [0.0; GRAD_LEN]);
@@ -808,7 +866,7 @@ pub(crate) fn schedule_penalty_value_and_grad(
             *dst = src * scale;
         }
     }
-    (value * scale, grad)
+    (penalty.value * scale, grad)
 }
 
 pub(crate) fn maybe_schedule_penalty_value_and_grad(
@@ -820,71 +878,5 @@ pub(crate) fn maybe_schedule_penalty_value_and_grad(
         schedule_penalty_value_and_grad(w, batch_size)
     } else {
         (0.0, [0.0; GRAD_LEN])
-    }
-}
-
-fn initial_penalty_state(w: &[f32]) -> MemoryState {
-    let stability = w[2].clamp(S_MIN, S_MAX);
-    MemoryState {
-        stability,
-        difficulty: init_difficulty_scalar(w, 3),
-        stability_fast: (stability * 0.8).clamp(S_MIN, S_MAX),
-    }
-}
-
-fn schedule_penalty_value(w: &[f32]) -> f64 {
-    if w.len() < PARAM_LEN {
-        return 0.0;
-    }
-    let p1 = interval_growth_penalty_value(w, PENALTY_N_REVIEWS, PENALTY_TARGET_DR);
-    let p2 = short_interval_penalty_value(w, PENALTY_N_REVIEWS, &PENALTY_TARGET_DRS);
-    let penalty = p1 * PENALTY_W_1 + p2 * PENALTY_W_2;
-    if penalty.is_finite() { penalty } else { 0.0 }
-}
-
-fn interval_growth_penalty_value(w: &[f32], n_reviews: usize, target_dr: f32) -> f64 {
-    let mut state = initial_penalty_state(w);
-    let mut prev_interval: Option<f32> = None;
-    let mut best_ratio = 0.0_f64;
-    for _ in 0..n_reviews {
-        let interval = fsrs7_next_interval_scalar_for_state(w, state, target_dr);
-        if let Some(prev) = prev_interval
-            && prev >= ONE_DAY
-            && interval.is_finite()
-            && prev.is_finite()
-        {
-            best_ratio = best_ratio.max((interval / prev) as f64);
-        }
-        prev_interval = Some(interval);
-        state = fsrs7_next_state_scalar(w, state, interval, 3);
-    }
-    best_ratio * best_ratio
-}
-
-fn short_interval_penalty_value(w: &[f32], n_reviews: usize, target_drs: &[f32]) -> f64 {
-    let mut penalty_sum = 0.0_f64;
-    let mut penalty_count = 0_usize;
-    for &target_dr in target_drs {
-        let mut state = initial_penalty_state(w);
-        let mut short_sum = 0.0_f64;
-        let mut short_count = 0_usize;
-        for _ in 0..n_reviews {
-            let interval = fsrs7_next_interval_scalar_for_state(w, state, target_dr);
-            if interval.is_finite() && interval < ONE_DAY {
-                short_sum += interval as f64;
-                short_count += 1;
-            }
-            state = fsrs7_next_state_scalar(w, state, interval, 3);
-        }
-        if short_count > 0 {
-            let avg_t = (short_sum / short_count as f64).max(MIN_T as f64);
-            penalty_sum += avg_t.recip().max(INV_C as f64) - INV_C as f64;
-            penalty_count += 1;
-        }
-    }
-    if penalty_count == 0 {
-        0.0
-    } else {
-        penalty_sum / penalty_count as f64
     }
 }
