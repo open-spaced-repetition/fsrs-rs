@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [ "main" ]
+  schedule:
+    - cron: '0 0 * * 0'
 permissions:
   contents: read
 
