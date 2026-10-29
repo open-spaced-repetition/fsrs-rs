@@ -4,6 +4,7 @@ use crate::error::{FSRSError, Result};
 use crate::inference::{ItemProgress, Parameters};
 use crate::model::{ModelVersion, check_and_fill_parameters, model_v6, model_v7};
 use itertools::{Itertools, izip};
+use rand::RngExt;
 use ndarray::{Array1, Array2, Array3};
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
