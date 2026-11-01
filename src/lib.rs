@@ -67,7 +67,7 @@ pub use cost_adr::{
     CostAdrNextStates, CostAdrPlotPoint, CostAdrPolicy, CostAdrTrainingConfig,
     CostAdrTrainingResult,
 };
-pub use dataset::{FSRSItem, FSRSReview, filter_outlier};
+pub use dataset::{CardPrefix, CardPrefixes, CardReviews, FSRSItem, FSRSReview, filter_outlier};
 pub use error::{FSRSError, Result};
 pub use inference::{
     DEFAULT_PARAMETERS, FSRS5_DEFAULT_DECAY, FSRS6_DEFAULT_DECAY, FSRS6_DEFAULT_PARAMETERS,
@@ -90,4 +90,5 @@ pub use training::{
     CombinedProgressState, ComputeParametersInput, ComputeParametersVersion,
     RecallClassificationCosts, RecallClassifierTrainingConfig, TrainingConfig, benchmark,
     compute_parameters, compute_parameters_for_recall_classifier,
+    compute_parameters_from_card_prefixes,
 };

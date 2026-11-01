@@ -5,15 +5,15 @@ use std::ops::{Add, Sub};
 use std::sync::{Arc, Mutex};
 
 use crate::dataset::{
-    WeightedFSRSItem, constant_weighted_fsrs_items, recency_weighted_fsrs_items,
-    recency_weighted_fsrs_items_with_card_ids,
+    CardPrefixes, WeightedFSRSItem, constant_weighted_fsrs_items, r_matrix_bin, recency_weight,
+    recency_weighted_fsrs_items, recency_weighted_fsrs_items_with_card_ids,
 };
 use crate::error::Result;
 use crate::model::{FSRS, ModelVersion};
 use crate::simulation::S_MIN;
 use crate::training::weighted_binary_cross_entropy;
 use crate::training::{self, ComputeParametersInput};
-use crate::{FSRSError, FSRSItem};
+use crate::{FSRSError, FSRSItem, FSRSReview};
 #[path = "inference_v6.rs"]
 pub(crate) mod inference_v6;
 #[path = "inference_v7.rs"]
@@ -90,6 +90,51 @@ fn predict_retrievability(fsrs: &FSRS, item: &FSRSItem) -> Result<f32> {
         Ok(retrievability)
     } else {
         Err(FSRSError::InvalidInput)
+    }
+}
+
+/// Accumulates (prediction, label, bin, weight) rows with the same arithmetic in the same order as
+/// `evaluate`, so that the metrics are bit-for-bit identical.
+fn score_predictions(
+    rows: impl ExactSizeIterator<Item = (f32, f32, (u32, u32, u32), f32)>,
+) -> Result<ModelEvaluation> {
+    let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
+    let mut preds = Vec::with_capacity(rows.len());
+    let mut labels = Vec::with_capacity(rows.len());
+    let mut weights = Vec::with_capacity(rows.len());
+    for (p, y, bin, weight) in rows {
+        let value = r_matrix.entry(bin).or_default();
+        value.predicted += p;
+        value.actual += y;
+        value.count += 1.0;
+        value.weight += weight;
+        preds.push(p);
+        labels.push(y);
+        weights.push(weight);
+    }
+    let rmse = rmse_bins(&r_matrix);
+    let loss = weighted_binary_cross_entropy(&preds, &labels, &weights);
+    if !loss.is_finite() || !rmse.is_finite() {
+        return Err(FSRSError::InvalidInput);
+    }
+    Ok(ModelEvaluation {
+        log_loss: loss,
+        rmse_bins: rmse,
+    })
+}
+
+/// Fill `bins` for one card's items, given as (index, length >= 1) sorted by length.
+fn fill_card_bins(reviews: &[FSRSReview], group: &[(usize, usize)], bins: &mut [(u32, u32, u32)]) {
+    let (mut applied, mut long_term, mut lapses) = (0, 0, 0);
+    for &(idx, len) in group {
+        for review in &reviews[applied..len - 1] {
+            long_term += usize::from(review.delta_t >= 1.0);
+            lapses += usize::from(review.rating == 1 && review.delta_t >= 1.0);
+        }
+        applied = len - 1;
+        let current = reviews[len - 1];
+        let with_current = long_term + usize::from(current.delta_t >= 1.0);
+        bins[idx] = r_matrix_bin(current.delta_t, with_current, lapses);
     }
 }
 
@@ -486,35 +531,65 @@ impl FSRS {
         }
         let weighted_items = recency_weighted_fsrs_items_with_card_ids(items, card_ids);
         let predictions = self.predictions_by_card(&weighted_items, progress)?;
+        score_predictions(weighted_items.iter().zip(predictions).map(|(item, p)| {
+            (
+                p,
+                f32::from(item.item.current().rating > 1),
+                item.item.r_matrix_index(),
+                item.weight,
+            )
+        }))
+    }
 
-        // Aggregate in the original item order — the same arithmetic in the same accumulation
-        // order as `evaluate`, so the resulting metrics are bit-for-bit identical.
-        let mut r_matrix: BTreeMap<(u32, u32, u32), RMatrixValue> = BTreeMap::new();
-        let mut preds = Vec::with_capacity(weighted_items.len());
-        let mut labels = Vec::with_capacity(weighted_items.len());
-        let mut weights = Vec::with_capacity(weighted_items.len());
-        for (idx, weighted_item) in weighted_items.iter().enumerate() {
-            let p = predictions[idx];
-            let y = f32::from(weighted_item.item.current().rating > 1);
-            let bin = weighted_item.item.r_matrix_index();
-            let value = r_matrix.entry(bin).or_default();
-            value.predicted += p;
-            value.actual += y;
-            value.count += 1.0;
-            value.weight += weighted_item.weight;
-            preds.push(p);
-            labels.push(y);
-            weights.push(weighted_item.weight);
+    /// Like [`Self::evaluate_with_card_ids`], but takes the items as [`CardPrefixes`], in memory
+    /// and time linear in the reviews. For any model version, the result is bit-for-bit identical.
+    pub fn evaluate_from_card_prefixes<F>(
+        &self,
+        card_prefixes: &CardPrefixes,
+        mut progress: F,
+    ) -> Result<ModelEvaluation>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if card_prefixes.prefixes.is_empty() {
+            return Err(FSRSError::NotEnoughData);
         }
-        let rmse = rmse_bins(&r_matrix);
-        let loss = weighted_binary_cross_entropy(&preds, &labels, &weights);
-        if !loss.is_finite() || !rmse.is_finite() {
-            return Err(FSRSError::InvalidInput);
+        card_prefixes.validate()?;
+        let total = card_prefixes.prefixes.len();
+        let mut by_card = vec![Vec::new(); card_prefixes.cards.len()];
+        for (idx, prefix) in card_prefixes.prefixes.iter().enumerate() {
+            by_card[prefix.card_index as usize].push((idx, prefix.len as usize));
         }
-        Ok(ModelEvaluation {
-            log_loss: loss,
-            rmse_bins: rmse,
-        })
+        let mut predictions = vec![0.0f32; total];
+        let mut bins = vec![(0, 0, 0); total];
+        let mut progress_info = ItemProgress { current: 0, total };
+        for (card, group) in card_prefixes.cards.iter().zip(&mut by_card) {
+            if group.is_empty() {
+                continue;
+            }
+            group.sort_by_key(|&(_, len)| len);
+            self.walk_trajectory(&card.reviews, group.iter().copied(), &mut predictions)?;
+            fill_card_bins(&card.reviews, group, &mut bins);
+            progress_info.current += group.len();
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+        score_predictions(
+            card_prefixes
+                .prefixes
+                .iter()
+                .enumerate()
+                .map(|(idx, &prefix)| {
+                    let rating = card_prefixes.reviews(prefix).last().unwrap().rating;
+                    (
+                        predictions[idx],
+                        f32::from(rating > 1),
+                        bins[idx],
+                        recency_weight(idx, total),
+                    )
+                }),
+        )
     }
 
     /// The predicted probability of recall of every item, in the order of `items`: for each
@@ -610,14 +685,27 @@ impl FSRS {
             }
             return Ok(());
         }
+        let group = order
+            .iter()
+            .map(|&idx| (idx, weighted_items[idx].item.reviews.len()));
+        self.walk_trajectory(longest, group, predictions)
+    }
+
+    /// Fill `predictions` for one card's items, given as (index, length) sorted by length, on one
+    /// walk of the card's trajectory.
+    fn walk_trajectory(
+        &self,
+        longest: &[FSRSReview],
+        group: impl IntoIterator<Item = (usize, usize)>,
+        predictions: &mut [f32],
+    ) -> Result<()> {
         let mut state: Option<MemoryState> = None;
         let mut applied = 0;
-        for &idx in &order {
-            let reviews = &weighted_items[idx].item.reviews;
-            if reviews.is_empty() {
+        for (idx, len) in group {
+            if len == 0 {
                 return Err(FSRSError::InvalidInput);
             }
-            let history_len = reviews.len() - 1;
+            let history_len = len - 1;
             while applied < history_len {
                 let review = &longest[applied];
                 state = Some(match state {
@@ -632,7 +720,7 @@ impl FSRS {
                 stability_fast: 0.0,
             });
             let retrievability =
-                self.power_forgetting_curve_for_state(reviews[history_len].delta_t, state);
+                self.power_forgetting_curve_for_state(longest[history_len].delta_t, state);
             if !retrievability.is_finite() {
                 return Err(FSRSError::InvalidInput);
             }
@@ -1276,6 +1364,27 @@ mod tests {
                 .unwrap();
             assert_eq!(again.0.to_bits(), first.0.to_bits());
             assert_eq!(again.1.to_bits(), first.1.to_bits());
+        }
+    }
+
+    #[test]
+    fn card_prefixes_evaluate_to_the_same_bits_as_their_items() {
+        use crate::test_helpers::{items_of_card_prefixes, varied_card_prefixes};
+        let card_prefixes = varied_card_prefixes();
+        let (items, card_ids) = items_of_card_prefixes(&card_prefixes);
+        for parameters in [&DEFAULT_PARAMETERS[..], &FSRS6_DEFAULT_PARAMETERS[..]] {
+            let fsrs = FSRS::new(parameters).unwrap();
+            let by_items = fsrs
+                .evaluate_with_card_ids(items.clone(), card_ids.clone(), |_| true)
+                .unwrap();
+            let by_prefixes = fsrs
+                .evaluate_from_card_prefixes(&card_prefixes, |_| true)
+                .unwrap();
+            assert_eq!(by_prefixes.log_loss.to_bits(), by_items.log_loss.to_bits());
+            assert_eq!(
+                by_prefixes.rmse_bins.to_bits(),
+                by_items.rmse_bins.to_bits()
+            );
         }
     }
 

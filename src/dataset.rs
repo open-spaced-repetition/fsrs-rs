@@ -4,6 +4,8 @@ use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::{FSRSError, Result};
+
 /// Stores a list of reviews for a card, in chronological order. Each FSRSItem corresponds
 /// to a single review, but contains the previous reviews of the card as well, after the
 /// first one.
@@ -29,6 +31,125 @@ pub struct FSRSReview {
     /// # Warning
     /// `delta_t` for item first(initial) review must be 0
     pub delta_t: f32,
+}
+
+/// One card's reviews in chronological order.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct CardReviews {
+    /// Must be unique, which evaluation validates too even though it does not read the ids. Orders
+    /// the training batches, like [`crate::ComputeParametersInput::card_ids`].
+    pub card_id: i64,
+    pub reviews: Vec<FSRSReview>,
+}
+
+/// An item made of the first `len` reviews of the card at `card_index` of [`CardPrefixes::cards`].
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CardPrefix {
+    pub card_index: u32,
+    pub len: u32,
+}
+
+/// The same items as a `Vec<FSRSItem>` with `card_ids`, as indices into each card's reviews. Memory
+/// per card grows linearly with its reviews here, and quadratically as [`FSRSItem`]s.
+///
+/// `prefixes` must be sorted oldest first, like `train_set`, because an item's position sets its
+/// recency weight.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct CardPrefixes {
+    pub cards: Vec<CardReviews>,
+    pub prefixes: Vec<CardPrefix>,
+}
+
+impl CardPrefixes {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let in_range = self.prefixes.iter().all(|prefix| {
+            self.cards
+                .get(prefix.card_index as usize)
+                .is_some_and(|card| prefix.len >= 1 && prefix.len as usize <= card.reviews.len())
+        });
+        let ids: HashSet<i64> = self.cards.iter().map(|card| card.card_id).collect();
+        if in_range && ids.len() == self.cards.len() {
+            Ok(())
+        } else {
+            Err(FSRSError::InvalidInput)
+        }
+    }
+
+    pub(crate) fn reviews(&self, prefix: CardPrefix) -> &[FSRSReview] {
+        &self.cards[prefix.card_index as usize].reviews[..prefix.len as usize]
+    }
+}
+
+/// What FSRS-7's windowed trainers read of a training set, by item.
+pub(crate) trait WindowedItems: Send + Sync {
+    fn count(&self) -> usize;
+    fn card_id(&self, index: usize) -> i64;
+    fn weight(&self, index: usize) -> f32;
+    fn reviews(&self, index: usize) -> &[FSRSReview];
+}
+
+impl WindowedItems for Vec<WeightedFSRSItem> {
+    fn count(&self) -> usize {
+        self.len()
+    }
+
+    fn card_id(&self, index: usize) -> i64 {
+        self[index]
+            .card_id
+            .expect("FSRS-7 training items have card ids")
+    }
+
+    fn weight(&self, index: usize) -> f32 {
+        self[index].weight
+    }
+
+    fn reviews(&self, index: usize) -> &[FSRSReview] {
+        &self[index].item.reviews
+    }
+}
+
+pub(crate) struct WeightedCardPrefixes<'a> {
+    pub card_prefixes: &'a CardPrefixes,
+    pub prefixes: Vec<(CardPrefix, f32)>,
+}
+
+impl WindowedItems for WeightedCardPrefixes<'_> {
+    fn count(&self) -> usize {
+        self.prefixes.len()
+    }
+
+    fn card_id(&self, index: usize) -> i64 {
+        self.card_prefixes.cards[self.prefixes[index].0.card_index as usize].card_id
+    }
+
+    fn weight(&self, index: usize) -> f32 {
+        self.prefixes[index].1
+    }
+
+    fn reviews(&self, index: usize) -> &[FSRSReview] {
+        self.card_prefixes.reviews(self.prefixes[index].0)
+    }
+}
+
+pub(crate) fn long_term_review_cnt(reviews: &[FSRSReview]) -> usize {
+    reviews
+        .iter()
+        .filter(|review| review.delta_t >= 1.0)
+        .count()
+}
+
+/// `long_term` counts the long-term reviews up to and including this one, and `lapses` the failed
+/// long-term reviews before it.
+pub(crate) fn r_matrix_bin(delta_t: f32, long_term: usize, lapses: usize) -> (u32, u32, u32) {
+    let delta_t = delta_t as f64;
+    let delta_t_bin = (2.48 * 3.62f64.powf(delta_t.log(3.62).floor()) * 100.0).round() as u32;
+    let length = long_term as f64 + 1.0;
+    let length_bin = (1.99 * 1.89f64.powf(length.log(1.89).floor())).round() as u32;
+    if lapses == 0 {
+        return (delta_t_bin, length_bin, 0);
+    }
+    let lapse_bin = (1.65 * 1.73f64.powf((lapses as f64).log(1.73).floor())).round() as u32;
+    (delta_t_bin, length_bin, lapse_bin)
 }
 
 const LONG_TERM_DELTA_T_BUCKET_DAYS: f32 = 1.0;
@@ -57,10 +178,7 @@ impl FSRSItem {
     }
 
     pub fn long_term_review_cnt(&self) -> usize {
-        self.reviews
-            .iter()
-            .filter(|review| review.delta_t >= 1.0)
-            .count()
+        long_term_review_cnt(&self.reviews)
     }
 
     pub(crate) fn first_long_term_review(&self) -> FSRSReview {
@@ -72,19 +190,11 @@ impl FSRSItem {
     }
 
     pub(crate) fn r_matrix_index(&self) -> (u32, u32, u32) {
-        let delta_t = self.current().delta_t as f64;
-        let delta_t_bin = (2.48 * 3.62f64.powf(delta_t.log(3.62).floor()) * 100.0).round() as u32;
-        let length = self.long_term_review_cnt() as f64 + 1.0;
-        let length_bin = (1.99 * 1.89f64.powf(length.log(1.89).floor())).round() as u32;
-        let lapse = self
+        let lapses = self
             .history()
             .filter(|review| review.rating == 1 && review.delta_t >= 1.0)
             .count();
-        if lapse == 0 {
-            return (delta_t_bin, length_bin, 0);
-        }
-        let lapse_bin = (1.65 * 1.73f64.powf((lapse as f64).log(1.73).floor())).round() as u32;
-        (delta_t_bin, length_bin, lapse_bin)
+        r_matrix_bin(self.current().delta_t, self.long_term_review_cnt(), lapses)
     }
 }
 
@@ -243,14 +353,19 @@ pub(crate) fn constant_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<Weighted
         .collect()
 }
 
+pub(crate) fn recency_weight(index: usize, count: usize) -> f32 {
+    let length = (count as f32 - 1.0).max(1.0);
+    0.25 + 0.75 * (index as f32 / length).powi(3)
+}
+
 /// The input items should be sorted by the review timestamp.
 pub(crate) fn recency_weighted_fsrs_items(items: Vec<FSRSItem>) -> Vec<WeightedFSRSItem> {
-    let length = (items.len() as f32 - 1.0).max(1.0);
+    let count = items.len();
     items
         .into_iter()
         .enumerate()
         .map(|(idx, item)| WeightedFSRSItem {
-            weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
+            weight: recency_weight(idx, count),
             item,
             card_id: None,
         })
@@ -261,13 +376,13 @@ pub(crate) fn recency_weighted_fsrs_items_with_card_ids(
     items: Vec<FSRSItem>,
     card_ids: Vec<i64>,
 ) -> Vec<WeightedFSRSItem> {
-    let length = (items.len() as f32 - 1.0).max(1.0);
+    let count = items.len();
     items
         .into_iter()
         .zip(card_ids)
         .enumerate()
         .map(|(idx, (item, card_id))| WeightedFSRSItem {
-            weight: 0.25 + 0.75 * (idx as f32 / length).powi(3),
+            weight: recency_weight(idx, count),
             item,
             card_id: Some(card_id),
         })

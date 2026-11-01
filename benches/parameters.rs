@@ -1,6 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use fsrs::{
-    ComputeParametersInput, FSRS, FSRSItem, FSRSReview, compute_parameters,
+    CardPrefix, CardPrefixes, CardReviews, ComputeParametersInput, ComputeParametersVersion, FSRS,
+    FSRSItem, FSRSReview, compute_parameters, compute_parameters_from_card_prefixes,
     evaluate_with_time_series_splits,
 };
 // Add necessary imports for inlined code
@@ -10,6 +11,7 @@ use itertools::Itertools;
 use rusqlite::{
     Connection, OpenFlags, Result as SqlResult, Row, types::FromSqlError as SqlFromSqlError,
 };
+use std::collections::HashMap;
 use std::hint::black_box;
 
 // Inlined RevlogReviewKind enum from convertor_tests.rs
@@ -282,6 +284,35 @@ fn load_and_prepare_data_with_card_ids() -> (Vec<FSRSItem>, Vec<i64>) {
     filtered.into_iter().unzip()
 }
 
+fn to_card_prefixes(items: &[FSRSItem], card_ids: &[i64]) -> CardPrefixes {
+    let mut positions = HashMap::new();
+    let mut cards: Vec<CardReviews> = Vec::new();
+    let mut prefixes = Vec::with_capacity(items.len());
+    for (item, &card_id) in items.iter().zip(card_ids) {
+        let card = *positions.entry(card_id).or_insert_with(|| {
+            cards.push(CardReviews {
+                card_id,
+                reviews: Vec::new(),
+            });
+            cards.len() - 1
+        });
+        let shared = item.reviews.len().min(cards[card].reviews.len());
+        assert_eq!(
+            item.reviews[..shared],
+            cards[card].reviews[..shared],
+            "a card's items must be prefixes of each other"
+        );
+        if item.reviews.len() > cards[card].reviews.len() {
+            cards[card].reviews.clone_from(&item.reviews);
+        }
+        prefixes.push(CardPrefix {
+            card_index: u32::try_from(card).unwrap(),
+            len: u32::try_from(item.reviews.len()).unwrap(),
+        });
+    }
+    CardPrefixes { cards, prefixes }
+}
+
 fn benchmark_evaluate(c: &mut Criterion) {
     let items = load_and_prepare_data();
     // Evaluate uses the FSRS instance's existing parameters.
@@ -293,6 +324,35 @@ fn benchmark_evaluate(c: &mut Criterion) {
     group.bench_function("evaluate", |b| {
         b.iter(|| {
             fsrs.evaluate(black_box(items.clone()), |_| true).unwrap();
+        })
+    });
+
+    group.finish();
+}
+
+fn benchmark_evaluate_with_card_ids(c: &mut Criterion) {
+    let (items, card_ids) = load_and_prepare_data_with_card_ids();
+    let fsrs = FSRS::default();
+
+    let mut group = c.benchmark_group("parameters");
+    group.sample_size(10);
+
+    group.bench_function("evaluate_with_card_ids", |b| {
+        b.iter(|| {
+            fsrs.evaluate_with_card_ids(
+                black_box(items.clone()),
+                black_box(card_ids.clone()),
+                |_| true,
+            )
+            .unwrap();
+        })
+    });
+
+    let card_prefixes = to_card_prefixes(&items, &card_ids);
+    group.bench_function("evaluate_from_card_prefixes", |b| {
+        b.iter(|| {
+            fsrs.evaluate_from_card_prefixes(black_box(&card_prefixes), |_| true)
+                .unwrap();
         })
     });
 
@@ -323,6 +383,7 @@ fn benchmark_evaluate_with_time_series_splits(c: &mut Criterion) {
 
 fn benchmark_compute_parameters(c: &mut Criterion) {
     let (items, card_ids) = load_and_prepare_data_with_card_ids();
+    let card_prefixes = to_card_prefixes(&items, &card_ids);
     let input_with_card_ids = ComputeParametersInput {
         train_set: items.clone(), // Using the full prepared dataset
         card_ids: Some(card_ids),
@@ -338,6 +399,19 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
     group.bench_function("compute_parameters", |b| {
         b.iter(|| {
             compute_parameters(black_box(input_with_card_ids.clone())).unwrap();
+        })
+    });
+
+    group.bench_function("compute_parameters_from_card_prefixes", |b| {
+        b.iter(|| {
+            compute_parameters_from_card_prefixes(
+                black_box(&card_prefixes),
+                ComputeParametersInput {
+                    model_version: ComputeParametersVersion::Fsrs7,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         })
     });
 
@@ -361,6 +435,7 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
 criterion_group!(
     benches,
     benchmark_evaluate,
+    benchmark_evaluate_with_card_ids,
     benchmark_evaluate_with_time_series_splits,
     benchmark_compute_parameters
 );

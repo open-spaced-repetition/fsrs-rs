@@ -19,7 +19,7 @@ use super::{
 };
 use crate::FSRSError;
 use crate::analytic_v7::wide_window::{self, Caches, WConsts};
-use crate::dataset::WeightedFSRSItem;
+use crate::dataset::{WeightedCardPrefixes, WeightedFSRSItem, WindowedItems};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -27,6 +27,35 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 const PARAM_LEN: usize = 34;
+
+/// A training set the threads can free while they wait.
+pub(super) trait FreeableItems: WindowedItems {
+    /// Returns false if nothing was left to free. Repeated calls must bring `count()` to 0.
+    fn free_some(&mut self) -> bool;
+}
+
+impl FreeableItems for Vec<WeightedFSRSItem> {
+    /// One block: first one independent load from each item's review buffer (the loads overlap),
+    /// then the frees.
+    fn free_some(&mut self) -> bool {
+        let len = self.len();
+        let keep = len.saturating_sub(32);
+        let touch = self[keep..].iter().fold(0u32, |a, it| {
+            a ^ it.item.reviews.first().map_or(0, |r| r.rating)
+        });
+        std::hint::black_box(touch);
+        self.truncate(keep);
+        keep < len
+    }
+}
+
+impl FreeableItems for WeightedCardPrefixes<'_> {
+    fn free_some(&mut self) -> bool {
+        let had_prefixes = !self.prefixes.is_empty();
+        self.prefixes = Vec::new();
+        had_prefixes
+    }
+}
 
 /// One batch's arrays, row-major [seq, bsz] (bsz = the card count rounded up to 8).
 struct Batch {
@@ -81,13 +110,12 @@ fn by_length<K: Ord + Default + Clone>(
 }
 
 impl Plan {
-    fn new(items: &[WeightedFSRSItem], batch_size: usize) -> Self {
+    fn new<I: WindowedItems>(items: &I, batch_size: usize) -> Self {
         // One pass in input order over the item headers only (the reviews, labels and weights are
         // read at layout time). Each card normally has one prefix of length 2 (its first
         // prediction): their count sizes the card index and the card list.
-        let n_cards = items
-            .iter()
-            .filter(|item| item.item.reviews.len() == 2)
+        let n_cards = (0..items.count())
+            .filter(|&idx| items.reviews(idx).len() == 2)
             .count();
         // The card index: open addressing with linear probing on card slots (u32::MAX = empty; a
         // slot's id is its card's), at most half full (doubled if more cards arrive than counted).
@@ -97,12 +125,12 @@ impl Plan {
             ((id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - bits)) as usize
         };
         let mut cards: Vec<PlanCard> = Vec::with_capacity(n_cards);
-        let mut link: Vec<u64> = Vec::with_capacity(items.len());
+        let mut link: Vec<u64> = Vec::with_capacity(items.count());
         let (mut min_id, mut max_id) = (i64::MAX, i64::MIN);
         let mut max_len = 0;
-        for (idx, item) in items.iter().enumerate() {
-            let id = item.card_id.expect("FSRS-7 training items have card ids");
-            let len = item.item.reviews.len();
+        for idx in 0..items.count() {
+            let id = items.card_id(idx);
+            let len = items.reviews(idx).len();
             max_len = max_len.max(len);
             let mut h = home(id, bits);
             while slots[h] != u32::MAX && cards[slots[h] as usize].id != id {
@@ -198,7 +226,7 @@ impl Plan {
 
     /// Batch `b`'s arrays: each card's reviews from its longest prefix, and at row (prefix length -
     /// 1) each prefix's weight, signed by its label (the rating of that review).
-    fn layout(&self, items: &[WeightedFSRSItem], b: usize) -> Batch {
+    fn layout<I: WindowedItems>(&self, items: &I, b: usize) -> Batch {
         let (first, end) = self.bounds[b];
         let batch = &self.order[first..end];
         let bsz = self.bsz(b);
@@ -213,12 +241,12 @@ impl Plan {
         let mut predictions = 0;
         // One independent load from each card's review buffer first (the cache misses overlap).
         let touch = batch.iter().fold(0u32, |a, &ci| {
-            let reviews = &items[self.cards[ci].longest as usize].item.reviews;
+            let reviews = items.reviews(self.cards[ci].longest as usize);
             a ^ reviews.first().map_or(0, |r| r.rating)
         });
         std::hint::black_box(touch);
         for (c, &ci) in batch.iter().enumerate() {
-            let reviews = &items[self.cards[ci].longest as usize].item.reviews;
+            let reviews = items.reviews(self.cards[ci].longest as usize);
             for (t, r) in reviews.iter().enumerate() {
                 t_hist[t * bsz + c] = r.delta_t.max(0.0);
                 r_hist[t * bsz + c] = r.rating as f32;
@@ -232,7 +260,7 @@ impl Plan {
                 let slot = &mut weights[t * bsz + c];
                 if slot.to_bits() == (-0.0f32).to_bits() {
                     let label = if reviews[t].rating == 1 { 0.0 } else { 1.0 };
-                    *slot = wide_window::signed_weight(items[idx as usize].weight, label);
+                    *slot = wide_window::signed_weight(items.weight(idx as usize), label);
                 }
                 idx = (e >> 32) as u32;
             }
@@ -251,7 +279,7 @@ impl Plan {
 }
 
 /// The plan and the prefix items, handed from the main thread to the helper.
-type Planned = Mutex<Option<(Plan, Vec<WeightedFSRSItem>)>>;
+type Planned<I> = Mutex<Option<(Plan, I)>>;
 
 const JOB_STOP: u64 = u64::MAX;
 
@@ -274,7 +302,7 @@ fn backoff(spins: &mut u32) {
 /// the batch, then both threads claim 8-card groups from `job` and store each group's gradient at
 /// its index in `out`; the main thread then adds the groups in group order. Batches take tens of
 /// microseconds, so the threads spin (then yield, see `backoff`) instead of sleeping.
-struct GradShared<'a> {
+struct GradShared<'a, I> {
     /// Filled once each, by the layouts.
     host: &'a [OnceLock<Batch>],
     /// (job sequence << 32) | next group to claim. The sequence in the same word keeps a thread
@@ -288,26 +316,23 @@ struct GradShared<'a> {
     ready: Vec<AtomicU32>,
     /// The prefix items, once the helper has laid out every batch: freed a block at a time by a
     /// thread that would otherwise wait (see free_some).
-    trash: Mutex<Vec<WeightedFSRSItem>>,
+    trash: Mutex<Option<I>>,
 }
 
-impl GradShared<'_> {
-    /// Frees one block of the prefix items if any are left and no other thread is freeing; returns
-    /// false if it freed nothing. First one independent load from each item's review buffer (the
-    /// loads overlap), then the frees. The threads call it while they wait (the helper for the next
+impl<I: FreeableItems> GradShared<'_, I> {
+    /// Frees part of the prefix items if any are left and no other thread is freeing, and returns
+    /// false if it freed nothing. The threads call it while they wait (the helper for the next
     /// job, the main thread for the helper's last group), so the frees mostly fill idle time.
     fn free_some(&self) -> bool {
         let Ok(mut items) = self.trash.try_lock() else {
             return false;
         };
-        let len = items.len();
-        let keep = len.saturating_sub(32);
-        let touch = items[keep..].iter().fold(0u32, |a, it| {
-            a ^ it.item.reviews.first().map_or(0, |r| r.rating)
-        });
-        std::hint::black_box(touch);
-        items.truncate(keep);
-        keep < len
+        items.as_mut().is_some_and(FreeableItems::free_some)
+    }
+
+    fn items_left(&self) -> bool {
+        let items = self.trash.lock().unwrap();
+        items.as_ref().is_some_and(|items| items.count() > 0)
     }
 
     /// Claim and compute groups of job `seq` until none is left (or the job changed).
@@ -354,20 +379,20 @@ impl GradShared<'_> {
     /// The second thread: lay out the batches in the order training first uses them, free the
     /// prefix items, then help with every published job. It takes the plan and the items once the
     /// main thread has laid out its lead batches (the main thread holds the lock until then).
-    fn helper(&self, planned: &Planned, first_order: &[usize]) {
+    fn helper(&self, planned: &Planned<I>, first_order: &[usize]) {
         let (plan, items) = planned.lock().unwrap().take().expect("the plan");
         for &b in first_order {
             let _ = self.host[b].set(plan.layout(&items, b));
         }
         drop(plan);
-        *self.trash.lock().unwrap() = items;
+        *self.trash.lock().unwrap() = Some(items);
         let mut caches = Caches::default();
         let mut seen = 0u32;
         let mut spins = 0;
         loop {
             let v = self.job.load(Ordering::Acquire);
             if v == JOB_STOP {
-                while !self.trash.lock().unwrap().is_empty() {
+                while self.items_left() {
                     self.free_some();
                 }
                 return;
@@ -391,14 +416,14 @@ impl GradShared<'_> {
 
 /// `train` for FSRS-7 with the log-loss objective: the same batches, batch order, learning-rate
 /// schedule, penalties, Adam steps and clipping, with the batch gradients computed as above.
-pub(super) fn train_fsrs7_windowed(
-    train_set: Vec<WeightedFSRSItem>,
+pub(super) fn train_fsrs7_windowed<I: FreeableItems>(
+    train_set: I,
     initial_parameters: &[f32],
     config: &InternalTrainingConfig,
     progress: Option<ProgressCollector>,
 ) -> Result<Vec<f32>> {
     let version = ModelVersion::Fsrs7;
-    let total_size = train_set.len();
+    let total_size = train_set.count();
     let plan = Plan::new(&train_set, config.batch_size);
     let batch_count = plan.bounds.len();
     let max_bsz = (0..batch_count).map(|b| plan.bsz(b)).max().unwrap_or(0);
@@ -418,7 +443,7 @@ pub(super) fn train_fsrs7_windowed(
     let mut first_order = order.clone();
     first_order.shuffle(&mut rng.clone());
     let l2_weight = l2_penalty_weight(version) * config.gamma;
-    let planned: Planned = Mutex::new(Some((plan, train_set)));
+    let planned: Planned<I> = Mutex::new(Some((plan, train_set)));
     let shared = GradShared {
         host: &host,
         job: AtomicU64::new(0),
@@ -428,7 +453,7 @@ pub(super) fn train_fsrs7_windowed(
             .map(|_| std::array::from_fn(|_| AtomicU64::new(0)))
             .collect(),
         ready: (0..max_bsz / 8).map(|_| AtomicU32::new(0)).collect(),
-        trash: Mutex::new(Vec::new()),
+        trash: Mutex::new(None),
     };
     let mut progress = progress;
     let mut caches = Caches::default();
@@ -533,7 +558,7 @@ pub(super) fn train_fsrs7_windowed(
         }
         shared.job.store(JOB_STOP, Ordering::Release);
         // Items left over: freed by both threads.
-        while !shared.trash.lock().unwrap().is_empty() {
+        while shared.items_left() {
             shared.free_some();
         }
     });

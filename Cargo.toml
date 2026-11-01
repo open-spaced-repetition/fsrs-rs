@@ -64,6 +64,10 @@ name = "optimize"
 path = "examples/optimize.rs"
 
 [[example]]
+name = "optimize_card_prefixes"
+path = "examples/optimize_card_prefixes.rs"
+
+[[example]]
 name = "cost_adr"
 path = "examples/cost_adr.rs"
 
