@@ -29,7 +29,7 @@ chrono = { version = "0.4.44", default-features = false, features = ["std", "clo
 chrono-tz = "0.10.4"
 criterion = { version = "0.8.2" }
 csv = "1.4.0"
-rusqlite = { version = "0.37.0", features = ["bundled-windows"] }
+rusqlite = { version = "0.41.1", features = ["bundled-windows"] }
 
 [[bench]]
 name = "benchmark"
