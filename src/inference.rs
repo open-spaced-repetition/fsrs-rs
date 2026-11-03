@@ -6,14 +6,14 @@ use std::sync::{Arc, Mutex};
 
 use crate::dataset::{
     CardPrefixes, WeightedFSRSItem, constant_weighted_fsrs_items, r_matrix_bin, recency_weight,
-    recency_weighted_fsrs_items, recency_weighted_fsrs_items_with_card_ids,
+    recency_weighted_fsrs_items, recency_weighted_fsrs_items_with_card_ids, validate_card_prefixes,
 };
 use crate::error::Result;
 use crate::model::{FSRS, ModelVersion};
 use crate::simulation::S_MIN;
 use crate::training::weighted_binary_cross_entropy;
 use crate::training::{self, ComputeParametersInput};
-use crate::{FSRSError, FSRSItem, FSRSReview};
+use crate::{CardPrefix, CardReviews, FSRSError, FSRSItem, FSRSReview};
 #[path = "inference_v6.rs"]
 pub(crate) mod inference_v6;
 #[path = "inference_v7.rs"]
@@ -91,6 +91,14 @@ fn predict_retrievability(fsrs: &FSRS, item: &FSRSItem) -> Result<f32> {
     } else {
         Err(FSRSError::InvalidInput)
     }
+}
+
+fn prefixes_by_card(card_count: usize, prefixes: &[CardPrefix]) -> Vec<Vec<(usize, usize)>> {
+    let mut by_card = vec![Vec::new(); card_count];
+    for (idx, prefix) in prefixes.iter().enumerate() {
+        by_card[prefix.card_index as usize].push((idx, prefix.len as usize));
+    }
+    by_card
 }
 
 /// Accumulates (prediction, label, bin, weight) rows with the same arithmetic in the same order as
@@ -556,10 +564,7 @@ impl FSRS {
         }
         card_prefixes.validate()?;
         let total = card_prefixes.prefixes.len();
-        let mut by_card = vec![Vec::new(); card_prefixes.cards.len()];
-        for (idx, prefix) in card_prefixes.prefixes.iter().enumerate() {
-            by_card[prefix.card_index as usize].push((idx, prefix.len as usize));
-        }
+        let mut by_card = prefixes_by_card(card_prefixes.cards.len(), &card_prefixes.prefixes);
         let mut predictions = vec![0.0f32; total];
         let mut bins = vec![(0, 0, 0); total];
         let mut progress_info = ItemProgress { current: 0, total };
@@ -590,6 +595,49 @@ impl FSRS {
                     )
                 }),
         )
+    }
+
+    /// Predict the retrievability of each selected compact prefix, in the order supplied.
+    ///
+    /// `cards` and `prefixes` are the corresponding fields of [`CardPrefixes`]. A slice of
+    /// prefixes may be used to predict a subset without cloning the cards or their histories.
+    /// Each card's history is walked once, and the results are bit-for-bit identical to
+    /// [`Self::predict_retrievability_with_card_ids`] for the equivalent expanded items.
+    ///
+    /// Returns [`FSRSError::NotEnoughData`] if `prefixes` is empty,
+    /// [`FSRSError::InvalidInput`] for invalid prefixes or duplicate card IDs, and
+    /// [`FSRSError::Interrupted`] if `progress` returns false.
+    pub fn predict_retrievability_from_card_prefixes<F>(
+        &self,
+        cards: &[CardReviews],
+        prefixes: &[CardPrefix],
+        mut progress: F,
+    ) -> Result<Vec<f32>>
+    where
+        F: FnMut(ItemProgress) -> bool,
+    {
+        if prefixes.is_empty() {
+            return Err(FSRSError::NotEnoughData);
+        }
+        validate_card_prefixes(cards, prefixes)?;
+        let mut by_card = prefixes_by_card(cards.len(), prefixes);
+        let mut predictions = vec![0.0; prefixes.len()];
+        let mut progress_info = ItemProgress {
+            current: 0,
+            total: prefixes.len(),
+        };
+        for (card, group) in cards.iter().zip(&mut by_card) {
+            if group.is_empty() {
+                continue;
+            }
+            group.sort_by_key(|&(_, len)| len);
+            self.walk_trajectory(&card.reviews, group.iter().copied(), &mut predictions)?;
+            progress_info.current += group.len();
+            if !progress(progress_info) {
+                return Err(FSRSError::Interrupted);
+            }
+        }
+        Ok(predictions)
     }
 
     /// The predicted probability of recall of every item, in the order of `items`: for each
@@ -1385,6 +1433,140 @@ mod tests {
                 by_prefixes.rmse_bins.to_bits(),
                 by_items.rmse_bins.to_bits()
             );
+        }
+    }
+
+    #[test]
+    fn card_prefix_predictions_match_expanded_items_for_full_and_partial_inputs() {
+        use crate::test_helpers::{items_of_card_prefixes, varied_card_prefixes};
+
+        let mut data = varied_card_prefixes();
+        data.prefixes.push(data.prefixes[0]);
+        let midpoint = data.prefixes.len() / 2;
+        for range in [0..data.prefixes.len(), midpoint..midpoint + 200] {
+            let subset = CardPrefixes {
+                cards: data.cards.clone(),
+                prefixes: data.prefixes[range].to_vec(),
+            };
+            let (items, card_ids) = items_of_card_prefixes(&subset);
+            for parameters in [&DEFAULT_PARAMETERS[..], &FSRS6_DEFAULT_PARAMETERS[..]] {
+                let fsrs = FSRS::new(parameters).unwrap();
+                let expected = fsrs
+                    .predict_retrievability_with_card_ids(items.clone(), card_ids.clone(), |_| true)
+                    .unwrap();
+                let mut progress = Vec::new();
+                let actual = fsrs
+                    .predict_retrievability_from_card_prefixes(
+                        &subset.cards,
+                        &subset.prefixes,
+                        |p| {
+                            progress.push((p.current, p.total));
+                            true
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(
+                    actual.iter().map(|p| p.to_bits()).collect::<Vec<_>>(),
+                    expected.iter().map(|p| p.to_bits()).collect::<Vec<_>>()
+                );
+                assert_eq!(progress.last(), Some(&(expected.len(), expected.len())));
+                assert!(progress.windows(2).all(|w| w[0].0 < w[1].0));
+            }
+        }
+    }
+
+    #[test]
+    fn card_prefix_predictions_validate_input_and_honor_cancellation() {
+        let fsrs = FSRS::new(&DEFAULT_PARAMETERS).unwrap();
+        let card = CardReviews {
+            card_id: 1,
+            reviews: vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0.0,
+                },
+                FSRSReview {
+                    rating: 2,
+                    delta_t: 1.0,
+                },
+            ],
+        };
+        let valid = CardPrefix {
+            card_index: 0,
+            len: 2,
+        };
+        assert!(matches!(
+            fsrs.predict_retrievability_from_card_prefixes(&[card.clone()], &[], |_| true),
+            Err(FSRSError::NotEnoughData)
+        ));
+        for invalid in [
+            CardPrefix {
+                card_index: 1,
+                len: 1,
+            },
+            CardPrefix {
+                card_index: 0,
+                len: 0,
+            },
+            CardPrefix {
+                card_index: 0,
+                len: 3,
+            },
+        ] {
+            assert!(matches!(
+                fsrs.predict_retrievability_from_card_prefixes(&[card.clone()], &[invalid], |_| {
+                    true
+                }),
+                Err(FSRSError::InvalidInput)
+            ));
+        }
+        assert!(matches!(
+            fsrs.predict_retrievability_from_card_prefixes(
+                &[card.clone(), card.clone()],
+                &[valid],
+                |_| true
+            ),
+            Err(FSRSError::InvalidInput)
+        ));
+        let mut calls = 0;
+        assert!(matches!(
+            fsrs.predict_retrievability_from_card_prefixes(&[card], &[valid], |_| {
+                calls += 1;
+                false
+            }),
+            Err(FSRSError::Interrupted)
+        ));
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn card_prefix_predictions_match_expanded_items_for_a_first_review() {
+        let cards = [CardReviews {
+            card_id: 1,
+            reviews: vec![FSRSReview {
+                rating: 3,
+                delta_t: 0.0,
+            }],
+        }];
+        let prefixes = [CardPrefix {
+            card_index: 0,
+            len: 1,
+        }];
+        for parameters in [&DEFAULT_PARAMETERS[..], &FSRS6_DEFAULT_PARAMETERS[..]] {
+            let fsrs = FSRS::new(parameters).unwrap();
+            let old = fsrs.predict_retrievability_with_card_ids(
+                vec![FSRSItem {
+                    reviews: cards[0].reviews.clone(),
+                }],
+                vec![1],
+                |_| true,
+            );
+            let new = fsrs.predict_retrievability_from_card_prefixes(&cards, &prefixes, |_| true);
+            match (old, new) {
+                (Ok(old), Ok(new)) => assert_eq!(old[0].to_bits(), new[0].to_bits()),
+                (Err(FSRSError::InvalidInput), Err(FSRSError::InvalidInput)) => {}
+                (old, new) => panic!("first-review results differ: {old:?} vs {new:?}"),
+            }
         }
     }
 
