@@ -1,3 +1,10 @@
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+
+use crate::FSRSItem;
+use crate::dataset::{CardPrefix, CardPrefixes, CardReviews, FSRSReview};
+
 pub trait TestHelper<const N: usize, T> {
     fn assert_approx_eq(&self, expected: [T; N]);
 }
@@ -43,4 +50,49 @@ where
             );
         }
     }
+}
+
+/// Cards of many lengths, failures and same-day reviews among them, with some prefixes left
+/// out, and the prefixes of all cards interleaved by a fixed shuffle.
+pub(crate) fn varied_card_prefixes() -> CardPrefixes {
+    let mut rng = StdRng::seed_from_u64(7);
+    let mut cards = Vec::new();
+    let mut prefixes = Vec::new();
+    let mut draw = |bound: u32| rand::Rng::random_range(&mut rng, 0..bound);
+    for card_index in 0..120u32 {
+        let length = 2 + draw(1 + 2 * card_index) as usize;
+        let reviews: Vec<_> = (0..length)
+            .map(|i| FSRSReview {
+                rating: if draw(5) == 0 { 1 } else { 2 + draw(3) },
+                delta_t: match (i, draw(4)) {
+                    (0, _) => 0.0,
+                    (_, 0) => draw(90) as f32 / 1440.0,
+                    _ => (1 + draw(60)) as f32 + draw(24) as f32 / 24.0,
+                },
+            })
+            .collect();
+        for len in 2..=length as u32 {
+            if draw(10) != 0 {
+                prefixes.push(CardPrefix { card_index, len });
+            }
+        }
+        cards.push(CardReviews {
+            card_id: 1_000 + 3 * card_index as i64,
+            reviews,
+        });
+    }
+    prefixes.shuffle(&mut rng);
+    CardPrefixes { cards, prefixes }
+}
+
+pub(crate) fn items_of_card_prefixes(card_prefixes: &CardPrefixes) -> (Vec<FSRSItem>, Vec<i64>) {
+    card_prefixes
+        .prefixes
+        .iter()
+        .map(|&prefix| {
+            let reviews = card_prefixes.reviews(prefix).to_vec();
+            let card_id = card_prefixes.cards[prefix.card_index as usize].card_id;
+            (FSRSItem { reviews }, card_id)
+        })
+        .unzip()
 }

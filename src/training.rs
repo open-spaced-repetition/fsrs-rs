@@ -1,6 +1,6 @@
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    FSRSItem, WeightedFSRSItem, filter_outlier_train_indices, prepare_training_data,
+    FSRSItem, WeightedFSRSItem, WindowedItems, filter_outlier_train_indices, prepare_training_data,
     recency_weighted_fsrs_items,
 };
 use crate::error::Result;
@@ -15,6 +15,8 @@ use rand::seq::SliceRandom;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
+#[path = "training_card_prefixes.rs"]
+mod card_prefixes;
 #[path = "training_v6.rs"]
 mod training_v6;
 #[path = "training_v7.rs"]
@@ -22,11 +24,15 @@ mod training_v7;
 #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
 #[path = "training_windowed.rs"]
 mod windowed;
+pub use card_prefixes::compute_parameters_from_card_prefixes;
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+use windowed::train_fsrs7_windowed;
 
 const PENALTY_GRAD_LEN: usize = training_v7::GRAD_LEN;
 const ADAM_BETA_1: f32 = 0.70;
 const ADAM_BETA_2: f32 = 0.98;
 const ADAM_EPSILON: f32 = 1e-8;
+const MIN_ITEMS_TO_TRAIN: usize = 64;
 // Per-version training defaults, used when a TrainingConfig leaves learning_rate or
 // num_epochs at 0. FSRS-7 uses srs-benchmark's values, where its accuracy is measured.
 // FSRS-6 keeps the values TrainingConfig::default() used to hold.
@@ -536,6 +542,11 @@ fn pow_11_25(x: f64) -> f64 {
     x8 * x2 * x * x.sqrt().sqrt()
 }
 
+fn fsrs7_recency_weight(index: usize, count: usize) -> f32 {
+    let x = index as f64 / count.max(1) as f64;
+    (0.0667 + 0.9333 * pow_11_25(x)) as f32
+}
+
 fn recency_weighted_training_items(
     items: Vec<TrainingFSRSItem>,
     model_version: ComputeParametersVersion,
@@ -547,10 +558,7 @@ fn recency_weighted_training_items(
         .enumerate()
         .map(|(idx, item)| WeightedFSRSItem {
             weight: match model_version {
-                ComputeParametersVersion::Fsrs7 => {
-                    let x = idx as f64 / n.max(1) as f64;
-                    (0.0667 + 0.9333 * pow_11_25(x)) as f32
-                }
+                ComputeParametersVersion::Fsrs7 => fsrs7_recency_weight(idx, n),
                 ComputeParametersVersion::Fsrs6 => {
                     0.25 + 0.75 * (idx as f32 / fsrs6_length).powi(3)
                 }
@@ -575,6 +583,38 @@ fn normalized_classification_costs(
         false_negative: costs.false_negative * scale,
     }
 }
+
+fn new_internal_training_config(
+    enable_short_term: bool,
+    enable_sched_penalties: bool,
+    num_relearning_steps: Option<usize>,
+) -> InternalTrainingConfig {
+    InternalTrainingConfig::new(ModelConfig {
+        freeze_initial_stability: !enable_short_term,
+        initial_stability: None,
+        initial_forgetting_curve: None,
+        freeze_short_term_stability: !enable_short_term,
+        num_relearning_steps: num_relearning_steps.unwrap_or(1),
+    })
+    .with_enable_sched_penalties(enable_sched_penalties)
+}
+
+fn reset_training_progress(
+    progress: &Option<Arc<Mutex<CombinedProgressState>>>,
+    epoch_total: usize,
+    items_total: usize,
+) {
+    if let Some(progress) = progress {
+        let progress_state = ProgressState {
+            epoch_total,
+            items_total,
+            epoch: 0,
+            items_processed: 0,
+        };
+        progress.lock().unwrap().reset(vec![progress_state]);
+    }
+}
+
 /// Computes optimized parameters for the FSRS model based on training data.
 ///
 /// This function trains the model on the provided dataset and returns optimized parameters.
@@ -649,8 +689,8 @@ fn compute_parameters_inner(
     if let Some(config) = &training_config {
         validate_training_config(config).inspect_err(|_| finish_progress())?;
     }
-    // FSRS-7 clamps delta_t in `train` (the windowed trainer only in the reviews it reads), so
-    // its prefix items are not rewritten here. The clamp does not change long_term_review_cnt.
+    // FSRS-7 clamps delta_t when it lays out its batches, so its prefix items are not rewritten
+    // here. The clamp does not change long_term_review_cnt.
     let train_set = if model_version == ComputeParametersVersion::Fsrs7 {
         train_set
     } else {
@@ -712,18 +752,15 @@ fn compute_parameters_inner(
             .iter()
             .all(|item| item.item.long_term_review_cnt() == 1),
     };
-    if only_first_reviews || train_set.len() < 64 {
+    if only_first_reviews || train_set.len() < MIN_ITEMS_TO_TRAIN {
         finish_progress();
         return Ok(initialized_parameters);
     }
-    let mut config = InternalTrainingConfig::new(ModelConfig {
-        freeze_initial_stability: !enable_short_term,
-        initial_stability: None,
-        initial_forgetting_curve: None,
-        freeze_short_term_stability: !enable_short_term,
-        num_relearning_steps: num_relearning_steps.unwrap_or(1),
-    })
-    .with_enable_sched_penalties(enable_sched_penalties);
+    let mut config = new_internal_training_config(
+        enable_short_term,
+        enable_sched_penalties,
+        num_relearning_steps,
+    );
     let training_objective = classifier_config.as_ref().map_or(
         TrainingObjective::ProbabilityLogLoss,
         |classifier_config| TrainingObjective::HardClassificationCost {
@@ -736,15 +773,7 @@ fn compute_parameters_inner(
     let mut weighted_train_set = recency_weighted_training_items(train_set, model_version);
     weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len);
 
-    if let Some(progress) = &progress {
-        let progress_state = ProgressState {
-            epoch_total: config.num_epochs,
-            items_total: weighted_train_set.len(),
-            epoch: 0,
-            items_processed: 0,
-        };
-        progress.lock().unwrap().reset(vec![progress_state]);
-    }
+    reset_training_progress(&progress, config.num_epochs, weighted_train_set.len());
     let optimized_parameters = train(
         weighted_train_set,
         &initialized_parameters,
@@ -892,18 +921,19 @@ impl WindowedFSRSBatch {
     }
 }
 
-fn build_windowed_batches(items: &[WeightedFSRSItem], batch_size: usize) -> Vec<WindowedFSRSBatch> {
-    let mut cards: HashMap<i64, Vec<&WeightedFSRSItem>> = HashMap::new();
-    for item in items {
-        if let Some(card_id) = item.card_id {
-            cards.entry(card_id).or_default().push(item);
-        }
+fn build_windowed_batches<I: WindowedItems>(
+    items: &I,
+    batch_size: usize,
+) -> Vec<WindowedFSRSBatch> {
+    let mut cards: HashMap<i64, Vec<usize>> = HashMap::new();
+    for index in 0..items.count() {
+        cards.entry(items.card_id(index)).or_default().push(index);
     }
     let mut cards = cards.into_iter().collect::<Vec<_>>();
     cards.sort_by_cached_key(|(card_id, prefixes)| {
         let full_len = prefixes
             .iter()
-            .map(|item| item.item.reviews.len())
+            .map(|&index| items.reviews(index).len())
             .max()
             .unwrap_or(0);
         (full_len, *card_id)
@@ -913,9 +943,9 @@ fn build_windowed_batches(items: &[WeightedFSRSItem], batch_size: usize) -> Vec<
     let mut current = Vec::new();
     let mut current_predictions = 0usize;
     for (_card_id, mut prefixes) in cards {
-        prefixes.sort_by_cached_key(|item| item.item.reviews.len());
+        prefixes.sort_by_cached_key(|&index| items.reviews(index).len());
         if !current.is_empty() && current_predictions + prefixes.len() > batch_size {
-            batches.push(build_windowed_batch(&current));
+            batches.push(build_windowed_batch(items, &current));
             current.clear();
             current_predictions = 0;
         }
@@ -923,19 +953,19 @@ fn build_windowed_batches(items: &[WeightedFSRSItem], batch_size: usize) -> Vec<
         current.push(prefixes);
     }
     if !current.is_empty() {
-        batches.push(build_windowed_batch(&current));
+        batches.push(build_windowed_batch(items, &current));
     }
     batches
 }
 
-fn build_windowed_batch(cards: &[Vec<&WeightedFSRSItem>]) -> WindowedFSRSBatch {
+fn build_windowed_batch<I: WindowedItems>(items: &I, cards: &[Vec<usize>]) -> WindowedFSRSBatch {
     let prediction_count = cards.iter().map(Vec::len).sum();
     let real_card_count = cards.len();
     let batch_size = real_card_count.div_ceil(8) * 8;
     let seq_len = cards
         .iter()
         .filter_map(|prefixes| prefixes.last())
-        .map(|item| item.item.reviews.len())
+        .map(|&index| items.reviews(index).len())
         .max()
         .expect("windowed batch is empty");
     let mut t_historys = vec![0.0f32; seq_len * batch_size];
@@ -944,18 +974,18 @@ fn build_windowed_batch(cards: &[Vec<&WeightedFSRSItem>]) -> WindowedFSRSBatch {
     let mut weights = vec![0.0f32; seq_len * batch_size];
 
     for (column, prefixes) in cards.iter().enumerate() {
-        let longest = prefixes.last().expect("card has at least one prefix item");
-        for (row, review) in longest.item.reviews.iter().enumerate() {
+        let longest = *prefixes.last().expect("card has at least one prefix item");
+        for (row, review) in items.reviews(longest).iter().enumerate() {
             let index = row * batch_size + column;
-            t_historys[index] = review.delta_t;
+            t_historys[index] = review.delta_t.max(0.0);
             r_historys[index] = review.rating as f32;
         }
-        for prefix in prefixes {
-            let row = prefix.item.reviews.len() - 1;
-            let current = prefix.item.current();
+        for &prefix in prefixes {
+            let reviews = items.reviews(prefix);
+            let row = reviews.len() - 1;
             let index = row * batch_size + column;
-            labels[index] = if current.rating == 1 { 0.0 } else { 1.0 };
-            weights[index] = prefix.weight;
+            labels[index] = if reviews[row].rating == 1 { 0.0 } else { 1.0 };
+            weights[index] = items.weight(prefix);
         }
     }
 
@@ -1312,22 +1342,56 @@ fn train(
     }
     // The log-loss objective trains FSRS-7 on two threads (the classifier objective reweights each
     // batch with its predictions first, and ARM has its own NEON kernel).
-    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
     if version == ModelVersion::Fsrs7 && objective == TrainingObjective::ProbabilityLogLoss {
-        return windowed::train_fsrs7_windowed(train_set, initial_parameters, config, progress);
-    }
-    if version == ModelVersion::Fsrs7 {
-        for item in &mut train_set {
-            for review in &mut item.item.reviews {
-                review.delta_t = review.delta_t.max(0.0);
-            }
-        }
+        return train_fsrs7_windowed(train_set, initial_parameters, config, progress);
     }
     let total_size = train_set.len();
     let fsrs7_batches = (version == ModelVersion::Fsrs7)
         .then(|| build_windowed_batches(&train_set, config.batch_size));
     let fsrs6_batches =
         (version == ModelVersion::Fsrs6).then(|| build_fsrs6_batches(train_set, config.batch_size));
+    train_on_batches(
+        fsrs7_batches,
+        fsrs6_batches,
+        total_size,
+        initial_parameters,
+        config,
+        objective,
+        progress,
+    )
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+fn train_fsrs7_windowed<I: WindowedItems>(
+    train_set: I,
+    initial_parameters: &[f32],
+    config: &InternalTrainingConfig,
+    progress: Option<ProgressCollector>,
+) -> Result<Vec<f32>> {
+    let total_size = train_set.count();
+    let batches = build_windowed_batches(&train_set, config.batch_size);
+    drop(train_set);
+    train_on_batches(
+        Some(batches),
+        None,
+        total_size,
+        initial_parameters,
+        config,
+        TrainingObjective::ProbabilityLogLoss,
+        progress,
+    )
+}
+
+fn train_on_batches(
+    fsrs7_batches: Option<Vec<WindowedFSRSBatch>>,
+    fsrs6_batches: Option<Vec<PrefixHostBatch>>,
+    total_size: usize,
+    initial_parameters: &[f32],
+    config: &InternalTrainingConfig,
+    objective: TrainingObjective,
+    progress: Option<ProgressCollector>,
+) -> Result<Vec<f32>> {
+    let version = ModelVersion::from_param_count(initial_parameters.len());
     let batch_count = fsrs7_batches
         .as_ref()
         .map_or_else(|| fsrs6_batches.as_ref().unwrap().len(), Vec::len);
