@@ -69,3 +69,33 @@ jobs:
       - name: Run checks
         shell: bash
         run: .github/workflows/check.sh
+
+  build-wasi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Rust Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-release-wasm32-wasip1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-release-wasm32-wasip1-
+
+      - name: Install WASI target
+        run: rustup target add wasm32-wasip1
+      - name: Install WASI C compiler for SQLite tests
+        run: |
+          curl -fsSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz -o "$RUNNER_TEMP/wasi-sdk.tar.gz"
+          tar -xzf "$RUNNER_TEMP/wasi-sdk.tar.gz" -C "$RUNNER_TEMP"
+          echo "CC_wasm32_wasip1=$RUNNER_TEMP/wasi-sdk-34.0-x86_64-linux/bin/clang" >> "$GITHUB_ENV"
+      - name: Run checks
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: node ${{ github.workspace }}/.github/workflows/run-wasi-tests.mjs
+        run: .github/workflows/check.sh --target wasm32-wasip1

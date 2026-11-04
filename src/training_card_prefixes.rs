@@ -79,6 +79,8 @@ pub fn compute_parameters_from_card_prefixes(
         &DEFAULT_PARAMETERS,
         &config,
         progress.clone().map(|p| ProgressCollector::new(p, 0)),
+        #[cfg(all(target_os = "wasi", target_env = "p1"))]
+        &mut |_| true,
     )
     .inspect_err(|_| finish_progress())?;
     finish_progress();
