@@ -463,10 +463,10 @@ pub(super) fn train_fsrs7_windowed<I: FreeableItems>(
     let mut seq = 0u32;
     let mut interrupted = false;
     // WASI p1 stays synchronous; with one CPU a helper would only add overhead.
-    #[cfg(all(target_os = "wasi", target_env = "p1"))]
-    let solo = true;
-    #[cfg(not(all(target_os = "wasi", target_env = "p1")))]
-    let solo = std::thread::available_parallelism().map_or(true, |n| n.get() < 2);
+    let solo = cfg_select! {
+        all(target_os = "wasi", target_env = "p1") => true,
+        _ => std::thread::available_parallelism().map_or(true, |n| n.get() < 2),
+    };
     std::thread::scope(|scope| {
         if solo {
             let (plan, items) = planned.lock().unwrap().take().expect("the plan");

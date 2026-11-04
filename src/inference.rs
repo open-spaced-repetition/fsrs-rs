@@ -1055,18 +1055,18 @@ where
                 );
                 let _ = tx.send((index, result));
             };
-            #[cfg(all(target_os = "wasi", target_env = "p1"))]
-            {
-                task();
-                let Ok((index, result)) = rx.recv() else {
-                    break;
-                };
-                if !process_result(index, result) {
-                    break;
+            cfg_select! {
+                all(target_os = "wasi", target_env = "p1") => {
+                    task();
+                    let Ok((index, result)) = rx.recv() else {
+                        break;
+                    };
+                    if !process_result(index, result) {
+                        break;
+                    }
                 }
+                _ => rayon::spawn(task),
             }
-            #[cfg(not(all(target_os = "wasi", target_env = "p1")))]
-            rayon::spawn(task);
         }
         drop(tx);
 
