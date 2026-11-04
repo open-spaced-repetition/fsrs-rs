@@ -92,3 +92,6 @@ pub use training::{
     compute_parameters, compute_parameters_for_recall_classifier,
     compute_parameters_from_card_prefixes,
 };
+
+#[cfg(all(target_os = "wasi", target_env = "p1"))]
+pub use training::compute_parameters_with_progress;

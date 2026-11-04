@@ -1,4 +1,4 @@
-//! FSRS-7 windowed training on two threads (targets without the NEON kernel).
+//! FSRS-7 windowed training (single-threaded on WASI p1; up to two threads elsewhere).
 //!
 //! The batches are the same as `build_windowed_batches` makes: cards ordered by (full length, card
 //! id) and packed whole into batches of at most `batch_size` predictions. What differs is how the
@@ -421,6 +421,9 @@ pub(super) fn train_fsrs7_windowed<I: FreeableItems>(
     initial_parameters: &[f32],
     config: &InternalTrainingConfig,
     progress: Option<ProgressCollector>,
+    #[cfg(all(target_os = "wasi", target_env = "p1"))] observer: &mut impl FnMut(
+        crate::ItemProgress,
+    ) -> bool,
 ) -> Result<Vec<f32>> {
     let version = ModelVersion::Fsrs7;
     let total_size = train_set.count();
@@ -459,8 +462,11 @@ pub(super) fn train_fsrs7_windowed<I: FreeableItems>(
     let mut caches = Caches::default();
     let mut seq = 0u32;
     let mut interrupted = false;
-    // With one CPU the second thread would only take time from the first.
-    let solo = std::thread::available_parallelism().map_or(true, |n| n.get() < 2);
+    // WASI p1 stays synchronous; with one CPU a helper would only add overhead.
+    let solo = cfg_select! {
+        all(target_os = "wasi", target_env = "p1") => true,
+        _ => std::thread::available_parallelism().map_or(true, |n| n.get() < 2),
+    };
     std::thread::scope(|scope| {
         if solo {
             let (plan, items) = planned.lock().unwrap().take().expect("the plan");
@@ -546,6 +552,8 @@ pub(super) fn train_fsrs7_windowed<I: FreeableItems>(
                 processed += hb.predictions;
                 if !render_progress(
                     &mut progress,
+                    #[cfg(all(target_os = "wasi", target_env = "p1"))]
+                    observer,
                     epoch,
                     config.num_epochs,
                     processed.min(total_size),

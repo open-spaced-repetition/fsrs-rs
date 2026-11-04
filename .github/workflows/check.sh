@@ -4,7 +4,7 @@ set -eux -o pipefail
 
 cargo fmt --check
 
-cargo clippy -- -Dwarnings
+cargo clippy "$@" -- -Dwarnings
 
 install -d tests/data/
 pushd tests/data/
@@ -17,6 +17,6 @@ else
 fi
 unzip -o "${archive_path}"
 
-RUSTDOCFLAGS="-D warnings" cargo doc --release
+RUSTDOCFLAGS="-D warnings" cargo doc --release "$@"
 
-SKIP_TRAINING=1 cargo test --release
+SKIP_TRAINING=1 cargo test --release "$@"

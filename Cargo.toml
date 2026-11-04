@@ -27,9 +27,14 @@ wide = "0.7"
 [dev-dependencies]
 chrono = { version = "0.4.44", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10.4"
-criterion = { version = "0.8.2" }
 csv = "1.4.0"
+
+[target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
+criterion = { version = "0.8.2" }
 rusqlite = { version = "0.41.1", features = ["bundled-windows"] }
+
+[target.'cfg(target_os = "wasi")'.dev-dependencies]
+rusqlite = { version = "0.41.1", features = ["bundled", "wasm32-wasi-vfs"] }
 
 [[bench]]
 name = "benchmark"

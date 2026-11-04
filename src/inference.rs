@@ -1002,27 +1002,9 @@ where
         let mut next_index = 0;
         let mut outcome: Result<()> = Ok(());
 
-        for (index, split) in splits.into_iter().enumerate() {
-            let tx = tx.clone();
-            let progress = split_progresses[index].clone();
-            rayon::spawn(move || {
-                let result = evaluate_time_series_split(
-                    split,
-                    enable_short_term,
-                    enable_sched_penalties,
-                    model_version,
-                    num_relearning_steps,
-                    training_config,
-                    Some(progress),
-                );
-                let _ = tx.send((index, result));
-            });
-        }
-        drop(tx);
-
-        for (index, result) in rx {
+        let mut process_result = |index: usize, result: Result<SplitEvaluation>| {
             if outcome.is_err() {
-                continue;
+                return false;
             }
 
             pending[index] = Some(result);
@@ -1055,6 +1037,42 @@ where
                 }
                 next_index += 1;
             }
+            outcome.is_ok()
+        };
+
+        for (index, split) in splits.into_iter().enumerate() {
+            let tx = tx.clone();
+            let progress = split_progresses[index].clone();
+            let task = move || {
+                let result = evaluate_time_series_split(
+                    split,
+                    enable_short_term,
+                    enable_sched_penalties,
+                    model_version,
+                    num_relearning_steps,
+                    training_config,
+                    Some(progress),
+                );
+                let _ = tx.send((index, result));
+            };
+            cfg_select! {
+                all(target_os = "wasi", target_env = "p1") => {
+                    task();
+                    let Ok((index, result)) = rx.recv() else {
+                        break;
+                    };
+                    if !process_result(index, result) {
+                        break;
+                    }
+                }
+                _ => rayon::spawn(task),
+            }
+        }
+        drop(tx);
+
+        #[cfg(not(all(target_os = "wasi", target_env = "p1")))]
+        for (index, result) in rx {
+            process_result(index, result);
         }
 
         if outcome.is_ok() && next_index < split_count {
