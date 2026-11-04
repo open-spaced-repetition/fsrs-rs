@@ -14,12 +14,13 @@
 
 use super::{
     CosineAnnealingLR, HostAdam, InternalTrainingConfig, ModelVersion, ProgressCollector, Result,
-    clip_host_parameters, l2_penalty_fn, l2_penalty_weight, render_progress, schedule_penalty_fn,
-    training_v7, zero_frozen_host_grad,
+    l2_penalty_fn, l2_penalty_weight, render_progress, schedule_penalty_fn, training_v7,
+    zero_frozen_host_grad,
 };
 use crate::FSRSError;
 use crate::analytic_v7::wide_window::{self, Caches, WConsts};
 use crate::dataset::{WeightedCardPrefixes, WeightedFSRSItem, WindowedItems};
+use crate::parameter_clipper::clip_parameters_in_place;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -544,7 +545,7 @@ pub(super) fn train_fsrs7_windowed<I: FreeableItems>(
                 }
                 zero_frozen_host_grad(&mut grad, &config.model);
                 adam.step(&mut parameters, &grad, scheduler.step());
-                clip_host_parameters(
+                clip_parameters_in_place(
                     &mut parameters,
                     config.model.num_relearning_steps,
                     !config.model.freeze_short_term_stability,
