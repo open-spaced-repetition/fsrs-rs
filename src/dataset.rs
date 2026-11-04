@@ -62,21 +62,25 @@ pub struct CardPrefixes {
 
 impl CardPrefixes {
     pub(crate) fn validate(&self) -> Result<()> {
-        let in_range = self.prefixes.iter().all(|prefix| {
-            self.cards
-                .get(prefix.card_index as usize)
-                .is_some_and(|card| prefix.len >= 1 && prefix.len as usize <= card.reviews.len())
-        });
-        let ids: HashSet<i64> = self.cards.iter().map(|card| card.card_id).collect();
-        if in_range && ids.len() == self.cards.len() {
-            Ok(())
-        } else {
-            Err(FSRSError::InvalidInput)
-        }
+        validate_card_prefixes(&self.cards, &self.prefixes)
     }
 
     pub(crate) fn reviews(&self, prefix: CardPrefix) -> &[FSRSReview] {
         &self.cards[prefix.card_index as usize].reviews[..prefix.len as usize]
+    }
+}
+
+pub(crate) fn validate_card_prefixes(cards: &[CardReviews], prefixes: &[CardPrefix]) -> Result<()> {
+    let in_range = prefixes.iter().all(|prefix| {
+        cards
+            .get(prefix.card_index as usize)
+            .is_some_and(|card| prefix.len >= 1 && prefix.len as usize <= card.reviews.len())
+    });
+    let ids: HashSet<i64> = cards.iter().map(|card| card.card_id).collect();
+    if in_range && ids.len() == cards.len() {
+        Ok(())
+    } else {
+        Err(FSRSError::InvalidInput)
     }
 }
 
