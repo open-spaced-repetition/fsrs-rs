@@ -21,6 +21,28 @@ Apple M2, release build, median of 10 samples.
 The default `parameters/compute_parameters*` benchmarks (FSRS-7) stay within
 3% of `main` across interleaved runs.
 
+### FSRS-7 as a baseline
+
+Comparing the two models needs equal threads as well as equal epochs. On
+aarch64 with NEON, FSRS-7 trains on one thread with its NEON kernel; its
+two-thread trainer (`training_windowed.rs`) is used on other targets. FSRS-6
+uses two threads on any multi-core target, so on Apple Silicon the table above
+compares two threads with one.
+
+Same benchmark with FSRS-6 forced to one thread:
+
+| Dataset         | Mode     | FSRS-6, 1 thread | FSRS-7, 1 thread | FSRS-6 time saved |
+| --------------- | -------- | ---------------: | ---------------: | ----------------: |
+| Anki collection | card IDs |          4.84 ms |          6.04 ms |               20% |
+| Anki collection | prefixes |         15.58 ms |         19.05 ms |               18% |
+| CSV revlog      | card IDs |         31.13 ms |         37.59 ms |               17% |
+| CSV revlog      | prefixes |        208.68 ms |        232.09 ms |               10% |
+
+FSRS-6 has 21 parameters to FSRS-7's 34, one forgetting curve instead of two,
+and trains on slightly fewer items after outlier filtering (14,165 vs. 14,290
+and 86,120 vs. 88,158). Being modestly faster than FSRS-7 per epoch is
+expected; the helper thread then gives another 1.6–1.9×.
+
 ## Where the time goes
 
 - **Kernel** (`analytic_v6/simd.rs`): eight histories are differentiated
