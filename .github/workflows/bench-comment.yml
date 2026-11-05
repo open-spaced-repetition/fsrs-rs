@@ -1,0 +1,59 @@
+name: Benchmark comment
+
+# Posts the report from bench.yml as a sticky PR comment. This workflow has a
+# write token, so it never checks out or runs PR code, and treats the artifact
+# as untrusted data: the PR number must be numeric and match the run's head
+# commit, and the report is only used as a comment body.
+on:
+  workflow_run:
+    workflows: [ "Benchmark" ]
+    types: [ completed ]
+
+permissions: {}
+
+concurrency:
+  group: bench-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Download report
+        run: gh run download "$RUN_ID" --name bench-report --dir "$RUNNER_TEMP/bench-report"
+
+      - name: Validate report
+        id: resolve
+        run: |
+          dir="$RUNNER_TEMP/bench-report"
+          pr=$(head -c 32 "$dir/pr-number" | tr -d '[:space:]')
+          if ! [[ "$pr" =~ ^[0-9]{1,10}$ ]]; then
+            echo "::error::Invalid PR number in artifact"
+            exit 1
+          fi
+          # Only comment on the PR whose head commit was benchmarked; a newer
+          # push will post its own report.
+          if [ "$(gh api "repos/$GH_REPO/pulls/$pr" --jq .head.sha)" != "$HEAD_SHA" ]; then
+            echo "::notice::PR #$pr is not at $HEAD_SHA; skipping"
+            exit 0
+          fi
+          # Stay below GitHub's 65536-character comment limit.
+          head -c 60000 "$dir/report.md" > "$RUNNER_TEMP/bench-body.md"
+          echo "pr-number=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update comment
+        if: steps.resolve.outputs.pr-number != ''
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: fsrs-bench
+          number_force: ${{ steps.resolve.outputs.pr-number }}
+          path: ${{ runner.temp }}/bench-body.md
+          skip_unchanged: true

@@ -1,0 +1,84 @@
+name: Benchmark
+
+# Runs with a read-only token, so it also works for PRs from forks. The report
+# is uploaded as an artifact; bench-comment.yml posts it on the PR.
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # HEAD is the PR merged into main; HEAD^1 is the main commit it was
+      # merged into, so the two differ by exactly the PR's changes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Rust Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-bench-v1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-bench-v1-
+
+      - name: Download test data
+        run: |
+          install -d tests/data
+          curl -fsSL https://github.com/open-spaced-repetition/fsrs-optimizer-burn/files/12394182/collection.anki21.zip -o tests/data/collection.anki21.zip
+          unzip -o tests/data/collection.anki21.zip -d tests/data
+          curl -fsSL https://github.com/open-spaced-repetition/fsrs-rs/files/15046782/revlog.csv -o tests/data/revlog.csv
+
+      # Base and head run one after the other on the same runner, because
+      # timings from different runners are not comparable.
+      - name: Run benchmarks
+        run: |
+          bench() {
+            cargo bench --bench parameters -- --warm-up-time 2 --measurement-time 4 "$@" \
+              '^(parameters|same_epoch_training)/'
+            FSRS_BENCH_REVLOG_CSV=tests/data/revlog.csv \
+              cargo bench --bench parameters -- --warm-up-time 2 --measurement-time 4 "$@" \
+              '^same_epoch_training/csv/'
+          }
+          rm -rf target/criterion
+          git checkout --detach HEAD^1
+          bench --save-baseline base
+          git checkout --detach "$GITHUB_SHA"
+          bench --baseline-lenient base
+
+      - name: Write report
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir bench-report
+          echo "$PR_NUMBER" > bench-report/pr-number
+          {
+            echo "### Benchmarks"
+            echo
+            echo "Base \`$(git rev-parse --short HEAD^1)\` (\`main\`) vs. head \`${HEAD_SHA::7}\`" \
+              "merged into it, measured in the same job on the same runner."
+            echo
+            .github/workflows/bench-report.sh target/criterion 10
+          } > bench-report/report.md
+          cat bench-report/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-report
+          path: bench-report/
+          retention-days: 7
