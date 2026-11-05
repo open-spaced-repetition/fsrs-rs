@@ -7,7 +7,7 @@
 //! SIGNED weights (`signed_weight`): the sign bit carries the label, so the batches need no label
 //! array. The recurrence keeps its logs in base 2 (they only feed 2^x and the gradient).
 
-use wide::{CmpEq, CmpGe, CmpGt, CmpLe, CmpLt, f32x4, f32x8};
+use wide::{f32x4, f32x8};
 
 const PARAM_LEN: usize = super::PARAM_LEN;
 const S_MIN: f32 = 0.0001;
