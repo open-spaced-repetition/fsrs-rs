@@ -96,3 +96,19 @@ pub(crate) fn items_of_card_prefixes(card_prefixes: &CardPrefixes) -> (Vec<FSRSI
         })
         .unzip()
 }
+
+/// `|actual - expected| / max(|expected|, 1)` in the L2 norm.
+pub(crate) fn relative_l2_error<A, E>(actual: &[A], expected: &[E]) -> f64
+where
+    A: Copy + Into<f64>,
+    E: Copy + Into<f64>,
+{
+    let mut error = 0.0;
+    let mut scale = 0.0;
+    for (&a, &e) in actual.iter().zip(expected) {
+        let (a, e): (f64, f64) = (a.into(), e.into());
+        error += (a - e).powi(2);
+        scale += e.powi(2);
+    }
+    error.sqrt() / scale.sqrt().max(1.0)
+}
