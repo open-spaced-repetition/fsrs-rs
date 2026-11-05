@@ -241,17 +241,26 @@ pub(crate) fn smooth_and_fill(
     rating_count: &HashMap<u32, u32>,
 ) -> Result<[f32; 4]> {
     rating_stability.retain(|&key, _| rating_count.contains_key(&key));
-    for (small_rating, big_rating) in [(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
-        if let (Some(&small_value), Some(&big_value)) = (
-            rating_stability.get(&small_rating),
-            rating_stability.get(&big_rating),
-        ) && small_value > big_value
-        {
-            if rating_count[&small_rating] > rating_count[&big_rating] {
-                rating_stability.insert(big_rating, small_value);
-            } else {
-                rating_stability.insert(small_rating, big_value);
+    // Fixing one pair can break a pair that was already checked, so repeat the
+    // pass until the values are in order.
+    loop {
+        let mut changed = false;
+        for (small_rating, big_rating) in [(1, 2), (2, 3), (3, 4), (1, 3), (2, 4), (1, 4)] {
+            if let (Some(&small_value), Some(&big_value)) = (
+                rating_stability.get(&small_rating),
+                rating_stability.get(&big_rating),
+            ) && small_value > big_value
+            {
+                if rating_count[&small_rating] > rating_count[&big_rating] {
+                    rating_stability.insert(big_rating, small_value);
+                } else {
+                    rating_stability.insert(small_rating, big_value);
+                }
+                changed = true;
             }
+        }
+        if !changed {
+            break;
         }
     }
 
@@ -498,5 +507,44 @@ mod tests {
         let rating_count = HashMap::from([(2, 1)]);
         let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
         assert_eq!(actual, [0.05738148, 0.35, 0.6242943, 2.2453482]);
+    }
+
+    #[test]
+    fn test_smooth_and_fill_fixes_pairs_broken_later_in_the_pass() {
+        // (2, 3) is in order when it is checked, but (3, 4) then lowers rating 3.
+        let mut rating_stability = HashMap::from([(2, 2.0), (3, 5.0), (4, 0.5)]);
+        let rating_count = HashMap::from([(2, 200), (3, 100), (4, 100)]);
+        let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
+        assert_eq!(actual, [2.0, 2.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn test_smooth_and_fill_is_non_decreasing() {
+        // Only the relative order of the values and of the counts matters, so
+        // this covers every case for the ratings that are present.
+        let values = [0.5, 1.0, 2.0, 4.0];
+        for mask in 1..16u32 {
+            let ratings: Vec<u32> = (1..=4).filter(|r| mask & (1 << (r - 1)) != 0).collect();
+            let n = ratings.len() as u32;
+            for value_index in 0..4u32.pow(n) {
+                for count_index in 0..4u32.pow(n) {
+                    let mut rating_stability = HashMap::new();
+                    let mut rating_count = HashMap::new();
+                    for (i, &rating) in ratings.iter().enumerate() {
+                        let digit = |x: u32| (x / 4u32.pow(i as u32)) % 4;
+                        rating_stability.insert(rating, values[digit(value_index) as usize]);
+                        rating_count.insert(rating, digit(count_index) + 1);
+                    }
+                    let input = rating_stability.clone();
+                    let actual = smooth_and_fill(&mut rating_stability, &rating_count).unwrap();
+                    // Filling in a missing rating from two equal values can be off by
+                    // an ulp, so allow for rounding.
+                    assert!(
+                        actual.windows(2).all(|w| w[0] <= w[1] * (1.0 + 1e-6)),
+                        "{input:?} {rating_count:?} -> {actual:?}"
+                    );
+                }
+            }
+        }
     }
 }
