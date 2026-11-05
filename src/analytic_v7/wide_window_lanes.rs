@@ -143,7 +143,7 @@ pub(super) fn curve8_fwd_into(
     let p35 = exp2_8_in_range((sp(33) - k(0.3)) * ln_sf); // ln_sf, ln_s are log2
     c.p35 = p35;
     let m1 = sp(23) * p35;
-    c.m1_live = m1.cmp_gt(k(0.01)) & m1.cmp_lt(k(0.95));
+    c.m1_live = m1.simd_gt(k(0.01)) & m1.simd_lt(k(0.95));
     let dm1 = clamp8(m1, 0.01, 0.95);
     let decay1 = k(0.0) - dm1;
     c.decay1 = decay1;
@@ -234,11 +234,11 @@ pub(super) fn curve8_bwd(
     let mut g_decay1 = v1 * c.ln_b1 * k(LN2); // ln(b1) = log2(b1) * ln2
     let g_b1_a = v1 * decay1 / c.b1 * c.a; // adjoint of b1, times a
     let g_a_a = g_b1_a * c.factor1; // adjoint of ln(a)
-    let g_q1 = c.q1.cmp_lt(k(60.0)).blend(g_b1_a * c.e1, z);
+    let g_q1 = c.q1.simd_lt(k(60.0)).select(g_b1_a * c.e1, z);
     let g_lw27 = g_q1 / decay1;
     g_decay1 -= g_lw27 * c.q1; // d(q1)/d(decay1) = -q1/decay1
     gw[25] += g_lw27; // ln_base1 = ln(w[25]); finish_gw applies 1/w25
-    let g_m1 = c.m1_live.blend(z - g_decay1, z);
+    let g_m1 = c.m1_live.select(z - g_decay1, z);
     let u = g_m1 * c.p35;
     gw[23] += u;
     let y = u * sp(23); // adjoint of ln(p35)
@@ -256,7 +256,7 @@ pub(super) fn curve8_bwd(
 pub(super) fn hard_easy8(w: &[f32], rating: F, start: usize) -> F {
     let k = F::splat;
     // The two masks never overlap, so the blends are one bitwise select: fewer SSE2 ops.
-    let (m2, m4) = (rating.cmp_eq(k(2.0)), rating.cmp_eq(k(4.0)));
+    let (m2, m4) = (rating.simd_eq(k(2.0)), rating.simd_eq(k(4.0)));
     (m2 & k(w[start + 6])) | (m4 & k(w[start + 7])) | (!(m2 | m4) & k(1.0))
 }
 
@@ -318,7 +318,7 @@ pub(super) fn stab8_fwd_into(
     // stability max(pls, ls_sinc) is ls_sinc and pls takes the gradient only on a tie. So the
     // post-lapse branch (a ln and two exps) is needed only if some lane lapses or ties; the value
     // of a padding lane (rating 0) is never used (its weights are 0).
-    let full = (rating.cmp_eq(one) | ls_sinc.cmp_eq(last_s)).any();
+    let full = (rating.simd_eq(one) | ls_sinc.simd_eq(last_s)).any();
     c.full = full;
     if !full {
         return ls_sinc;
@@ -335,7 +335,7 @@ pub(super) fn stab8_fwd_into(
     c.nsf_fail = nsf_fail;
     let pls = last_s.fast_min(nsf_fail);
     let nss = pls.fast_max(ls_sinc);
-    rating.cmp_gt(one).blend(nss, pls)
+    rating.simd_gt(one).select(nss, pls)
 }
 
 /// VJP of stab8_fwd_into (F analogue of stab_bwd). Returns (g_last_s, g_last_d, g_r).
@@ -361,18 +361,18 @@ pub(super) fn stab8_bwd(
     // Without the post-lapse branch (see stab8_fwd_into) every lane routes to ls_sinc: no lane
     // lapsed, so every real lane has rating > 1, and a padding lane's adjoint is already zero.
     let (mut g_last_s, g_ls_sinc, g_nsf_fail) = if c.full {
-        let gt1 = rating.cmp_gt(one);
-        let g_nss = gt1.blend(g_out, z);
+        let gt1 = rating.simd_gt(one);
+        let g_nss = gt1.select(g_out, z);
         let pls = last_s.fast_min(c.nsf_fail);
         let ls_sinc = last_s * c.sinc;
-        let g_pls_direct = gt1.blend(z, g_out);
+        let g_pls_direct = gt1.select(z, g_out);
         // nss = max(pls, ls_sinc)  (ties to pls, matching the scalar >= / > split)
-        let g_pls_from_nss = pls.cmp_ge(ls_sinc).blend(g_nss, z);
-        let g_ls_sinc = ls_sinc.cmp_gt(pls).blend(g_nss, z);
+        let g_pls_from_nss = pls.simd_ge(ls_sinc).select(g_nss, z);
+        let g_ls_sinc = ls_sinc.simd_gt(pls).select(g_nss, z);
         let g_pls = g_pls_direct + g_pls_from_nss;
         // pls = min(last_s, nsf_fail)
-        let g_ls = last_s.cmp_le(c.nsf_fail).blend(g_pls, z);
-        (g_ls, g_ls_sinc, c.nsf_fail.cmp_lt(last_s).blend(g_pls, z))
+        let g_ls = last_s.simd_le(c.nsf_fail).select(g_pls, z);
+        (g_ls, g_ls_sinc, c.nsf_fail.simd_lt(last_s).select(g_pls, z))
     } else {
         (z, g_out, z)
     };
@@ -391,8 +391,8 @@ pub(super) fn stab8_bwd(
     // d(prod)/d(hard_penalty) on rating-2 lanes and d(prod)/d(easy_bonus) on rating-4 lanes are
     // both `base` (the other factor is exactly 1 there).
     let g_base = g_prod * c.base;
-    gw[start + 6] += rating.cmp_eq(k(2.0)).blend(g_base, z); // hard_penalty
-    gw[start + 7] += rating.cmp_eq(k(4.0)).blend(g_base, z); // easy_bonus
+    gw[start + 6] += rating.simd_eq(k(2.0)).select(g_base, z); // hard_penalty
+    gw[start + 7] += rating.simd_eq(k(4.0)).select(g_base, z); // easy_bonus
     // prod = base * he is a product, so the adjoint of ln(aa) and of ln(cc) are both g_prod * prod.
     let p_ln = g_base * he;
     gw[start] += p_ln; // aa = exp(w[start]-1.5)
@@ -432,8 +432,8 @@ pub(super) fn next_d8_fwd(
     // Surprise-weighted lapse: on a lapse scale delta_d by (r+0.1) = 1 + (R-0.9).
     let delta_d = if lapse {
         rating
-            .cmp_eq(k(1.0))
-            .blend(delta_d_base * (r + k(0.1)), delta_d_base)
+            .simd_eq(k(1.0))
+            .select(delta_d_base * (r + k(0.1)), delta_d_base)
     } else {
         delta_d_base
     };
@@ -448,7 +448,7 @@ pub(super) fn next_d8_fwd(
 pub(super) fn next_d8_cache(out_pre: F, delta_d: F) -> (F, F) {
     let k = F::splat;
     (
-        out_pre.cmp_gt(k(D_MIN)) & out_pre.cmp_lt(k(D_MAX)),
+        out_pre.simd_gt(k(D_MIN)) & out_pre.simd_lt(k(D_MAX)),
         k(1.0) - delta_d / k(9.0),
     )
 }
@@ -471,7 +471,7 @@ pub(super) fn next_d8_bwd(
 ) -> (F, F) {
     let k = F::splat;
     let z = k(0.0);
-    let g_out_pre = live.blend(g_out, z);
+    let g_out_pre = live.select(g_out, z);
     let g_init = g_out_pre * k(0.01);
     let g_new_d = g_out_pre * k(0.99);
     gw[4] += g_init;
@@ -483,11 +483,11 @@ pub(super) fn next_d8_bwd(
         gw[6] += g_delta_d * (z - rm3); // d(delta_d)/d(w6) = -(rating-3)
         return (g_last_d, z);
     }
-    let is_lapse = rating.cmp_eq(k(1.0));
+    let is_lapse = rating.simd_eq(k(1.0));
     // d(delta_d_eff)/d(w6) = -(rating-3), scaled by (r+0.1) on a lapse.
-    gw[6] += g_delta_d * is_lapse.blend((z - rm3) * (r + k(0.1)), z - rm3);
+    gw[6] += g_delta_d * is_lapse.select((z - rm3) * (r + k(0.1)), z - rm3);
     // d(delta_d_eff)/dr = delta_d_base = -w6*(rating-3), only on a lapse.
-    let g_r = is_lapse.blend(g_delta_d * (k(-w[6]) * rm3), z);
+    let g_r = is_lapse.select(g_delta_d * (k(-w[6]) * rm3), z);
     (g_last_d, g_r)
 }
 
@@ -529,10 +529,10 @@ pub(super) fn first8_fwd(w: &[f32], rating: F) -> ((F, F, F), First8) {
     let k = F::splat;
     let one = k(1.0);
     let rc = clamp8(rating, 1.0, 4.0);
-    let init_s = rc.cmp_eq(one).blend(
+    let init_s = rc.simd_eq(one).select(
         k(w[0]),
-        rc.cmp_eq(k(2.0))
-            .blend(k(w[1]), rc.cmp_eq(k(3.0)).blend(k(w[2]), k(w[3]))),
+        rc.simd_eq(k(2.0))
+            .select(k(w[1]), rc.simd_eq(k(3.0)).select(k(w[2]), k(w[3]))),
     );
     let ex_w5 = exp8_in_range(k(w[5]) * (rc - one));
     let id_in = k(w[4]) - ex_w5 + one;
@@ -568,17 +568,17 @@ pub(super) fn first8_bwd(c: &First8, g_out: (F, F, F), gw: &mut [F; 34]) {
         ex_w5,
         id_in,
     } = c;
-    let g_ns3 = (init_s.cmp_gt(k(S_MIN)) & init_s.cmp_lt(k(S_MAX))).blend(g_ns_out, z);
+    let g_ns3 = (init_s.simd_gt(k(S_MIN)) & init_s.simd_lt(k(S_MAX))).select(g_ns_out, z);
     let nsf3 = k(0.8) * *init_s;
-    let g_nsf3 = (nsf3.cmp_gt(k(S_MIN)) & nsf3.cmp_lt(k(S_MAX))).blend(g_nsf_out, z);
+    let g_nsf3 = (nsf3.simd_gt(k(S_MIN)) & nsf3.simd_lt(k(S_MAX))).select(g_nsf_out, z);
     let g_init_s = g_ns3 + g_nsf3 * k(0.8);
-    gw[0] += rc.cmp_eq(k(1.0)).blend(g_init_s, z);
-    gw[1] += rc.cmp_eq(k(2.0)).blend(g_init_s, z);
-    gw[2] += rc.cmp_eq(k(3.0)).blend(g_init_s, z);
-    gw[3] += rc.cmp_eq(k(4.0)).blend(g_init_s, z);
-    let idmask = id_in.cmp_gt(k(D_MIN)) & id_in.cmp_lt(k(D_MAX));
-    gw[4] += idmask.blend(g_nd_out, z);
-    gw[5] += idmask.blend(g_nd_out * (z - *ex_w5 * (*rc - one)), z);
+    gw[0] += rc.simd_eq(k(1.0)).select(g_init_s, z);
+    gw[1] += rc.simd_eq(k(2.0)).select(g_init_s, z);
+    gw[2] += rc.simd_eq(k(3.0)).select(g_init_s, z);
+    gw[3] += rc.simd_eq(k(4.0)).select(g_init_s, z);
+    let idmask = id_in.simd_gt(k(D_MIN)) & id_in.simd_lt(k(D_MAX));
+    gw[4] += idmask.select(g_nd_out, z);
+    gw[5] += idmask.select(g_nd_out * (z - *ex_w5 * (*rc - one)), z);
 }
 
 /// step8_fwd writing its cache into `slot` (reused across groups by card_group_grad): the forward
@@ -630,16 +630,16 @@ pub(super) fn step8_fwd_into(
     let fast_out = stab8_fwd_into(
         w, wc, last_sf, last_d, r1, rating, 15, wc.aa16, ln_last_sf, fast,
     );
-    let lapse = rating.cmp_eq(one).any();
+    let lapse = rating.simd_eq(one).any();
     *c_lapse = lapse;
     let (nd, pre, dd) = next_d8_fwd(w, last_d, rating, r, wc.init, lapse);
     (*nd_live, *nd_omd9) = next_d8_cache(pre, dd);
     // Post-lapse short reset: on a lapse cap s_short at 0.8 * post-lapse s_long.
     let nsf_pre = if lapse {
-        *fast_wins = fast_out.cmp_le(k(0.8) * slow_out);
+        *fast_wins = fast_out.simd_le(k(0.8) * slow_out);
         rating
-            .cmp_eq(one)
-            .blend(fast_out.fast_min(k(0.8) * slow_out), fast_out)
+            .simd_eq(one)
+            .select(fast_out.fast_min(k(0.8) * slow_out), fast_out)
     } else {
         fast_out
     };
@@ -647,8 +647,8 @@ pub(super) fn step8_fwd_into(
     // weight 0, and lanes are independent, so padding lanes may evolve (their values stay finite:
     // rating 0 takes the clamped post-lapse branch) and contribute only zero gradients.
     let (ns3, nsf3, nd3) = (slow_out, nsf_pre, nd);
-    *ns_live = ns3.cmp_gt(k(S_MIN)) & ns3.cmp_lt(k(S_MAX));
-    *nsf_live = nsf3.cmp_gt(k(S_MIN)) & nsf3.cmp_lt(k(S_MAX));
+    *ns_live = ns3.simd_gt(k(S_MIN)) & ns3.simd_lt(k(S_MAX));
+    *nsf_live = nsf3.simd_gt(k(S_MIN)) & nsf3.simd_lt(k(S_MAX));
     (clamp8(ns3, S_MIN, S_MAX), nd3, clamp8(nsf3, S_MIN, S_MAX))
 }
 
@@ -692,15 +692,15 @@ pub(super) fn step8_bwd(
         (g_r_loss, z, (z, z, z))
     } else {
         // (The forward stored the clamp masks of the new stabilities.)
-        let g_ns2 = ns_live.blend(g_ns_out, z);
-        let g_nsf2 = nsf_live.blend(g_nsf_out, z);
+        let g_ns2 = ns_live.select(g_ns_out, z);
+        let g_nsf2 = nsf_live.select(g_nsf_out, z);
         let g_nd2 = g_nd_out;
         // POST-LAPSE min routing: nsf_pre = (rating==1)? min(fast.out, 0.8*slow.out) : fast.out.
         let (g_fast_out, g_slow_from_relearn) = if *lapse {
-            let is_lapse = rating.cmp_eq(one);
+            let is_lapse = rating.simd_eq(one);
             (
-                is_lapse.blend(fast_wins.blend(g_nsf2, z), g_nsf2),
-                is_lapse.blend(fast_wins.blend(z, g_nsf2 * k(0.8)), z),
+                is_lapse.select(fast_wins.select(g_nsf2, z), g_nsf2),
+                is_lapse.select(fast_wins.select(z, g_nsf2 * k(0.8)), z),
             )
         } else {
             (g_nsf2, z)
@@ -778,7 +778,7 @@ pub(super) fn g_r_loss_at(r_raw: F, weights: &[f32], base: usize) -> F {
     let swt = load8(weights, base);
     let r = clamp8(r_raw, MIN_R, MAX_R);
     let g_r = swt * (one / (one - abs_label_diff(swt, r)));
-    (r_raw.cmp_gt(k(MIN_R)) & r_raw.cmp_lt(k(MAX_R))).blend(g_r, z)
+    (r_raw.simd_gt(k(MIN_R)) & r_raw.simd_lt(k(MAX_R))).select(g_r, z)
 }
 
 /// |label - r| for label = the sign bit of the signed weight `swt` (see g_r_loss_at): 1 - r for
@@ -786,7 +786,7 @@ pub(super) fn g_r_loss_at(r_raw: F, weights: &[f32], base: usize) -> F {
 #[inline(always)]
 fn abs_label_diff(swt: F, r: F) -> F {
     let label1: F = bytemuck::cast(bytemuck::cast::<F, I>(swt) >> 31);
-    label1.blend(F::splat(1.0) - r, r)
+    label1.select(F::splat(1.0) - r, r)
 }
 
 /// Windowed forward + backward of 8-card group `g` (columns 8g..8g+8) of a batch. Returns the
