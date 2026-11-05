@@ -5,6 +5,15 @@ name: Benchmark
 on:
   pull_request:
     branches: [ "main" ]
+    # Only when the PR changes code that can affect the results, or this
+    # benchmark setup itself.
+    paths:
+      - "src/**"
+      - "benches/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/bench.yml"
+      - ".github/workflows/bench-report.sh"
 
 permissions:
   contents: read
