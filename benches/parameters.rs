@@ -1,8 +1,8 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use fsrs::{
     CardPrefix, CardPrefixes, CardReviews, ComputeParametersInput, ComputeParametersVersion, FSRS,
-    FSRSItem, FSRSReview, compute_parameters, compute_parameters_from_card_prefixes,
-    evaluate_with_time_series_splits,
+    FSRSItem, FSRSReview, TrainingConfig, compute_parameters,
+    compute_parameters_from_card_prefixes, evaluate_with_time_series_splits,
 };
 // Add necessary imports for inlined code
 use chrono::prelude::*;
@@ -270,10 +270,48 @@ fn load_and_prepare_data() -> Vec<FSRSItem> {
     [pretrain_set, train_set].concat()
 }
 
+/// Reads a revlog in the repository's CSV format
+/// (`review_time,card_id,review_rating,review_duration,review_state`).
+fn read_revlog_csv(path: &str) -> Vec<RevlogEntry> {
+    #[derive(serde::Deserialize)]
+    struct CsvReview {
+        card_id: i64,
+        review_time: i64,
+        review_rating: u8,
+        review_state: u8,
+    }
+    let mut reader = csv::Reader::from_path(path).expect("read revlog CSV");
+    let mut reviews: Vec<_> = reader
+        .deserialize::<CsvReview>()
+        .map(|row| {
+            let row = row.expect("valid revlog CSV row");
+            RevlogEntry {
+                id: row.review_time,
+                cid: row.card_id,
+                button_chosen: row.review_rating,
+                review_kind: match row.review_state {
+                    0 | 1 => RevlogReviewKind::Learning,
+                    2 => RevlogReviewKind::Review,
+                    3 => RevlogReviewKind::Relearning,
+                    4 => RevlogReviewKind::Filtered,
+                    5 => RevlogReviewKind::Manual,
+                    _ => panic!("invalid review state"),
+                },
+                ..Default::default()
+            }
+        })
+        .collect();
+    reviews.sort_by_key(|r| (r.cid, r.id));
+    reviews
+}
+
+/// Loads `FSRS_BENCH_REVLOG_CSV` if set, else the Anki collection.
 fn load_and_prepare_data_with_card_ids() -> (Vec<FSRSItem>, Vec<i64>) {
-    let (items, card_ids) = anki_to_fsrs_with_card_ids(
-        read_collection_inline().expect("read error for inlined function"),
-    );
+    let revlogs = match std::env::var("FSRS_BENCH_REVLOG_CSV") {
+        Ok(path) => read_revlog_csv(&path),
+        Err(_) => read_collection_inline().expect("read error for inlined function"),
+    };
+    let (items, card_ids) = anki_to_fsrs_with_card_ids(revlogs);
     let filtered = items
         .into_iter()
         .zip(card_ids)
@@ -432,11 +470,53 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
     group.finish();
 }
 
+/// Compare the models with the same input, epoch count and batch size. Keep
+/// cloning outside the timer; each model retains its own preprocessing and LR.
+fn benchmark_same_epoch_training(c: &mut Criterion) {
+    let (items, card_ids) = load_and_prepare_data_with_card_ids();
+    let dataset = if std::env::var_os("FSRS_BENCH_REVLOG_CSV").is_some() {
+        "csv"
+    } else {
+        "collection"
+    };
+    let mut group = c.benchmark_group(format!("same_epoch_training/{dataset}"));
+    group.sample_size(10);
+    for use_card_ids in [true, false] {
+        for (name, version) in [
+            ("fsrs6", ComputeParametersVersion::Fsrs6),
+            ("fsrs7", ComputeParametersVersion::Fsrs7),
+        ] {
+            let input = ComputeParametersInput {
+                train_set: items.clone(),
+                card_ids: use_card_ids.then(|| card_ids.clone()),
+                model_version: version,
+                training_config: Some(TrainingConfig {
+                    num_epochs: 5,
+                    batch_size: 512,
+                    max_seq_len: 1024,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let mode = if use_card_ids { "card_ids" } else { "prefixes" };
+            group.bench_with_input(BenchmarkId::new(name, mode), &input, |b, input| {
+                b.iter_batched(
+                    || input.clone(),
+                    |input| black_box(compute_parameters(input).unwrap()),
+                    BatchSize::PerIteration,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_evaluate,
     benchmark_evaluate_with_card_ids,
     benchmark_evaluate_with_time_series_splits,
-    benchmark_compute_parameters
+    benchmark_compute_parameters,
+    benchmark_same_epoch_training
 );
 criterion_main!(benches);
