@@ -11,12 +11,12 @@ calls with 5 epochs, batch size 512, `max_seq_len` 1024, seed 2023, short-term
 training on, schedule penalties off. Input cloning is outside the timer.
 Apple M2, release build, median of 10 samples.
 
-| Dataset | Mode | FSRS-6 `main` | FSRS-6 now | Speedup | FSRS-7 `main` | FSRS-7 now |
-|---|---|---:|---:|---:|---:|---:|
-| Anki collection (14,290 items) | card IDs | 17.99 ms | 2.97 ms | 6.1× | 5.91 ms | 5.90 ms |
-| Anki collection | prefixes | 52.45 ms | 8.41 ms | 6.2× | 18.93 ms | 18.96 ms |
-| CSV revlog (88,158 items) | card IDs | 97.45 ms | 18.30 ms | 5.3× | 36.14 ms | 35.55 ms |
-| CSV revlog | prefixes | 667.49 ms | 108.72 ms | 6.1× | 230.80 ms | 233.27 ms |
+| Dataset                        | Mode     | FSRS-6 `main` | FSRS-6 now | Speedup | FSRS-7 `main` | FSRS-7 now |
+| ------------------------------ | -------- | ------------: | ---------: | ------: | ------------: | ---------: |
+| Anki collection (14,290 items) | card IDs |      17.99 ms |    2.97 ms |    6.1× |       5.91 ms |    5.90 ms |
+| Anki collection                | prefixes |      52.45 ms |    8.41 ms |    6.2× |      18.93 ms |   18.96 ms |
+| CSV revlog (88,158 items)      | card IDs |      97.45 ms |   18.30 ms |    5.3× |      36.14 ms |   35.55 ms |
+| CSV revlog                     | prefixes |     667.49 ms |  108.72 ms |    6.1× |     230.80 ms |  233.27 ms |
 
 The default `parameters/compute_parameters*` benchmarks (FSRS-7) stay within
 3% of `main` across interleaved runs.
