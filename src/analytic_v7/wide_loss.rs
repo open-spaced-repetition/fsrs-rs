@@ -9,7 +9,7 @@
 //! Result is not bit-for-bit vs autodiff (different FP order) but is judged by the
 //! ±0.0010 average-log-loss band.
 
-use wide::{CmpEq, CmpGe, CmpGt, CmpLe, CmpLt, f32x8, i32x8};
+use wide::{f32x8, i32x8};
 
 const PARAM_LEN: usize = super::PARAM_LEN;
 const S_MIN: f32 = 0.0001;
@@ -47,7 +47,7 @@ fn clamp8(x: f32x8, lo: f32, hi: f32) -> f32x8 {
 #[inline(always)]
 fn exp8<const FAST: bool>(x: f32x8) -> f32x8 {
     let x = x.fast_max(f32x8::splat(-87.0)).fast_min(f32x8::splat(88.0));
-    let n = (x * f32x8::splat(LOG2E)).round();
+    let n = (x * f32x8::splat(LOG2E)).round_ties_even();
     let r = x - n * f32x8::splat(LN2);
     let c = |v: f32| f32x8::splat(v);
     let p = if FAST {
@@ -1006,7 +1006,7 @@ fn curve8_bwd(
     let g_inv2 = g_p28 * c.p28 * k(ln_w28);
     g_decay2 += g_inv2 * (z - k(1.0) / (c.decay2 * c.decay2));
     let g_dm2 = z - g_decay2;
-    let g_m2 = (c.m2.cmp_gt(k(0.01)) & c.m2.cmp_lt(k(0.95))).blend(g_dm2, z);
+    let g_m2 = (c.m2.simd_gt(k(0.01)) & c.m2.simd_lt(k(0.95))).select(g_dm2, z);
     gw[24] += g_m2; // m2 = w24 directly (clamp gate via c.m2)
     g_s += g_bv * (z - t / (s * s)); // bv = t/s
     // r1 = b1^decay1
@@ -1016,13 +1016,13 @@ fn curve8_bwd(
     let g_factor1 = g_b1 * c.a;
     let g_e1 = g_factor1;
     let g_q1c = g_e1 * c.e1;
-    let g_q1 = c.q1.cmp_lt(k(60.0)).blend(g_q1c, z);
+    let g_q1 = c.q1.simd_lt(k(60.0)).select(g_q1c, z);
     // q1 = ln(base1) / decay1
     let g_lw27 = g_q1 / c.decay1;
     g_decay1 += g_q1 * (z - k(ln_w27) / (c.decay1 * c.decay1));
     gw[25] += g_lw27 / sp(25); // ln_base1 = ln(w[25])
     let g_dm1 = z - g_decay1;
-    let g_m1 = (c.m1.cmp_gt(k(0.01)) & c.m1.cmp_lt(k(0.95))).blend(g_dm1, z);
+    let g_m1 = (c.m1.simd_gt(k(0.01)) & c.m1.simd_lt(k(0.95))).select(g_dm1, z);
     gw[23] += g_m1 * c.p35; // m1 = decay1[w23] * p35
     let g_p35 = g_m1 * sp(23);
     g_sf += g_p35 * (sp(33) - k(0.3)) * (c.p35 / sf); // p35 = s_short^(s_decay1-0.3)
@@ -1066,8 +1066,8 @@ fn stab8_fwd<const FAST: bool>(
     let sp = |i: usize| f32x8::splat(w[i]);
     let k = f32x8::splat;
     let one = k(1.0);
-    let hard = rating.cmp_eq(k(2.0)).blend(sp(start + 6), one);
-    let easy = rating.cmp_eq(k(4.0)).blend(sp(start + 7), one);
+    let hard = rating.simd_eq(k(2.0)).select(sp(start + 6), one);
+    let easy = rating.simd_eq(k(4.0)).select(sp(start + 7), one);
     let ln_ls1 = ln8::<FAST>(last_s + one);
     let qbase = exp8::<FAST>(sp(start + 4) * ln_ls1); // (last_s+1)^fail_s_exp[start+4]
     // fail_d_exp DROPPED: post-lapse stability is D-independent, so the legacy `pr` cache field now
@@ -1082,7 +1082,7 @@ fn stab8_fwd<const FAST: bool>(
     let sinc = aa8 * bb * cc * (expr - one) * hard * easy + one;
     let ls_sinc = last_s * sinc;
     let nss = pls.fast_max(ls_sinc);
-    let out = rating.cmp_gt(one).blend(nss, pls);
+    let out = rating.simd_gt(one).select(nss, pls);
     Stab8 {
         out,
         nsf_fail,
@@ -1121,18 +1121,18 @@ fn stab8_bwd(
     let one = k(1.0);
     let z = k(0.0);
     let _ = last_d; // post-lapse stability is D-independent now (fail_d_exp dropped)
-    let gt1 = rating.cmp_gt(one);
-    let g_nss = gt1.blend(g_out, z);
-    let g_pls_direct = gt1.blend(z, g_out);
+    let gt1 = rating.simd_gt(one);
+    let g_nss = gt1.select(g_out, z);
+    let g_pls_direct = gt1.select(z, g_out);
     // nss = max(pls, ls_sinc)  (ties to pls, matching the scalar >= / > split)
-    let g_pls_from_nss = c.pls.cmp_ge(c.ls_sinc).blend(g_nss, z);
-    let g_ls_sinc = c.ls_sinc.cmp_gt(c.pls).blend(g_nss, z);
+    let g_pls_from_nss = c.pls.simd_ge(c.ls_sinc).select(g_nss, z);
+    let g_ls_sinc = c.ls_sinc.simd_gt(c.pls).select(g_nss, z);
     let mut g_last_s = g_ls_sinc * c.sinc;
     let g_sinc = g_ls_sinc * last_s;
     let g_pls = g_pls_direct + g_pls_from_nss;
     // pls = min(last_s, nsf_fail)
-    g_last_s += last_s.cmp_le(c.nsf_fail).blend(g_pls, z);
-    let g_nsf_fail = c.nsf_fail.cmp_lt(last_s).blend(g_pls, z);
+    g_last_s += last_s.simd_le(c.nsf_fail).select(g_pls, z);
+    let g_nsf_fail = c.nsf_fail.simd_lt(last_s).select(g_pls, z);
     // sinc = aa*bb*cc*(expr-1)*hard*easy + 1
     let em1 = c.expr - one;
     let g_prod = g_sinc;
@@ -1142,11 +1142,11 @@ fn stab8_bwd(
     let g_cc = g_prod * (c.aa * c.bb * em1 * c.hard * c.easy);
     let g_em1 = g_prod * (c.aa * c.bb * c.cc * c.hard * c.easy);
     gw[start + 6] += rating
-        .cmp_eq(k(2.0))
-        .blend(g_prod * (c.aa * c.bb * c.cc * em1 * c.easy), z); // hard_penalty
+        .simd_eq(k(2.0))
+        .select(g_prod * (c.aa * c.bb * c.cc * em1 * c.easy), z); // hard_penalty
     gw[start + 7] += rating
-        .cmp_eq(k(4.0))
-        .blend(g_prod * (c.aa * c.bb * c.cc * em1 * c.hard), z); // easy_bonus
+        .simd_eq(k(4.0))
+        .select(g_prod * (c.aa * c.bb * c.cc * em1 * c.hard), z); // easy_bonus
     let g_last_d = g_bb * (z - one); // bb = 11 - last_d (the ONLY D-dependence of stab now)
     g_last_s += g_cc * k(-w[start + 1]) * (c.cc / last_s);
     gw[start + 1] += g_cc * (z - c.cc * c.ln_ls);
@@ -1181,8 +1181,8 @@ fn next_d8_fwd(
     let delta_d_base = k(-w[6]) * (rating - k(3.0));
     // Surprise-weighted lapse: on a lapse scale delta_d by (r+0.1) = 1 + (R-0.9).
     let delta_d = rating
-        .cmp_eq(k(1.0))
-        .blend(delta_d_base * (r + k(0.1)), delta_d_base);
+        .simd_eq(k(1.0))
+        .select(delta_d_base * (r + k(0.1)), delta_d_base);
     let new_d = last_d + (k(10.0) - last_d) * delta_d / k(9.0);
     let out_pre = k(0.01) * k(init) + k(0.99) * new_d;
     (clamp8(out_pre, D_MIN, D_MAX), out_pre, delta_d) // delta_d returned = EFFECTIVE delta_d
@@ -1204,7 +1204,7 @@ fn next_d8_bwd(
 ) -> (f32x8, f32x8) {
     let k = f32x8::splat;
     let z = k(0.0);
-    let g_out_pre = (out_pre.cmp_gt(k(D_MIN)) & out_pre.cmp_lt(k(D_MAX))).blend(g_out, z);
+    let g_out_pre = (out_pre.simd_gt(k(D_MIN)) & out_pre.simd_lt(k(D_MAX))).select(g_out, z);
     let g_init = g_out_pre * k(0.01);
     let g_new_d = g_out_pre * k(0.99);
     gw[4] += g_init;
@@ -1212,11 +1212,11 @@ fn next_d8_bwd(
     let g_last_d = g_new_d * (k(1.0) - delta_d / k(9.0));
     let g_delta_d = g_new_d * (k(10.0) - last_d) / k(9.0);
     let rm3 = rating - k(3.0);
-    let is_lapse = rating.cmp_eq(k(1.0));
+    let is_lapse = rating.simd_eq(k(1.0));
     // d(delta_d_eff)/d(w6) = -(rating-3), scaled by (r+0.1) on a lapse.
-    gw[6] += g_delta_d * is_lapse.blend((z - rm3) * (r + k(0.1)), z - rm3);
+    gw[6] += g_delta_d * is_lapse.select((z - rm3) * (r + k(0.1)), z - rm3);
     // d(delta_d_eff)/dr = delta_d_base = -w6*(rating-3), only on a lapse.
-    let g_r = is_lapse.blend(g_delta_d * (k(-w[6]) * rm3), z);
+    let g_r = is_lapse.select(g_delta_d * (k(-w[6]) * rm3), z);
     (g_last_d, g_r)
 }
 
@@ -1255,10 +1255,10 @@ pub(crate) fn batch_loss_simd(
             if t == 0 {
                 // First review: initialise state from rating (mirrors step_fwd's nth0 override).
                 let rc = clamp8(rating, 1.0, 4.0);
-                let init_s = rc.cmp_eq(one).blend(
+                let init_s = rc.simd_eq(one).select(
                     k(w[0]),
-                    rc.cmp_eq(k(2.0))
-                        .blend(k(w[1]), rc.cmp_eq(k(3.0)).blend(k(w[2]), k(w[3]))),
+                    rc.simd_eq(k(2.0))
+                        .select(k(w[1]), rc.simd_eq(k(3.0)).select(k(w[2]), k(w[3]))),
                 );
                 let init_d = clamp8(
                     k(w[4]) - exp8::<false>(k(w[5]) * (rc - one)) + one,
@@ -1285,14 +1285,14 @@ pub(crate) fn batch_loss_simd(
                         .out;
                 // POST-LAPSE short reset: on a lapse cap s_short at 0.8 * post-lapse s_long.
                 let nsf = rating
-                    .cmp_eq(one)
-                    .blend(nsf_raw.fast_min(k(0.8) * ns), nsf_raw);
+                    .simd_eq(one)
+                    .select(nsf_raw.fast_min(k(0.8) * ns), nsf_raw);
                 let nd = next_d8_fwd(w, d_c, rating, rr, wc.init).0;
                 // rating==0 (padding) passes the state through unchanged.
-                let m0 = rating.cmp_eq(k(0.0));
-                s = clamp8(m0.blend(s_c, ns), S_MIN, S_MAX);
-                d = m0.blend(d_c, nd);
-                sf = clamp8(m0.blend(sf_c, nsf), S_MIN, S_MAX);
+                let m0 = rating.simd_eq(k(0.0));
+                s = clamp8(m0.select(s_c, ns), S_MIN, S_MAX);
+                d = m0.select(d_c, nd);
+                sf = clamp8(m0.select(sf_c, nsf), S_MIN, S_MAX);
             }
         }
         let dts = load8(delta_ts, c0);
@@ -1421,10 +1421,10 @@ fn step8_fwd<const FAST: bool>(
     let (s0, d0, sf0) = state;
     if first {
         let rc = clamp8(rating, 1.0, 4.0);
-        let init_s = rc.cmp_eq(one).blend(
+        let init_s = rc.simd_eq(one).select(
             k(w[0]),
-            rc.cmp_eq(k(2.0))
-                .blend(k(w[1]), rc.cmp_eq(k(3.0)).blend(k(w[2]), k(w[3]))),
+            rc.simd_eq(k(2.0))
+                .select(k(w[1]), rc.simd_eq(k(3.0)).select(k(w[2]), k(w[3]))),
         );
         let ex_w5 = exp8::<FAST>(k(w[5]) * (rc - one));
         let id_in = k(w[4]) - ex_w5 + one;
@@ -1465,13 +1465,13 @@ fn step8_fwd<const FAST: bool>(
         let (nd, nd_out_pre, nd_delta_d) = next_d8_fwd(w, last_d, rating, r, wc.init);
         // POST-LAPSE short reset (iter-97): on a lapse cap s_short at 0.8 * post-lapse s_long.
         let nsf_pre = rating
-            .cmp_eq(one)
-            .blend(fast.out.fast_min(k(0.8) * slow.out), fast.out);
+            .simd_eq(one)
+            .select(fast.out.fast_min(k(0.8) * slow.out), fast.out);
         // rating==0 (padding) passes the input state through unchanged.
-        let m0 = rating.cmp_eq(k(0.0));
-        let ns3 = m0.blend(last_s, slow.out);
-        let nsf3 = m0.blend(last_sf, nsf_pre);
-        let nd3 = m0.blend(last_d, nd);
+        let m0 = rating.simd_eq(k(0.0));
+        let ns3 = m0.select(last_s, slow.out);
+        let nsf3 = m0.select(last_sf, nsf_pre);
+        let nd3 = m0.select(last_d, nd);
         let out = (clamp8(ns3, S_MIN, S_MAX), nd3, clamp8(nsf3, S_MIN, S_MAX));
         (
             out,
@@ -1524,17 +1524,17 @@ fn step8_bwd(
             ex_w5,
             id_in,
         } => {
-            let g_ns3 = (init_s.cmp_gt(k(S_MIN)) & init_s.cmp_lt(k(S_MAX))).blend(g_ns_out, z);
+            let g_ns3 = (init_s.simd_gt(k(S_MIN)) & init_s.simd_lt(k(S_MAX))).select(g_ns_out, z);
             let nsf3 = k(0.8) * *init_s;
-            let g_nsf3 = (nsf3.cmp_gt(k(S_MIN)) & nsf3.cmp_lt(k(S_MAX))).blend(g_nsf_out, z);
+            let g_nsf3 = (nsf3.simd_gt(k(S_MIN)) & nsf3.simd_lt(k(S_MAX))).select(g_nsf_out, z);
             let g_init_s = g_ns3 + g_nsf3 * k(0.8);
-            gw[0] += rc.cmp_eq(k(1.0)).blend(g_init_s, z);
-            gw[1] += rc.cmp_eq(k(2.0)).blend(g_init_s, z);
-            gw[2] += rc.cmp_eq(k(3.0)).blend(g_init_s, z);
-            gw[3] += rc.cmp_eq(k(4.0)).blend(g_init_s, z);
-            let idmask = id_in.cmp_gt(k(D_MIN)) & id_in.cmp_lt(k(D_MAX));
-            gw[4] += idmask.blend(g_nd_out, z);
-            gw[5] += idmask.blend(g_nd_out * (z - *ex_w5 * (*rc - one)), z);
+            gw[0] += rc.simd_eq(k(1.0)).select(g_init_s, z);
+            gw[1] += rc.simd_eq(k(2.0)).select(g_init_s, z);
+            gw[2] += rc.simd_eq(k(3.0)).select(g_init_s, z);
+            gw[3] += rc.simd_eq(k(4.0)).select(g_init_s, z);
+            let idmask = id_in.simd_gt(k(D_MIN)) & id_in.simd_lt(k(D_MAX));
+            gw[4] += idmask.select(g_nd_out, z);
+            gw[5] += idmask.select(g_nd_out * (z - *ex_w5 * (*rc - one)), z);
             (z, z, z)
         }
         Step8::Full {
@@ -1554,22 +1554,22 @@ fn step8_bwd(
             ns3,
             nsf3,
         } => {
-            let g_ns3 = (ns3.cmp_gt(k(S_MIN)) & ns3.cmp_lt(k(S_MAX))).blend(g_ns_out, z);
-            let g_nsf3 = (nsf3.cmp_gt(k(S_MIN)) & nsf3.cmp_lt(k(S_MAX))).blend(g_nsf_out, z);
+            let g_ns3 = (ns3.simd_gt(k(S_MIN)) & ns3.simd_lt(k(S_MAX))).select(g_ns_out, z);
+            let g_nsf3 = (nsf3.simd_gt(k(S_MIN)) & nsf3.simd_lt(k(S_MAX))).select(g_nsf_out, z);
             let g_nd3 = g_nd_out;
             // rating==0 padding: output state == input state, so the adjoint flows straight through.
-            let m0 = rating.cmp_eq(z);
-            let g_ns2 = m0.blend(z, g_ns3);
-            let g_nsf2 = m0.blend(z, g_nsf3); // adjoint on nsf_pre
-            let g_nd2 = m0.blend(z, g_nd3);
-            let g_last_s_extra = m0.blend(g_ns3, z);
-            let g_last_sf_extra = m0.blend(g_nsf3, z);
-            let g_last_d_extra = m0.blend(g_nd3, z);
+            let m0 = rating.simd_eq(z);
+            let g_ns2 = m0.select(z, g_ns3);
+            let g_nsf2 = m0.select(z, g_nsf3); // adjoint on nsf_pre
+            let g_nd2 = m0.select(z, g_nd3);
+            let g_last_s_extra = m0.select(g_ns3, z);
+            let g_last_sf_extra = m0.select(g_nsf3, z);
+            let g_last_d_extra = m0.select(g_nd3, z);
             // POST-LAPSE min routing: nsf_pre = (rating==1)? min(fast.out, 0.8*slow.out) : fast.out.
-            let is_lapse = rating.cmp_eq(one);
-            let fast_wins = fast.out.cmp_le(k(0.8) * slow.out);
-            let g_fast_out = is_lapse.blend(fast_wins.blend(g_nsf2, z), g_nsf2);
-            let g_slow_from_relearn = is_lapse.blend(fast_wins.blend(z, g_nsf2 * k(0.8)), z);
+            let is_lapse = rating.simd_eq(one);
+            let fast_wins = fast.out.simd_le(k(0.8) * slow.out);
+            let g_fast_out = is_lapse.select(fast_wins.select(g_nsf2, z), g_nsf2);
+            let g_slow_from_relearn = is_lapse.select(fast_wins.select(z, g_nsf2 * k(0.8)), z);
             // LONG stab reads mixed retention curve.out; SHORT stab reads r1=curve.r1 (start 15).
             let (g_ls_a, g_ld_a, g_r_long) = stab8_bwd(
                 w,
@@ -1613,9 +1613,9 @@ fn step8_bwd(
             let g_last_s = g_ls_a + g_ls_d + g_last_s_extra;
             let g_last_sf = g_lsf_b + g_lsf_d + g_last_sf_extra;
             let g_last_d = g_ld_a + g_ld_b + g_ld_c + g_ld_d + g_last_d_extra;
-            let g_s0 = (s0.cmp_gt(k(S_MIN)) & s0.cmp_lt(k(S_MAX))).blend(g_last_s, z);
-            let g_d0 = (d0.cmp_gt(k(D_MIN)) & d0.cmp_lt(k(D_MAX))).blend(g_last_d, z);
-            let g_sf0 = (sf0.cmp_gt(k(S_MIN)) & sf0.cmp_lt(k(S_MAX))).blend(g_last_sf, z);
+            let g_s0 = (s0.simd_gt(k(S_MIN)) & s0.simd_lt(k(S_MAX))).select(g_last_s, z);
+            let g_d0 = (d0.simd_gt(k(D_MIN)) & d0.simd_lt(k(D_MAX))).select(g_last_d, z);
+            let g_sf0 = (sf0.simd_gt(k(S_MIN)) & sf0.simd_lt(k(S_MAX))).select(g_last_sf, z);
             (g_s0, g_d0, g_sf0)
         }
     }
@@ -1683,7 +1683,7 @@ fn loss_and_grad_range_simd(
         // (loss VALUE skipped — see the fn doc; training discards it, validation uses batch_loss_simd.)
         // d loss / d r, then the [MIN_R, MAX_R] clamp, in f32x8.
         let g_r = (k(0.0) - wt) * (lbl / r - (one - lbl) / (one - r));
-        let g_rraw = (r_raw.cmp_gt(k(MIN_R)) & r_raw.cmp_lt(k(MAX_R))).blend(g_r, k(0.0));
+        let g_rraw = (r_raw.simd_gt(k(MIN_R)) & r_raw.simd_lt(k(MAX_R))).select(g_r, k(0.0));
         let mut gw_g = [f32x8::splat(0.0); 34];
         let (mut g_s, mut g_sf, mut g_d) = curve8_bwd(
             w,
@@ -1800,9 +1800,9 @@ pub(crate) fn card_loss_and_grad_simd(
         let lbl = load8(labels, base);
         let r = clamp8(r_raw, MIN_R, MAX_R);
         let dd = lbl - r;
-        let sgn = dd.cmp_gt(z).blend(one, z - one);
+        let sgn = dd.simd_gt(z).select(one, z - one);
         let g_r = (z - wt) * (sgn / (one - dd.fast_max(z - dd)));
-        (r_raw.cmp_gt(k(MIN_R)) & r_raw.cmp_lt(k(MAX_R))).blend(g_r, z)
+        (r_raw.simd_gt(k(MIN_R)) & r_raw.simd_lt(k(MAX_R))).select(g_r, z)
     };
     let mut caches: Vec<Step8> = Vec::with_capacity(seq_len);
     for g in 0..n_groups {
@@ -1860,9 +1860,9 @@ pub(crate) fn card_loss_and_grad_simd(
             wc.ln_w27,
             wc.ln_w28,
         );
-        let mut g_s = (s.cmp_gt(k(S_MIN)) & s.cmp_lt(k(S_MAX))).blend(g_ls, z);
-        let mut g_d = (d.cmp_gt(k(D_MIN)) & d.cmp_lt(k(D_MAX))).blend(g_ld, z);
-        let mut g_sf = (sf.cmp_gt(k(S_MIN)) & sf.cmp_lt(k(S_MAX))).blend(g_lsf, z);
+        let mut g_s = (s.simd_gt(k(S_MIN)) & s.simd_lt(k(S_MAX))).select(g_ls, z);
+        let mut g_d = (d.simd_gt(k(D_MIN)) & d.simd_lt(k(D_MAX))).select(g_ld, z);
+        let mut g_sf = (sf.simd_gt(k(S_MIN)) & sf.simd_lt(k(S_MAX))).select(g_lsf, z);
         for t in (0..seq_len - 1).rev() {
             let g_r_loss = if t == 0 {
                 z // init step: no prediction (min surviving prefix length is 2).
