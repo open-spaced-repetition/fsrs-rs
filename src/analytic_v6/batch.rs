@@ -8,7 +8,7 @@ use super::{RuntimeParams, S_MAX};
 use crate::FSRSReview;
 use crate::dataset::WeightedFSRSItem;
 use std::ops::Range;
-use wide::{CmpEq, CmpGe, f32x8 as F};
+use wide::f32x8 as F;
 
 pub(crate) use super::simd::Workspace;
 
@@ -52,7 +52,7 @@ impl Batch {
                 let target = &mut rows[item.item.reviews.len() - 1];
                 set_target(target, lane, item);
                 // The target only scores the prediction; it updates no state.
-                target.rating.as_array_mut()[lane] = 0.0;
+                target.rating.as_mut_array()[lane] = 0.0;
             },
         );
         Self {
@@ -105,17 +105,17 @@ impl Batch {
             |rows, lane, &col| {
                 for (row, review) in rows.iter_mut().enumerate().take(lengths[col]) {
                     let index = row * columns + col;
-                    review.t.as_array_mut()[lane] = t[index];
-                    review.rating.as_array_mut()[lane] = ratings[index];
+                    review.t.as_mut_array()[lane] = t[index];
+                    review.rating.as_mut_array()[lane] = ratings[index];
                     if target_t.is_none() {
-                        review.weight.as_array_mut()[lane] =
+                        review.weight.as_mut_array()[lane] =
                             signed_weight(weights[index], labels[index] == 1.0);
                     }
                 }
                 if let Some(target_t) = target_t {
                     let target = &mut rows[lengths[col]];
-                    target.t.as_array_mut()[lane] = target_t[col];
-                    target.weight.as_array_mut()[lane] =
+                    target.t.as_mut_array()[lane] = target_t[col];
+                    target.weight.as_mut_array()[lane] =
                         signed_weight(weights[col], labels[col] == 1.0);
                 }
             },
@@ -186,13 +186,13 @@ fn pack<C>(
 
 fn write_history(rows: &mut [Review], lane: usize, reviews: &[FSRSReview]) {
     for (row, review) in rows.iter_mut().zip(reviews) {
-        row.t.as_array_mut()[lane] = review.delta_t;
-        row.rating.as_array_mut()[lane] = review.rating as f32;
+        row.t.as_mut_array()[lane] = review.delta_t;
+        row.rating.as_mut_array()[lane] = review.rating as f32;
     }
 }
 
 fn set_target(row: &mut Review, lane: usize, item: &WeightedFSRSItem) {
-    row.weight.as_array_mut()[lane] = signed_weight(item.weight, item.item.current().rating > 1);
+    row.weight.as_mut_array()[lane] = signed_weight(item.weight, item.item.current().rating > 1);
 }
 
 impl Group {
@@ -206,16 +206,16 @@ impl Group {
     }
 }
 
-/// `fsrs6_elapsed_days` for eight lanes. SIMD `round` is ties-to-even while
-/// Rust's is ties-away, so only exact half-days rounded down are corrected.
+/// `fsrs6_elapsed_days` for eight lanes. `round_ties_even` differs from Rust's
+/// ties-away `round` only at exact half-days, so only those are corrected.
 /// Adding 0.5 before rounding would move values just below a half-day across
 /// the boundary.
 fn elapsed_days(t: F) -> F {
-    let t = t.cmp_ge(F::ZERO).blend(t, F::ZERO);
-    let rounded = t.round();
+    let t = t.simd_ge(F::ZERO).select(t, F::ZERO);
+    let rounded = t.round_ties_even();
     (t - rounded)
-        .cmp_eq(F::splat(0.5))
-        .blend(rounded + F::ONE, rounded)
+        .simd_eq(F::splat(0.5))
+        .select(rounded + F::ONE, rounded)
 }
 
 #[cfg(test)]

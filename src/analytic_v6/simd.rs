@@ -4,7 +4,7 @@
 //! that would lose precision here are recomputed with it.
 
 use super::{D_MAX, D_MIN, MAX_PROB, MIN_PROB, RuntimeParams, S_MAX, S_MIN};
-use wide::{CmpEq, CmpGe, CmpGt, CmpLe, CmpLt, f32x8 as F, i32x8 as I};
+use wide::{f32x8 as F, i32x8 as I};
 
 pub(super) const LANES: usize = 8;
 pub(super) const PARAMS: usize = 21;
@@ -89,7 +89,7 @@ fn clamp(x: F, low: f32, high: f32) -> F {
 
 #[inline(always)]
 pub(super) fn live(x: F, low: f32, high: f32) -> F {
-    x.cmp_ge(F::splat(low)) & x.cmp_le(F::splat(high))
+    x.simd_ge(F::splat(low)) & x.simd_le(F::splat(high))
 }
 
 // The recurrence uses positive normal log arguments and modest exponentials.
@@ -133,9 +133,9 @@ fn ln_positive(x: F) -> F {
     let exponent_bits: I = (bits >> 23) - I::splat(127);
     let exponent = exponent_bits.round_float();
     let mantissa: F = bytemuck::cast((bits & I::splat(0x007f_ffff)) | I::splat(127 << 23));
-    let upper = mantissa.cmp_gt(k(std::f32::consts::SQRT_2));
-    let m = upper.blend(mantissa * k(0.5), mantissa);
-    let e = upper.blend(exponent + k(1.0), exponent);
+    let upper = mantissa.simd_gt(k(std::f32::consts::SQRT_2));
+    let m = upper.select(mantissa * k(0.5), mantissa);
+    let e = upper.select(exponent + k(1.0), exponent);
     let t = (m - k(1.0)) / (m + k(1.0));
     let t2 = t * t;
     let poly = k(2.0) * t * (k(1.0) + t2 * (k(1.0 / 3.0) + t2 * k(1.0 / 5.0)));
@@ -153,9 +153,7 @@ fn scalar_group_gradient(p: &RuntimeParams<'_>, reviews: &[Review]) -> [F; PARAM
     let lengths: [usize; LANES] = std::array::from_fn(|lane| {
         reviews
             .iter()
-            .rposition(|r| {
-                r.rating.as_array_ref()[lane] != 0.0 || r.weight.as_array_ref()[lane] != 0.0
-            })
+            .rposition(|r| r.rating.as_array()[lane] != 0.0 || r.weight.as_array()[lane] != 0.0)
             .map_or(0, |i| i + 1)
     });
     let mut grad = [0.0; PARAMS];
@@ -190,7 +188,7 @@ fn trajectory_gradient<const BOUNDED: bool>(
     let rating = first.rating;
     let mut initial_s = sp(0);
     for i in 1..4 {
-        initial_s = rating.cmp_eq(k((i + 1) as f32)).blend(sp(i), initial_s);
+        initial_s = rating.simd_eq(k((i + 1) as f32)).select(sp(i), initial_s);
     }
     let offset = (rating - one).fast_max(z);
     let initial_exp = exp_in_range(sp(5) * offset);
@@ -226,26 +224,26 @@ fn trajectory_gradient<const BOUNDED: bool>(
             exp(c.ln_base * k(p.curve_decay))
         };
         let r = clamp(c.r, MIN_PROB, MAX_PROB);
-        let scored = c.r.cmp_gt(k(MIN_PROB)) & c.r.cmp_lt(k(MAX_PROB));
+        let scored = c.r.simd_gt(k(MIN_PROB)) & c.r.simd_lt(k(MAX_PROB));
         // Targets are binary recall labels. Select the active BCE term instead
         // of dividing by both r and 1-r, including the term with a zero label.
-        let recalled = review.weight.cmp_lt(z);
-        let forgotten = review.weight.cmp_gt(z);
+        let recalled = review.weight.simd_lt(z);
+        let forgotten = review.weight.simd_gt(z);
         let score = if forgotten.any() {
-            recalled.blend(review.weight, review.weight * r / (one - r))
+            recalled.select(review.weight, review.weight * r / (one - r))
         } else {
             review.weight
         };
         // Store the adjoint of log(R). Its recalled term is simply -weight,
         // eliminating a divide followed by multiplication by the same R.
-        c.score_log_r = scored.blend(score, z);
+        c.score_log_r = scored.select(score, z);
         // The last target has no subsequent prediction consuming its state.
         if row + 2 == reviews.len() {
             break;
         }
-        let active = review.rating.cmp_gt(z);
-        c.short = active & c.t.cmp_eq(z);
-        c.failure = active & !c.short & review.rating.cmp_eq(one);
+        let active = review.rating.simd_gt(z);
+        c.short = active & c.t.simd_eq(z);
+        c.failure = active & !c.short & review.rating.simd_eq(one);
         c.success = active & !c.short & !c.failure;
         c.ln_s = ln_positive(s);
         let mut next_s = s;
@@ -253,9 +251,9 @@ fn trajectory_gradient<const BOUNDED: bool>(
         if c.short.any() {
             c.short_raw =
                 exp_in_range(sp(17) * (review.rating - k(3.0) + sp(18)) - sp(19) * c.ln_s);
-            c.short_live = !(review.rating.cmp_ge(k(2.0)) & c.short_raw.cmp_lt(one));
-            c.short_value = c.short_live.blend(c.short_raw, one);
-            next_s = c.short.blend(s * c.short_value, next_s);
+            c.short_live = !(review.rating.simd_ge(k(2.0)) & c.short_raw.simd_lt(one));
+            c.short_value = c.short_live.select(c.short_raw, one);
+            next_s = c.short.select(s * c.short_value, next_s);
         }
         if c.failure.any() {
             c.ln_d = ln_positive(d);
@@ -264,22 +262,22 @@ fn trajectory_gradient<const BOUNDED: bool>(
             c.failure_prefactor = sp(11) * exp_in_range(-sp(12) * c.ln_d + (one - c.r) * sp(14));
             c.failure_raw = c.failure_prefactor * (c.failure_power - one);
             c.failure_floor = s / k(p.failure_floor_divisor);
-            c.floor_live = c.failure_floor.cmp_lt(c.failure_raw);
+            c.floor_live = c.failure_floor.simd_lt(c.failure_raw);
             next_s = c
                 .failure
-                .blend(c.floor_live.blend(c.failure_floor, c.failure_raw), next_s);
+                .select(c.floor_live.select(c.failure_floor, c.failure_raw), next_s);
         }
         if c.success.any() {
-            let hard = review.rating.cmp_eq(k(2.0)).blend(sp(15), one);
-            let easy = review.rating.cmp_eq(k(4.0)).blend(sp(16), one);
+            let hard = review.rating.simd_eq(k(2.0)).select(sp(15), one);
+            let easy = review.rating.simd_eq(k(4.0)).select(sp(16), one);
             c.success_base = k(p.exp_w8) * (k(11.0) - d) * exp_in_range(-sp(9) * c.ln_s);
             c.success_exp = exp_in_range((one - c.r) * sp(10));
             // Tiny exp(x)-1 amplifies f32 rounding throughout the trajectory and its adjoints.
-            if (c.success & (c.success_exp - one).cmp_lt(k(0.001))).any() {
+            if (c.success & (c.success_exp - one).simd_lt(k(0.001))).any() {
                 return scalar_group_gradient(p, reviews);
             }
             c.success_inc = c.success_base * (c.success_exp - one) * hard * easy;
-            next_s = c.success.blend(s * (one + c.success_inc), next_s);
+            next_s = c.success.select(s * (one + c.success_inc), next_s);
         }
         let delta_d = -sp(6) * (review.rating - k(3.0));
         c.next_d = d + (k(10.0) - d) * delta_d / k(9.0);
@@ -287,7 +285,7 @@ fn trajectory_gradient<const BOUNDED: bool>(
         c.s_live = live(next_s, S_MIN, S_MAX);
         c.d_live = live(mean_d, D_MIN, D_MAX);
         s = clamp(next_s, S_MIN, S_MAX);
-        d = active.blend(clamp(mean_d, D_MIN, D_MAX), d);
+        d = active.select(clamp(mean_d, D_MIN, D_MAX), d);
     }
 
     // Reverse pass: gs and gd are the adjoints of the state entering a row.
@@ -296,25 +294,25 @@ fn trajectory_gradient<const BOUNDED: bool>(
     for (row, c) in steps.iter().enumerate().rev() {
         let mut gr = z;
         if row + 1 != steps.len() {
-            let active = c.rating.cmp_gt(z);
-            let g = c.s_live.blend(gs, z);
-            let mut previous_s = active.blend(z, gs);
-            let mut previous_d = active.blend(z, gd);
+            let active = c.rating.simd_gt(z);
+            let g = c.s_live.select(gs, z);
+            let mut previous_s = active.select(z, gs);
+            let mut previous_d = active.select(z, gd);
             if c.short.any() {
-                let g = c.short.blend(g, z);
-                let g_raw = c.short_live.blend(g * c.s * c.short_raw, z);
+                let g = c.short.select(g, z);
+                let g_raw = c.short_live.select(g * c.s * c.short_raw, z);
                 gw[17] += g_raw * (c.rating - k(3.0) + sp(18));
                 gw[18] += g_raw * sp(17);
                 gw[19] -= g_raw * c.ln_s;
                 previous_s += g * c.short_value - g_raw * sp(19) * c.inv_s;
             }
             if c.failure.any() {
-                let g_floor = (c.failure & c.floor_live).blend(g * c.failure_floor, z);
+                let g_floor = (c.failure & c.floor_live).select(g * c.failure_floor, z);
                 gw[17] -= g_floor * sp(18);
                 gw[18] -= g_floor * sp(17);
                 previous_s += g_floor * c.inv_s;
 
-                let g = (c.failure & !c.floor_live).blend(g, z);
+                let g = (c.failure & !c.floor_live).select(g, z);
                 let g_raw = g * c.failure_raw;
                 let g_power = g * c.failure_prefactor * c.failure_power;
                 gw[11] += g_raw / sp(11);
@@ -326,9 +324,9 @@ fn trajectory_gradient<const BOUNDED: bool>(
                 gr -= g_raw * sp(14);
             }
             if c.success.any() {
-                let g = c.success.blend(g, z);
-                let hard = c.rating.cmp_eq(k(2.0)).blend(sp(15), one);
-                let easy = c.rating.cmp_eq(k(4.0)).blend(sp(16), one);
+                let g = c.success.select(g, z);
+                let hard = c.rating.simd_eq(k(2.0)).select(sp(15), one);
+                let easy = c.rating.simd_eq(k(4.0)).select(sp(16), one);
                 let g_inc = g * c.s;
                 let g_increment = g_inc * c.success_inc;
                 let g_exp = g_inc * c.success_base * hard * easy * c.success_exp;
@@ -337,13 +335,13 @@ fn trajectory_gradient<const BOUNDED: bool>(
                 gw[10] += g_exp * (one - c.r);
                 // Avoid dividing by w15: the hard multiplier may be exactly zero.
                 let g_bonus = g_inc * c.success_base * (c.success_exp - one);
-                gw[15] += c.rating.cmp_eq(k(2.0)).blend(g_bonus, z);
-                gw[16] += c.rating.cmp_eq(k(4.0)).blend(g_bonus, z);
+                gw[15] += c.rating.simd_eq(k(2.0)).select(g_bonus, z);
+                gw[16] += c.rating.simd_eq(k(4.0)).select(g_bonus, z);
                 previous_s += g * (one + c.success_inc) - g_increment * sp(9) * c.inv_s;
                 previous_d -= g_increment / (k(11.0) - c.d);
                 gr -= g_exp * sp(10);
             }
-            let g_mean = (active & c.d_live).blend(gd, z);
+            let g_mean = (active & c.d_live).select(gd, z);
             gw[7] += g_mean * (k(p.easy_d) - c.next_d);
             gw[4] += g_mean * sp(7);
             gw[5] -= g_mean * sp(7) * k(3.0 * p.exp_3w5_f64 as f32);
@@ -357,21 +355,21 @@ fn trajectory_gradient<const BOUNDED: bool>(
         // R = base^decay, base = 1 + t/s * factor(decay), decay = -w20.
         let gr_r = gr * c.r + c.score_log_r;
         // Match the scalar zero-adjoint early return, including 0 * ln(infinity).
-        let curve_active = !gr_r.cmp_eq(z);
+        let curve_active = !gr_r.simd_eq(z);
         let g_base = gr_r * k(p.curve_decay) / c.base;
-        let g_base_t_over_s = curve_active.blend(g_base * c.t * c.inv_s, z);
+        let g_base_t_over_s = curve_active.select(g_base * c.t * c.inv_s, z);
         gs -= g_base_t_over_s * k(p.curve_factor) * c.inv_s;
-        gw[20] -= curve_active.blend(
+        gw[20] -= curve_active.select(
             gr_r * c.ln_base + g_base_t_over_s * k(p.curve_dfactor_ddecay as f32),
             z,
         );
     }
 
-    gs = live(initial_s, S_MIN, S_MAX).blend(gs, z);
+    gs = live(initial_s, S_MIN, S_MAX).select(gs, z);
     for (i, dst) in gw[..4].iter_mut().enumerate() {
-        *dst += rating.cmp_eq(k((i + 1) as f32)).blend(gs, z);
+        *dst += rating.simd_eq(k((i + 1) as f32)).select(gs, z);
     }
-    gd = live(initial_d, D_MIN, D_MAX).blend(gd, z);
+    gd = live(initial_d, D_MIN, D_MAX).select(gd, z);
     gw[4] += gd;
     gw[5] -= gd * offset * initial_exp;
     gw
