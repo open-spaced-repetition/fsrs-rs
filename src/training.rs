@@ -1,14 +1,19 @@
 #[cfg(all(target_os = "wasi", target_env = "p1"))]
 use crate::ItemProgress;
+use crate::analytic_v6::plan::{BatchPlan, build_batch_plans};
+use crate::analytic_v6::worker::{BatchGradientFn, with_gradients};
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    FSRSItem, WeightedFSRSItem, WindowedItems, filter_outlier_train_indices, prepare_training_data,
+    FSRSItem, WeightedFSRSItem, WindowedItems, outlier_bucket_decisions,
     recency_weighted_fsrs_items,
 };
 use crate::error::Result;
 use crate::model::{FSRS, ModelConfig, ModelVersion};
 use crate::parameter_clipper::clip_parameters_in_place;
-use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
+use crate::parameter_initialization::{
+    InitialReview, initialize_stability_from_first_reviews, initialize_stability_parameters,
+    smooth_and_fill,
+};
 use crate::parameter_initialization_fsrs7::smooth_initial_stabilities_fsrs7;
 use crate::{DEFAULT_PARAMETERS, FSRS6_DEFAULT_PARAMETERS, FSRSError};
 use rand::SeedableRng;
@@ -441,7 +446,7 @@ fn normalize_for_model_version(
             .into_iter()
             .map(|mut item| {
                 for review in &mut item.reviews {
-                    review.delta_t = review.delta_t.max(0.0).round();
+                    review.delta_t = fsrs6_elapsed_days(review.delta_t);
                 }
                 item
             })
@@ -485,48 +490,74 @@ fn attach_card_ids(
     }
 }
 
-fn prepare_training_data_with_card_ids(
-    items: Vec<TrainingFSRSItem>,
-) -> (Vec<FSRSItem>, Vec<TrainingFSRSItem>) {
-    let initialization_source_indices = items
+/// FSRS-6 preprocessing: collect the initialization reviews and drop outliers.
+///
+/// Returns the same initialization set and training items as rounding every
+/// history first and then running `prepare_training_data`, but only reads each
+/// item's first long-term review. Whole-day rounding of complete histories is
+/// left to batch layout.
+fn prepare_fsrs6_training_data(
+    mut items: Vec<TrainingFSRSItem>,
+) -> (Vec<InitialReview>, Vec<TrainingFSRSItem>) {
+    let first_reviews: Vec<_> = items
         .iter()
-        .enumerate()
-        .filter_map(|(index, item)| (item.item.long_term_review_cnt() == 1).then_some(index))
-        .collect::<Vec<_>>();
-    let dataset_for_initialization = initialization_source_indices
-        .iter()
-        .map(|&index| items[index].item.clone())
-        .collect::<Vec<_>>();
-
-    if std::env::var("FSRS_NO_OUTLIER").is_ok() {
-        let trainset = items
-            .into_iter()
-            .filter(|item| item.item.long_term_review_cnt() != 1)
-            .collect();
-        return (dataset_for_initialization, trainset);
-    }
-
-    let (initialization_indices, train_indices) = filter_outlier_train_indices(
-        &dataset_for_initialization,
-        items.iter().map(|item| &item.item),
-    );
-    let filtered_initialization = initialization_indices
-        .into_iter()
-        .map(|index| {
-            let source_index = initialization_source_indices[index];
-            items[source_index].item.clone()
-        })
+        .map(|item| first_long_term_review(&item.item))
         .collect();
-    let mut train_indices = train_indices.into_iter();
-    let mut next_train_index = train_indices.next();
-    let mut trainset = Vec::new();
-    for (index, item) in items.into_iter().enumerate() {
-        if next_train_index == Some(index) {
-            trainset.push(item);
-            next_train_index = train_indices.next();
-        }
+    // Items with exactly one long-term review initialize the stabilities.
+    let initial_reviews: Vec<_> = first_reviews
+        .iter()
+        .filter_map(|first| first.filter(|f| f.is_only).map(|f| f.review))
+        .collect();
+    if std::env::var("FSRS_NO_OUTLIER").is_ok() {
+        let mut first_reviews = first_reviews.iter();
+        items.retain(|_| !first_reviews.next().unwrap().is_some_and(|f| f.is_only));
+        return (initial_reviews, items);
     }
-    (filtered_initialization, trainset)
+    let decisions = outlier_bucket_decisions(initial_reviews.iter().map(|r| (r.rating, r.delta_t)));
+    let initialization = decisions
+        .kept_initialization_indices
+        .iter()
+        .map(|&i| initial_reviews[i])
+        .collect();
+    let outliers = decisions.removed_bucket_lookup();
+    let mut first_reviews = first_reviews.iter();
+    items.retain(|_| {
+        first_reviews
+            .next()
+            .unwrap()
+            .is_none_or(|f| !outliers.contains(f.review.rating, f.review.delta_t))
+    });
+    (initialization, items)
+}
+
+#[derive(Clone, Copy)]
+struct FirstLongTermReview {
+    review: InitialReview,
+    /// No later review of the item is long-term.
+    is_only: bool,
+}
+
+/// The first review that is long-term after FSRS-6's whole-day rounding, i.e.
+/// whose raw interval is at least half a day.
+fn first_long_term_review(item: &FSRSItem) -> Option<FirstLongTermReview> {
+    let mut long_term = item.reviews.iter().filter(|r| r.delta_t >= 0.5);
+    let first = long_term.next()?;
+    Some(FirstLongTermReview {
+        review: InitialReview {
+            rating: item.reviews[0].rating,
+            delta_t: fsrs6_elapsed_days(first.delta_t),
+            recalled: first.rating > 1,
+        },
+        is_only: long_term.next().is_none(),
+    })
+}
+
+/// FSRS-6's whole-day rounding of an elapsed interval (`max(0).round()`).
+#[inline]
+pub(crate) fn fsrs6_elapsed_days(t: f32) -> f32 {
+    let t = t.max(0.0);
+    // Integer-day logs need no library rounding call.
+    if t == t as u32 as f32 { t } else { t.round() }
 }
 
 /// Recency weights for training, in item (review-time) order. FSRS-7 uses srs-benchmark's
@@ -715,32 +746,18 @@ fn compute_parameters_inner(
     if let Some(config) = &training_config {
         validate_training_config(config).inspect_err(|_| finish_progress())?;
     }
-    // FSRS-7 clamps delta_t when it lays out its batches, so its prefix items are not rewritten
-    // here. The clamp does not change long_term_review_cnt.
-    let train_set = if model_version == ComputeParametersVersion::Fsrs7 {
-        train_set
-    } else {
-        normalize_for_model_version(train_set, model_version)
-    };
+    // Every item needs a current review to predict, as in `evaluate`.
+    if train_set.iter().any(|item| item.reviews.is_empty()) {
+        finish_progress();
+        return Err(FSRSError::InvalidInput);
+    }
     let (dataset_for_initialization, train_set) =
         if model_version == ComputeParametersVersion::Fsrs7 {
             // FSRS-7 trains on every item, as in srs-benchmark: no outlier filter.
             // No pre-training, so no initialization set (see only_first_reviews below).
             (Vec::new(), attach_card_ids(train_set, card_ids)?)
-        } else if card_ids.is_some() {
-            prepare_training_data_with_card_ids(attach_card_ids(train_set, card_ids)?)
         } else {
-            let (dataset_for_initialization, train_set) = prepare_training_data(train_set);
-            (
-                dataset_for_initialization,
-                train_set
-                    .into_iter()
-                    .map(|item| TrainingFSRSItem {
-                        item,
-                        card_id: None,
-                    })
-                    .collect(),
-            )
+            prepare_fsrs6_training_data(attach_card_ids(train_set, card_ids)?)
         };
     if train_set.len() < 8 {
         finish_progress();
@@ -750,15 +767,19 @@ fn compute_parameters_inner(
         }));
     }
 
+    let initialization_size = dataset_for_initialization.len();
     let (mut initialized_parameters, fsrs6_initial_rating_count) = match model_version {
         ComputeParametersVersion::Fsrs6 => {
             let average_recall =
                 calculate_average_recall_from_items(train_set.iter().map(|item| &item.item));
             let (initial_stability, initial_rating_count) =
-                initialize_stability_parameters(dataset_for_initialization.clone(), average_recall)
-                    .inspect_err(|_e| {
-                        finish_progress();
-                    })?;
+                initialize_stability_from_first_reviews(
+                    dataset_for_initialization.into_iter(),
+                    average_recall,
+                )
+                .inspect_err(|_e| {
+                    finish_progress();
+                })?;
             let initialized_parameters = initial_stability
                 .into_iter()
                 .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
@@ -773,7 +794,7 @@ fn compute_parameters_inner(
     }
     // Every item is a first long-term review: nothing to train on.
     let only_first_reviews = match model_version {
-        ComputeParametersVersion::Fsrs6 => train_set.len() == dataset_for_initialization.len(),
+        ComputeParametersVersion::Fsrs6 => train_set.len() == initialization_size,
         ComputeParametersVersion::Fsrs7 => train_set
             .iter()
             .all(|item| item.item.long_term_review_cnt() == 1),
@@ -817,7 +838,7 @@ fn compute_parameters_inner(
 
     if optimized_parameters
         .iter()
-        .any(|parameter: &f32| parameter.is_infinite())
+        .any(|parameter: &f32| !parameter.is_finite())
     {
         return Err(FSRSError::InvalidInput);
     }
@@ -1392,13 +1413,28 @@ fn train(
         );
     }
     let total_size = train_set.len();
-    let fsrs7_batches = (version == ModelVersion::Fsrs7)
-        .then(|| build_windowed_batches(&train_set, config.batch_size));
-    let fsrs6_batches =
-        (version == ModelVersion::Fsrs6).then(|| build_fsrs6_batches(train_set, config.batch_size));
+    let batches = match version {
+        ModelVersion::Fsrs7 => {
+            TrainingBatches::Fsrs7(build_windowed_batches(&train_set, config.batch_size))
+        }
+        // Log loss: SIMD kernel; its layout rounds elapsed days per batch.
+        ModelVersion::Fsrs6 if objective == TrainingObjective::ProbabilityLogLoss => {
+            let plans = build_batch_plans(&train_set, config.batch_size);
+            TrainingBatches::Fsrs6Simd(plans, train_set)
+        }
+        // Classifier objectives reweight each batch from its predictions,
+        // which only the scalar kernel supports; round the histories for it here.
+        ModelVersion::Fsrs6 => {
+            for item in &mut train_set {
+                for review in &mut item.item.reviews {
+                    review.delta_t = fsrs6_elapsed_days(review.delta_t);
+                }
+            }
+            TrainingBatches::Fsrs6(build_fsrs6_batches(train_set, config.batch_size))
+        }
+    };
     train_on_batches(
-        fsrs7_batches,
-        fsrs6_batches,
+        batches,
         total_size,
         initial_parameters,
         config,
@@ -1420,8 +1456,7 @@ fn train_fsrs7_windowed<I: WindowedItems>(
     let batches = build_windowed_batches(&train_set, config.batch_size);
     drop(train_set);
     train_on_batches(
-        Some(batches),
-        None,
+        TrainingBatches::Fsrs7(batches),
         total_size,
         initial_parameters,
         config,
@@ -1430,13 +1465,16 @@ fn train_fsrs7_windowed<I: WindowedItems>(
     )
 }
 
-#[cfg_attr(
-    all(target_os = "wasi", target_env = "p1"),
-    allow(clippy::too_many_arguments)
-)]
+enum TrainingBatches {
+    /// FSRS-6 scalar reference kernel, used by the classifier objective.
+    Fsrs6(Vec<PrefixHostBatch>),
+    /// FSRS-6 SIMD kernel for log loss: batch plans and the items they index.
+    Fsrs6Simd(Vec<BatchPlan>, Vec<WeightedFSRSItem>),
+    Fsrs7(Vec<WindowedFSRSBatch>),
+}
+
 fn train_on_batches(
-    fsrs7_batches: Option<Vec<WindowedFSRSBatch>>,
-    fsrs6_batches: Option<Vec<PrefixHostBatch>>,
+    batches: TrainingBatches,
     total_size: usize,
     initial_parameters: &[f32],
     config: &InternalTrainingConfig,
@@ -1444,10 +1482,57 @@ fn train_on_batches(
     progress: Option<ProgressCollector>,
     #[cfg(all(target_os = "wasi", target_env = "p1"))] observer: &mut impl FnMut(ItemProgress) -> bool,
 ) -> Result<Vec<f32>> {
+    let optimize = |batch_sizes: &[usize], gradient: &mut BatchGradientFn<'_>| {
+        run_epochs(
+            batch_sizes,
+            gradient,
+            total_size,
+            initial_parameters,
+            config,
+            progress,
+            #[cfg(all(target_os = "wasi", target_env = "p1"))]
+            observer,
+        )
+    };
+    match batches {
+        TrainingBatches::Fsrs7(batches) => {
+            let sizes: Vec<_> = batches.iter().map(|b| b.real_batch_size()).collect();
+            optimize(&sizes, &mut |index, parameters| {
+                fsrs7_batch_grad(&batches[index], parameters, objective)
+            })
+        }
+        TrainingBatches::Fsrs6(batches) => {
+            let sizes: Vec<_> = batches.iter().map(|b| b.real_batch_size).collect();
+            optimize(&sizes, &mut |index, parameters| {
+                fsrs6_batch_grad(&batches[index], parameters, objective)
+            })
+        }
+        TrainingBatches::Fsrs6Simd(plans, items) => {
+            let sizes: Vec<_> = plans.iter().map(BatchPlan::predictions).collect();
+            // Lay out the batches in the order the first epoch visits them.
+            let mut first_epoch: Vec<_> = (0..plans.len()).collect();
+            first_epoch.shuffle(&mut StdRng::seed_from_u64(config.seed));
+            with_gradients(&plans, items, &first_epoch, |gradient| {
+                optimize(&sizes, gradient)
+            })
+        }
+    }
+}
+
+/// Mini-batch Adam over shuffled batches. `gradient(index, parameters)`
+/// returns the loss gradient of batch `index`; `batch_sizes[index]` is its
+/// number of predictions.
+fn run_epochs(
+    batch_sizes: &[usize],
+    gradient: &mut BatchGradientFn<'_>,
+    total_size: usize,
+    initial_parameters: &[f32],
+    config: &InternalTrainingConfig,
+    mut progress: Option<ProgressCollector>,
+    #[cfg(all(target_os = "wasi", target_env = "p1"))] observer: &mut impl FnMut(ItemProgress) -> bool,
+) -> Result<Vec<f32>> {
     let version = ModelVersion::from_param_count(initial_parameters.len());
-    let batch_count = fsrs7_batches
-        .as_ref()
-        .map_or_else(|| fsrs6_batches.as_ref().unwrap().len(), Vec::len);
+    let batch_count = batch_sizes.len();
     let mut parameters = initial_parameters.to_vec();
     let initial = parameters.clone();
     let mut adam = HostAdam::new(parameters.len());
@@ -1460,42 +1545,13 @@ fn train_on_batches(
     let mut scheduler = CosineAnnealingLR::init(iterations as f64, config.learning_rate);
     let mut rng = StdRng::seed_from_u64(config.seed);
     let mut order = (0..batch_count).collect::<Vec<_>>();
-    let mut progress = progress;
 
     for epoch in 1..=config.num_epochs {
         order.shuffle(&mut rng);
         let mut processed = 0;
         for &index in &order {
-            let real_batch_size = if let Some(batches) = &fsrs7_batches {
-                batches[index].real_batch_size()
-            } else {
-                fsrs6_batches.as_ref().unwrap()[index].real_batch_size
-            };
-            let mut grad = if let Some(batches) = &fsrs7_batches {
-                let batch = &batches[index];
-                if matches!(objective, TrainingObjective::HardClassificationCost { .. }) {
-                    let mut adjusted = batch.clone();
-                    let predictions = windowed_predictions(
-                        &parameters,
-                        &batch.t_historys,
-                        &batch.r_historys,
-                        &batch.weights,
-                        batch.seq_len,
-                        batch.batch_size,
-                    );
-                    adjusted.weights =
-                        objective_weights(objective, &batch.labels, &batch.weights, &predictions);
-                    adjusted.analytic_bce_grad(&parameters).to_vec()
-                } else {
-                    batch.analytic_bce_grad(&parameters).to_vec()
-                }
-            } else {
-                fsrs6_batch_grad(
-                    &fsrs6_batches.as_ref().unwrap()[index],
-                    &parameters,
-                    objective,
-                )
-            };
+            let real_batch_size = batch_sizes[index];
+            let mut grad = gradient(index, &parameters);
             let l2_weight = l2_penalty_weight(version) * config.gamma;
             let (_, l2_grad) = l2_penalty_fn(version)(
                 &parameters,
@@ -1538,9 +1594,311 @@ fn train_on_batches(
     Ok(parameters)
 }
 
+fn fsrs7_batch_grad(
+    batch: &WindowedFSRSBatch,
+    parameters: &[f32],
+    objective: TrainingObjective,
+) -> Vec<f32> {
+    if !matches!(objective, TrainingObjective::HardClassificationCost { .. }) {
+        return batch.analytic_bce_grad(parameters).to_vec();
+    }
+    let predictions = windowed_predictions(
+        parameters,
+        &batch.t_historys,
+        &batch.r_historys,
+        &batch.weights,
+        batch.seq_len,
+        batch.batch_size,
+    );
+    let mut adjusted = batch.clone();
+    adjusted.weights = objective_weights(objective, &batch.labels, &batch.weights, &predictions);
+    adjusted.analytic_bce_grad(parameters).to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analytic_v6::batch::Workspace;
+    use crate::dataset::prepare_training_data;
+    use crate::test_helpers::relative_l2_error;
+
+    fn fsrs6_test_items(card_ids: bool) -> Vec<WeightedFSRSItem> {
+        let fixture = crate::test_helpers::varied_card_prefixes();
+        let (items, ids) = crate::test_helpers::items_of_card_prefixes(&fixture);
+        let items = attach_card_ids(items, card_ids.then_some(ids)).unwrap();
+        recency_weighted_training_items(items, ComputeParametersVersion::Fsrs6)
+    }
+
+    fn round_elapsed_days(items: &mut [WeightedFSRSItem]) {
+        for item in items {
+            for review in &mut item.item.reviews {
+                review.delta_t = fsrs6_elapsed_days(review.delta_t);
+            }
+        }
+    }
+
+    /// SIMD batches keep the scalar batches' boundaries and prediction counts,
+    /// and their gradients stay within the kernel's relative L2 tolerance.
+    fn assert_simd_batches_match_scalar(items: &[WeightedFSRSItem], batch_size: usize) {
+        let plans = build_batch_plans(items, batch_size);
+        let mut rounded = items.to_vec();
+        round_elapsed_days(&mut rounded);
+        let scalar = build_fsrs6_batches(rounded, batch_size);
+        assert_eq!(plans.len(), scalar.len());
+        let mut workspace = Workspace::default();
+        for (plan, reference) in plans.iter().zip(&scalar) {
+            let batch = plan.layout(items);
+            assert_eq!(batch.predictions, reference.real_batch_size);
+            let actual = batch.gradient(&FSRS6_DEFAULT_PARAMETERS, &mut workspace);
+            let expected = fsrs6_batch_grad(
+                reference,
+                &FSRS6_DEFAULT_PARAMETERS,
+                TrainingObjective::ProbabilityLogLoss,
+            );
+            let error = relative_l2_error(&actual, &expected);
+            assert!(
+                error < 2e-4,
+                "batch_size={batch_size}, relative error={error}"
+            );
+        }
+    }
+
+    #[test]
+    fn fsrs6_deferred_preprocessing_matches_normalized_preprocessing() {
+        let fixture = crate::test_helpers::varied_card_prefixes();
+        let (mut items, ids) = crate::test_helpers::items_of_card_prefixes(&fixture);
+        // Exercise both sides of half-day rounding and the outlier bucket boundary.
+        for (i, item) in items.iter_mut().enumerate() {
+            if item.reviews.len() > 1 {
+                item.reviews[1].delta_t = [0.49, 0.5, 0.51, 1.49, 1.5, 1.51][i % 6];
+            }
+        }
+        let normalized =
+            normalize_for_model_version(items.clone(), ComputeParametersVersion::Fsrs6);
+        let (expected_init, expected_items) = prepare_training_data(normalized);
+        let (actual_init, actual_items) =
+            prepare_fsrs6_training_data(attach_card_ids(items, Some(ids.clone())).unwrap());
+        let expected_init: Vec<_> = expected_init
+            .iter()
+            .map(|item| {
+                let review = item.first_long_term_review();
+                InitialReview {
+                    rating: item.reviews[0].rating,
+                    delta_t: review.delta_t,
+                    recalled: review.rating > 1,
+                }
+            })
+            .collect();
+        assert_eq!(actual_init, expected_init);
+        let actual_items = normalize_for_model_version(
+            actual_items.into_iter().map(|it| it.item).collect(),
+            ComputeParametersVersion::Fsrs6,
+        );
+        assert_eq!(actual_items, expected_items);
+        for value in [
+            -1.0,
+            0.0,
+            0.49999997,
+            0.5,
+            1.5,
+            100.5,
+            16_777_216.0,
+            f32::MAX,
+            f32::INFINITY,
+            f32::NAN,
+        ] {
+            assert_eq!(fsrs6_elapsed_days(value), value.max(0.0).round());
+        }
+    }
+
+    #[test]
+    fn fsrs6_simd_batches_preserve_prediction_counts_and_gradients() {
+        for card_ids in [false, true] {
+            for batch_size in [7, 512] {
+                assert_simd_batches_match_scalar(&fsrs6_test_items(card_ids), batch_size);
+            }
+        }
+    }
+
+    #[test]
+    fn fsrs6_flat_plan_handles_duplicate_prefixes_and_extreme_ids() {
+        let mut items = fsrs6_test_items(true);
+        // Missing first prefixes force the card table to grow from its minimum
+        // size. Widely spaced signed IDs check the ID ordering.
+        items.retain(|it| it.item.reviews.len() > 2);
+        for item in &mut items {
+            let id = (item.card_id.unwrap() - 1_000) / 3;
+            item.card_id = Some(match id {
+                0 => i64::MIN,
+                1 => i64::MAX,
+                _ => -id * 1_000_000_000_000,
+            });
+        }
+        let mut duplicates: Vec<_> = items.iter().step_by(13).cloned().collect();
+        for item in &mut duplicates {
+            item.weight = 0.0;
+        }
+        items.extend(duplicates);
+        items.reverse();
+        for batch_size in [1, 31, 512] {
+            assert_simd_batches_match_scalar(&items, batch_size);
+        }
+    }
+
+    #[test]
+    fn fsrs6_training_matches_scalar_and_can_be_interrupted() {
+        for card_ids in [false, true] {
+            let items = fsrs6_test_items(card_ids);
+            let mut rounded = items.clone();
+            round_elapsed_days(&mut rounded);
+            let mut config = new_internal_training_config(true, false, None);
+            config.num_epochs = 2;
+            config.learning_rate = 0.04;
+            let reference = train_on_batches(
+                TrainingBatches::Fsrs6(build_fsrs6_batches(rounded.clone(), config.batch_size)),
+                items.len(),
+                &FSRS6_DEFAULT_PARAMETERS,
+                &config,
+                TrainingObjective::ProbabilityLogLoss,
+                None,
+                #[cfg(all(target_os = "wasi", target_env = "p1"))]
+                &mut |_| true,
+            )
+            .unwrap();
+            let actual = train(
+                items.clone(),
+                &FSRS6_DEFAULT_PARAMETERS,
+                &config,
+                TrainingObjective::ProbabilityLogLoss,
+                None,
+                #[cfg(all(target_os = "wasi", target_env = "p1"))]
+                &mut |_| true,
+            )
+            .unwrap();
+            let samples: Vec<_> = rounded.into_iter().map(|item| item.item).collect();
+            let log_loss = |parameters: &[f32]| {
+                FSRS::new(parameters)
+                    .unwrap()
+                    .evaluate(samples.clone(), |_| true)
+                    .unwrap()
+                    .log_loss
+            };
+            let (actual_loss, expected_loss) = (log_loss(&actual), log_loss(&reference));
+            assert!(
+                (actual_loss - expected_loss).abs() < 1e-5,
+                "{actual_loss} != {expected_loss}"
+            );
+            let progress = CombinedProgressState::new_shared();
+            reset_training_progress(&Some(progress.clone()), config.num_epochs, items.len());
+            progress.lock().unwrap().want_abort = true;
+            assert_eq!(
+                train(
+                    items,
+                    &FSRS6_DEFAULT_PARAMETERS,
+                    &config,
+                    TrainingObjective::ProbabilityLogLoss,
+                    Some(ProgressCollector::new(progress, 0)),
+                    #[cfg(all(target_os = "wasi", target_env = "p1"))]
+                    &mut |_| true,
+                ),
+                Err(FSRSError::Interrupted)
+            );
+        }
+    }
+
+    #[test]
+    fn items_without_reviews_are_rejected_instead_of_panicking() {
+        let fixture = crate::test_helpers::varied_card_prefixes();
+        let (mut items, _) = crate::test_helpers::items_of_card_prefixes(&fixture);
+        items.push(FSRSItem { reviews: vec![] });
+        for model_version in [
+            ComputeParametersVersion::Fsrs6,
+            ComputeParametersVersion::Fsrs7,
+        ] {
+            let progress = CombinedProgressState::new_shared();
+            let input = ComputeParametersInput {
+                train_set: items.clone(),
+                progress: Some(progress.clone()),
+                model_version,
+                ..Default::default()
+            };
+            assert_eq!(
+                compute_parameters(input.clone()),
+                Err(FSRSError::InvalidInput)
+            );
+            assert!(progress.lock().unwrap().finished());
+            assert_eq!(
+                compute_parameters_for_recall_classifier(input, Default::default()),
+                Err(FSRSError::InvalidInput)
+            );
+        }
+    }
+
+    #[test]
+    fn fsrs6_extreme_interval_training_matches_scalar_parameters() {
+        let reviews = vec![
+            crate::FSRSReview {
+                rating: 1,
+                delta_t: 0.0,
+            },
+            crate::FSRSReview {
+                rating: 1,
+                delta_t: 1.0,
+            },
+            crate::FSRSReview {
+                rating: 3,
+                delta_t: f32::MAX,
+            },
+        ];
+        let mut train_set = vec![
+            FSRSItem {
+                reviews: reviews[..2].to_vec()
+            };
+            32
+        ];
+        train_set.extend(vec![FSRSItem { reviews }; 64]);
+        // main's scalar trainer on this input, including initialization and one Adam step.
+        let expected = [
+            0.0001,
+            0.00060995284,
+            0.0010879717,
+            0.003913019,
+            6.4133,
+            0.8334,
+            3.0194,
+            0.001,
+            1.8722,
+            0.1666,
+            0.796,
+            1.4835,
+            0.0614,
+            0.2629,
+            1.6483,
+            0.6014,
+            1.8729,
+            0.5425,
+            0.0912,
+            0.0658,
+            0.19420001,
+        ];
+        for with_card_ids in [false, true] {
+            let actual = compute_parameters(ComputeParametersInput {
+                train_set: train_set.clone(),
+                card_ids: with_card_ids.then(|| (0..32).chain(0..64).collect()),
+                model_version: ComputeParametersVersion::Fsrs6,
+                training_config: Some(TrainingConfig {
+                    num_epochs: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap();
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!(actual.is_finite());
+                assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+            }
+        }
+    }
 
     #[test]
     fn fsrs7_schedule_penalty_matches_srs_benchmark_at_default_parameters() {

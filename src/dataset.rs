@@ -202,73 +202,141 @@ impl FSRSItem {
     }
 }
 
-struct OutlierBucketDecisions {
-    removed_pairs: [HashSet<u32>; 5],
-    kept_initialization_indices: Vec<usize>,
+pub(crate) struct OutlierBucketDecisions {
+    pub(crate) removed_pairs: [HashSet<u32>; 5],
+    pub(crate) kept_initialization_indices: Vec<usize>,
 }
 
-fn compute_outlier_bucket_decisions<'a>(
+pub(crate) fn compute_outlier_bucket_decisions<'a>(
     dataset_for_initialization: impl Iterator<Item = &'a FSRSItem>,
 ) -> OutlierBucketDecisions {
-    let to_key = |delta_t: f32| bucket_long_term_delta_t(delta_t).to_bits();
-    let from_key = |key: u32| f32::from_bits(key);
-    let mut groups = HashMap::<u32, HashMap<u32, Vec<usize>>>::new();
+    outlier_bucket_decisions(dataset_for_initialization.map(|item| {
+        (
+            item.reviews[0].rating,
+            item.first_long_term_review().delta_t,
+        )
+    }))
+}
 
-    // Group by first rating and first long-term review delta_t.
-    // (For FSRS-7, current review can be same-day and should not define the group.)
-    for (index, item) in dataset_for_initialization.enumerate() {
-        let first_review = item.reviews.first().unwrap();
-        let first_long_term_review = item.first_long_term_review();
-        groups
-            .entry(first_review.rating)
-            .or_default()
-            .entry(to_key(first_long_term_review.delta_t))
-            .or_default()
-            .push(index);
+/// Outlier decisions from each initialization item's `(first rating, first
+/// long-term interval)`. Per rating, the least populated buckets (5%, at least
+/// 20 items) are removed, as are small or long-interval buckets.
+pub(crate) fn outlier_bucket_decisions(
+    first_reviews: impl Iterator<Item = (u32, f32)>,
+) -> OutlierBucketDecisions {
+    struct Bucket {
+        rating: u32,
+        delta_t: f32,
+        count: usize,
+        first: usize,
+        last: usize,
     }
-
+    const NONE: usize = usize::MAX;
+    // Common integer-day buckets have a direct index; rare large intervals use
+    // a sparse map. Prefix membership is one flat chain, not a Vec per bucket.
+    let mut days = [[NONE; 366]; 5];
+    let mut sparse = HashMap::<(u32, u32), usize>::new();
+    let mut buckets: Vec<Bucket> = Vec::new();
+    let mut next = Vec::new();
+    let mut totals = [0usize; 5];
+    for (index, (rating, delta_t)) in first_reviews.enumerate() {
+        let delta_t = bucket_long_term_delta_t(delta_t);
+        let slot = if delta_t <= 365.0 {
+            &mut days[rating as usize][delta_t as usize]
+        } else {
+            sparse.entry((rating, delta_t.to_bits())).or_insert(NONE)
+        };
+        if *slot == NONE {
+            *slot = buckets.len();
+            buckets.push(Bucket {
+                rating,
+                delta_t,
+                count: 0,
+                first: index,
+                last: NONE,
+            });
+        }
+        let bucket = &mut buckets[*slot];
+        if bucket.last != NONE {
+            next[bucket.last] = index;
+        }
+        next.push(NONE);
+        bucket.last = index;
+        bucket.count += 1;
+        totals[rating as usize] += 1;
+    }
+    // Match the original per-rating reverse traversal of buckets sorted by
+    // descending population and then descending interval.
+    buckets.sort_unstable_by(|a, b| {
+        a.rating
+            .cmp(&b.rating)
+            .then(a.count.cmp(&b.count))
+            .then(a.delta_t.total_cmp(&b.delta_t))
+    });
     let mut removed_pairs: [HashSet<_>; 5] = Default::default();
     let mut kept_initialization_indices = Vec::new();
-
-    for (rating, delta_t_groups) in groups.into_iter().sorted_by_key(|&(k, _)| k) {
-        let mut sub_groups = delta_t_groups.into_iter().collect::<Vec<_>>();
-
-        // Order by bucket size descending and delta_t descending, matching the
-        // previous item-grouped implementation without storing full item groups.
-        sub_groups.sort_by(|(delta_t_a, indices_a), (delta_t_b, indices_b)| {
-            indices_b
-                .len()
-                .cmp(&indices_a.len())
-                .then(from_key(*delta_t_b).total_cmp(&from_key(*delta_t_a)))
-        });
-
-        let total = sub_groups
-            .iter()
-            .map(|(_, indices)| indices.len())
-            .sum::<usize>();
-        let mut has_been_removed = 0;
-
-        for (delta_t, indices) in sub_groups.iter().rev() {
-            // remove 5% items (20 at least) of each group
-            if has_been_removed + indices.len() >= 20.max(total / 20) {
-                // keep the sub_group if it includes at least six items
-                // and the delta_t is less than 100 days if rating is not 4
-                // or less than 365 days if rating is 4
-                if indices.len() < 6 || from_key(*delta_t) > if rating != 4 { 100.0 } else { 365.0 }
-                {
-                    removed_pairs[rating as usize].insert(*delta_t);
-                } else {
-                    kept_initialization_indices.extend(indices);
-                }
-            } else {
-                has_been_removed += indices.len();
-                removed_pairs[rating as usize].insert(*delta_t);
+    let mut removed = [0usize; 5];
+    for bucket in buckets {
+        let rating = bucket.rating as usize;
+        let discard = if removed[rating] + bucket.count < 20.max(totals[rating] / 20) {
+            removed[rating] += bucket.count;
+            true
+        } else {
+            bucket.count < 6 || bucket.delta_t > if rating != 4 { 100.0 } else { 365.0 }
+        };
+        if discard {
+            removed_pairs[rating].insert(bucket.delta_t.to_bits());
+        } else {
+            let mut index = bucket.first;
+            while index != NONE {
+                kept_initialization_indices.push(index);
+                index = next[index];
             }
         }
     }
     OutlierBucketDecisions {
         removed_pairs,
         kept_initialization_indices,
+    }
+}
+
+impl OutlierBucketDecisions {
+    pub(crate) fn removed_bucket_lookup(&self) -> RemovedBucketLookup<'_> {
+        let mut days = [[0u64; 6]; 5];
+        for (rating, keys) in self.removed_pairs.iter().enumerate() {
+            for &key in keys {
+                let day = f32::from_bits(key);
+                if day <= 365.0 {
+                    let day = day as usize;
+                    days[rating][day / 64] |= 1 << (day % 64);
+                }
+            }
+        }
+        RemovedBucketLookup {
+            days,
+            removed_pairs: &self.removed_pairs,
+        }
+    }
+}
+
+/// Membership test for removed (first rating, interval bucket) pairs. Every
+/// training prefix is checked, so buckets of up to a year use a bitset; longer
+/// intervals fall back to the hash set.
+pub(crate) struct RemovedBucketLookup<'a> {
+    days: [[u64; 6]; 5],
+    removed_pairs: &'a [HashSet<u32>; 5],
+}
+
+impl RemovedBucketLookup<'_> {
+    pub(crate) fn contains(&self, first_rating: u32, delta_t: f32) -> bool {
+        let rating = first_rating as usize;
+        let bucket = bucket_long_term_delta_t(delta_t);
+        if bucket <= 365.0 {
+            let day = bucket as usize;
+            self.days[rating][day / 64] & (1 << (day % 64)) != 0
+        } else {
+            self.removed_pairs[rating].contains(&bucket.to_bits())
+        }
     }
 }
 
@@ -391,4 +459,112 @@ pub(crate) fn recency_weighted_fsrs_items_with_card_ids(
             card_id: Some(card_id),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod outlier_regression_tests {
+    use super::*;
+    use rand::{Rng, SeedableRng, rngs::StdRng};
+
+    // The pre-optimization hash-map implementation is an independent ordering
+    // oracle for the dense buckets and flat membership chains.
+    fn reference(first_reviews: impl Iterator<Item = (u32, f32)>) -> OutlierBucketDecisions {
+        let to_key = |delta_t: f32| bucket_long_term_delta_t(delta_t).to_bits();
+        let from_key = |key: u32| f32::from_bits(key);
+        let mut groups = HashMap::<u32, HashMap<u32, Vec<usize>>>::new();
+
+        // Group by first rating and first long-term review delta_t.
+        // (For FSRS-7, current review can be same-day and should not define the group.)
+        for (index, (rating, delta_t)) in first_reviews.enumerate() {
+            groups
+                .entry(rating)
+                .or_default()
+                .entry(to_key(delta_t))
+                .or_default()
+                .push(index);
+        }
+
+        let mut removed_pairs: [HashSet<_>; 5] = Default::default();
+        let mut kept_initialization_indices = Vec::new();
+
+        for (rating, delta_t_groups) in groups.into_iter().sorted_by_key(|&(k, _)| k) {
+            let mut sub_groups = delta_t_groups.into_iter().collect::<Vec<_>>();
+
+            // Order by bucket size descending and delta_t descending, matching the
+            // previous item-grouped implementation without storing full item groups.
+            sub_groups.sort_by(|(delta_t_a, indices_a), (delta_t_b, indices_b)| {
+                indices_b
+                    .len()
+                    .cmp(&indices_a.len())
+                    .then(from_key(*delta_t_b).total_cmp(&from_key(*delta_t_a)))
+            });
+
+            let total = sub_groups
+                .iter()
+                .map(|(_, indices)| indices.len())
+                .sum::<usize>();
+            let mut has_been_removed = 0;
+
+            for (delta_t, indices) in sub_groups.iter().rev() {
+                // remove 5% items (20 at least) of each group
+                if has_been_removed + indices.len() >= 20.max(total / 20) {
+                    // keep the sub_group if it includes at least six items
+                    // and the delta_t is less than 100 days if rating is not 4
+                    // or less than 365 days if rating is 4
+                    if indices.len() < 6
+                        || from_key(*delta_t) > if rating != 4 { 100.0 } else { 365.0 }
+                    {
+                        removed_pairs[rating as usize].insert(*delta_t);
+                    } else {
+                        kept_initialization_indices.extend(indices);
+                    }
+                } else {
+                    has_been_removed += indices.len();
+                    removed_pairs[rating as usize].insert(*delta_t);
+                }
+            }
+        }
+        OutlierBucketDecisions {
+            removed_pairs,
+            kept_initialization_indices,
+        }
+    }
+
+    #[test]
+    fn flat_buckets_match_previous_outlier_decisions() {
+        let mut rng = StdRng::seed_from_u64(606);
+        for n in [0, 1, 5, 6, 19, 20, 21, 100, 400, 2000, 10_000] {
+            for _ in 0..8 {
+                let reviews: Vec<_> = (0..n)
+                    .map(|_| {
+                        let days = [
+                            0.0,
+                            0.5,
+                            1.0,
+                            1.1,
+                            5.0,
+                            100.0,
+                            101.0,
+                            365.0,
+                            366.0,
+                            10_000.0,
+                            f32::INFINITY,
+                            f32::NAN,
+                        ];
+                        (
+                            rng.random_range(1..=4),
+                            days[rng.random_range(0..days.len())],
+                        )
+                    })
+                    .collect();
+                let actual = outlier_bucket_decisions(reviews.iter().copied());
+                let expected = reference(reviews.iter().copied());
+                assert_eq!(actual.removed_pairs, expected.removed_pairs);
+                assert_eq!(
+                    actual.kept_initialization_indices,
+                    expected.kept_initialization_indices
+                );
+            }
+        }
+    }
 }

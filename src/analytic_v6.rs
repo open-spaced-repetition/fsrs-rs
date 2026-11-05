@@ -1,5 +1,14 @@
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
 
+// SIMD training path for the log-loss objective: `plan` chooses the items of
+// each batch, `batch` lays them out, `simd` differentiates eight histories at
+// once, and `worker` shares each batch between two threads. The scalar kernel
+// below is the reference and serves the classifier objective.
+pub(crate) mod batch;
+pub(crate) mod plan;
+mod simd;
+pub(crate) mod worker;
+
 const MIN_PROB: f32 = 1e-7;
 const MAX_PROB: f32 = 1.0 - 1e-7;
 

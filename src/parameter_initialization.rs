@@ -16,7 +16,36 @@ pub(crate) fn initialize_stability_parameters(
     fsrs_items: Vec<FSRSItem>,
     average_recall: f32,
 ) -> Result<([f32; 4], HashMap<u32, u32>)> {
-    let dataset_for_initialization = prepare_dataset_for_initialization(fsrs_items);
+    initialize_stability_from_first_reviews(
+        fsrs_items
+            .iter()
+            .filter(|item| item.long_term_review_cnt() == 1)
+            .map(|item| {
+                let review = item.first_long_term_review();
+                InitialReview {
+                    rating: item.reviews[0].rating,
+                    delta_t: review.delta_t,
+                    recalled: review.rating > 1,
+                }
+            }),
+        average_recall,
+    )
+}
+
+/// What initialization needs from an item with exactly one long-term review:
+/// the first rating and the outcome of that long-term review.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct InitialReview {
+    pub rating: u32,
+    pub delta_t: f32,
+    pub recalled: bool,
+}
+
+pub(crate) fn initialize_stability_from_first_reviews(
+    reviews: impl Iterator<Item = InitialReview>,
+    average_recall: f32,
+) -> Result<([f32; 4], HashMap<u32, u32>)> {
+    let dataset_for_initialization = prepare_dataset_for_initialization(reviews);
     let rating_count = total_rating_count(&dataset_for_initialization);
     let mut rating_stability = search_parameters(dataset_for_initialization, average_recall);
     Ok((
@@ -29,55 +58,34 @@ type FirstRating = u32;
 type Count = u32;
 
 fn prepare_dataset_for_initialization(
-    fsrs_items: Vec<FSRSItem>,
+    reviews: impl Iterator<Item = InitialReview>,
 ) -> HashMap<FirstRating, Vec<AverageRecall>> {
-    let to_key = |delta_t: f32| delta_t.to_bits();
-    let from_key = |key: u32| f32::from_bits(key);
-    // filter FSRSItem instances with exactly 1 long term review.
-    let items: Vec<_> = fsrs_items
+    // first rating -> first long-term delta_t -> (recalled, total)
+    let mut groups = HashMap::<u32, HashMap<u32, (u64, u64)>>::new();
+    for review in reviews {
+        let entry = groups
+            .entry(review.rating)
+            .or_default()
+            .entry(review.delta_t.to_bits())
+            .or_default();
+        entry.0 += u64::from(review.recalled);
+        entry.1 += 1;
+    }
+    groups
         .into_iter()
-        .filter(|item| item.long_term_review_cnt() == 1)
-        .collect();
-
-    // use a nested HashMap (groups) to group items first by the rating in the first FSRSReview
-    // and then by the delta_t in the second FSRSReview.
-    // (first_rating -> first_long_term_delta_t -> vec![0/1 for fail/pass])
-    let mut groups = HashMap::new();
-
-    for item in items {
-        let first_rating = item.reviews[0].rating;
-        let first_long_term_review = item.first_long_term_review();
-        let first_long_term_delta_t = to_key(first_long_term_review.delta_t);
-        let first_long_term_label = (first_long_term_review.rating > 1) as i32;
-
-        let inner_map = groups.entry(first_rating).or_insert_with(HashMap::new);
-        let ratings = inner_map
-            .entry(first_long_term_delta_t)
-            .or_insert_with(Vec::new);
-        ratings.push(first_long_term_label);
-    }
-
-    let mut results = HashMap::new();
-
-    for (first_rating, inner_map) in &groups {
-        let mut data = vec![];
-
-        // calculate the average (recall) and count for each group.
-        for (second_delta_t, ratings) in inner_map {
-            let avg = ratings.iter().map(|&x| x as f64).sum::<f64>() / ratings.len() as f64;
-            data.push(AverageRecall {
-                delta_t: from_key(*second_delta_t) as f64,
-                recall: avg,
-                count: ratings.len() as f64,
-            })
-        }
-
-        // Sort by delta_t in ascending order
-        data.sort_unstable_by(|a, b| a.delta_t.total_cmp(&b.delta_t));
-
-        results.insert(*first_rating, data);
-    }
-    results
+        .map(|(rating, buckets)| {
+            let mut data: Vec<_> = buckets
+                .into_iter()
+                .map(|(delta, (recalled, count))| AverageRecall {
+                    delta_t: f32::from_bits(delta) as f64,
+                    recall: recalled as f64 / count as f64,
+                    count: count as f64,
+                })
+                .collect();
+            data.sort_unstable_by(|a, b| a.delta_t.total_cmp(&b.delta_t));
+            (rating, data)
+        })
+        .collect()
 }
 
 /// The average pass rate & count for a single delta_t for a given first rating.
@@ -99,12 +107,17 @@ fn total_rating_count(
         .collect()
 }
 
+#[cfg(test)]
 fn power_forgetting_curve(t: &Array1<f64>, s: f64) -> Array1<f64> {
     let decay = -FSRS6_DEFAULT_PARAMETERS[20] as f64;
     let factor = 0.9f64.powf(1.0 / decay) - 1.0;
     (t / s * factor + 1.0).mapv(|v| v.powf(decay))
 }
 
+/// The initialization objective: BCE of the default forgetting curve plus an
+/// absolute-deviation prior. The search minimizes it via `loss_derivatives`;
+/// tests compare against it directly.
+#[cfg(test)]
 fn loss(
     delta_t: &Array1<f64>,
     recall: &Array1<f64>,
@@ -123,12 +136,79 @@ fn loss(
 
 pub(crate) const INIT_S_MAX: f32 = 100.0;
 
+/// First and second derivatives of the initialization BCE with respect to the
+/// stability `s` (the prior is handled by the caller). With `c = t * factor`
+/// and `p = (1 + c / s)^-decay`: `dp/ds = p * b` and `dBCE/dp = n * (p - y) /
+/// (p * (1 - p))`, so the slope is `n * a * b` with `a = (p - y) / (1 - p)`.
+fn loss_derivatives(delta_t: &[f64], recall: &[f64], count: &[f64], s: f64) -> (f64, f64) {
+    let decay = FSRS6_DEFAULT_PARAMETERS[20] as f64;
+    let factor = 0.9f64.powf(-1.0 / decay) - 1.0;
+    let mut slope = 0.0;
+    let mut curvature = 0.0;
+    for ((&t, &y), &n) in delta_t.iter().zip(recall).zip(count) {
+        let c = t * factor;
+        let p = (1.0 + c / s).powf(-decay);
+        let b = decay * c / (s * (s + c));
+        let a = (p - y) / (1.0 - p);
+        slope += n * a * b;
+        curvature +=
+            n * ((1.0 - y) * p * (b / (1.0 - p)).powi(2) - a * b * (1.0 / s + 1.0 / (s + c)));
+    }
+    (slope, curvature)
+}
+
+/// Minimizes BCE + |s - default| / 16 over `[S_MIN, INIT_S_MAX]`. The slope at
+/// the prior's kink (`default`) decides the side of the optimum. On that side
+/// the objective is smooth: Newton steps, safeguarded by bisection, find the
+/// root of its slope to f32 precision.
+fn initial_stability(delta_t: &[f64], recall: &[f64], count: &[f64], default: f64) -> f32 {
+    let (slope, _) = loss_derivatives(delta_t, recall, count, default);
+    // The subgradient of |s-default|/16 contains zero here.
+    if slope.abs() <= 1.0 / 16.0 {
+        return default as f32;
+    }
+    let (mut low, mut high, prior_slope) = if slope > 0.0 {
+        (S_MIN as f64, default, -1.0 / 16.0)
+    } else {
+        (default, INIT_S_MAX as f64, 1.0 / 16.0)
+    };
+    // The optimum is the search boundary when the slope keeps its sign there.
+    let boundary = if slope > 0.0 { low } else { high };
+    let boundary_slope = loss_derivatives(delta_t, recall, count, boundary).0 + prior_slope;
+    if (slope > 0.0 && boundary_slope >= 0.0) || (slope < 0.0 && boundary_slope <= 0.0) {
+        return boundary as f32;
+    }
+    let mut s = default;
+    for _ in 0..80 {
+        let (slope, curvature) = loss_derivatives(delta_t, recall, count, s);
+        let slope = slope + prior_slope;
+        if slope > 0.0 {
+            high = s;
+        } else {
+            low = s;
+        }
+        if low as f32 == high as f32 {
+            break;
+        }
+        let newton = s - slope / curvature;
+        let next = if curvature > 0.0 && newton > low && newton < high {
+            newton
+        } else {
+            (low + high) / 2.0
+        };
+        if next as f32 == s as f32 {
+            return next as f32;
+        }
+        s = next;
+    }
+    ((low + high) / 2.0) as f32
+}
+
 fn search_parameters(
     mut dataset_for_initialization: HashMap<FirstRating, Vec<AverageRecall>>,
     average_recall: f32,
 ) -> HashMap<u32, f32> {
     let mut optimal_stabilities = HashMap::new();
-    let epsilon = f64::EPSILON;
 
     for (first_rating, data) in &mut dataset_for_initialization {
         let r_s0_default: HashMap<u32, f32> = R_S0_DEFAULT_ARRAY.iter().cloned().collect();
@@ -142,29 +222,15 @@ fn search_parameters(
             let real_recall = Array1::from_iter(data.iter().map(|d| d.recall));
             (real_recall * count.clone() + average_recall as f64) / (count.clone() + 1.0)
         };
-        let mut low = S_MIN as f64;
-        let mut high = INIT_S_MAX as f64;
-        let mut optimal_s = default_s0;
-
-        let mut iter = 0;
-        while high - low > epsilon && iter < 1000 {
-            iter += 1;
-            let mid1 = low + (high - low) / 3.0;
-            let mid2 = high - (high - low) / 3.0;
-
-            let loss1 = loss(&delta_t, &recall, &count, mid1, default_s0);
-            let loss2 = loss(&delta_t, &recall, &count, mid2, default_s0);
-
-            if loss1 < loss2 {
-                high = mid2;
-            } else {
-                low = mid1;
-            }
-
-            optimal_s = (high + low) / 2.0;
-        }
-
-        optimal_stabilities.insert(*first_rating, optimal_s as f32);
+        optimal_stabilities.insert(
+            *first_rating,
+            initial_stability(
+                delta_t.as_slice().unwrap(),
+                recall.as_slice().unwrap(),
+                count.as_slice().unwrap(),
+                default_s0,
+            ),
+        );
     }
 
     optimal_stabilities
@@ -288,6 +354,60 @@ mod tests {
     use crate::dataset::filter_outlier;
     use crate::test_helpers::TestHelper;
     use crate::training::calculate_average_recall;
+
+    #[test]
+    fn derivative_search_matches_the_previous_trisection_objective() {
+        use rand::{Rng, SeedableRng, rngs::StdRng};
+        let mut rng = StdRng::seed_from_u64(607);
+        for trial in 0..200 {
+            let rating = 1 + trial % 4;
+            let default_s = FSRS6_DEFAULT_PARAMETERS[rating as usize - 1] as f64;
+            let average = rng.random_range(0.05..0.995);
+            let data: Vec<_> = (1..=rng.random_range(1..80))
+                .map(|day| AverageRecall {
+                    delta_t: day as f64,
+                    recall: if trial % 10 == 0 {
+                        0.0
+                    } else if trial % 10 == 1 {
+                        1.0
+                    } else {
+                        rng.random_range(0.0..1.0)
+                    },
+                    count: rng.random_range(1..1000) as f64,
+                })
+                .collect();
+            let delta = Array1::from_iter(data.iter().map(|d| d.delta_t));
+            let counts = Array1::from_iter(data.iter().map(|d| d.count));
+            let recall = Array1::from_iter(
+                data.iter()
+                    .map(|d| (d.recall * d.count + average as f64) / (d.count + 1.0)),
+            );
+            let (mut low, mut high) = (S_MIN as f64, INIT_S_MAX as f64);
+            for _ in 0..1000 {
+                let before = (low, high);
+                let left = low + (high - low) / 3.0;
+                let right = high - (high - low) / 3.0;
+                if loss(&delta, &recall, &counts, left, default_s)
+                    < loss(&delta, &recall, &counts, right, default_s)
+                {
+                    high = right;
+                } else {
+                    low = left;
+                }
+                if before == (low, high) {
+                    break;
+                }
+            }
+            let reference = ((low + high) / 2.0) as f32;
+            let actual = search_parameters(HashMap::from([(rating, data)]), average)[&rating];
+            let reference_loss = loss(&delta, &recall, &counts, reference as f64, default_s);
+            let actual_loss = loss(&delta, &recall, &counts, actual as f64, default_s);
+            assert!(
+                actual_loss <= reference_loss + 1e-8 * reference_loss.max(1.0),
+                "trial={trial}, {actual} vs {reference}: {actual_loss} vs {reference_loss}"
+            );
+        }
+    }
 
     #[test]
     fn test_power_forgetting_curve() {
