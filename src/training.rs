@@ -746,6 +746,11 @@ fn compute_parameters_inner(
     if let Some(config) = &training_config {
         validate_training_config(config).inspect_err(|_| finish_progress())?;
     }
+    // Every item needs a current review to predict, as in `evaluate`.
+    if train_set.iter().any(|item| item.reviews.is_empty()) {
+        finish_progress();
+        return Err(FSRSError::InvalidInput);
+    }
     let (dataset_for_initialization, train_set) =
         if model_version == ComputeParametersVersion::Fsrs7 {
             // FSRS-7 trains on every item, as in srs-benchmark: no outlier filter.
@@ -1797,6 +1802,34 @@ mod tests {
                     &mut |_| true,
                 ),
                 Err(FSRSError::Interrupted)
+            );
+        }
+    }
+
+    #[test]
+    fn items_without_reviews_are_rejected_instead_of_panicking() {
+        let fixture = crate::test_helpers::varied_card_prefixes();
+        let (mut items, _) = crate::test_helpers::items_of_card_prefixes(&fixture);
+        items.push(FSRSItem { reviews: vec![] });
+        for model_version in [
+            ComputeParametersVersion::Fsrs6,
+            ComputeParametersVersion::Fsrs7,
+        ] {
+            let progress = CombinedProgressState::new_shared();
+            let input = ComputeParametersInput {
+                train_set: items.clone(),
+                progress: Some(progress.clone()),
+                model_version,
+                ..Default::default()
+            };
+            assert_eq!(
+                compute_parameters(input.clone()),
+                Err(FSRSError::InvalidInput)
+            );
+            assert!(progress.lock().unwrap().finished());
+            assert_eq!(
+                compute_parameters_for_recall_classifier(input, Default::default()),
+                Err(FSRSError::InvalidInput)
             );
         }
     }
