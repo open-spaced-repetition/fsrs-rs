@@ -26,7 +26,7 @@ jobs:
 
       - uses: dprint/check@v2.2
   build-macos:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v2
 
