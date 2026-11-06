@@ -4,7 +4,7 @@ use crate::analytic_v6::plan::{BatchPlan, build_batch_plans};
 use crate::analytic_v6::worker::{BatchGradientFn, with_gradients};
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    FSRSItem, WeightedFSRSItem, WindowedItems, outlier_bucket_decisions,
+    FSRSItem, FSRSReview, FreeableItems, WeightedFSRSItem, WindowedItems, outlier_bucket_decisions,
     recency_weighted_fsrs_items,
 };
 use crate::error::Result;
@@ -24,6 +24,8 @@ use std::sync::{Arc, Mutex};
 
 #[path = "training_card_prefixes.rs"]
 mod card_prefixes;
+#[path = "training_card_prefixes_v6.rs"]
+mod card_prefixes_v6;
 #[path = "training_v6.rs"]
 mod training_v6;
 #[path = "training_v7.rs"]
@@ -496,13 +498,11 @@ fn attach_card_ids(
 /// history first and then running `prepare_training_data`, but only reads each
 /// item's first long-term review. Whole-day rounding of complete histories is
 /// left to batch layout.
-fn prepare_fsrs6_training_data(
-    mut items: Vec<TrainingFSRSItem>,
-) -> (Vec<InitialReview>, Vec<TrainingFSRSItem>) {
-    let first_reviews: Vec<_> = items
-        .iter()
-        .map(|item| first_long_term_review(&item.item))
-        .collect();
+fn prepare_fsrs6_training_data<T>(
+    mut items: Vec<T>,
+    first_long_term: impl Fn(&T) -> Option<FirstLongTermReview>,
+) -> (Vec<InitialReview>, Vec<T>) {
+    let first_reviews: Vec<_> = items.iter().map(first_long_term).collect();
     // Items with exactly one long-term review initialize the stabilities.
     let initial_reviews: Vec<_> = first_reviews
         .iter()
@@ -539,12 +539,12 @@ struct FirstLongTermReview {
 
 /// The first review that is long-term after FSRS-6's whole-day rounding, i.e.
 /// whose raw interval is at least half a day.
-fn first_long_term_review(item: &FSRSItem) -> Option<FirstLongTermReview> {
-    let mut long_term = item.reviews.iter().filter(|r| r.delta_t >= 0.5);
+fn first_long_term_review(reviews: &[FSRSReview]) -> Option<FirstLongTermReview> {
+    let mut long_term = reviews.iter().filter(|r| r.delta_t >= 0.5);
     let first = long_term.next()?;
     Some(FirstLongTermReview {
         review: InitialReview {
-            rating: item.reviews[0].rating,
+            rating: reviews[0].rating,
             delta_t: fsrs6_elapsed_days(first.delta_t),
             recalled: first.rating > 1,
         },
@@ -757,7 +757,9 @@ fn compute_parameters_inner(
             // No pre-training, so no initialization set (see only_first_reviews below).
             (Vec::new(), attach_card_ids(train_set, card_ids)?)
         } else {
-            prepare_fsrs6_training_data(attach_card_ids(train_set, card_ids)?)
+            prepare_fsrs6_training_data(attach_card_ids(train_set, card_ids)?, |item| {
+                first_long_term_review(&item.item.reviews)
+            })
         };
     if train_set.len() < 8 {
         finish_progress();
@@ -1412,15 +1414,20 @@ fn train(
             observer,
         );
     }
+    if version == ModelVersion::Fsrs6 && objective == TrainingObjective::ProbabilityLogLoss {
+        return train_fsrs6_simd(
+            train_set,
+            initial_parameters,
+            config,
+            progress,
+            #[cfg(all(target_os = "wasi", target_env = "p1"))]
+            observer,
+        );
+    }
     let total_size = train_set.len();
     let batches = match version {
         ModelVersion::Fsrs7 => {
             TrainingBatches::Fsrs7(build_windowed_batches(&train_set, config.batch_size))
-        }
-        // Log loss: SIMD kernel; its layout rounds elapsed days per batch.
-        ModelVersion::Fsrs6 if objective == TrainingObjective::ProbabilityLogLoss => {
-            let plans = build_batch_plans(&train_set, config.batch_size);
-            TrainingBatches::Fsrs6Simd(plans, train_set)
         }
         // Classifier objectives reweight each batch from its predictions,
         // which only the scalar kernel supports; round the histories for it here.
@@ -1443,6 +1450,34 @@ fn train(
         #[cfg(all(target_os = "wasi", target_env = "p1"))]
         observer,
     )
+}
+
+/// Train FSRS-6 log loss from either expanded items or borrowed card prefixes.
+fn train_fsrs6_simd<I: FreeableItems>(
+    train_set: I,
+    initial_parameters: &[f32],
+    config: &InternalTrainingConfig,
+    progress: Option<ProgressCollector>,
+    #[cfg(all(target_os = "wasi", target_env = "p1"))] observer: &mut impl FnMut(ItemProgress) -> bool,
+) -> Result<Vec<f32>> {
+    let total_size = train_set.count();
+    let plans = build_batch_plans(&train_set, config.batch_size);
+    let sizes: Vec<_> = plans.iter().map(BatchPlan::predictions).collect();
+    // Lay out the batches in the order the first epoch visits them.
+    let mut first_epoch: Vec<_> = (0..plans.len()).collect();
+    first_epoch.shuffle(&mut StdRng::seed_from_u64(config.seed));
+    with_gradients(&plans, train_set, &first_epoch, |gradient| {
+        run_epochs(
+            &sizes,
+            gradient,
+            total_size,
+            initial_parameters,
+            config,
+            progress,
+            #[cfg(all(target_os = "wasi", target_env = "p1"))]
+            observer,
+        )
+    })
 }
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
@@ -1468,8 +1503,6 @@ fn train_fsrs7_windowed<I: WindowedItems>(
 enum TrainingBatches {
     /// FSRS-6 scalar reference kernel, used by the classifier objective.
     Fsrs6(Vec<PrefixHostBatch>),
-    /// FSRS-6 SIMD kernel for log loss: batch plans and the items they index.
-    Fsrs6Simd(Vec<BatchPlan>, Vec<WeightedFSRSItem>),
     Fsrs7(Vec<WindowedFSRSBatch>),
 }
 
@@ -1505,15 +1538,6 @@ fn train_on_batches(
             let sizes: Vec<_> = batches.iter().map(|b| b.real_batch_size).collect();
             optimize(&sizes, &mut |index, parameters| {
                 fsrs6_batch_grad(&batches[index], parameters, objective)
-            })
-        }
-        TrainingBatches::Fsrs6Simd(plans, items) => {
-            let sizes: Vec<_> = plans.iter().map(BatchPlan::predictions).collect();
-            // Lay out the batches in the order the first epoch visits them.
-            let mut first_epoch: Vec<_> = (0..plans.len()).collect();
-            first_epoch.shuffle(&mut StdRng::seed_from_u64(config.seed));
-            with_gradients(&plans, items, &first_epoch, |gradient| {
-                optimize(&sizes, gradient)
             })
         }
     }
@@ -1676,8 +1700,10 @@ mod tests {
         let normalized =
             normalize_for_model_version(items.clone(), ComputeParametersVersion::Fsrs6);
         let (expected_init, expected_items) = prepare_training_data(normalized);
-        let (actual_init, actual_items) =
-            prepare_fsrs6_training_data(attach_card_ids(items, Some(ids.clone())).unwrap());
+        let (actual_init, actual_items) = prepare_fsrs6_training_data(
+            attach_card_ids(items, Some(ids.clone())).unwrap(),
+            |item| first_long_term_review(&item.item.reviews),
+        );
         let expected_init: Vec<_> = expected_init
             .iter()
             .map(|item| {

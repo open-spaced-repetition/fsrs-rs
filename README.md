@@ -81,7 +81,7 @@ let parameters = compute_parameters(ComputeParametersInput {
 
 Feed the optimizer a vector of `FSRSItem` instances built from your review history; the returned parameters can then be persisted or supplied to schedulers. Full example: [`examples/optimize.rs`](examples/optimize.rs).
 
-Each `FSRSItem` owns the reviews before it, so items take memory that grows with the square of a card's history. `CardPrefixes` holds the same items as indices into each card's reviews, in memory linear in the reviews: `compute_parameters_from_card_prefixes` (FSRS-7 only) and `FSRS::evaluate_from_card_prefixes` (any version) give bit-for-bit identical results. Full example: [`examples/optimize_card_prefixes.rs`](examples/optimize_card_prefixes.rs).
+Each `FSRSItem` owns the reviews before it, so items take memory that grows with the square of a card's history. `CardPrefixes` holds the same items as indices into each card's reviews, in memory linear in the reviews: `compute_parameters_from_card_prefixes` and `FSRS::evaluate_from_card_prefixes` support both FSRS-6 and FSRS-7 and give bit-for-bit identical results to their expanded-item counterparts. Full example: [`examples/optimize_card_prefixes.rs`](examples/optimize_card_prefixes.rs).
 
 ### Train and use a single-user Cost ADR policy
 

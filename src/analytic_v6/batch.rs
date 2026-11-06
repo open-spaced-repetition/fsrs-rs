@@ -6,7 +6,7 @@ use super::plan::{BatchPlan, CardPlan};
 use super::simd::{self, LANES, PARAMS, Review, signed_weight};
 use super::{RuntimeParams, S_MAX};
 use crate::FSRSReview;
-use crate::dataset::WeightedFSRSItem;
+use crate::dataset::WindowedItems;
 use std::ops::Range;
 use wide::f32x8 as F;
 
@@ -25,7 +25,7 @@ struct Group {
 }
 
 impl BatchPlan {
-    pub(crate) fn layout(&self, items: &[WeightedFSRSItem]) -> Batch {
+    pub(crate) fn layout<I: WindowedItems + ?Sized>(&self, items: &I) -> Batch {
         match self {
             Self::Prefixes(indices) => Batch::from_prefixes(items, indices),
             Self::Cards { plan, range, .. } => Batch::from_cards(items, plan, range.clone()),
@@ -42,15 +42,20 @@ impl BatchPlan {
 
 impl Batch {
     /// Each item is a lane whose last review is the scored target.
-    fn from_prefixes(items: &[WeightedFSRSItem], indices: &[usize]) -> Self {
+    fn from_prefixes<I: WindowedItems + ?Sized>(items: &I, indices: &[usize]) -> Self {
         let (groups, reviews) = pack(
             indices,
-            |&index| items[index].item.reviews.len(),
+            |&index| items.reviews(index).len(),
             |rows, lane, &index| {
-                let item = &items[index];
-                write_history(rows, lane, &item.item.reviews);
-                let target = &mut rows[item.item.reviews.len() - 1];
-                set_target(target, lane, item);
+                let reviews = items.reviews(index);
+                write_history(rows, lane, reviews);
+                let target = &mut rows[reviews.len() - 1];
+                set_target(
+                    target,
+                    lane,
+                    items.weight(index),
+                    reviews.last().unwrap().rating,
+                );
                 // The target only scores the prediction; it updates no state.
                 target.rating.as_mut_array()[lane] = 0.0;
             },
@@ -64,17 +69,26 @@ impl Batch {
 
     /// Each card is a lane following its longest history; every item of the
     /// card scores the step at its own last review.
-    fn from_cards(items: &[WeightedFSRSItem], plan: &CardPlan, range: Range<usize>) -> Self {
+    fn from_cards<I: WindowedItems + ?Sized>(
+        items: &I,
+        plan: &CardPlan,
+        range: Range<usize>,
+    ) -> Self {
         let cards = plan.cards(range);
         let (groups, reviews) = pack(
             cards,
             |card| card.length,
             |rows, lane, card| {
-                write_history(rows, lane, &items[card.longest].item.reviews);
+                write_history(rows, lane, items.reviews(card.longest));
                 // In input order: a duplicate prefix keeps the last weight.
                 for index in plan.items(card) {
-                    let item = &items[index];
-                    set_target(&mut rows[item.item.reviews.len() - 1], lane, item);
+                    let reviews = items.reviews(index);
+                    set_target(
+                        &mut rows[reviews.len() - 1],
+                        lane,
+                        items.weight(index),
+                        reviews.last().unwrap().rating,
+                    );
                 }
             },
         );
@@ -191,8 +205,8 @@ fn write_history(rows: &mut [Review], lane: usize, reviews: &[FSRSReview]) {
     }
 }
 
-fn set_target(row: &mut Review, lane: usize, item: &WeightedFSRSItem) {
-    row.weight.as_mut_array()[lane] = signed_weight(item.weight, item.item.current().rating > 1);
+fn set_target(row: &mut Review, lane: usize, weight: f32, rating: u32) {
+    row.weight.as_mut_array()[lane] = signed_weight(weight, rating > 1);
 }
 
 impl Group {

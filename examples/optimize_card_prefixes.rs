@@ -4,10 +4,11 @@ use fsrs::{
 };
 
 const USAGE: &str = "\
-Usage: cargo run --release --example optimize_card_prefixes -- [card_prefixes|items] [cards] [reviews]
+Usage: cargo run --release --example optimize_card_prefixes -- [card_prefixes|items] [cards] [reviews] [fsrs6|fsrs7]
 
 `items` builds the same training set as `Vec<FSRSItem>`. Both print the same parameters.
 `reviews` must be at least 1.
+`fsrs7` is the default model; use `fsrs6` to compare FSRS-6 training.
 To compare their peak memory, run the built binary under `/usr/bin/time -l` (Linux: `-v`).
 ";
 
@@ -16,6 +17,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let form = args.next().unwrap_or_else(|| "card_prefixes".to_string());
     let cards = args.next().map_or(Ok(1000), |cards| cards.parse())?;
     let reviews = args.next().map_or(Ok(256), |reviews| reviews.parse())?;
+    let model_version = match args.next().as_deref() {
+        None | Some("fsrs7") => ComputeParametersVersion::Fsrs7,
+        Some("fsrs6") => ComputeParametersVersion::Fsrs6,
+        _ => {
+            eprint!("{USAGE}");
+            return Err("invalid model".into());
+        }
+    };
     let use_items = form == "items";
     if !(use_items || form == "card_prefixes") || reviews == 0 {
         eprint!("{USAGE}");
@@ -26,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Number of items: {}", card_prefixes.prefixes.len());
 
     let input = ComputeParametersInput {
-        model_version: ComputeParametersVersion::Fsrs7,
+        model_version,
         ..Default::default()
     };
     let optimized_parameters = if use_items {

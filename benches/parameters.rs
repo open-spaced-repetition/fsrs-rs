@@ -453,6 +453,30 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
         })
     });
 
+    let input_fsrs6 = ComputeParametersInput {
+        model_version: ComputeParametersVersion::Fsrs6,
+        ..input_with_card_ids.clone()
+    };
+    group.bench_function("compute_parameters_fsrs6_items", |b| {
+        b.iter_batched(
+            || input_fsrs6.clone(),
+            |input| compute_parameters(black_box(input)).unwrap(),
+            BatchSize::LargeInput,
+        )
+    });
+    group.bench_function("compute_parameters_fsrs6_card_prefixes", |b| {
+        b.iter(|| {
+            compute_parameters_from_card_prefixes(
+                black_box(&card_prefixes),
+                ComputeParametersInput {
+                    model_version: ComputeParametersVersion::Fsrs6,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        })
+    });
+
     let input_without_card_ids = ComputeParametersInput {
         train_set: items,
         card_ids: None,

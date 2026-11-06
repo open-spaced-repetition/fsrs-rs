@@ -14,6 +14,10 @@ throughout filtering.
   with Newton steps safeguarded by bisection.
 - FSRS-7 retains all items and starts from its default parameters.
 
+The compact `compute_parameters_from_card_prefixes()` entry point supports both
+versions. FSRS-6 applies the same filtering and initialization to borrowed
+prefixes, then builds the same SIMD batches without expanding their histories.
+
 ## Host batches and gradients
 
 Training is entirely host-side and has no tensor-framework dependency.
