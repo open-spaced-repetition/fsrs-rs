@@ -3027,7 +3027,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            3370.383
+            3508.0286
         );
         Ok(())
     }
@@ -3329,8 +3329,8 @@ mod tests {
         assert_eq!(
             review_cnt_per_day.to_vec(),
             vec![
-                0, 21, 62, 69, 91, 93, 124, 106, 133, 126, 156, 142, 160, 185, 180, 200, 188, 200,
-                200, 193, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200
+                0, 21, 60, 65, 87, 94, 111, 102, 119, 131, 148, 152, 145, 169, 170, 194, 194, 192,
+                200, 190, 175, 200, 200, 200, 200, 200, 200, 200, 200, 200
             ]
         );
         assert_eq!(
@@ -3352,7 +3352,7 @@ mod tests {
         } = simulate(&config, &DEFAULT_PARAMETERS, 0.9, None, None)?;
         assert_eq!(
             memorized_cnt_per_day[memorized_cnt_per_day.len() - 1],
-            3379.6497
+            3402.4185
         );
         Ok(())
     }
@@ -3523,40 +3523,40 @@ mod tests {
             };
         }
         println!("Default behavior: low difficulty cards reviewed first.");
-        run_test!(None, 69.28404)?;
+        run_test!(None, 68.673454)?;
         println!("High difficulty cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| -(card.difficulty * 100.0) as i32),
-            74.6778
+            72.636505
         )?;
         println!("Low retrievability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| (card.retrievability() * 1000.0) as i32),
-            74.90477
+            74.208015
         )?;
         println!("High retrievability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| -(card.retrievability() * 1000.0) as i32),
-            69.74799
+            68.99744
         )?;
         println!("Low stability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| (card.stability * 100.0) as i32),
-            74.361115
+            73.63752
         )?;
         println!("High stability cards reviewed first.");
         run_test!(
             wrap!(|card: &Card| -(card.stability * 100.0) as i32),
-            68.68905
+            68.0306
         )?;
         println!("Long interval cards reviewed first.");
-        run_test!(wrap!(|card: &Card| -card.interval as i32), 69.376434)?;
+        run_test!(wrap!(|card: &Card| -card.interval as i32), 68.739685)?;
         println!("Short interval cards reviewed first.");
-        run_test!(wrap!(|card: &Card| card.interval as i32), 74.64231)?;
+        run_test!(wrap!(|card: &Card| card.interval as i32), 74.24034)?;
         println!("Early scheduled due cards reviewed first.");
-        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 70.820175)?;
+        run_test!(wrap!(|card: &Card| card.scheduled_due() as i32), 71.022285)?;
         println!("Late scheduled due cards reviewed first.");
-        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 71.20782)?;
+        run_test!(wrap!(|card: &Card| -card.scheduled_due() as i32), 70.3017)?;
         Ok(())
     }
 

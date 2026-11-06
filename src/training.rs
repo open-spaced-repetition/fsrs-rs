@@ -1375,17 +1375,6 @@ fn zero_frozen_host_grad(grad: &mut [f32], model: &ModelConfig) {
     }
 }
 
-fn clip_host_parameters(
-    parameters: &mut [f32],
-    num_relearning_steps: usize,
-    enable_short_term: bool,
-) {
-    clip_parameters_in_place(parameters, num_relearning_steps, enable_short_term);
-    if !enable_short_term && parameters.len() == 34 {
-        parameters[26] = 0.0;
-    }
-}
-
 fn train(
     mut train_set: Vec<WeightedFSRSItem>,
     initial_parameters: &[f32],
@@ -1596,7 +1585,7 @@ fn run_epochs(
             }
             zero_frozen_host_grad(&mut grad, &config.model);
             adam.step(&mut parameters, &grad, scheduler.step());
-            clip_host_parameters(
+            clip_parameters_in_place(
                 &mut parameters,
                 config.model.num_relearning_steps,
                 !config.model.freeze_short_term_stability,
@@ -2004,6 +1993,69 @@ mod tests {
     fn l2_penalty_weight_depends_on_model_version() {
         assert_eq!(l2_penalty_weight(ModelVersion::Fsrs7), 0.3333);
         assert_eq!(l2_penalty_weight(ModelVersion::Fsrs6), 0.5);
+    }
+
+    #[test]
+    fn fsrs7_short_term_disabled_preserves_base2_bounds() {
+        let mut train_set = Vec::new();
+        let mut card_ids = Vec::new();
+        for card in 0..96u32 {
+            let reviews = [
+                crate::FSRSReview {
+                    rating: card % 4 + 1,
+                    delta_t: 0.0,
+                },
+                crate::FSRSReview {
+                    rating: if card.is_multiple_of(5) { 1 } else { 3 },
+                    delta_t: if card.is_multiple_of(3) { 0.0 } else { 2.0 },
+                },
+                crate::FSRSReview {
+                    rating: if card.is_multiple_of(6) { 1 } else { 4 },
+                    delta_t: (card % 14 + 1) as f32,
+                },
+            ];
+            for len in 2..=reviews.len() {
+                train_set.push(FSRSItem {
+                    reviews: reviews[..len].to_vec(),
+                });
+                card_ids.push(i64::from(card));
+            }
+        }
+        let input = ComputeParametersInput {
+            train_set,
+            card_ids: Some(card_ids),
+            enable_short_term: false,
+            model_version: ComputeParametersVersion::Fsrs7,
+            training_config: Some(TrainingConfig {
+                num_epochs: 2,
+                batch_size: 32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let log_loss_params = compute_parameters(input.clone()).unwrap();
+        let classifier_params = compute_parameters_for_recall_classifier(
+            input,
+            RecallClassifierTrainingConfig::default(),
+        )
+        .unwrap();
+
+        for parameters in [log_loss_params, classifier_params] {
+            assert_eq!(parameters.len(), 34);
+            assert!(parameters.iter().all(|value| value.is_finite()));
+            assert!(
+                (parameters[25].max(0.5)..=0.99).contains(&parameters[26]),
+                "w[26] = {}, w[25] = {}",
+                parameters[26],
+                parameters[25]
+            );
+            assert_eq!(FSRS::new(&parameters).unwrap().parameters(), parameters);
+            for (actual, expected) in parameters[..4].iter().zip(&DEFAULT_PARAMETERS[..4]) {
+                assert!((actual - expected).abs() <= 1e-6);
+            }
+            assert_ne!(&parameters[4..], &DEFAULT_PARAMETERS[4..]);
+        }
     }
 }
 
