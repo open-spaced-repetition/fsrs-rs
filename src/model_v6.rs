@@ -69,7 +69,7 @@ pub(crate) fn stability_after_failure_scalar(w: &[f32], s: f32, r: f32, d: f32) 
 
 pub(crate) fn stability_short_term_scalar(w: &[f32], s: f32, rating: usize) -> f32 {
     let sinc = (w[17] * (rating as f32 - 3.0 + w[18])).exp() * s.powf(-w[19]);
-    let new_s = s * if rating >= 3 { sinc.max(1.0) } else { sinc };
+    let new_s = s * if rating >= 2 { sinc.max(1.0) } else { sinc };
     new_s.clamp(super::S_MIN, super::S_MAX)
 }
 
@@ -99,8 +99,7 @@ pub(crate) fn next_state_scalar(
     let d = state.difficulty.clamp(super::D_MIN, super::D_MAX);
     let r = power_forgetting_curve_scalar(w, delta_t, s);
     let stability = if delta_t == 0.0 {
-        let sinc = (w[17] * (rating as f32 - 3.0 + w[18])).exp() * s.powf(-w[19]);
-        (s * if rating >= 2 { sinc.max(1.0) } else { sinc }).clamp(super::S_MIN, super::S_MAX)
+        stability_short_term_scalar(w, s, rating)
     } else if rating == 1 {
         stability_after_failure_scalar(w, s, r, d)
     } else {
@@ -139,6 +138,33 @@ pub(crate) fn memory_state_from_sm2_scalar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_term_stability_matches_next_state() {
+        let w = FSRS6_DEFAULT_PARAMETERS;
+        for s in [super::super::S_MIN, 0.1, 1.0, 10.0, super::super::S_MAX] {
+            for rating in 1..=4 {
+                let stability = stability_short_term_scalar(&w, s, rating);
+                let state = MemoryState {
+                    stability: s,
+                    stability_fast: s,
+                    difficulty: 5.0,
+                };
+                assert_eq!(
+                    stability,
+                    next_state_scalar(&w, state, 0.0, rating as u32).stability,
+                    "stability={s}, rating={rating}"
+                );
+                if rating >= 2 {
+                    assert!(stability >= s);
+                }
+            }
+        }
+        assert!(stability_short_term_scalar(&w, 1.0, 1) < 1.0);
+        assert_eq!(stability_short_term_scalar(&w, 1.0, 2), 1.0);
+        let s = super::super::S_MIN;
+        assert!(stability_short_term_scalar(&w, s, 2) > s);
+    }
 
     #[test]
     fn forgetting_curve_rounds_elapsed_days() {
