@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn derivative_search_matches_the_previous_trisection_objective() {
-        use rand::{Rng, SeedableRng, rngs::StdRng};
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
         let mut rng = StdRng::seed_from_u64(607);
         for trial in 0..200 {
             let rating = 1 + trial % 4;
