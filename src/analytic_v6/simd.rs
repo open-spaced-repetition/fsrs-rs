@@ -381,7 +381,7 @@ mod tests {
     use crate::FSRS6_DEFAULT_PARAMETERS;
     use crate::analytic_v6::batch::Batch;
     use crate::test_helpers::relative_l2_error;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     #[test]
     fn vector_math_matches_libm_in_the_recurrence_range() {

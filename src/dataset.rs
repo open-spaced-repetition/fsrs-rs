@@ -520,7 +520,7 @@ pub(crate) fn recency_weighted_fsrs_items_with_card_ids(
 #[cfg(test)]
 mod outlier_regression_tests {
     use super::*;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     // The pre-optimization hash-map implementation is an independent ordering
     // oracle for the dense buckets and flat membership chains.

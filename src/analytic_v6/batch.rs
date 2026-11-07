@@ -235,7 +235,7 @@ fn elapsed_days(t: F) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     #[test]
     fn vector_day_rounding_matches_scalar_including_half_day_boundaries() {

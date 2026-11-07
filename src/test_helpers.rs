@@ -58,7 +58,7 @@ pub(crate) fn varied_card_prefixes() -> CardPrefixes {
     let mut rng = StdRng::seed_from_u64(7);
     let mut cards = Vec::new();
     let mut prefixes = Vec::new();
-    let mut draw = |bound: u32| rand::Rng::random_range(&mut rng, 0..bound);
+    let mut draw = |bound: u32| rand::RngExt::random_range(&mut rng, 0..bound);
     for card_index in 0..120u32 {
         let length = 2 + draw(1 + 2 * card_index) as usize;
         let reviews: Vec<_> = (0..length)

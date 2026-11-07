@@ -413,10 +413,10 @@ pub(super) fn train_fsrs7_windowed<I: FreeableItems>(
     );
     let mut rng = StdRng::seed_from_u64(config.seed);
     let mut order = (0..batch_count).collect::<Vec<_>>();
-    // The first epoch's batch order (the same shuffle the loop makes, on a copy of the RNG): the
-    // helper lays the batches out in this order.
+    // The first epoch's batch order (the same shuffle the loop makes, from a second RNG with the
+    // same seed): the helper lays the batches out in this order.
     let mut first_order = order.clone();
-    first_order.shuffle(&mut rng.clone());
+    first_order.shuffle(&mut StdRng::seed_from_u64(config.seed));
     let l2_weight = l2_penalty_weight(version) * config.gamma;
     let planned: Planned<I> = Mutex::new(Some((plan, train_set)));
     let shared = GradShared {
