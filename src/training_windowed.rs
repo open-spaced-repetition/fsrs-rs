@@ -19,8 +19,7 @@ use super::{
 };
 use crate::FSRSError;
 use crate::analytic_v7::wide_window::{self, Caches, WConsts};
-use crate::dataset::{FreeableItems, WindowedItems};
-use crate::dataset::{WeightedCardPrefixes, WeightedFSRSItem, WindowedItems};
+use crate::dataset::{FreeableItems, WeightedCardPrefixes, WeightedFSRSItem, WindowedItems};
 use crate::parameter_clipper::clip_parameters_in_place;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
