@@ -13,7 +13,7 @@ use super::RuntimeParams;
 use super::batch::{Batch, Workspace};
 use super::plan::BatchPlan;
 use super::simd::PARAMS;
-use crate::dataset::WeightedFSRSItem;
+use crate::dataset::FreeableItems;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -22,9 +22,9 @@ pub(crate) type BatchGradientFn<'a> = dyn FnMut(usize, &[f32]) -> Vec<f32> + 'a;
 
 /// Runs `train` with a gradient function over `plans`. `first_order` is the
 /// order in which the first epoch visits the batches.
-pub(crate) fn with_gradients<T>(
+pub(crate) fn with_gradients<T, I: FreeableItems>(
     plans: &[BatchPlan],
-    items: Vec<WeightedFSRSItem>,
+    items: I,
     first_order: &[usize],
     train: impl FnOnce(&mut BatchGradientFn<'_>) -> T,
 ) -> T {
@@ -57,7 +57,7 @@ pub(crate) fn with_gradients<T>(
                 }
                 let _ = shared.batches[index].set(plans[index].layout(&items));
             }
-            *shared.retired_items.lock().unwrap() = items;
+            *shared.retired_items.lock().unwrap() = Some(items);
             shared.serve_requests();
         });
         let _stop = StopOnDrop {
@@ -84,13 +84,13 @@ fn job(seq: u32, group: u32) -> u64 {
     (u64::from(seq) << 32) | u64::from(group)
 }
 
-struct Shared<'a> {
+struct Shared<'a, I: FreeableItems> {
     batches: &'a [OnceLock<Batch>],
     job: AtomicU64,
     batch: AtomicUsize,
     parameters: [AtomicU32; PARAMS],
     outputs: Vec<GroupOutput>,
-    retired_items: Mutex<Vec<WeightedFSRSItem>>,
+    retired_items: Mutex<Option<I>>,
 }
 
 /// Per-group result. Each output gets its own cache line so that threads
@@ -103,7 +103,7 @@ struct GroupOutput {
     ready: AtomicU32,
 }
 
-impl<'a> Shared<'a> {
+impl<'a, I: FreeableItems> Shared<'a, I> {
     fn new(batches: &'a [OnceLock<Batch>], max_groups: usize) -> Self {
         Self {
             batches,
@@ -116,7 +116,7 @@ impl<'a> Shared<'a> {
                     ready: AtomicU32::new(0),
                 })
                 .collect(),
-            retired_items: Mutex::new(Vec::new()),
+            retired_items: Mutex::new(None),
         }
     }
 
@@ -227,31 +227,22 @@ impl<'a> Shared<'a> {
         }
     }
 
-    /// Frees up to 32 input items; returns whether any were left to free.
+    /// Frees a portion of the input; returns whether any was freed.
     fn drop_retired_items(&self) -> bool {
         let Ok(mut items) = self.retired_items.try_lock() else {
             return false;
         };
-        let len = items.len();
-        let keep = len.saturating_sub(32);
-        // Load the items' histories before freeing them, so the allocator's
-        // pointer-chasing latency overlaps instead of serializing.
-        let touch = items[keep..].iter().fold(0u32, |acc, item| {
-            acc ^ item.item.reviews.first().map_or(0, |r| r.rating)
-        });
-        std::hint::black_box(touch);
-        items.truncate(keep);
-        len != 0
+        items.as_mut().is_some_and(FreeableItems::free_some)
     }
 }
 
 /// Stops the helper when dropped: always, or only while unwinding a panic.
-struct StopOnDrop<'a, 'b> {
-    shared: &'a Shared<'b>,
+struct StopOnDrop<'a, 'b, I: FreeableItems> {
+    shared: &'a Shared<'b, I>,
     only_on_panic: bool,
 }
 
-impl Drop for StopOnDrop<'_, '_> {
+impl<I: FreeableItems> Drop for StopOnDrop<'_, '_, I> {
     fn drop(&mut self) {
         if !self.only_on_panic || std::thread::panicking() {
             self.shared.stop();
@@ -272,6 +263,7 @@ fn backoff(spins: &mut u32) {
 mod tests {
     use super::*;
     use crate::FSRS6_DEFAULT_PARAMETERS;
+    use crate::dataset::WeightedFSRSItem;
 
     #[test]
     fn threaded_reduction_is_identical_to_serial_and_stops_on_return() {

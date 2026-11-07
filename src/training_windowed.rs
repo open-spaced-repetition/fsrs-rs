@@ -19,7 +19,7 @@ use super::{
 };
 use crate::FSRSError;
 use crate::analytic_v7::wide_window::{self, Caches, WConsts};
-use crate::dataset::{WeightedCardPrefixes, WeightedFSRSItem, WindowedItems};
+use crate::dataset::{FreeableItems, WeightedCardPrefixes, WeightedFSRSItem, WindowedItems};
 use crate::parameter_clipper::clip_parameters_in_place;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -28,35 +28,6 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 const PARAM_LEN: usize = 34;
-
-/// A training set the threads can free while they wait.
-pub(super) trait FreeableItems: WindowedItems {
-    /// Returns false if nothing was left to free. Repeated calls must bring `count()` to 0.
-    fn free_some(&mut self) -> bool;
-}
-
-impl FreeableItems for Vec<WeightedFSRSItem> {
-    /// One block: first one independent load from each item's review buffer (the loads overlap),
-    /// then the frees.
-    fn free_some(&mut self) -> bool {
-        let len = self.len();
-        let keep = len.saturating_sub(32);
-        let touch = self[keep..].iter().fold(0u32, |a, it| {
-            a ^ it.item.reviews.first().map_or(0, |r| r.rating)
-        });
-        std::hint::black_box(touch);
-        self.truncate(keep);
-        keep < len
-    }
-}
-
-impl FreeableItems for WeightedCardPrefixes<'_> {
-    fn free_some(&mut self) -> bool {
-        let had_prefixes = !self.prefixes.is_empty();
-        self.prefixes = Vec::new();
-        had_prefixes
-    }
-}
 
 /// One batch's arrays, row-major [seq, bsz] (bsz = the card count rounded up to 8).
 struct Batch {

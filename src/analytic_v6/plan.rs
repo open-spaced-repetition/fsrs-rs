@@ -6,7 +6,7 @@
 //! - With card IDs, cards are sorted by (longest history, card ID) and packed
 //!   until another card would exceed `batch_size` predictions.
 
-use crate::dataset::WeightedFSRSItem;
+use crate::dataset::WindowedItems;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -66,17 +66,16 @@ impl CardPlan {
         })
     }
 
-    fn new(items: &[WeightedFSRSItem]) -> Self {
+    fn new<I: WindowedItems + ?Sized>(items: &I) -> Self {
         // A card's first item usually has two reviews.
-        let expected_cards = items
-            .iter()
-            .filter(|item| item.item.reviews.len() == 2)
+        let expected_cards = (0..items.count())
+            .filter(|&index| items.reviews(index).len() == 2)
             .count();
         let mut index = CardIndex::new(expected_cards);
         let mut cards: Vec<PlanCard> = Vec::with_capacity(expected_cards);
-        let mut next = vec![NONE; items.len()];
-        for (item_index, item) in items.iter().enumerate() {
-            let id = item.card_id.expect("checked card id");
+        let mut next = vec![NONE; items.count()];
+        for item_index in 0..items.count() {
+            let id = items.card_id(item_index);
             let card_index = match index.find(id, &cards) {
                 Ok(card_index) => card_index,
                 Err(slot) => {
@@ -93,7 +92,7 @@ impl CardPlan {
                 }
             };
             let card = &mut cards[card_index];
-            let length = item.item.reviews.len();
+            let length = items.reviews(item_index).len();
             if length >= card.length {
                 card.longest = item_index;
                 card.length = length;
@@ -158,9 +157,12 @@ impl CardIndex {
     }
 }
 
-pub(crate) fn build_batch_plans(items: &[WeightedFSRSItem], batch_size: usize) -> Vec<BatchPlan> {
-    if items.iter().all(|item| item.card_id.is_none()) {
-        return stable_order_by_length(items.len(), |i| items[i].item.reviews.len())
+pub(crate) fn build_batch_plans<I: WindowedItems + ?Sized>(
+    items: &I,
+    batch_size: usize,
+) -> Vec<BatchPlan> {
+    if (0..items.count()).all(|i| items.optional_card_id(i).is_none()) {
+        return stable_order_by_length(items.count(), |i| items.reviews(i).len())
             .chunks(batch_size)
             .map(|indices| BatchPlan::Prefixes(indices.to_vec()))
             .collect();

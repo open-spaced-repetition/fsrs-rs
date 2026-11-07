@@ -8,14 +8,30 @@ use crate::error::Result;
 use crate::parameter_initialization_fsrs7::smooth_initial_stabilities_fsrs7;
 use crate::{DEFAULT_PARAMETERS, FSRSError};
 
-/// Like [`compute_parameters`](super::compute_parameters) for FSRS-7, but takes the items as
+/// Like [`compute_parameters`](super::compute_parameters), but takes the items as
 /// [`CardPrefixes`], in memory linear in the reviews. The result is bit-for-bit identical.
 ///
-/// The [`ComputeParametersInput`] provides the options. Its `model_version` must be FSRS-7, its
-/// `train_set` empty and its `card_ids` `None`.
+/// The [`ComputeParametersInput`] provides the options. Its `train_set` must be empty
+/// and its `card_ids` must be `None`.
 pub fn compute_parameters_from_card_prefixes(
     card_prefixes: &CardPrefixes,
-    ComputeParametersInput {
+    input: ComputeParametersInput,
+) -> Result<Vec<f32>> {
+    match input.model_version {
+        ComputeParametersVersion::Fsrs6 => {
+            super::card_prefixes_v6::compute_parameters_from_card_prefixes(card_prefixes, input)
+        }
+        ComputeParametersVersion::Fsrs7 => {
+            compute_parameters_from_card_prefixes_fsrs7(card_prefixes, input)
+        }
+    }
+}
+
+fn compute_parameters_from_card_prefixes_fsrs7(
+    card_prefixes: &CardPrefixes,
+    input: ComputeParametersInput,
+) -> Result<Vec<f32>> {
+    let ComputeParametersInput {
         train_set,
         card_ids,
         progress,
@@ -24,17 +40,13 @@ pub fn compute_parameters_from_card_prefixes(
         model_version,
         num_relearning_steps,
         training_config,
-    }: ComputeParametersInput,
-) -> Result<Vec<f32>> {
+    } = input;
     let finish_progress = || {
         if let Some(progress) = &progress {
             progress.lock().unwrap().mark_finished();
         }
     };
-    if !train_set.is_empty()
-        || card_ids.is_some()
-        || model_version != ComputeParametersVersion::Fsrs7
-    {
+    if !train_set.is_empty() || card_ids.is_some() {
         finish_progress();
         return Err(FSRSError::InvalidInput);
     }
@@ -103,13 +115,172 @@ mod tests {
     use super::*;
     use crate::dataset::{CardPrefix, CardReviews, FSRSReview};
     use crate::test_helpers::{items_of_card_prefixes, varied_card_prefixes};
-    use crate::{TrainingConfig, compute_parameters};
+    use crate::{
+        CombinedProgressState, FSRS6_DEFAULT_PARAMETERS, TrainingConfig, compute_parameters,
+    };
 
     fn fsrs7_input() -> ComputeParametersInput {
         ComputeParametersInput {
             model_version: ComputeParametersVersion::Fsrs7,
             ..Default::default()
         }
+    }
+
+    fn fsrs6_input() -> ComputeParametersInput {
+        ComputeParametersInput {
+            model_version: ComputeParametersVersion::Fsrs6,
+            ..Default::default()
+        }
+    }
+
+    fn assert_fsrs6_matches_expanded(prefixes: &CardPrefixes, input: ComputeParametersInput) {
+        let (train_set, card_ids) = items_of_card_prefixes(prefixes);
+        let expanded = compute_parameters(ComputeParametersInput {
+            train_set,
+            card_ids: Some(card_ids),
+            ..input.clone()
+        });
+        let compact = compute_parameters_from_card_prefixes(prefixes, input);
+        match (expanded, compact) {
+            (Ok(expanded), Ok(compact)) => assert_eq!(
+                compact
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                expanded
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+            ),
+            (Err(expanded), Err(compact)) => assert_eq!(compact, expanded),
+            (expanded, compact) => panic!("expanded: {expanded:?}, compact: {compact:?}"),
+        }
+    }
+
+    #[test]
+    fn fsrs6_card_prefix_training_matches_expanded_items() {
+        let mut data = varied_card_prefixes();
+        data.cards[0].card_id = i64::MIN;
+        data.cards[1].card_id = i64::MAX;
+        data.cards[2].card_id = -1;
+        // The elapsed intervals cross the whole-day rounding boundaries used
+        // by initialization, outlier filtering and SIMD batch layout.
+        for card in &mut data.cards {
+            for (index, review) in card.reviews.iter_mut().enumerate().skip(1) {
+                if index % 5 == 0 {
+                    review.delta_t = [0.49, 0.5, 0.51, 1.49, 1.5, 1.51, 365.5][index % 7];
+                }
+            }
+        }
+        data.prefixes.push(data.prefixes[0]);
+        for enable_short_term in [true, false] {
+            for training_config in [
+                None,
+                Some(TrainingConfig {
+                    max_seq_len: 64,
+                    batch_size: 127,
+                    ..TrainingConfig::default()
+                }),
+            ] {
+                assert_fsrs6_matches_expanded(
+                    &data,
+                    ComputeParametersInput {
+                        enable_short_term,
+                        training_config,
+                        ..fsrs6_input()
+                    },
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fsrs6_card_prefix_training_matches_small_or_empty_sets() {
+        let empty = CardPrefixes::default();
+        assert_eq!(
+            compute_parameters_from_card_prefixes(&empty, fsrs6_input()).unwrap(),
+            FSRS6_DEFAULT_PARAMETERS
+        );
+        let mut data = varied_card_prefixes();
+        for count in [1, 7, 8, 63] {
+            data.prefixes.truncate(count);
+            assert_fsrs6_matches_expanded(&data, fsrs6_input());
+            data = varied_card_prefixes();
+        }
+        // Each target is a card's first long-term review; no gradient training is needed.
+        let first_reviews = CardPrefixes {
+            cards: (0..100)
+                .map(|id| CardReviews {
+                    card_id: id,
+                    reviews: vec![
+                        FSRSReview {
+                            rating: (id % 4 + 1) as u32,
+                            delta_t: 0.0,
+                        },
+                        FSRSReview {
+                            rating: (id % 3 + 1) as u32,
+                            delta_t: 2.0,
+                        },
+                    ],
+                })
+                .collect(),
+            prefixes: (0..100)
+                .map(|card_index| CardPrefix { card_index, len: 2 })
+                .collect(),
+        };
+        assert!(compute_parameters_from_card_prefixes(&first_reviews, fsrs6_input()).is_ok());
+        assert_fsrs6_matches_expanded(&first_reviews, fsrs6_input());
+    }
+
+    #[test]
+    fn fsrs6_card_prefix_training_validates_and_honors_cancellation() {
+        let progress = CombinedProgressState::new_shared();
+        let invalid = CardPrefixes {
+            cards: vec![],
+            prefixes: vec![CardPrefix {
+                card_index: 0,
+                len: 1,
+            }],
+        };
+        assert_eq!(
+            compute_parameters_from_card_prefixes(
+                &invalid,
+                ComputeParametersInput {
+                    progress: Some(progress.clone()),
+                    ..fsrs6_input()
+                },
+            ),
+            Err(FSRSError::InvalidInput)
+        );
+        assert!(progress.lock().unwrap().finished());
+
+        let progress = CombinedProgressState::new_shared();
+        assert_eq!(
+            compute_parameters_from_card_prefixes(
+                &varied_card_prefixes(),
+                ComputeParametersInput {
+                    card_ids: Some(vec![]),
+                    progress: Some(progress.clone()),
+                    ..fsrs6_input()
+                },
+            ),
+            Err(FSRSError::InvalidInput)
+        );
+        assert!(progress.lock().unwrap().finished());
+
+        let progress = CombinedProgressState::new_shared();
+        progress.lock().unwrap().want_abort = true;
+        assert_eq!(
+            compute_parameters_from_card_prefixes(
+                &varied_card_prefixes(),
+                ComputeParametersInput {
+                    progress: Some(progress.clone()),
+                    ..fsrs6_input()
+                },
+            ),
+            Err(FSRSError::Interrupted)
+        );
+        assert!(progress.lock().unwrap().finished());
     }
 
     /// Asserts that items and prefixes train to the same bits, and returns the parameters.

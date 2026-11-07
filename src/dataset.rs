@@ -84,10 +84,13 @@ pub(crate) fn validate_card_prefixes(cards: &[CardReviews], prefixes: &[CardPref
     }
 }
 
-/// What FSRS-7's windowed trainers read of a training set, by item.
+/// What the card-oriented trainers read of a training set, by item.
 pub(crate) trait WindowedItems: Send + Sync {
     fn count(&self) -> usize;
     fn card_id(&self, index: usize) -> i64;
+    fn optional_card_id(&self, index: usize) -> Option<i64> {
+        Some(self.card_id(index))
+    }
     fn weight(&self, index: usize) -> f32;
     fn reviews(&self, index: usize) -> &[FSRSReview];
 }
@@ -98,9 +101,35 @@ impl WindowedItems for Vec<WeightedFSRSItem> {
     }
 
     fn card_id(&self, index: usize) -> i64 {
+        self.as_slice().card_id(index)
+    }
+
+    fn optional_card_id(&self, index: usize) -> Option<i64> {
+        self.as_slice().optional_card_id(index)
+    }
+
+    fn weight(&self, index: usize) -> f32 {
+        self.as_slice().weight(index)
+    }
+
+    fn reviews(&self, index: usize) -> &[FSRSReview] {
+        self.as_slice().reviews(index)
+    }
+}
+
+impl WindowedItems for [WeightedFSRSItem] {
+    fn count(&self) -> usize {
+        self.len()
+    }
+
+    fn card_id(&self, index: usize) -> i64 {
         self[index]
             .card_id
-            .expect("FSRS-7 training items have card ids")
+            .expect("card-oriented training items have card ids")
+    }
+
+    fn optional_card_id(&self, index: usize) -> Option<i64> {
+        self[index].card_id
     }
 
     fn weight(&self, index: usize) -> f32 {
@@ -132,6 +161,33 @@ impl WindowedItems for WeightedCardPrefixes<'_> {
 
     fn reviews(&self, index: usize) -> &[FSRSReview] {
         self.card_prefixes.reviews(self.prefixes[index].0)
+    }
+}
+
+/// A training set the gradient workers can free incrementally while waiting.
+pub(crate) trait FreeableItems: WindowedItems {
+    /// Returns false if nothing was left to free. Repeated calls must empty the set.
+    fn free_some(&mut self) -> bool;
+}
+
+impl FreeableItems for Vec<WeightedFSRSItem> {
+    fn free_some(&mut self) -> bool {
+        let len = self.len();
+        let keep = len.saturating_sub(32);
+        let touch = self[keep..].iter().fold(0u32, |acc, item| {
+            acc ^ item.item.reviews.first().map_or(0, |r| r.rating)
+        });
+        std::hint::black_box(touch);
+        self.truncate(keep);
+        keep < len
+    }
+}
+
+impl FreeableItems for WeightedCardPrefixes<'_> {
+    fn free_some(&mut self) -> bool {
+        let had_prefixes = !self.prefixes.is_empty();
+        self.prefixes = Vec::new();
+        had_prefixes
     }
 }
 
