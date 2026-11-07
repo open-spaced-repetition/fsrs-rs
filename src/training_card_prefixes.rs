@@ -17,12 +17,20 @@ pub fn compute_parameters_from_card_prefixes(
     card_prefixes: &CardPrefixes,
     input: ComputeParametersInput,
 ) -> Result<Vec<f32>> {
-    if input.model_version == ComputeParametersVersion::Fsrs6 {
-        return super::card_prefixes_v6::compute_parameters_from_card_prefixes(
-            card_prefixes,
-            input,
-        );
+    match input.model_version {
+        ComputeParametersVersion::Fsrs6 => {
+            super::card_prefixes_v6::compute_parameters_from_card_prefixes(card_prefixes, input)
+        }
+        ComputeParametersVersion::Fsrs7 => {
+            compute_parameters_from_card_prefixes_fsrs7(card_prefixes, input)
+        }
     }
+}
+
+fn compute_parameters_from_card_prefixes_fsrs7(
+    card_prefixes: &CardPrefixes,
+    input: ComputeParametersInput,
+) -> Result<Vec<f32>> {
     let ComputeParametersInput {
         train_set,
         card_ids,
@@ -38,10 +46,7 @@ pub fn compute_parameters_from_card_prefixes(
             progress.lock().unwrap().mark_finished();
         }
     };
-    if !train_set.is_empty()
-        || card_ids.is_some()
-        || model_version != ComputeParametersVersion::Fsrs7
-    {
+    if !train_set.is_empty() || card_ids.is_some() {
         finish_progress();
         return Err(FSRSError::InvalidInput);
     }

@@ -434,48 +434,41 @@ fn benchmark_compute_parameters(c: &mut Criterion) {
     let mut group = c.benchmark_group("parameters");
     group.sample_size(10); // Reduce sample size as this involves optimization
 
-    group.bench_function("compute_parameters", |b| {
-        b.iter(|| {
-            compute_parameters(black_box(input_with_card_ids.clone())).unwrap();
-        })
-    });
-
-    group.bench_function("compute_parameters_from_card_prefixes", |b| {
-        b.iter(|| {
-            compute_parameters_from_card_prefixes(
-                black_box(&card_prefixes),
-                ComputeParametersInput {
-                    model_version: ComputeParametersVersion::Fsrs7,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        })
-    });
-
-    let input_fsrs6 = ComputeParametersInput {
-        model_version: ComputeParametersVersion::Fsrs6,
-        ..input_with_card_ids.clone()
-    };
-    group.bench_function("compute_parameters_fsrs6_items", |b| {
-        b.iter_batched(
-            || input_fsrs6.clone(),
-            |input| compute_parameters(black_box(input)).unwrap(),
-            BatchSize::LargeInput,
-        )
-    });
-    group.bench_function("compute_parameters_fsrs6_card_prefixes", |b| {
-        b.iter(|| {
-            compute_parameters_from_card_prefixes(
-                black_box(&card_prefixes),
-                ComputeParametersInput {
-                    model_version: ComputeParametersVersion::Fsrs6,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        })
-    });
+    for (name, model_version) in [
+        ("fsrs6", ComputeParametersVersion::Fsrs6),
+        ("fsrs7", ComputeParametersVersion::Fsrs7),
+    ] {
+        let input = ComputeParametersInput {
+            model_version,
+            ..input_with_card_ids.clone()
+        };
+        group.bench_with_input(
+            BenchmarkId::new("compute_parameters", name),
+            &input,
+            |b, input| {
+                b.iter_batched(
+                    || input.clone(),
+                    |input| black_box(compute_parameters(input).unwrap()),
+                    BatchSize::PerIteration,
+                );
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new("compute_parameters_from_card_prefixes", name),
+            |b| {
+                b.iter(|| {
+                    compute_parameters_from_card_prefixes(
+                        black_box(&card_prefixes),
+                        ComputeParametersInput {
+                            model_version,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+                });
+            },
+        );
+    }
 
     let input_without_card_ids = ComputeParametersInput {
         train_set: items,

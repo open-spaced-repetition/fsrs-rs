@@ -1,13 +1,12 @@
 use super::{
-    ComputeParametersInput, MIN_ITEMS_TO_TRAIN, ProgressCollector, apply_training_config,
-    first_long_term_review, new_internal_training_config, prepare_fsrs6_training_data,
-    reset_training_progress, train_fsrs6_simd, validate_training_config,
+    ComputeParametersInput, Fsrs6Initialization, ProgressCollector, apply_training_config,
+    finalize_fsrs6_parameters, first_long_term_review, initialize_fsrs6_training,
+    new_internal_training_config, prepare_fsrs6_training_data, reset_training_progress,
+    train_fsrs6_simd, validate_training_config,
 };
+use crate::FSRSError;
 use crate::dataset::{CardPrefixes, WeightedCardPrefixes, recency_weight};
 use crate::error::Result;
-use crate::parameter_initialization::{initialize_stability_from_first_reviews, smooth_and_fill};
-use crate::{FSRS6_DEFAULT_PARAMETERS, FSRSError};
-use std::collections::HashMap;
 
 /// FSRS-6's preprocessing and SIMD trainer over the selected card prefixes.
 pub(super) fn compute_parameters_from_card_prefixes(
@@ -46,30 +45,18 @@ pub(super) fn compute_parameters_from_card_prefixes(
         prepare_fsrs6_training_data(card_prefixes.prefixes.clone(), |prefix| {
             first_long_term_review(card_prefixes.reviews(*prefix))
         });
-    if train_prefixes.len() < 8 {
-        finish_progress();
-        return Ok(FSRS6_DEFAULT_PARAMETERS.to_vec());
-    }
-    let initialization_size = initial_reviews.len();
-    let (total_recall, total_reviews) =
-        train_prefixes
-            .iter()
-            .fold((0u32, 0u32), |(sum, count), &prefix| {
-                let review = card_prefixes.reviews(prefix).last().unwrap();
-                (sum + (review.rating > 1) as u32, count + 1)
-            });
-    let average_recall = total_recall as f32 / total_reviews as f32;
-    let (initial_stability, initial_rating_count) =
-        initialize_stability_from_first_reviews(initial_reviews.into_iter(), average_recall)
-            .inspect_err(|_| finish_progress())?;
-    let initialized_parameters: Vec<_> = initial_stability
-        .into_iter()
-        .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
-        .collect();
-    if train_prefixes.len() == initialization_size || train_prefixes.len() < MIN_ITEMS_TO_TRAIN {
-        finish_progress();
-        return Ok(initialized_parameters);
-    }
+    let (initialized_parameters, initial_rating_count) =
+        match initialize_fsrs6_training(initial_reviews, &train_prefixes, None, |&prefix| {
+            card_prefixes.reviews(prefix).last().unwrap().rating
+        })
+        .inspect_err(|_| finish_progress())?
+        {
+            Fsrs6Initialization::Finished(parameters) => {
+                finish_progress();
+                return Ok(parameters);
+            }
+            Fsrs6Initialization::Ready(parameters, rating_count) => (parameters, rating_count),
+        };
 
     let mut config = new_internal_training_config(
         enable_short_term,
@@ -101,17 +88,5 @@ pub(super) fn compute_parameters_from_card_prefixes(
     )
     .inspect_err(|_| finish_progress())?;
     finish_progress();
-    if optimized.iter().any(|parameter| !parameter.is_finite()) {
-        return Err(FSRSError::InvalidInput);
-    }
-    let mut initial_stability: HashMap<_, _> = optimized[0..4]
-        .iter()
-        .enumerate()
-        .map(|(index, &value)| (index as u32 + 1, value))
-        .collect();
-    let smoothed = smooth_and_fill(&mut initial_stability, &initial_rating_count)?;
-    Ok(smoothed
-        .into_iter()
-        .chain(optimized[4..].iter().copied())
-        .collect())
+    finalize_fsrs6_parameters(&optimized, &initial_rating_count)
 }

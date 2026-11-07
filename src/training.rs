@@ -530,6 +530,67 @@ fn prepare_fsrs6_training_data<T>(
     (initialization, items)
 }
 
+enum Fsrs6Initialization {
+    Finished(Vec<f32>),
+    Ready(Vec<f32>, HashMap<u32, u32>),
+}
+
+/// Initialize FSRS-6 and decide whether enough reviews remain for training.
+fn initialize_fsrs6_training<T>(
+    initial_reviews: Vec<InitialReview>,
+    items: &[T],
+    initial_parameters: Option<Vec<f32>>,
+    current_rating: impl Fn(&T) -> u32,
+) -> Result<Fsrs6Initialization> {
+    if items.len() < 8 {
+        return Ok(Fsrs6Initialization::Finished(
+            initial_parameters.unwrap_or_else(|| FSRS6_DEFAULT_PARAMETERS.to_vec()),
+        ));
+    }
+
+    let initialization_size = initial_reviews.len();
+    let (total_recall, total_reviews) = items.iter().fold((0u32, 0u32), |(sum, count), item| {
+        (sum + (current_rating(item) > 1) as u32, count + 1)
+    });
+    let average_recall = total_recall as f32 / total_reviews as f32;
+    let (initial_stability, initial_rating_count) =
+        initialize_stability_from_first_reviews(initial_reviews.into_iter(), average_recall)?;
+    let initialized_parameters = initial_parameters.unwrap_or_else(|| {
+        initial_stability
+            .into_iter()
+            .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
+            .collect()
+    });
+    if items.len() == initialization_size || items.len() < MIN_ITEMS_TO_TRAIN {
+        Ok(Fsrs6Initialization::Finished(initialized_parameters))
+    } else {
+        Ok(Fsrs6Initialization::Ready(
+            initialized_parameters,
+            initial_rating_count,
+        ))
+    }
+}
+
+/// Validate and smooth optimized FSRS-6 parameters for both input formats.
+fn finalize_fsrs6_parameters(
+    optimized: &[f32],
+    initial_rating_count: &HashMap<u32, u32>,
+) -> Result<Vec<f32>> {
+    if optimized.iter().any(|parameter| !parameter.is_finite()) {
+        return Err(FSRSError::InvalidInput);
+    }
+    let mut initial_stability = optimized[0..4]
+        .iter()
+        .enumerate()
+        .map(|(index, &value)| (index as u32 + 1, value))
+        .collect();
+    let smoothed = smooth_and_fill(&mut initial_stability, initial_rating_count)?;
+    Ok(smoothed
+        .into_iter()
+        .chain(optimized[4..].iter().copied())
+        .collect())
+}
+
 #[derive(Clone, Copy)]
 struct FirstLongTermReview {
     review: InitialReview,
@@ -761,50 +822,39 @@ fn compute_parameters_inner(
                 first_long_term_review(&item.item.reviews)
             })
         };
-    if train_set.len() < 8 {
-        finish_progress();
-        return Ok(initial_parameters.unwrap_or_else(|| match model_version {
-            ComputeParametersVersion::Fsrs6 => FSRS6_DEFAULT_PARAMETERS.to_vec(),
-            ComputeParametersVersion::Fsrs7 => DEFAULT_PARAMETERS.to_vec(),
-        }));
-    }
-
-    let initialization_size = dataset_for_initialization.len();
-    let (mut initialized_parameters, fsrs6_initial_rating_count) = match model_version {
+    let (initialized_parameters, fsrs6_initial_rating_count) = match model_version {
         ComputeParametersVersion::Fsrs6 => {
-            let average_recall =
-                calculate_average_recall_from_items(train_set.iter().map(|item| &item.item));
-            let (initial_stability, initial_rating_count) =
-                initialize_stability_from_first_reviews(
-                    dataset_for_initialization.into_iter(),
-                    average_recall,
-                )
-                .inspect_err(|_e| {
+            match initialize_fsrs6_training(
+                dataset_for_initialization,
+                &train_set,
+                initial_parameters,
+                |item| item.item.current().rating,
+            )
+            .inspect_err(|_| finish_progress())?
+            {
+                Fsrs6Initialization::Finished(parameters) => {
                     finish_progress();
-                })?;
-            let initialized_parameters = initial_stability
-                .into_iter()
-                .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
-                .collect();
-            (initialized_parameters, Some(initial_rating_count))
+                    return Ok(parameters);
+                }
+                Fsrs6Initialization::Ready(parameters, rating_count) => {
+                    (parameters, Some(rating_count))
+                }
+            }
         }
         // FSRS-7 has no parameter pre-training: it trains from the default parameters.
-        ComputeParametersVersion::Fsrs7 => (DEFAULT_PARAMETERS.to_vec(), None),
+        ComputeParametersVersion::Fsrs7 => {
+            let parameters = initial_parameters.unwrap_or_else(|| DEFAULT_PARAMETERS.to_vec());
+            if train_set.len() < MIN_ITEMS_TO_TRAIN
+                || train_set
+                    .iter()
+                    .all(|item| item.item.long_term_review_cnt() == 1)
+            {
+                finish_progress();
+                return Ok(parameters);
+            }
+            (parameters, None)
+        }
     };
-    if let Some(initial_parameters) = initial_parameters {
-        initialized_parameters = initial_parameters;
-    }
-    // Every item is a first long-term review: nothing to train on.
-    let only_first_reviews = match model_version {
-        ComputeParametersVersion::Fsrs6 => train_set.len() == initialization_size,
-        ComputeParametersVersion::Fsrs7 => train_set
-            .iter()
-            .all(|item| item.item.long_term_review_cnt() == 1),
-    };
-    if only_first_reviews || train_set.len() < MIN_ITEMS_TO_TRAIN {
-        finish_progress();
-        return Ok(initialized_parameters);
-    }
     let mut config = new_internal_training_config(
         enable_short_term,
         enable_sched_penalties,
@@ -838,31 +888,26 @@ fn compute_parameters_inner(
 
     finish_progress();
 
-    if optimized_parameters
-        .iter()
-        .any(|parameter: &f32| !parameter.is_finite())
-    {
-        return Err(FSRSError::InvalidInput);
-    }
-
-    let clamped_stability = match model_version {
+    match model_version {
         ComputeParametersVersion::Fsrs6 => {
             let initial_rating_count = fsrs6_initial_rating_count.expect("FSRS-6 rating count");
-            let mut optimized_initial_stability = optimized_parameters[0..4]
-                .iter()
-                .enumerate()
-                .map(|(i, &val)| (i as u32 + 1, val))
-                .collect::<HashMap<_, _>>();
-            smooth_and_fill(&mut optimized_initial_stability, &initial_rating_count)?
+            finalize_fsrs6_parameters(&optimized_parameters, &initial_rating_count)
         }
         ComputeParametersVersion::Fsrs7 => {
-            smooth_initial_stabilities_fsrs7(optimized_parameters[0..4].try_into().unwrap())?
+            if optimized_parameters
+                .iter()
+                .any(|parameter| !parameter.is_finite())
+            {
+                return Err(FSRSError::InvalidInput);
+            }
+            let clamped_stability =
+                smooth_initial_stabilities_fsrs7(optimized_parameters[0..4].try_into().unwrap())?;
+            Ok(clamped_stability
+                .into_iter()
+                .chain(optimized_parameters[4..].iter().copied())
+                .collect())
         }
-    };
-    Ok(clamped_stability
-        .into_iter()
-        .chain(optimized_parameters[4..].iter().copied())
-        .collect())
+    }
 }
 
 pub fn benchmark(
@@ -1847,6 +1892,70 @@ mod tests {
                 Err(FSRSError::InvalidInput)
             );
         }
+    }
+
+    #[test]
+    fn fsrs6_classifier_uses_warm_start_with_and_without_training() {
+        let mut first_reviews = Vec::new();
+        let mut later_reviews = Vec::new();
+        for card in 0..120 {
+            let reviews = vec![
+                FSRSReview {
+                    rating: 3,
+                    delta_t: 0.0,
+                },
+                FSRSReview {
+                    rating: if card % 5 == 0 { 1 } else { 3 },
+                    delta_t: 2.0,
+                },
+                FSRSReview {
+                    rating: if card % 3 == 0 { 1 } else { 4 },
+                    delta_t: (card % 11 + 1) as f32,
+                },
+            ];
+            if card < 100 {
+                first_reviews.push(FSRSItem {
+                    reviews: reviews[..2].to_vec(),
+                });
+            }
+            later_reviews.push(FSRSItem { reviews });
+        }
+        let mut items = first_reviews;
+        items.extend(later_reviews);
+        let mut warm_start = FSRS6_DEFAULT_PARAMETERS.to_vec();
+        warm_start[4] += 0.5;
+        let classifier = RecallClassifierTrainingConfig {
+            initial_parameters: Some(warm_start.clone()),
+            ..Default::default()
+        };
+        for count in [0, 7, 8, 63] {
+            let progress = CombinedProgressState::new_shared();
+            let input = ComputeParametersInput {
+                train_set: items[..count].to_vec(),
+                progress: Some(progress.clone()),
+                model_version: ComputeParametersVersion::Fsrs6,
+                ..Default::default()
+            };
+            assert_eq!(
+                compute_parameters_for_recall_classifier(input, classifier.clone()).unwrap(),
+                warm_start
+            );
+            assert!(progress.lock().unwrap().finished());
+        }
+
+        let input = ComputeParametersInput {
+            train_set: items,
+            model_version: ComputeParametersVersion::Fsrs6,
+            training_config: Some(TrainingConfig {
+                num_epochs: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let warm = compute_parameters_for_recall_classifier(input.clone(), classifier).unwrap();
+        let default = compute_parameters_for_recall_classifier(input, Default::default()).unwrap();
+        assert!(warm.iter().all(|parameter| parameter.is_finite()));
+        assert_ne!(warm, default);
     }
 
     #[test]
