@@ -66,6 +66,9 @@ jobs:
           rm -rf target/criterion
           git checkout --detach HEAD^1
           bench --save-baseline base
+          # Criterion also leaves a `new` estimate for the base run. Remove it
+          # so the report can distinguish removed benchmarks from head results.
+          find target/criterion -type f -path '*/new/estimates.json' -delete
           git checkout --detach "$GITHUB_SHA"
           bench --baseline-lenient base
 
