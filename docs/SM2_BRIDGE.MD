@@ -22,6 +22,17 @@ forgetting curve remains consistent with the card's existing interval.
   - Ignores the ease factor because FSRS-7 has no equivalent scalar difficulty
     bridge
 
+## General form
+
+The FSRS-7 bridge is the special case `D = 5`, `S_fast = 0.8 * S` of
+`FSRS::scale_memory_state_to_interval(state, interval, retention)`. That method
+solves the same equation for any shape: it scales both traces of `state`
+(keeping its difficulty and its `S_fast / S` ratio) until the forgetting curve
+reaches `retention` at `interval`. For FSRS-6 it sets `S_fast = S` and solves the
+scalar curve directly. Implemented as `scale_memory_state_to_interval_scalar(...)`
+in `src/model_v7.rs` and `src/model_v6.rs`; `memory_state_from_sm2_scalar(...)`
+in `src/model_v7.rs` calls it with the neutral shape.
+
 ## Dispatch
 
 - `FSRS::memory_state_from_sm2(...)` delegates to
