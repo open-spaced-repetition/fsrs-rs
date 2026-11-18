@@ -14,17 +14,48 @@ pub(crate) fn memory_state_from_sm2_scalar(
     interval: f32,
     sm2_retention: f32,
 ) -> Result<MemoryState> {
-    if !interval.is_finite() || !sm2_retention.is_finite() || !(0.0..1.0).contains(&sm2_retention) {
+    scale_memory_state_to_interval_scalar(
+        w,
+        MemoryState {
+            stability: 1.0,
+            difficulty: 5.0,
+            stability_fast: 0.8,
+        },
+        interval,
+        sm2_retention,
+    )
+}
+
+/// Scales both stability traces of `shape` (keeping its difficulty and its
+/// fast/slow ratio) so that the forgetting curve reaches `target_retention` at `interval`.
+pub(crate) fn scale_memory_state_to_interval_scalar(
+    w: &[f32],
+    shape: MemoryState,
+    interval: f32,
+    target_retention: f32,
+) -> Result<MemoryState> {
+    if !interval.is_finite()
+        || !target_retention.is_finite()
+        || !(0.0..1.0).contains(&target_retention)
+        || !shape.difficulty.is_finite()
+        || !shape.stability.is_finite()
+        || shape.stability <= 0.0
+        || !shape.stability_fast.is_finite()
+        || shape.stability_fast <= 0.0
+    {
         return Err(FSRSError::InvalidInput);
     }
+
+    let difficulty = shape.difficulty.clamp(super::D_MIN, super::D_MAX);
+    let ratio = shape.stability_fast / shape.stability;
 
     let interval = interval.max(super::S_MIN).clamp(super::S_MIN, super::S_MAX);
     let state_at = |log_stability: f32| {
         let stability = log_stability.exp().clamp(super::S_MIN, super::S_MAX);
         MemoryState {
             stability,
-            difficulty: 5.0,
-            stability_fast: (stability * 0.8).clamp(super::S_MIN, super::S_MAX),
+            difficulty,
+            stability_fast: (stability * ratio).clamp(super::S_MIN, super::S_MAX),
         }
     };
 
@@ -37,10 +68,10 @@ pub(crate) fn memory_state_from_sm2_scalar(
     if !low_retention.is_finite() || !high_retention.is_finite() {
         return Err(FSRSError::InvalidInput);
     }
-    if sm2_retention <= low_retention {
+    if target_retention <= low_retention {
         return Ok(low_state);
     }
-    if sm2_retention >= high_retention {
+    if target_retention >= high_retention {
         return Ok(high_state);
     }
 
@@ -51,10 +82,10 @@ pub(crate) fn memory_state_from_sm2_scalar(
         if !retention.is_finite() {
             return Err(FSRSError::InvalidInput);
         }
-        if (retention - sm2_retention).abs() <= RETENTION_TOLERANCE {
+        if (retention - target_retention).abs() <= RETENTION_TOLERANCE {
             return Ok(state);
         }
-        if retention < sm2_retention {
+        if retention < target_retention {
             low = mid;
         } else {
             high = mid;

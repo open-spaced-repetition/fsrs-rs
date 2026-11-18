@@ -284,6 +284,28 @@ impl FSRS {
             }
         }
     }
+
+    pub(crate) fn scale_memory_state_to_interval_inner(
+        &self,
+        state: MemoryState,
+        interval: f32,
+        retention: f32,
+    ) -> Result<MemoryState> {
+        match self.version {
+            ModelVersion::Fsrs6 => model_v6::scale_memory_state_to_interval_scalar(
+                &self.parameters,
+                state,
+                interval,
+                retention,
+            ),
+            ModelVersion::Fsrs7 => model_v7::scale_memory_state_to_interval_scalar(
+                &self.parameters,
+                state,
+                interval,
+                retention,
+            ),
+        }
+    }
 }
 
 /// Validates parameters and fills empty input with FSRS-7 defaults.

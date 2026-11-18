@@ -135,6 +135,39 @@ pub(crate) fn memory_state_from_sm2_scalar(
     }
 }
 
+/// Stability whose forgetting curve reaches `retention` at `interval`, clamped to the
+/// model's stability bounds. `difficulty` is kept (clamped).
+pub(crate) fn scale_memory_state_to_interval_scalar(
+    w: &[f32],
+    shape: MemoryState,
+    interval: f32,
+    retention: f32,
+) -> Result<MemoryState> {
+    if !interval.is_finite()
+        || !retention.is_finite()
+        || !(0.0..1.0).contains(&retention)
+        || !shape.difficulty.is_finite()
+        || !shape.stability.is_finite()
+        || shape.stability <= 0.0
+        || !shape.stability_fast.is_finite()
+        || shape.stability_fast <= 0.0
+    {
+        return Err(FSRSError::InvalidInput);
+    }
+    let decay = -w[20];
+    let factor = 0.9f32.powf(1.0 / decay) - 1.0;
+    let stability = interval.max(super::S_MIN) * factor / (retention.powf(1.0 / decay) - 1.0);
+    if !stability.is_finite() {
+        return Err(FSRSError::InvalidInput);
+    }
+    let stability = stability.clamp(super::S_MIN, super::S_MAX);
+    Ok(MemoryState {
+        stability,
+        difficulty: shape.difficulty.clamp(super::D_MIN, super::D_MAX),
+        stability_fast: stability,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

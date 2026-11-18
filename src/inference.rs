@@ -347,6 +347,30 @@ impl FSRS {
         self.memory_state_from_sm2_inner(ease_factor, interval, sm2_retention)
     }
 
+    /// Scale both stability traces of `state` so that its forgetting curve reaches
+    /// `retention` at `interval` days, keeping its difficulty and its fast/slow
+    /// stability ratio.
+    ///
+    /// FSRS-6 has a single trace, so `stability_fast` is set equal to `stability`. For
+    /// FSRS-7 the curve depends on the difficulty and on both traces, so this is the
+    /// inverse of [FSRS::interval_at_retrievability] for a given shape. Results are
+    /// clamped to the model's stability bounds, as in [FSRS::memory_state_from_sm2]: if
+    /// the target is out of range, the bound state is returned.
+    ///
+    /// Returns [FSRSError::InvalidInput] for a non-finite input, non-positive
+    /// stabilities, or a `retention` outside (0, 1).
+    pub fn scale_memory_state_to_interval(
+        &self,
+        state: MemoryState,
+        interval: f32,
+        retention: f32,
+    ) -> Result<MemoryState> {
+        if retention <= 0.0 {
+            return Err(FSRSError::InvalidInput);
+        }
+        self.scale_memory_state_to_interval_inner(state, interval, retention)
+    }
+
     /// Calculate current retrievability using the active FSRS version.
     pub fn current_retrievability(&self, state: MemoryState, days_elapsed: f32) -> f32 {
         self.power_forgetting_curve_for_state(days_elapsed.max(0.0), state)
