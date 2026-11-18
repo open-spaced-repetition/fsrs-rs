@@ -6,7 +6,7 @@
 //! - With card IDs, cards are sorted by (longest history, card ID) and packed
 //!   until another card would exceed `batch_size` predictions.
 
-use crate::dataset::WindowedItems;
+use crate::dataset::{WindowedItems, stable_order_by_length};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -189,30 +189,4 @@ pub(crate) fn build_batch_plans<I: WindowedItems + ?Sized>(
         });
     }
     batches
-}
-
-/// Indices `0..count` stably sorted by `length`: a counting sort for ordinary
-/// review counts, with a comparison sort for exceptionally sparse lengths.
-fn stable_order_by_length(count: usize, length: impl Fn(usize) -> usize) -> Vec<usize> {
-    let max_len = (0..count).map(&length).max().unwrap_or(0);
-    if max_len > count.saturating_mul(4).max(1024) {
-        let mut order: Vec<_> = (0..count).collect();
-        order.sort_by_key(|&i| length(i));
-        return order;
-    }
-    let mut offsets = vec![0usize; max_len + 1];
-    for i in 0..count {
-        offsets[length(i)] += 1;
-    }
-    let mut offset = 0;
-    for value in &mut offsets {
-        (*value, offset) = (offset, offset + *value);
-    }
-    let mut order = vec![0; count];
-    for i in 0..count {
-        let position = &mut offsets[length(i)];
-        order[*position] = i;
-        *position += 1;
-    }
-    order
 }

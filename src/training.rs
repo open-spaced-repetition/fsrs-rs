@@ -4,8 +4,8 @@ use crate::analytic_v6::plan::{BatchPlan, build_batch_plans};
 use crate::analytic_v6::worker::{BatchGradientFn, with_gradients};
 use crate::cosine_annealing::CosineAnnealingLR;
 use crate::dataset::{
-    FSRSItem, FSRSReview, FreeableItems, WeightedFSRSItem, WindowedItems, outlier_bucket_decisions,
-    recency_weighted_fsrs_items,
+    FSRSItem, FSRSReview, FreeableItems, WeightedFSRSItem, outlier_bucket_decisions,
+    recency_weighted_fsrs_items, stable_order_by_length,
 };
 use crate::error::Result;
 use crate::model::{FSRS, ModelConfig, ModelVersion};
@@ -19,6 +19,7 @@ use crate::{DEFAULT_PARAMETERS, FSRS6_DEFAULT_PARAMETERS, FSRSError};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
@@ -932,16 +933,11 @@ pub fn benchmark(
     {
         panic!("card_ids must be aligned with train_set");
     }
-    let average_recall = calculate_average_recall(&train_set);
-    let (dataset_for_initialization, _next_train_set) = train_set
-        .clone()
-        .into_iter()
-        .partition(|item| item.long_term_review_cnt() == 1);
     let initialized_parameters = match model_version {
         ComputeParametersVersion::Fsrs6 => {
+            let average_recall = calculate_average_recall(&train_set);
             let (initial_stability, _rating_count) =
-                initialize_stability_parameters(dataset_for_initialization, average_recall)
-                    .unwrap();
+                initialize_stability_parameters(&train_set, average_recall).unwrap();
             initial_stability
                 .into_iter()
                 .chain(FSRS6_DEFAULT_PARAMETERS[4..].iter().copied())
@@ -978,7 +974,7 @@ pub fn benchmark(
     .unwrap()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct WindowedFSRSBatch {
     t_historys: Vec<f32>,
     r_historys: Vec<f32>,
@@ -994,13 +990,23 @@ impl WindowedFSRSBatch {
         self.prediction_count
     }
 
-    fn analytic_bce_grad(&self, w: &[f32]) -> [f32; 34] {
+    fn grad(&self, w: &[f32], objective: TrainingObjective) -> [f32; 34] {
+        let weights = objective_weights(objective, &self.labels, &self.weights, || {
+            windowed_predictions(
+                w,
+                &self.t_historys,
+                &self.r_historys,
+                &self.weights,
+                self.seq_len,
+                self.batch_size,
+            )
+        });
         crate::analytic_v7::windowed_grad(
             w,
             &self.t_historys,
             &self.r_historys,
             &self.labels,
-            &self.weights,
+            &weights,
             self.seq_len,
             self.batch_size,
         )
@@ -1019,10 +1025,19 @@ impl WindowedFSRSBatch {
     }
 }
 
-fn build_windowed_batches<I: WindowedItems>(
-    items: &I,
+fn build_windowed_batches<I: FreeableItems>(
+    mut items: I,
     batch_size: usize,
 ) -> Vec<WindowedFSRSBatch> {
+    if (0..items.count()).all(|index| items.optional_card_id(index).is_none()) {
+        // One prediction per card. Input order breaks ties between equal lengths.
+        return stable_order_by_length(items.count(), |index| items.reviews(index).len())
+            .chunks(batch_size)
+            .map(|indices| {
+                build_windowed_batch(&mut items, indices.iter().map(std::slice::from_ref))
+            })
+            .collect();
+    }
     let mut cards: HashMap<i64, Vec<usize>> = HashMap::new();
     for index in 0..items.count() {
         cards.entry(items.card_id(index)).or_default().push(index);
@@ -1043,7 +1058,10 @@ fn build_windowed_batches<I: WindowedItems>(
     for (_card_id, mut prefixes) in cards {
         prefixes.sort_by_cached_key(|&index| items.reviews(index).len());
         if !current.is_empty() && current_predictions + prefixes.len() > batch_size {
-            batches.push(build_windowed_batch(items, &current));
+            batches.push(build_windowed_batch(
+                &mut items,
+                current.iter().map(Vec::as_slice),
+            ));
             current.clear();
             current_predictions = 0;
         }
@@ -1051,17 +1069,23 @@ fn build_windowed_batches<I: WindowedItems>(
         current.push(prefixes);
     }
     if !current.is_empty() {
-        batches.push(build_windowed_batch(items, &current));
+        batches.push(build_windowed_batch(
+            &mut items,
+            current.iter().map(Vec::as_slice),
+        ));
     }
     batches
 }
 
-fn build_windowed_batch<I: WindowedItems>(items: &I, cards: &[Vec<usize>]) -> WindowedFSRSBatch {
-    let prediction_count = cards.iter().map(Vec::len).sum();
+fn build_windowed_batch<'a>(
+    items: &mut impl FreeableItems,
+    cards: impl ExactSizeIterator<Item = &'a [usize]> + Clone,
+) -> WindowedFSRSBatch {
+    let prediction_count = cards.clone().map(|prefixes| prefixes.len()).sum();
     let real_card_count = cards.len();
     let batch_size = real_card_count.div_ceil(8) * 8;
     let seq_len = cards
-        .iter()
+        .clone()
         .filter_map(|prefixes| prefixes.last())
         .map(|&index| items.reviews(index).len())
         .max()
@@ -1071,7 +1095,7 @@ fn build_windowed_batch<I: WindowedItems>(items: &I, cards: &[Vec<usize>]) -> Wi
     let mut labels = vec![0.0f32; seq_len * batch_size];
     let mut weights = vec![0.0f32; seq_len * batch_size];
 
-    for (column, prefixes) in cards.iter().enumerate() {
+    for (column, prefixes) in cards.enumerate() {
         let longest = *prefixes.last().expect("card has at least one prefix item");
         for (row, review) in items.reviews(longest).iter().enumerate() {
             let index = row * batch_size + column;
@@ -1084,6 +1108,7 @@ fn build_windowed_batch<I: WindowedItems>(items: &I, cards: &[Vec<usize>]) -> Wi
             let index = row * batch_size + column;
             labels[index] = if reviews[row].rating == 1 { 0.0 } else { 1.0 };
             weights[index] = items.weight(prefix);
+            items.release_reviews(prefix);
         }
     }
 
@@ -1237,34 +1262,33 @@ fn build_fsrs6_batches(
     batches
 }
 
-fn objective_weights(
+fn objective_weights<'a>(
     objective: TrainingObjective,
     labels: &[f32],
-    weights: &[f32],
-    predictions: &[f32],
-) -> Vec<f32> {
+    weights: &'a [f32],
+    predict: impl FnOnce() -> Vec<f32>,
+) -> Cow<'a, [f32]> {
     match objective {
-        TrainingObjective::ProbabilityLogLoss => weights.to_vec(),
+        TrainingObjective::ProbabilityLogLoss => Cow::Borrowed(weights),
         TrainingObjective::HardClassificationCost {
             costs,
             decision_boundary,
             decision_sharpness,
-        } => labels
-            .iter()
-            .zip(weights)
-            .zip(predictions)
-            .map(|((&label, &weight), &prediction)| {
-                let prediction = prediction.clamp(0.0001, 0.9999);
+        } => {
+            let mut adjusted = predict();
+            for ((value, &label), &weight) in adjusted.iter_mut().zip(labels).zip(weights) {
+                let prediction = value.clamp(0.0001, 0.9999);
                 let soft =
                     1.0 / (1.0 + (-(prediction - decision_boundary) * decision_sharpness).exp());
                 let slope = decision_sharpness * soft * (1.0 - soft);
-                if label > 0.5 {
+                *value = if label > 0.5 {
                     weight * costs.false_negative * slope * prediction
                 } else {
                     weight * costs.false_positive * slope * (1.0 - prediction)
-                }
-            })
-            .collect(),
+                };
+            }
+            Cow::Owned(adjusted)
+        }
     }
 }
 
@@ -1326,8 +1350,9 @@ fn fsrs6_batch_grad(
     parameters: &[f32],
     objective: TrainingObjective,
 ) -> Vec<f32> {
-    let predictions = prefix_predictions(batch, parameters);
-    let weights = objective_weights(objective, &batch.labels, &batch.weights, &predictions);
+    let weights = objective_weights(objective, &batch.labels, &batch.weights, || {
+        prefix_predictions(batch, parameters)
+    });
     let mut grad = vec![0.0f64; parameters.len()];
     if batch.windowed {
         crate::analytic_v6::card_loss_and_grad(
@@ -1429,13 +1454,6 @@ fn train(
     #[cfg(all(target_os = "wasi", target_env = "p1"))] observer: &mut impl FnMut(ItemProgress) -> bool,
 ) -> Result<Vec<f32>> {
     let version = ModelVersion::from_param_count(initial_parameters.len());
-    if version == ModelVersion::Fsrs7 {
-        for (index, item) in train_set.iter_mut().enumerate() {
-            if item.card_id.is_none() {
-                item.card_id = Some(i64::MIN + index as i64);
-            }
-        }
-    }
     // The log-loss objective trains FSRS-7 on two threads (the classifier objective reweights each
     // batch with its predictions first, and ARM has its own NEON kernel).
     if version == ModelVersion::Fsrs7 && objective == TrainingObjective::ProbabilityLogLoss {
@@ -1461,7 +1479,7 @@ fn train(
     let total_size = train_set.len();
     let batches = match version {
         ModelVersion::Fsrs7 => {
-            TrainingBatches::Fsrs7(build_windowed_batches(&train_set, config.batch_size))
+            TrainingBatches::Fsrs7(build_windowed_batches(train_set, config.batch_size))
         }
         // Classifier objectives reweight each batch from its predictions,
         // which only the scalar kernel supports; round the histories for it here.
@@ -1515,15 +1533,14 @@ fn train_fsrs6_simd<I: FreeableItems>(
 }
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-fn train_fsrs7_windowed<I: WindowedItems>(
+fn train_fsrs7_windowed<I: FreeableItems>(
     train_set: I,
     initial_parameters: &[f32],
     config: &InternalTrainingConfig,
     progress: Option<ProgressCollector>,
 ) -> Result<Vec<f32>> {
     let total_size = train_set.count();
-    let batches = build_windowed_batches(&train_set, config.batch_size);
-    drop(train_set);
+    let batches = build_windowed_batches(train_set, config.batch_size);
     train_on_batches(
         TrainingBatches::Fsrs7(batches),
         total_size,
@@ -1565,7 +1582,7 @@ fn train_on_batches(
         TrainingBatches::Fsrs7(batches) => {
             let sizes: Vec<_> = batches.iter().map(|b| b.real_batch_size()).collect();
             optimize(&sizes, &mut |index, parameters| {
-                fsrs7_batch_grad(&batches[index], parameters, objective)
+                batches[index].grad(parameters, objective).to_vec()
             })
         }
         TrainingBatches::Fsrs6(batches) => {
@@ -1652,33 +1669,49 @@ fn run_epochs(
     Ok(parameters)
 }
 
-fn fsrs7_batch_grad(
-    batch: &WindowedFSRSBatch,
-    parameters: &[f32],
-    objective: TrainingObjective,
-) -> Vec<f32> {
-    if !matches!(objective, TrainingObjective::HardClassificationCost { .. }) {
-        return batch.analytic_bce_grad(parameters).to_vec();
-    }
-    let predictions = windowed_predictions(
-        parameters,
-        &batch.t_historys,
-        &batch.r_historys,
-        &batch.weights,
-        batch.seq_len,
-        batch.batch_size,
-    );
-    let mut adjusted = batch.clone();
-    adjusted.weights = objective_weights(objective, &batch.labels, &batch.weights, &predictions);
-    adjusted.analytic_bce_grad(parameters).to_vec()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analytic_v6::batch::Workspace;
     use crate::dataset::prepare_training_data;
     use crate::test_helpers::relative_l2_error;
+
+    #[test]
+    fn independent_fsrs7_prefixes_match_unique_card_ids_bit_for_bit() {
+        let mut fixture = crate::test_helpers::varied_card_prefixes();
+        fixture.prefixes.truncate(96);
+        let (train_set, _) = crate::test_helpers::items_of_card_prefixes(&fixture);
+        let unique_ids = (0..train_set.len() as i64).collect();
+        let independent = ComputeParametersInput {
+            train_set,
+            model_version: ComputeParametersVersion::Fsrs7,
+            training_config: Some(TrainingConfig {
+                num_epochs: 2,
+                batch_size: 13,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let identified = ComputeParametersInput {
+            card_ids: Some(unique_ids),
+            ..independent.clone()
+        };
+        for classifier in [false, true] {
+            let fit_bits = |input| {
+                let parameters = if classifier {
+                    compute_parameters_for_recall_classifier(input, Default::default())
+                } else {
+                    compute_parameters(input)
+                };
+                parameters
+                    .unwrap()
+                    .into_iter()
+                    .map(f32::to_bits)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(fit_bits(independent.clone()), fit_bits(identified.clone()));
+        }
+    }
 
     fn fsrs6_test_items(card_ids: bool) -> Vec<WeightedFSRSItem> {
         let fixture = crate::test_helpers::varied_card_prefixes();
