@@ -13,7 +13,7 @@ static R_S0_DEFAULT_ARRAY: &[(u32, f32); 4] = &[
 ];
 
 pub(crate) fn initialize_stability_parameters(
-    fsrs_items: Vec<FSRSItem>,
+    fsrs_items: &[FSRSItem],
     average_recall: f32,
 ) -> Result<([f32; 4], HashMap<u32, u32>)> {
     initialize_stability_from_first_reviews(
@@ -490,7 +490,7 @@ mod tests {
         let items = [dataset_for_initialization.clone(), trainset].concat();
         let average_recall = calculate_average_recall(&items);
 
-        initialize_stability_parameters(dataset_for_initialization, average_recall)
+        initialize_stability_parameters(&dataset_for_initialization, average_recall)
             .unwrap()
             .0
             .assert_approx_eq([0.73550886, 2.1338913, 4.473312, 11.087741])

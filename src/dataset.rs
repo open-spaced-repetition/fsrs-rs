@@ -123,9 +123,8 @@ impl WindowedItems for [WeightedFSRSItem] {
     }
 
     fn card_id(&self, index: usize) -> i64 {
-        self[index]
-            .card_id
-            .expect("card-oriented training items have card ids")
+        // Independent prefixes use input order to break ties between equal lengths.
+        self[index].card_id.unwrap_or(i64::MIN + index as i64)
     }
 
     fn optional_card_id(&self, index: usize) -> Option<i64> {
@@ -164,13 +163,20 @@ impl WindowedItems for WeightedCardPrefixes<'_> {
     }
 }
 
-/// A training set the gradient workers can free incrementally while waiting.
+/// A training set whose owned storage can be freed during batch layout or training.
 pub(crate) trait FreeableItems: WindowedItems {
+    /// Release a prefix after packing it. Compact prefixes borrow the card's reviews.
+    fn release_reviews(&mut self, _index: usize) {}
+
     /// Returns false if nothing was left to free. Repeated calls must empty the set.
     fn free_some(&mut self) -> bool;
 }
 
 impl FreeableItems for Vec<WeightedFSRSItem> {
+    fn release_reviews(&mut self, index: usize) {
+        self[index].item.reviews = Vec::new();
+    }
+
     fn free_some(&mut self) -> bool {
         let len = self.len();
         let keep = len.saturating_sub(32);
@@ -396,60 +402,25 @@ impl RemovedBucketLookup<'_> {
     }
 }
 
-pub(crate) fn item_survives_outlier(item: &FSRSItem, removed_pairs: &[HashSet<u32>; 5]) -> bool {
-    if item.long_term_review_cnt() == 0 {
-        true
-    } else {
-        let key = bucket_long_term_delta_t(item.first_long_term_review().delta_t).to_bits();
-        !removed_pairs[item.reviews[0].rating as usize].contains(&key)
-    }
-}
-
-pub(crate) fn filter_outlier_indices(
-    dataset_for_initialization: &[FSRSItem],
-    trainset: &[FSRSItem],
-) -> (Vec<usize>, Vec<usize>) {
-    filter_outlier_train_indices(dataset_for_initialization, trainset.iter())
-}
-
-pub(crate) fn filter_outlier_train_indices<'a>(
-    dataset_for_initialization: &[FSRSItem],
-    trainset: impl IntoIterator<Item = &'a FSRSItem>,
-) -> (Vec<usize>, Vec<usize>) {
-    let decisions = compute_outlier_bucket_decisions(dataset_for_initialization.iter());
-    let train_indices = trainset
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, item)| {
-            item_survives_outlier(item, &decisions.removed_pairs).then_some(index)
-        })
-        .collect();
-    (decisions.kept_initialization_indices, train_indices)
-}
-
 pub fn filter_outlier(
-    dataset_for_initialization: Vec<FSRSItem>,
-    trainset: Vec<FSRSItem>,
+    mut dataset_for_initialization: Vec<FSRSItem>,
+    mut trainset: Vec<FSRSItem>,
 ) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
-    let (initialization_indices, train_indices) =
-        filter_outlier_indices(&dataset_for_initialization, &trainset);
-    let mut initialization_items = dataset_for_initialization
+    let decisions = compute_outlier_bucket_decisions(dataset_for_initialization.iter());
+    let outliers = decisions.removed_bucket_lookup();
+    trainset.retain(|item| {
+        item.reviews
+            .iter()
+            .find(|review| review.delta_t >= 1.0)
+            .is_none_or(|review| !outliers.contains(item.reviews[0].rating, review.delta_t))
+    });
+    trainset.shrink_to_fit();
+    let initialization = decisions
+        .kept_initialization_indices
         .into_iter()
-        .map(Some)
-        .collect::<Vec<Option<FSRSItem>>>();
-    let filtered_items = initialization_indices
-        .into_iter()
-        .map(|index| initialization_items[index].take().unwrap())
+        .map(|index| std::mem::take(&mut dataset_for_initialization[index]))
         .collect();
-    let mut train_items = trainset
-        .into_iter()
-        .map(Some)
-        .collect::<Vec<Option<FSRSItem>>>();
-    let trainset = train_indices
-        .into_iter()
-        .map(|index| train_items[index].take().unwrap())
-        .collect();
-    (filtered_items, trainset)
+    (initialization, trainset)
 }
 
 pub(crate) fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec<FSRSItem>) {
@@ -461,6 +432,32 @@ pub(crate) fn prepare_training_data(items: Vec<FSRSItem>) -> (Vec<FSRSItem>, Vec
         (dataset_for_initialization, trainset) = filter_outlier(dataset_for_initialization, items);
     }
     (dataset_for_initialization, trainset)
+}
+
+/// Indices `0..count` stably sorted by `length`: a counting sort for ordinary
+/// review counts, with a comparison sort for exceptionally sparse lengths.
+pub(crate) fn stable_order_by_length(count: usize, length: impl Fn(usize) -> usize) -> Vec<usize> {
+    let max_len = (0..count).map(&length).max().unwrap_or(0);
+    if max_len > count.saturating_mul(4).max(1024) {
+        let mut order: Vec<_> = (0..count).collect();
+        order.sort_by_key(|&i| length(i));
+        return order;
+    }
+    let mut offsets = vec![0usize; max_len + 1];
+    for i in 0..count {
+        offsets[length(i)] += 1;
+    }
+    let mut offset = 0;
+    for value in &mut offsets {
+        (*value, offset) = (offset, offset + *value);
+    }
+    let mut order = vec![0; count];
+    for i in 0..count {
+        let position = &mut offsets[length(i)];
+        order[*position] = i;
+        *position += 1;
+    }
+    order
 }
 
 pub(crate) fn sort_items_by_review_length(
