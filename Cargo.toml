@@ -31,7 +31,7 @@ csv = "1.4.0"
 
 [target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
 criterion = { version = "0.8.2" }
-rusqlite = { version = "0.41.1", features = ["bundled-windows"] }
+rusqlite = { version = "0.42.0", features = ["bundled-windows"] }
 
 [target.'cfg(target_os = "wasi")'.dev-dependencies]
 rusqlite = { version = "0.41.1", features = ["bundled", "wasm32-wasi-vfs"] }
