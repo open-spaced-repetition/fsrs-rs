@@ -2557,7 +2557,9 @@ pub fn extract_simulator_config(
 
     // Calculate mean costs
     for ((state, rating), durations) in state_rating_durations.iter() {
-        let mean_duration = durations.iter().sum::<u32>() / durations.len() as u32;
+        // Sum in u64: u32 milliseconds overflow after about 49.7 days of review time.
+        let total_millis: u64 = durations.iter().map(|&d| u64::from(d)).sum();
+        let mean_duration = total_millis / durations.len() as u64;
         state_rating_costs[*state][*rating] = mean_duration as f32 / 1000.0;
     }
 
@@ -3726,6 +3728,23 @@ mod tests {
     fn test_extract_simulator_config_without_revlog() {
         let simulator_config = extract_simulator_config(vec![], 0, true);
         assert_eq!(simulator_config, SimulatorConfig::default());
+    }
+
+    #[test]
+    fn test_extract_simulator_config_costs_do_not_overflow() {
+        // 480,000 reviews of 9 seconds add up to 4.32e9 ms, more than u32::MAX.
+        let revlogs = (0..480_000)
+            .map(|i| RevlogEntry {
+                id: 1_700_000_000_000 + i,
+                cid: i,
+                button_chosen: 3,
+                taken_millis: 9_000,
+                review_kind: RevlogReviewKind::Review,
+                ..Default::default()
+            })
+            .collect();
+        let simulator_config = extract_simulator_config(revlogs, 0, false);
+        assert_eq!(simulator_config.state_rating_costs[1][2], 9.0);
     }
 
     #[test]
