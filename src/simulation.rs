@@ -2532,6 +2532,15 @@ pub fn extract_simulator_config(
     day_cutoff: i64,
     smooth: bool,
 ) -> SimulatorConfig {
+    // Keep only answers that affect scheduling, as Anki does when training: a button from 1 to 4,
+    // and not cramming (a filtered deck with rescheduling off, which Anki logs with ease 0).
+    let df = df
+        .into_iter()
+        .filter(|entry| {
+            (1..=4).contains(&entry.button_chosen)
+                && !(entry.review_kind == RevlogReviewKind::Filtered && entry.ease_factor == 0)
+        })
+        .collect_vec();
     if df.is_empty() {
         return SimulatorConfig::default();
     }
@@ -3745,6 +3754,69 @@ mod tests {
             .collect();
         let simulator_config = extract_simulator_config(revlogs, 0, false);
         assert_eq!(simulator_config.state_rating_costs[1][2], 9.0);
+    }
+
+    fn revlog_entry(
+        cid: i64,
+        minute: i64,
+        review_kind: RevlogReviewKind,
+        button_chosen: u8,
+        ease_factor: u32,
+    ) -> RevlogEntry {
+        RevlogEntry {
+            id: 1_700_000_000_000 + minute * 60_000,
+            cid,
+            button_chosen,
+            ease_factor,
+            taken_millis: 5_000,
+            review_kind,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_extract_simulator_config_ignores_cramming() {
+        use RevlogReviewKind::{Filtered, Learning, Review};
+        let answers = vec![
+            revlog_entry(1, 0, Learning, 3, 0),
+            revlog_entry(1, 10, Learning, 3, 2500),
+            revlog_entry(2, 0, Learning, 1, 0),
+            revlog_entry(2, 1, Learning, 3, 0),
+            revlog_entry(2, 11, Learning, 3, 2500),
+            revlog_entry(3, 0, Review, 1, 2300),
+            revlog_entry(3, 10, Review, 3, 2300),
+        ];
+        // Cramming: a filtered deck with rescheduling off, logged by Anki with ease 0.
+        // Card 1 is previewed before it is learnt, card 2 after.
+        let mut with_cramming = answers.clone();
+        with_cramming.push(revlog_entry(1, -5, Filtered, 4, 0));
+        with_cramming.push(revlog_entry(2, 20, Filtered, 1, 0));
+        with_cramming.push(revlog_entry(2, 21, Filtered, 2, 0));
+        with_cramming.sort_by_key(|entry| (entry.cid, entry.id));
+        for smooth in [false, true] {
+            assert_eq!(
+                extract_simulator_config(with_cramming.clone(), 0, smooth),
+                extract_simulator_config(answers.clone(), 0, smooth)
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_simulator_config_ignores_unrated_entries() {
+        use RevlogReviewKind::{Learning, Review};
+        let answers = vec![
+            revlog_entry(1, 0, Learning, 3, 0),
+            revlog_entry(1, 10, Learning, 3, 2500),
+            revlog_entry(2, 0, Review, 1, 2300),
+            revlog_entry(2, 10, Review, 3, 2300),
+        ];
+        // An entry with no answer button (0) but a review time, after card 1's learning steps.
+        let mut with_unrated = answers.clone();
+        with_unrated.push(revlog_entry(1, 20, Learning, 0, 0));
+        assert_eq!(
+            extract_simulator_config(with_unrated, 0, false),
+            extract_simulator_config(answers, 0, false)
+        );
     }
 
     #[test]
